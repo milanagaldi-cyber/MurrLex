@@ -71,7 +71,7 @@ DEBUG = env_bool("DEBUG", True)
 if not DEBUG and SECRET_KEY == "dev-only-change-me":
     raise ImproperlyConfigured("SECRET_KEY must be set when DEBUG is false.")
 
-ALLOWED_HOSTS = env_list("ALLOWED_HOSTS", ["127.0.0.1", "localhost"])
+ALLOWED_HOSTS = env_list("ALLOWED_HOSTS", ["127.0.0.1", "localhost", "testserver"])
 INTERNAL_IMPORT_TOKEN = os.environ.get("INTERNAL_IMPORT_TOKEN", "")
 
 

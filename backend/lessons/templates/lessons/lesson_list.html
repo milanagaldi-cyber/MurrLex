@@ -1,0 +1,38 @@
+{% extends "lessons/base.html" %}
+
+{% block content %}
+<section class="panel stack">
+    <div>
+        <h1>Lessons</h1>
+        <p class="muted">Imported lessons in the local database.</p>
+    </div>
+    {% if lessons %}
+        <table>
+            <thead>
+                <tr>
+                    <th>Title</th>
+                    <th>External ID</th>
+                    <th>Kind</th>
+                    <th>Languages</th>
+                    <th>Cards</th>
+                    <th>Updated</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for lesson in lessons %}
+                    <tr>
+                        <td><a href="{% url 'lessons:lesson_detail' lesson.id %}">{{ lesson.title }}</a></td>
+                        <td>{{ lesson.external_id }}</td>
+                        <td>{{ lesson.card_kind|default:"-" }}</td>
+                        <td>{{ lesson.source_language|default:"-" }} -> {{ lesson.target_language|default:"-" }}</td>
+                        <td>{{ lesson.cards.count }}</td>
+                        <td>{{ lesson.updated_at }}</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <p>No lessons imported yet.</p>
+    {% endif %}
+</section>
+{% endblock %}

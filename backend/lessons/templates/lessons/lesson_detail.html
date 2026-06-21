@@ -1,0 +1,42 @@
+{% extends "lessons/base.html" %}
+
+{% block content %}
+<section class="panel stack">
+    <div>
+        <h1>{{ lesson.title }}</h1>
+        <p class="muted">
+            External ID: {{ lesson.external_id }} |
+            Kind: {{ lesson.card_kind|default:"-" }} |
+            {{ lesson.source_language|default:"-" }} -> {{ lesson.target_language|default:"-" }}
+        </p>
+    </div>
+    {% if lesson.cards.all %}
+        <table>
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Mistake / Native</th>
+                    <th>Correct</th>
+                    <th>Kind</th>
+                    <th>Stars</th>
+                    <th>Hint</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for card in lesson.cards.all %}
+                    <tr>
+                        <td>{{ card.external_card_id }}</td>
+                        <td>{{ card.mistake|default:card.native_value }}</td>
+                        <td>{{ card.correct_value }}</td>
+                        <td>{{ card.card_kind|default:"-" }}</td>
+                        <td>{{ card.stars }}</td>
+                        <td>{{ card.hint|truncatechars:140 }}</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <p>No cards for this lesson.</p>
+    {% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,38 @@
+{% extends "lessons/base.html" %}
+
+{% block content %}
+<section class="panel stack">
+    <div>
+        <h1>Import logs</h1>
+        <p class="muted">Last 100 import attempts.</p>
+    </div>
+    {% if import_logs %}
+        <table>
+            <thead>
+                <tr>
+                    <th>Created</th>
+                    <th>Status</th>
+                    <th>Source</th>
+                    <th>Lesson ID</th>
+                    <th>Cards</th>
+                    <th>Error</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for log in import_logs %}
+                    <tr>
+                        <td>{{ log.created_at }}</td>
+                        <td>{{ log.status }}</td>
+                        <td>{{ log.source|default:"-" }}</td>
+                        <td>{{ log.external_lesson_id|default:"-" }}</td>
+                        <td>{{ log.cards_count }}</td>
+                        <td>{{ log.error_message|default:"-" }}</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% else %}
+        <p>No import attempts yet.</p>
+    {% endif %}
+</section>
+{% endblock %}

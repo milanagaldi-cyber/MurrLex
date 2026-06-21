@@ -7,9 +7,10 @@ Current state:
 - minimal Django project is created;
 - `lessons` app is created;
 - `Lesson`, `Card`, and `ImportLog` models are created and registered in Django Admin;
+- simple Lab UI pages are available under `/lab/`;
 - SQLite is used by default for local development;
 - `DATABASE_URL` can later switch the project to PostgreSQL settings;
-- Lab UI and import API have not been added yet.
+- the internal import API has not been added yet.
 
 ## Local Setup
 
@@ -53,4 +54,13 @@ DATABASE_URL=postgresql://make_mistake_user:password@localhost:5432/make_mistake
 .\.venv\Scripts\python.exe manage.py showmigrations lessons
 .\.venv\Scripts\python.exe manage.py shell -c "from django.contrib import admin; from lessons.models import Lesson, Card, ImportLog; print(Lesson in admin.site._registry, Card in admin.site._registry, ImportLog in admin.site._registry)"
 .\.venv\Scripts\python.exe manage.py runserver
+```
+
+Lab UI pages:
+
+```text
+http://127.0.0.1:8000/lab/import-json/
+http://127.0.0.1:8000/lab/lessons/
+http://127.0.0.1:8000/lab/lessons/<id>/
+http://127.0.0.1:8000/lab/imports/
 ```

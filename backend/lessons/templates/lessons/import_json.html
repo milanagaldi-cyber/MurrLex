@@ -1,0 +1,17 @@
+{% extends "lessons/base.html" %}
+
+{% block content %}
+<section class="panel stack">
+    <div>
+        <h1>Import lesson JSON</h1>
+        <p class="muted">Paste one Make Mistake lesson JSON object and import it into the local database.</p>
+    </div>
+    <form method="post" class="stack">
+        {% csrf_token %}
+        <textarea name="json_payload" spellcheck="false" placeholder='{"id":"lesson-1","title":"Lesson 1","cards":[...]}' required>{{ json_text }}</textarea>
+        <div>
+            <button type="submit">Import</button>
+        </div>
+    </form>
+</section>
+{% endblock %}
