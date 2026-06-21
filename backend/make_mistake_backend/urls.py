@@ -17,8 +17,10 @@ Including another URLconf
 
 from django.contrib import admin
 from django.urls import include, path
+from lessons import views as lesson_views
 
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("lab/", include("lessons.urls")),
+    path("api/internal/import-lesson", lesson_views.internal_import_lesson, name="internal_import_lesson"),
 ]

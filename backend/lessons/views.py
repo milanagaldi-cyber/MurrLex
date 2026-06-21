@@ -1,7 +1,10 @@
 import json
 
+from django.conf import settings
 from django.contrib import messages
+from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
 from .models import ImportLog, Lesson
@@ -62,3 +65,48 @@ def lesson_detail(request, lesson_id: int):
 def import_log_list(request):
     import_logs = ImportLog.objects.all()[:100]
     return render(request, "lessons/import_log_list.html", {"import_logs": import_logs})
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def internal_import_lesson(request):
+    expected_token = settings.INTERNAL_IMPORT_TOKEN
+    if not expected_token:
+        return JsonResponse(
+            {"status": "error", "error": "INTERNAL_IMPORT_TOKEN is not configured."},
+            status=500,
+        )
+
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header != f"Bearer {expected_token}":
+        return JsonResponse({"status": "error", "error": "Unauthorized."}, status=401)
+
+    try:
+        payload = json.loads(request.body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        log_failed_import(
+            source="api",
+            raw_payload={"raw": request.body.decode("utf-8", errors="replace")},
+            error_message=f"Invalid JSON: {exc}",
+        )
+        return JsonResponse({"status": "error", "error": f"Invalid JSON: {exc}"}, status=400)
+
+    try:
+        result = import_lesson_payload(payload, source="api")
+    except LessonImportError as exc:
+        external_lesson_id = str(payload.get("id", "")) if isinstance(payload, dict) else ""
+        log_failed_import(
+            source="api",
+            raw_payload=payload,
+            error_message=str(exc),
+            external_lesson_id=external_lesson_id,
+        )
+        return JsonResponse({"status": "error", "error": str(exc)}, status=400)
+
+    return JsonResponse(
+        {
+            "status": "ok",
+            "lessonId": result.lesson.external_id,
+            "cardsImported": result.cards_imported,
+        }
+    )

@@ -8,9 +8,9 @@ Current state:
 - `lessons` app is created;
 - `Lesson`, `Card`, and `ImportLog` models are created and registered in Django Admin;
 - simple Lab UI pages are available under `/lab/`;
+- internal lesson import API is available at `/api/internal/import-lesson`;
 - SQLite is used by default for local development;
 - `DATABASE_URL` can later switch the project to PostgreSQL settings;
-- the internal import API has not been added yet.
 
 ## Local Setup
 
@@ -63,4 +63,35 @@ http://127.0.0.1:8000/lab/import-json/
 http://127.0.0.1:8000/lab/lessons/
 http://127.0.0.1:8000/lab/lessons/<id>/
 http://127.0.0.1:8000/lab/imports/
+```
+
+Internal API:
+
+```text
+POST http://127.0.0.1:8000/api/internal/import-lesson
+Authorization: Bearer <INTERNAL_IMPORT_TOKEN>
+Content-Type: application/json
+```
+
+PowerShell example:
+
+```powershell
+$headers = @{ Authorization = "Bearer change-me-import-token" }
+$json = Get-Content -Raw .\sample_lesson.json
+Invoke-RestMethod `
+  -Uri "http://127.0.0.1:8000/api/internal/import-lesson" `
+  -Method Post `
+  -Headers $headers `
+  -ContentType "application/json" `
+  -Body $json
+```
+
+Expected success response:
+
+```json
+{
+  "status": "ok",
+  "lessonId": "lesson-id",
+  "cardsImported": 30
+}
 ```
