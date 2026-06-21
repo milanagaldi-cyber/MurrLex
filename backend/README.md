@@ -53,8 +53,18 @@ DATABASE_URL=postgresql://make_mistake_user:password@localhost:5432/make_mistake
 .\.venv\Scripts\python.exe manage.py migrate
 .\.venv\Scripts\python.exe manage.py showmigrations lessons
 .\.venv\Scripts\python.exe manage.py shell -c "from django.contrib import admin; from lessons.models import Lesson, Card, ImportLog; print(Lesson in admin.site._registry, Card in admin.site._registry, ImportLog in admin.site._registry)"
+.\.venv\Scripts\python.exe manage.py test
 .\.venv\Scripts\python.exe manage.py runserver
 ```
+
+The current test suite covers:
+
+- successful internal API import;
+- missing Bearer token rejection;
+- invalid JSON rejection;
+- lesson without cards rejection;
+- imported cards linked to their lesson;
+- duplicate lesson import updating the existing lesson safely.
 
 Lab UI pages:
 
