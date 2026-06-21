@@ -48,7 +48,13 @@ cd C:\CodexProjects\MakeMistake\backend
 
 ## Connector
 
-The `connector/` folder is reserved for Python scripts/modules that will send lesson JSON into the Django backend. It will later be shaped toward MCP-style tools, but the first version should stay as a simple local script.
+The `connector/` folder contains Python scripts/modules that send lesson JSON into the Django backend. The first script is:
+
+```text
+connector/send_lesson.py
+```
+
+It reads a lesson JSON file and sends it to `DJANGO_IMPORT_URL` with `INTERNAL_IMPORT_TOKEN`.
 
 ## Environment
 

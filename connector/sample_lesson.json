@@ -1,0 +1,29 @@
+{
+  "id": "connector-sample-lesson",
+  "title": "Connector Sample Lesson",
+  "cardKind": "LN",
+  "sourceLanguage": "Russian",
+  "targetLanguage": "Polish",
+  "cards": [
+    {
+      "id": 1,
+      "nativeValue": "кот",
+      "correctValue": "kot",
+      "hint": "Basic noun.",
+      "cardKind": "LN",
+      "sourceLanguage": "Russian",
+      "targetLanguage": "Polish",
+      "stars": 0
+    },
+    {
+      "id": 2,
+      "nativeValue": "дом",
+      "correctValue": "dom",
+      "hint": "Basic noun.",
+      "cardKind": "LN",
+      "sourceLanguage": "Russian",
+      "targetLanguage": "Polish",
+      "stars": 0
+    }
+  ]
+}
