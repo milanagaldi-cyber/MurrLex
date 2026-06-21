@@ -33,9 +33,18 @@ mobile/android/app/build/outputs/apk/debug/app-debug.apk
 
 ## Backend
 
-The `backend/` folder is reserved for the Django backend. Step 2 only prepares the folder; the Django project itself is not created yet.
+The `backend/` folder contains the Django backend. It currently uses SQLite by default for local development and reads settings from environment variables.
 
-For the first backend iteration, prefer local development with SQLite and environment variables from `.env` based on `.env.example`.
+The settings are prepared for a later PostgreSQL migration through `DATABASE_URL`, while keeping the first local iteration simple.
+
+Backend quick check:
+
+```powershell
+cd C:\CodexProjects\MakeMistake\backend
+.\.venv\Scripts\python.exe manage.py check
+.\.venv\Scripts\python.exe manage.py migrate
+.\.venv\Scripts\python.exe manage.py runserver
+```
 
 ## Connector
 
