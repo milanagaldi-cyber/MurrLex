@@ -1,0 +1,28 @@
+*.iml
+.DS_Store
+
+# Android / Gradle
+.gradle/
+.idea/
+.kotlin/
+build/
+captures/
+local.properties
+mobile/android/.gradle/
+mobile/android/.idea/
+mobile/android/.kotlin/
+mobile/android/build/
+mobile/android/app/build/
+mobile/android/local.properties
+
+# Logs and crash dumps
+*.log
+hs_err_pid*.log
+replay_pid*.log
+
+# Server placeholders
+server/.env
+server/.venv/
+server/node_modules/
+server/dist/
+server/build/

@@ -1,0 +1,16 @@
+[
+  {
+    "id": 1,
+    "nativeValue": "Я закончил задачу",
+    "correctValue": "Skończyłem zadanie",
+    "wrongAnswers": [
+      { "answer": "Ja skończył zadanie", "date": "2026-06-19 10:30" }
+    ],
+    "hint": "Use the first-person past tense ending: skończyłem for a male speaker, skończyłam for a female speaker.",
+    "madeAt": "2026-06-19 10:30",
+    "where": "Polish practice",
+    "type": "phrase",
+    "stars": 1,
+    "log": ["2026-06-19 10:30 - created"]
+  }
+]

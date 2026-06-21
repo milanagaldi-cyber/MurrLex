@@ -1,0 +1,578 @@
+{
+  "id": "belarusian_typical_mistakes_1_30_LN",
+  "title": "Беларуская мова - Тыповыя памылкі 1-30 - LN Русский → Беларуская",
+  "timesCompleted": 0,
+  "editable": true,
+  "cards": [
+    {
+      "id": 1,
+      "nativeValue": "Белорусский язык; по-белорусски.",
+      "correctValue": "беларуская мова; па-беларуску",
+      "wrongAnswers": [],
+      "hint": "У значэнні “language” літаратурная норма — мова. Слова язык — орган у роце. Для “по-белорусски” натуральна: па-беларуску. Прыклады: Я гавару па-беларуску. Гэта беларуская мова. Мы вывучаем беларускую мову.",
+      "madeAt": "2026-06-20 13:00",
+      "where": "translation lesson: Russian to Belarusian",
+      "log": [
+        "created LN card from original mistake card #1",
+        "front side is Russian, back side is correct Belarusian"
+      ],
+      "mistake": "",
+      "type": "card",
+      "cardKind": "LN",
+      "sourceLanguage": "Russian",
+      "targetLanguage": "Belarusian",
+      "stars": 0
+    },
+    {
+      "id": 2,
+      "nativeValue": "молоко; вода; города",
+      "correctValue": "малако; вада; гарады",
+      "wrongAnswers": [],
+      "hint": "Аканне — адна з асноўных рыс беларускай арфаграфіі: о, э не пад націскам часта пераходзяць у а. Прыклады: молоко → малако, вода → вада, город → горад, города → гарады.",
+      "madeAt": "2026-06-20 13:00",
+      "where": "translation lesson: Russian to Belarusian",
+      "log": [
+        "created LN card from original mistake card #2",
+        "front side is Russian, back side is correct Belarusian"
+      ],
+      "mistake": "",
+      "type": "card",
+      "cardKind": "LN",
+      "sourceLanguage": "Russian",
+      "targetLanguage": "Belarusian",
+      "stars": 0
+    },
+    {
+      "id": 3,
+      "nativeValue": "весна; земля; тепло",
+      "correctValue": "вясна; зямля; цяпло",
+      "wrongAnswers": [],
+      "hint": "Яканне: у многіх беларускіх словах е/ё не пад націскам перад націскным складам перадаюцца як я. Прыклады: весна → вясна, земля → зямля, тепло → цяпло, лес — лясы.",
+      "madeAt": "2026-06-20 13:00",
+      "where": "translation lesson: Russian to Belarusian",
+      "log": [
+        "created LN card from original mistake card #3",
+        "front side is Russian, back side is correct Belarusian"
+      ],
+      "mistake": "",
+      "type": "card",
+      "cardKind": "LN",
+      "sourceLanguage": "Russian",
+      "targetLanguage": "Belarusian",
+      "stars": 0
+    },
+    {
+      "id": 4,
+      "nativeValue": "я увидел; она взяла; в университете",
+      "correctValue": "я ўбачыў; яна ўзяла; ва ўніверсітэце",
+      "wrongAnswers": [],
+      "hint": "Літара ў пішацца пасля галоснай, калі наступнае слова або частка слова пачынаецца з гука [у] і не стаіць у пачатку сказа. Прыклады: я ўбачыў, яна ўзяла, сонца ўзімку, ва ўніверсітэце.",
+      "madeAt": "2026-06-20 13:00",
+      "where": "translation lesson: Russian to Belarusian",
+      "log": [
+        "created LN card from original mistake card #4",
+        "front side is Russian, back side is correct Belarusian"
+      ],
+      "mistake": "",
+      "type": "card",
+      "cardKind": "LN",
+      "sourceLanguage": "Russian",
+      "targetLanguage": "Belarusian",
+      "stars": 0
+    },
+    {
+      "id": 5,
+      "nativeValue": "В Минске идёт дождь.",
+      "correctValue": "У Мінску ідзе дождж.",
+      "wrongAnswers": [],
+      "hint": "Ў не пішацца ў пачатку сказа або пасля знака прыпынку. Пачынаем сказ з У. Прыклады: У мяне ёсць пытанне. У Беларусі прыгожа. Але: я ў Беларусі.",
+      "madeAt": "2026-06-20 13:00",
+      "where": "translation lesson: Russian to Belarusian",
+      "log": [
+        "created LN card from original mistake card #5",
+        "front side is Russian, back side is correct Belarusian"
+      ],
+      "mistake": "",
+      "type": "card",
+      "cardKind": "LN",
+      "sourceLanguage": "Russian",
+      "targetLanguage": "Belarusian",
+      "stars": 0
+    },
+    {
+      "id": 6,
+      "nativeValue": "объявление; подъезд; объём; съезд",
+      "correctValue": "аб'ява; пад'езд; аб'ём; з'езд",
+      "wrongAnswers": [],
+      "hint": "Апостраф пішацца пры асобным вымаўленні зычнага і наступнага галоснага, асабліва пасля прыставак на зычны перад е, ё, ю, я і націскным і. Прыклады: аб'ява, пад'езд, аб'ём, з'езд, раз'юшаны.",
+      "madeAt": "2026-06-20 13:00",
+      "where": "translation lesson: Russian to Belarusian",
+      "log": [
+        "created LN card from original mistake card #6",
+        "front side is Russian, back side is correct Belarusian"
+      ],
+      "mistake": "",
+      "type": "card",
+      "cardKind": "LN",
+      "sourceLanguage": "Russian",
+      "targetLanguage": "Belarusian",
+      "stars": 0
+    },
+    {
+      "id": 7,
+      "nativeValue": "ночь; мышь; дождь; царь",
+      "correctValue": "ноч; мыш; дождж; цар",
+      "wrongAnswers": [],
+      "hint": "У беларускай мове мяккі знак не пішацца пасля ж, дж, ч, ш, р і некаторых іншых цвёрдых зычных. Прыклады: ноч, мыш, дождж, цар, плач, нож.",
+      "madeAt": "2026-06-20 13:00",
+      "where": "translation lesson: Russian to Belarusian",
+      "log": [
+        "created LN card from original mistake card #7",
+        "front side is Russian, back side is correct Belarusian"
+      ],
+      "mistake": "",
+      "type": "card",
+      "cardKind": "LN",
+      "sourceLanguage": "Russian",
+      "targetLanguage": "Belarusian",
+      "stars": 0
+    },
+    {
+      "id": 8,
+      "nativeValue": "дети; день; люди; тебе; теперь",
+      "correctValue": "дзеці; дзень; людзі; цябе; цяпер",
+      "wrongAnswers": [],
+      "hint": "У беларускай мове перад е, ё, і, ю, я цвёрдыя д, т у многіх уласнабеларускіх словах пераходзяць у дз, ц. Прыклады: дзеці, дзень, людзі, у горадзе, цябе, цяпер.",
+      "madeAt": "2026-06-20 13:00",
+      "where": "translation lesson: Russian to Belarusian",
+      "log": [
+        "created LN card from original mistake card #8",
+        "front side is Russian, back side is correct Belarusian"
+      ],
+      "mistake": "",
+      "type": "card",
+      "cardKind": "LN",
+      "sourceLanguage": "Russian",
+      "targetLanguage": "Belarusian",
+      "stars": 0
+    },
+    {
+      "id": 9,
+      "nativeValue": "жизнь; семена; колосья; свадьба",
+      "correctValue": "жыццё; насенне; калоссе; вяселле",
+      "wrongAnswers": [],
+      "hint": "У беларускай мове часта пішацца падаўжэнне зычных: цц, нн, сс, лл. Прыклады: жыццё, насенне, калоссе, вяселле, галлё, суддзя.",
+      "madeAt": "2026-06-20 13:00",
+      "where": "translation lesson: Russian to Belarusian",
+      "log": [
+        "created LN card from original mistake card #9",
+        "front side is Russian, back side is correct Belarusian"
+      ],
+      "mistake": "",
+      "type": "card",
+      "cardKind": "LN",
+      "sourceLanguage": "Russian",
+      "targetLanguage": "Belarusian",
+      "stars": 0
+    },
+    {
+      "id": 10,
+      "nativeValue": "компьютер; интернет; аудитория",
+      "correctValue": "камп'ютар; інтэрнэт; аўдыторыя",
+      "wrongAnswers": [],
+      "hint": "Многія запазычаныя словы маюць усталяваны беларускі правапіс: камп'ютар, інтэрнэт, аўдыторыя. Правярай слоўнік: не перанось рускую графіку аўтаматычна.",
+      "madeAt": "2026-06-20 13:00",
+      "where": "translation lesson: Russian to Belarusian",
+      "log": [
+        "created LN card from original mistake card #10",
+        "front side is Russian, back side is correct Belarusian"
+      ],
+      "mistake": "",
+      "type": "card",
+      "cardKind": "LN",
+      "sourceLanguage": "Russian",
+      "targetLanguage": "Belarusian",
+      "stars": 0
+    },
+    {
+      "id": 11,
+      "nativeValue": "я могу сделать; он может сказать; мы хотим начать",
+      "correctValue": "я магу зрабіць; ён можа сказаць; мы хочам пачаць",
+      "wrongAnswers": [],
+      "hint": "Пасля мадальных слоў магу, можа, хочам, трэба ставіцца інфінітыў. Прыклады: магу зрабіць, можа сказаць, трэба ісці, хочам пачаць.",
+      "madeAt": "2026-06-20 13:00",
+      "where": "translation lesson: Russian to Belarusian",
+      "log": [
+        "created LN card from original mistake card #11",
+        "front side is Russian, back side is correct Belarusian"
+      ],
+      "mistake": "",
+      "type": "card",
+      "cardKind": "LN",
+      "sourceLanguage": "Russian",
+      "targetLanguage": "Belarusian",
+      "stars": 0
+    },
+    {
+      "id": 12,
+      "nativeValue": "у меня есть вопрос; у него есть идея",
+      "correctValue": "у мяне ёсць пытанне; у яго ёсць ідэя",
+      "wrongAnswers": [],
+      "hint": "Маю/мае магчыма, але ў жывой беларускай мове часта натуральней канструкцыя “у каго ёсць”. Прыклады: У мяне ёсць час. У нас ёсць план. У іх ёсць досвед.",
+      "madeAt": "2026-06-20 13:00",
+      "where": "translation lesson: Russian to Belarusian",
+      "log": [
+        "created LN card from original mistake card #12",
+        "front side is Russian, back side is correct Belarusian"
+      ],
+      "mistake": "",
+      "type": "card",
+      "cardKind": "LN",
+      "sourceLanguage": "Russian",
+      "targetLanguage": "Belarusian",
+      "stars": 0
+    },
+    {
+      "id": 13,
+      "nativeValue": "нет времени; нет денег; нет вопросов",
+      "correctValue": "няма часу; няма грошай; няма пытанняў",
+      "wrongAnswers": [],
+      "hint": "Пасля няма патрэбны родны склон. Прыклады: няма часу, няма вады, няма людзей, няма пытанняў, няма магчымасці.",
+      "madeAt": "2026-06-20 13:00",
+      "where": "translation lesson: Russian to Belarusian",
+      "log": [
+        "created LN card from original mistake card #13",
+        "front side is Russian, back side is correct Belarusian"
+      ],
+      "mistake": "",
+      "type": "card",
+      "cardKind": "LN",
+      "sourceLanguage": "Russian",
+      "targetLanguage": "Belarusian",
+      "stars": 0
+    },
+    {
+      "id": 14,
+      "nativeValue": "много людей; много денег; много времени",
+      "correctValue": "шмат людзей; шмат грошай; шмат часу",
+      "wrongAnswers": [],
+      "hint": "Словы колькасці шмат, многа, мала патрабуюць роднага склону. Прыклады: шмат працы, шмат людзей, шмат грошай, мала часу, многа відэа.",
+      "madeAt": "2026-06-20 13:00",
+      "where": "translation lesson: Russian to Belarusian",
+      "log": [
+        "created LN card from original mistake card #14",
+        "front side is Russian, back side is correct Belarusian"
+      ],
+      "mistake": "",
+      "type": "card",
+      "cardKind": "LN",
+      "sourceLanguage": "Russian",
+      "targetLanguage": "Belarusian",
+      "stars": 0
+    },
+    {
+      "id": 15,
+      "nativeValue": "белорусский язык; родной язык; красивый язык",
+      "correctValue": "беларуская мова; родная мова; прыгожая мова",
+      "wrongAnswers": [],
+      "hint": "Мова — жаночы род, таму прыметнікі таксама ў жаночым родзе: беларуская, родная, прыгожая, складаная. Прыклады: мая мова, новая мова.",
+      "madeAt": "2026-06-20 13:00",
+      "where": "translation lesson: Russian to Belarusian",
+      "log": [
+        "created LN card from original mistake card #15",
+        "front side is Russian, back side is correct Belarusian"
+      ],
+      "mistake": "",
+      "type": "card",
+      "cardKind": "LN",
+      "sourceLanguage": "Russian",
+      "targetLanguage": "Belarusian",
+      "stars": 0
+    },
+    {
+      "id": 16,
+      "nativeValue": "это кино; новое видео; короткое видео",
+      "correctValue": "гэтае кіно; новае відэа; кароткае відэа",
+      "wrongAnswers": [],
+      "hint": "Кіно і відэа ў беларускай мове ніякага роду: гэтае, новае, цікавае, кароткае. Прыклады: Гэтае відэа добрае. Новае кіно мне спадабалася.",
+      "madeAt": "2026-06-20 13:00",
+      "where": "translation lesson: Russian to Belarusian",
+      "log": [
+        "created LN card from original mistake card #16",
+        "front side is Russian, back side is correct Belarusian"
+      ],
+      "mistake": "",
+      "type": "card",
+      "cardKind": "LN",
+      "sourceLanguage": "Russian",
+      "targetLanguage": "Belarusian",
+      "stars": 0
+    },
+    {
+      "id": 17,
+      "nativeValue": "я был программистом; она стала авторкой",
+      "correctValue": "я быў праграмістам; яна стала аўтаркай",
+      "wrongAnswers": [],
+      "hint": "Пасля быць/стаць у значэнні ролі або прафесіі часта патрэбны творны склон. Прыклады: быў студэнтам, стала рэжысёркай, працаваў настаўнікам.",
+      "madeAt": "2026-06-20 13:00",
+      "where": "translation lesson: Russian to Belarusian",
+      "log": [
+        "created LN card from original mistake card #17",
+        "front side is Russian, back side is correct Belarusian"
+      ],
+      "mistake": "",
+      "type": "card",
+      "cardKind": "LN",
+      "sourceLanguage": "Russian",
+      "targetLanguage": "Belarusian",
+      "stars": 0
+    },
+    {
+      "id": 18,
+      "nativeValue": "из Минска; из Беларуси; из фильма",
+      "correctValue": "з Мінска; з Беларусі; з фільма",
+      "wrongAnswers": [],
+      "hint": "Пасля з/са ў значэнні “из/с” патрэбны родны склон. Прыклады: з Мінска, з Варшавы, з Беларусі, з фільма, са школы.",
+      "madeAt": "2026-06-20 13:00",
+      "where": "translation lesson: Russian to Belarusian",
+      "log": [
+        "created LN card from original mistake card #18",
+        "front side is Russian, back side is correct Belarusian"
+      ],
+      "mistake": "",
+      "type": "card",
+      "cardKind": "LN",
+      "sourceLanguage": "Russian",
+      "targetLanguage": "Belarusian",
+      "stars": 0
+    },
+    {
+      "id": 19,
+      "nativeValue": "вижу человека; знаю автора; встретил друга",
+      "correctValue": "бачу чалавека; ведаю аўтара; сустрэў сябра",
+      "wrongAnswers": [],
+      "hint": "Для жывых істот у вінавальным склоне часта форма як родны склон: бачу чалавека, ведаю аўтара, сустрэў сябра. Пытанне: каго?",
+      "madeAt": "2026-06-20 13:00",
+      "where": "translation lesson: Russian to Belarusian",
+      "log": [
+        "created LN card from original mistake card #19",
+        "front side is Russian, back side is correct Belarusian"
+      ],
+      "mistake": "",
+      "type": "card",
+      "cardKind": "LN",
+      "sourceLanguage": "Russian",
+      "targetLanguage": "Belarusian",
+      "stars": 0
+    },
+    {
+      "id": 20,
+      "nativeValue": "большинство людей смотрит; большинство хочет",
+      "correctValue": "большасць людзей глядзіць; большасць хоча",
+      "wrongAnswers": [],
+      "hint": "Слова большасць граматычна адзіночнага ліку, таму часта: большасць глядзіць, большасць хоча, большасць лічыць. У жывой мове множны можа сустракацца, але для нормы трымай адзіночны лік.",
+      "madeAt": "2026-06-20 13:00",
+      "where": "translation lesson: Russian to Belarusian",
+      "log": [
+        "created LN card from original mistake card #20",
+        "front side is Russian, back side is correct Belarusian"
+      ],
+      "mistake": "",
+      "type": "card",
+      "cardKind": "LN",
+      "sourceLanguage": "Russian",
+      "targetLanguage": "Belarusian",
+      "stars": 0
+    },
+    {
+      "id": 21,
+      "nativeValue": "один год; два года; пять лет",
+      "correctValue": "адзін год; два гады; пяць гадоў",
+      "wrongAnswers": [],
+      "hint": "Пасля 1 — год, пасля 2/3/4 — гады, пасля 5 і больш — гадоў. Прыклады: 21 год, 22 гады, 25 гадоў.",
+      "madeAt": "2026-06-20 13:00",
+      "where": "translation lesson: Russian to Belarusian",
+      "log": [
+        "created LN card from original mistake card #21",
+        "front side is Russian, back side is correct Belarusian"
+      ],
+      "mistake": "",
+      "type": "card",
+      "cardKind": "LN",
+      "sourceLanguage": "Russian",
+      "targetLanguage": "Belarusian",
+      "stars": 0
+    },
+    {
+      "id": 22,
+      "nativeValue": "один час; два часа; пять часов",
+      "correctValue": "адна гадзіна; дзве гадзіны; пяць гадзін",
+      "wrongAnswers": [],
+      "hint": "Гадзіна — жаночы род: адна, дзве. Пасля 5 і больш — родны множны: гадзін. Прыклады: адна гадзіна, дзве гадзіны, тры гадзіны, пяць гадзін.",
+      "madeAt": "2026-06-20 13:00",
+      "where": "translation lesson: Russian to Belarusian",
+      "log": [
+        "created LN card from original mistake card #22",
+        "front side is Russian, back side is correct Belarusian"
+      ],
+      "mistake": "",
+      "type": "card",
+      "cardKind": "LN",
+      "sourceLanguage": "Russian",
+      "targetLanguage": "Belarusian",
+      "stars": 0
+    },
+    {
+      "id": 23,
+      "nativeValue": "он был; он сказал; он сделал",
+      "correctValue": "ён быў; ён сказаў; ён зрабіў",
+      "wrongAnswers": [],
+      "hint": "У мужчынскім родзе прошлага часу часта пішацца ў: быў, сказаў, зрабіў, убачыў, пачаў. Пара: быў — была, сказаў — сказала.",
+      "madeAt": "2026-06-20 13:00",
+      "where": "translation lesson: Russian to Belarusian",
+      "log": [
+        "created LN card from original mistake card #23",
+        "front side is Russian, back side is correct Belarusian"
+      ],
+      "mistake": "",
+      "type": "card",
+      "cardKind": "LN",
+      "sourceLanguage": "Russian",
+      "targetLanguage": "Belarusian",
+      "stars": 0
+    },
+    {
+      "id": 24,
+      "nativeValue": "мне нравится кино; мне нравятся ролики",
+      "correctValue": "мне падабаецца кіно; мне падабаюцца ролікі",
+      "wrongAnswers": [],
+      "hint": "Русское “нравится” перакладаем як падабаецца. Калі прадмет адзін — падабаецца, калі некалькі — падабаюцца. Прыклады: Мне падабаецца фільм. Мне падабаюцца гэтыя відэа.",
+      "madeAt": "2026-06-20 13:00",
+      "where": "translation lesson: Russian to Belarusian",
+      "log": [
+        "created LN card from original mistake card #24",
+        "front side is Russian, back side is correct Belarusian"
+      ],
+      "mistake": "",
+      "type": "card",
+      "cardKind": "LN",
+      "sourceLanguage": "Russian",
+      "targetLanguage": "Belarusian",
+      "stars": 0
+    },
+    {
+      "id": 25,
+      "nativeValue": "смотреть фильм; смотреть видео",
+      "correctValue": "глядзець фільм; глядзець відэа",
+      "wrongAnswers": [],
+      "hint": "Натуральна: глядзець фільм, глядзець відэа, глядзець стрым. “Глядзець на” — калі літаральна глядзіш на прадмет/чалавека: глядзець на экран.",
+      "madeAt": "2026-06-20 13:00",
+      "where": "translation lesson: Russian to Belarusian",
+      "log": [
+        "created LN card from original mistake card #25",
+        "front side is Russian, back side is correct Belarusian"
+      ],
+      "mistake": "",
+      "type": "card",
+      "cardKind": "LN",
+      "sourceLanguage": "Russian",
+      "targetLanguage": "Belarusian",
+      "stars": 0
+    },
+    {
+      "id": 26,
+      "nativeValue": "у нас получилось; получилось хорошо",
+      "correctValue": "у нас атрымалася; атрымалася добра",
+      "wrongAnswers": [],
+      "hint": "Атрымаць = получить что-то. Атрымацца = получиться. Прыклады: У мяне атрымалася. Відэа атрымалася добрым. У нас не атрымалася.",
+      "madeAt": "2026-06-20 13:00",
+      "where": "translation lesson: Russian to Belarusian",
+      "log": [
+        "created LN card from original mistake card #26",
+        "front side is Russian, back side is correct Belarusian"
+      ],
+      "mistake": "",
+      "type": "card",
+      "cardKind": "LN",
+      "sourceLanguage": "Russian",
+      "targetLanguage": "Belarusian",
+      "stars": 0
+    },
+    {
+      "id": 27,
+      "nativeValue": "неделя = 7 дней; воскресенье = день недели",
+      "correctValue": "тыдзень = 7 дзён; нядзеля = воскресенье",
+      "wrongAnswers": [],
+      "hint": "У беларускай мове “нядзеля” — гэта дзень тыдня, воскресенье. Семь дней — тыдзень. Прыклады: На гэтым тыдні. У нядзелю я адпачываю.",
+      "madeAt": "2026-06-20 13:00",
+      "where": "translation lesson: Russian to Belarusian",
+      "log": [
+        "created LN card from original mistake card #27",
+        "front side is Russian, back side is correct Belarusian"
+      ],
+      "mistake": "",
+      "type": "card",
+      "cardKind": "LN",
+      "sourceLanguage": "Russian",
+      "targetLanguage": "Belarusian",
+      "stars": 0
+    },
+    {
+      "id": 28,
+      "nativeValue": "маніць = лгать; манить = привлекать",
+      "correctValue": "маніць = лгать; прывабліваць = манить",
+      "wrongAnswers": [],
+      "hint": "Фальшывы сябар: маніць па-беларуску значыць “хлусіць, гаварыць няпраўду”. Русское “манить” — прывабліваць, вабіць. Прыклады: Не мані. Гэта мяне прываблівае.",
+      "madeAt": "2026-06-20 13:00",
+      "where": "translation lesson: Russian to Belarusian",
+      "log": [
+        "created LN card from original mistake card #28",
+        "front side is Russian, back side is correct Belarusian"
+      ],
+      "mistake": "",
+      "type": "card",
+      "cardKind": "LN",
+      "sourceLanguage": "Russian",
+      "targetLanguage": "Belarusian",
+      "stars": 0
+    },
+    {
+      "id": 29,
+      "nativeValue": "ругаться; вариться",
+      "correctValue": "сварыцца = ругаться; варыцца = вариться",
+      "wrongAnswers": [],
+      "hint": "Фальшывы сябар: сварыцца = ругацца. Для еды: варыцца. Прыклады: Суп варыцца. Яны сварацца. Бульба зварылася.",
+      "madeAt": "2026-06-20 13:00",
+      "where": "translation lesson: Russian to Belarusian",
+      "log": [
+        "created LN card from original mistake card #29",
+        "front side is Russian, back side is correct Belarusian"
+      ],
+      "mistake": "",
+      "type": "card",
+      "cardKind": "LN",
+      "sourceLanguage": "Russian",
+      "targetLanguage": "Belarusian",
+      "stars": 0
+    },
+    {
+      "id": 30,
+      "nativeValue": "смеяться над ошибками; смеяться над собой",
+      "correctValue": "смяяцца з памылак; смяяцца з сябе",
+      "wrongAnswers": [],
+      "hint": "Беларуская канструкцыя: смяяцца з каго/чаго. Прыклады: смяяцца з сябе, смяяцца з жарта, смяяцца з памылак.",
+      "madeAt": "2026-06-20 13:00",
+      "where": "translation lesson: Russian to Belarusian",
+      "log": [
+        "created LN card from original mistake card #30",
+        "front side is Russian, back side is correct Belarusian"
+      ],
+      "mistake": "",
+      "type": "card",
+      "cardKind": "LN",
+      "sourceLanguage": "Russian",
+      "targetLanguage": "Belarusian",
+      "stars": 0
+    }
+  ]
+}
