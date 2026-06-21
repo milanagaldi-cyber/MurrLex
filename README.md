@@ -56,6 +56,12 @@ connector/send_lesson.py
 
 It reads a lesson JSON file and sends it to `DJANGO_IMPORT_URL` with `INTERNAL_IMPORT_TOKEN`.
 
+The reusable connector function for future MCP-style wrapping is:
+
+```python
+from connector.client import save_lesson_to_make_mistakes
+```
+
 ## Environment
 
 Copy `.env.example` to `.env` for local backend/connector development when Step 3 begins. Do not commit `.env`.

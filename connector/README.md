@@ -2,7 +2,7 @@
 
 Python connector code for sending lesson JSON into the Make Mistake Django backend.
 
-Current script:
+Current CLI script:
 
 ```text
 send_lesson.py
@@ -15,6 +15,16 @@ It:
 - also loads `.env` from the repository root if present;
 - sends `POST` to the Django internal import endpoint;
 - prints the JSON response.
+
+Reusable connector function:
+
+```python
+from connector.client import save_lesson_to_make_mistakes
+
+result = save_lesson_to_make_mistakes(lesson_dict)
+```
+
+This function is the MCP-style boundary we will wrap later. It already calls the same Django internal import endpoint as the CLI script.
 
 ## Usage
 
@@ -45,3 +55,11 @@ Expected response:
 ```
 
 Later this connector logic will be wrapped in an MCP-style tool.
+
+## Tests
+
+From the repository root:
+
+```powershell
+python -m unittest connector.test_client
+```
