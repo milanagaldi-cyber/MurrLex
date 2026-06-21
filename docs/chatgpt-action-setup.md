@@ -46,9 +46,37 @@ Set `ALLOWED_HOSTS` in `.env` to include the tunnel host:
 
 ```text
 ALLOWED_HOSTS=127.0.0.1,localhost,testserver,abc123.ngrok-free.app
+CSRF_TRUSTED_ORIGINS=https://abc123.ngrok-free.app
 ```
 
 Restart Django after changing `.env`.
+
+For Cloudflare quick tunnels:
+
+```text
+ALLOWED_HOSTS=127.0.0.1,localhost,testserver,.trycloudflare.com
+CSRF_TRUSTED_ORIGINS=https://*.trycloudflare.com
+```
+
+## 2.1. Protect Lab UI for a Colleague
+
+The Lab UI requires Django login. Create a temporary user:
+
+```powershell
+cd C:\CodexProjects\MakeMistake\backend
+$env:DJANGO_SUPERUSER_PASSWORD = "choose-a-temporary-password"
+.\.venv\Scripts\python.exe manage.py createsuperuser --username methodist --email methodist@example.com --noinput
+```
+
+Send your colleague:
+
+```text
+https://YOUR-TUNNEL-URL/lab/lessons/
+username: methodist
+password: choose-a-temporary-password
+```
+
+Use a temporary password and change/delete this user after testing.
 
 ## 3. Prepare OpenAPI Schema
 

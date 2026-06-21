@@ -1,5 +1,6 @@
 import json
 
+from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 
 from .models import Card, ImportLog, Lesson
@@ -153,3 +154,34 @@ class LessonImportServiceTests(TestCase):
         self.assertEqual(lesson.cards.count(), 1)
         self.assertEqual(lesson.cards.first().external_card_id, "10")
         self.assertEqual(ImportLog.objects.filter(status=ImportLog.Status.SUCCESS).count(), 2)
+
+
+@override_settings(INTERNAL_IMPORT_TOKEN="test-token")
+class LabUiAuthTests(TestCase):
+    def test_lab_requires_login(self):
+        response = self.client.get("/lab/lessons/")
+
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response["Location"].startswith("/login/"))
+
+    def test_logged_in_user_can_open_lab(self):
+        user_model = get_user_model()
+        user = user_model.objects.create_user(username="methodist", password="test-password")
+        self.client.force_login(user)
+
+        response = self.client.get("/lab/lessons/")
+
+        self.assertEqual(response.status_code, 200)
+
+    def test_api_still_uses_bearer_token_not_login(self):
+        user_model = get_user_model()
+        user = user_model.objects.create_user(username="methodist", password="test-password")
+        self.client.force_login(user)
+
+        response = self.client.post(
+            "/api/internal/import-lesson",
+            data=json.dumps(sample_lesson_payload()),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 401)

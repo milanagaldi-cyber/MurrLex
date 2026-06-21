@@ -81,6 +81,16 @@ http://127.0.0.1:8000/lab/imports/
 
 The Lab UI is a small testing interface, not the final product UI.
 
+The Lab UI requires Django login. For a temporary colleague account:
+
+```powershell
+cd C:\CodexProjects\MakeMistake\backend
+$env:DJANGO_SUPERUSER_PASSWORD = "choose-a-temporary-password"
+.\.venv\Scripts\python.exe manage.py createsuperuser --username methodist --email methodist@example.com --noinput
+```
+
+For external tunnel access, add the tunnel host to `ALLOWED_HOSTS` and `CSRF_TRUSTED_ORIGINS` in `.env`.
+
 ## Internal API
 
 Endpoint:

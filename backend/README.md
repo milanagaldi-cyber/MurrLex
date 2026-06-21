@@ -78,6 +78,8 @@ http://127.0.0.1:8000/lab/lessons/<id>/
 http://127.0.0.1:8000/lab/imports/
 ```
 
+The Lab UI requires Django login. For temporary external testing, create a local user and share that login instead of your admin account.
+
 Internal API:
 
 ```text

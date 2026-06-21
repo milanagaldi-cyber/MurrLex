@@ -72,7 +72,11 @@ if not DEBUG and SECRET_KEY == "dev-only-change-me":
     raise ImproperlyConfigured("SECRET_KEY must be set when DEBUG is false.")
 
 ALLOWED_HOSTS = env_list("ALLOWED_HOSTS", ["127.0.0.1", "localhost", "testserver"])
+CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS", [])
 INTERNAL_IMPORT_TOKEN = os.environ.get("INTERNAL_IMPORT_TOKEN", "")
+LOGIN_URL = "/login/"
+LOGIN_REDIRECT_URL = "/lab/lessons/"
+LOGOUT_REDIRECT_URL = "/login/"
 
 
 # Application definition

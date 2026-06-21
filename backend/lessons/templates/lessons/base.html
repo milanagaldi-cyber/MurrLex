@@ -94,6 +94,10 @@
             <a href="{% url 'lessons:lesson_list' %}">Lessons</a>
             <a href="{% url 'lessons:import_log_list' %}">Import logs</a>
             <a href="/admin/">Admin</a>
+            <form method="post" action="{% url 'logout' %}" style="margin:0;">
+                {% csrf_token %}
+                <button type="submit" style="padding:0;background:transparent;color:#274c35;">Logout</button>
+            </form>
         </nav>
     </header>
     <main class="stack">

@@ -16,11 +16,14 @@ Including another URLconf
 """
 
 from django.contrib import admin
+from django.contrib.auth import views as auth_views
 from django.urls import include, path
 from lessons import views as lesson_views
 
 urlpatterns = [
     path("admin/", admin.site.urls),
+    path("login/", auth_views.LoginView.as_view(template_name="registration/login.html"), name="login"),
+    path("logout/", auth_views.LogoutView.as_view(), name="logout"),
     path("lab/", include("lessons.urls")),
     path("api/health", lesson_views.api_health, name="api_health"),
     path("api/internal/import-lesson", lesson_views.internal_import_lesson, name="internal_import_lesson"),

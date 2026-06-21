@@ -2,6 +2,7 @@ import json
 
 from django.conf import settings
 from django.contrib import messages
+from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.csrf import csrf_exempt
@@ -12,6 +13,7 @@ from .services import LessonImportError, import_lesson_payload, log_failed_impor
 
 
 @require_http_methods(["GET", "POST"])
+@login_required
 def import_json(request):
     json_text = ""
 
@@ -53,16 +55,21 @@ def import_json(request):
 
 
 def lesson_list(request):
+    if not request.user.is_authenticated:
+        return redirect(f"{settings.LOGIN_URL}?next={request.path}")
     lessons = Lesson.objects.prefetch_related("cards").all()
     return render(request, "lessons/lesson_list.html", {"lessons": lessons})
 
 
+@login_required
 def lesson_detail(request, lesson_id: int):
     lesson = get_object_or_404(Lesson.objects.prefetch_related("cards"), id=lesson_id)
     return render(request, "lessons/lesson_detail.html", {"lesson": lesson})
 
 
 def import_log_list(request):
+    if not request.user.is_authenticated:
+        return redirect(f"{settings.LOGIN_URL}?next={request.path}")
     import_logs = ImportLog.objects.all()[:100]
     return render(request, "lessons/import_log_list.html", {"import_logs": import_logs})
 
