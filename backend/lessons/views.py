@@ -67,6 +67,11 @@ def import_log_list(request):
     return render(request, "lessons/import_log_list.html", {"import_logs": import_logs})
 
 
+@require_http_methods(["GET"])
+def api_health(request):
+    return JsonResponse({"status": "ok", "service": "make-mistake-backend"})
+
+
 @csrf_exempt
 @require_http_methods(["POST"])
 def internal_import_lesson(request):

@@ -101,6 +101,17 @@ Expected success response:
 }
 ```
 
+## ChatGPT Action Bridge
+
+For local ChatGPT Action testing, Django must be exposed through a temporary public HTTPS tunnel.
+
+Docs:
+
+```text
+docs/chatgpt-action-setup.md
+docs/chatgpt-action-openapi.yaml
+```
+
 ## Connector
 
 CLI usage:

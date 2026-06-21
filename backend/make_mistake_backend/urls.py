@@ -22,5 +22,6 @@ from lessons import views as lesson_views
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("lab/", include("lessons.urls")),
+    path("api/health", lesson_views.api_health, name="api_health"),
     path("api/internal/import-lesson", lesson_views.internal_import_lesson, name="internal_import_lesson"),
 ]

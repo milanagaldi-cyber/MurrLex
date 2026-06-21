@@ -109,3 +109,10 @@ Expected success response:
   "cardsImported": 30
 }
 ```
+
+ChatGPT Action setup:
+
+```text
+C:\CodexProjects\MakeMistake\docs\chatgpt-action-setup.md
+C:\CodexProjects\MakeMistake\docs\chatgpt-action-openapi.yaml
+```
