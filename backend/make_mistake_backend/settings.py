@@ -78,6 +78,7 @@ INTERNAL_IMPORT_TOKEN = os.environ.get("INTERNAL_IMPORT_TOKEN", "")
 # Application definition
 
 INSTALLED_APPS = [
+    "lessons",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",

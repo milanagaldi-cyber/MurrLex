@@ -5,9 +5,11 @@ Django backend for Make Mistake.
 Current state:
 
 - minimal Django project is created;
+- `lessons` app is created;
+- `Lesson`, `Card`, and `ImportLog` models are created and registered in Django Admin;
 - SQLite is used by default for local development;
 - `DATABASE_URL` can later switch the project to PostgreSQL settings;
-- no lesson models, Lab UI, or import API have been added yet.
+- Lab UI and import API have not been added yet.
 
 ## Local Setup
 
@@ -48,5 +50,7 @@ DATABASE_URL=postgresql://make_mistake_user:password@localhost:5432/make_mistake
 ```powershell
 .\.venv\Scripts\python.exe manage.py check
 .\.venv\Scripts\python.exe manage.py migrate
+.\.venv\Scripts\python.exe manage.py showmigrations lessons
+.\.venv\Scripts\python.exe manage.py shell -c "from django.contrib import admin; from lessons.models import Lesson, Card, ImportLog; print(Lesson in admin.site._registry, Card in admin.site._registry, ImportLog in admin.site._registry)"
 .\.venv\Scripts\python.exe manage.py runserver
 ```
