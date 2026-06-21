@@ -14,9 +14,12 @@ Current state:
 
 ## Local Setup
 
-From this folder:
+From the repository:
 
 ```powershell
+cd C:\CodexProjects\MakeMistake
+Copy-Item .env.example .env
+cd C:\CodexProjects\MakeMistake\backend
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
@@ -86,8 +89,9 @@ Content-Type: application/json
 PowerShell example:
 
 ```powershell
+cd C:\CodexProjects\MakeMistake
 $headers = @{ Authorization = "Bearer change-me-import-token" }
-$json = Get-Content -Raw .\sample_lesson.json
+$json = Get-Content -Raw .\connector\sample_lesson.json
 Invoke-RestMethod `
   -Uri "http://127.0.0.1:8000/api/internal/import-lesson" `
   -Method Post `
