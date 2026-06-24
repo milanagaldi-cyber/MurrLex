@@ -197,10 +197,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             state.currentPortion
         }
         val rebuiltPortion = if (lesson != null) {
-            when (state.mode) {
-                StudyMode.ALPHABETICAL -> studyCards.sortedBy { it.nativeText().lowercase(Locale.getDefault()) }
-                StudyMode.RANDOM -> studyCards
-            }
+            orderStudyCards(studyCards, state.mode, shuffleRandom = false)
         } else {
             studyCards
         }
@@ -252,6 +249,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
     private fun defaultBackVisible(): Boolean {
         return _uiState.value.cardStartSide == CardStartSide.TRANSLATION
+    }
+
+    private fun orderStudyCards(
+        cards: List<Flashcard>,
+        mode: StudyMode,
+        shuffleRandom: Boolean
+    ): List<Flashcard> {
+        return when (mode) {
+            StudyMode.ORIGINAL -> cards
+            StudyMode.ALPHABETICAL -> cards.sortedBy { it.nativeText().lowercase(Locale.getDefault()) }
+            StudyMode.RANDOM -> if (shuffleRandom) cards.shuffled() else cards
+        }
     }
 
     private fun detectSystemInterfaceLanguage(): String {
@@ -385,7 +394,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         repository.saveLessonOrder(_uiState.value.lessons.map { it.id })
     }
     fun setMode(mode: StudyMode) {
-        _uiState.value = _uiState.value.copy(mode = mode)
+        val state = _uiState.value
+        val lesson = state.selectedLesson
+        if (lesson == null) {
+            _uiState.value = state.copy(mode = mode)
+            return
+        }
+
+        val currentCardId = state.currentCard?.id
+        val studyCards = if (state.excludeMasteredCards) {
+            lesson.cards.filterNot { it.starCount() == 3 }
+        } else {
+            lesson.cards
+        }
+        val cards = orderStudyCards(studyCards, mode, shuffleRandom = mode == StudyMode.RANDOM)
+        val nextIndex = currentCardId
+            ?.let { id -> cards.indexOfFirst { it.id == id } }
+            ?.takeIf { it >= 0 }
+            ?: 0
+
+        _uiState.value = state.copy(
+            mode = mode,
+            currentPortion = cards,
+            currentIndex = nextIndex.coerceAtMost((cards.size - 1).coerceAtLeast(0)),
+            answer = "",
+            isBackVisible = defaultBackVisible()
+        )
     }
 
     fun startNewPortion() {
@@ -396,10 +430,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             lesson.cards
         }
-        val cards = when (state.mode) {
-            StudyMode.ALPHABETICAL -> studyCards.sortedBy { it.nativeText().lowercase(Locale.getDefault()) }
-            StudyMode.RANDOM -> studyCards.shuffled()
-        }
+        val cards = orderStudyCards(studyCards, state.mode, shuffleRandom = true)
 
         _uiState.value = state.copy(
             currentPortion = cards,
@@ -782,10 +813,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             savedLesson.cards
         }
-        val updatedPortion = when (state.mode) {
-            StudyMode.ALPHABETICAL -> studyCards.sortedBy { it.nativeText().lowercase(Locale.getDefault()) }
-            StudyMode.RANDOM -> studyCards
-        }
+        val updatedPortion = orderStudyCards(studyCards, state.mode, shuffleRandom = false)
         val nextIndex = oldIndex.coerceAtMost((updatedPortion.size - 1).coerceAtLeast(0))
         _uiState.value = state.copy(
             lessons = lessons,
@@ -937,10 +965,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             selectedLesson?.cards ?: updatedLesson.cards
         }
-        val updatedPortion = when (state.mode) {
-            StudyMode.ALPHABETICAL -> studyCards.sortedBy { it.nativeText().lowercase(Locale.getDefault()) }
-            StudyMode.RANDOM -> studyCards
-        }
+        val updatedPortion = orderStudyCards(studyCards, state.mode, shuffleRandom = false)
         val validCompletedIds = updatedPortion.map { it.id }.toSet()
         _uiState.value = state.copy(
             lessons = lessons,

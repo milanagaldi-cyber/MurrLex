@@ -89,6 +89,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
@@ -96,6 +98,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -1713,27 +1716,37 @@ private fun TopControls(
     onShowAllCardsChange: (Boolean) -> Unit
 ) {
     val ui = rememberUiText()
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(top = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        FilterChip(
-            selected = mode == StudyMode.ALPHABETICAL,
-            onClick = { onModeChange(StudyMode.ALPHABETICAL) },
-            label = { Text("Alphabetical") }
+        val modes = listOf(
+            StudyMode.ORIGINAL to "Original",
+            StudyMode.ALPHABETICAL to "Alphabetical",
+            StudyMode.RANDOM to "Random"
         )
-        FilterChip(
-            selected = mode == StudyMode.RANDOM,
-            onClick = { onModeChange(StudyMode.RANDOM) },
-            label = { Text("Random") }
-        )
-        FilterChip(
-            selected = showAllCards,
-            onClick = { onShowAllCardsChange(!showAllCards) },
-            label = { Text("Show all") }
-        )
+        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+            modes.forEachIndexed { index, item ->
+                SegmentedButton(
+                    selected = mode == item.first,
+                    onClick = { onModeChange(item.first) },
+                    shape = SegmentedButtonDefaults.itemShape(index = index, count = modes.size),
+                    label = { Text(item.second) }
+                )
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Start
+        ) {
+            FilterChip(
+                selected = showAllCards,
+                onClick = { onShowAllCardsChange(!showAllCards) },
+                label = { Text("Show all") }
+            )
+        }
     }
 }
 
@@ -2901,6 +2914,7 @@ private fun sampleLessonJson(): String {
 
 private fun versionLogText(): String {
     return """
+        v0.50 - Added the Original study order, changed the study order controls to a segmented switch, and made mode changes reorder the current lesson immediately.
         v0.49 - Fixed the header version to read from BuildConfig, added lessonInfo to bundled lessons so info icons are visible immediately, and kept the lesson instructions feature visible in default content.
         v0.48 - Added lesson-level lessonInfo JSON support with info icons on lesson tiles and the study screen, added lesson info editing, preserved lessonInfo in exports, and updated the sample JSON template.
         v0.47 - Localized settings descriptions and lesson tile summaries, kept action button labels in English for stable layout, added a Lessons action to the completed-lesson screen, and made the Left counter jump to the first remaining card.
