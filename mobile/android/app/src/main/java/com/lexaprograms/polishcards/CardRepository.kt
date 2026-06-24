@@ -87,6 +87,24 @@ class CardRepository(private val context: Context) {
         preferences.edit().putString(KEY_INTERFACE_LANGUAGE, language.normalizedInterfaceLanguage()).apply()
     }
 
+    fun loadStudySession(lessonId: String): StudySession? {
+        val raw = preferences.getString(studySessionKey(lessonId), null) ?: return null
+        return runCatching { json.decodeFromString<StudySession>(raw) }
+            .getOrNull()
+            ?.takeIf { it.lessonId == lessonId }
+    }
+
+    fun saveStudySession(session: StudySession) {
+        if (session.lessonId.isBlank()) return
+        preferences.edit()
+            .putString(studySessionKey(session.lessonId), json.encodeToString(session))
+            .apply()
+    }
+
+    fun clearStudySession(lessonId: String) {
+        preferences.edit().remove(studySessionKey(lessonId)).apply()
+    }
+
     fun findRandomNotificationCard(): Pair<Lesson, Flashcard>? {
         val weightedCards = loadLessons(includeHidden = false)
             .flatMap { lesson -> lesson.cards.map { card -> lesson to card } }
@@ -216,6 +234,7 @@ class CardRepository(private val context: Context) {
             .putString(KEY_STATS, json.encodeToString(stats))
             .putString(KEY_HIDDEN_LESSONS, json.encodeToString(hiddenLessonIds))
             .putString(KEY_LESSON_ORDER, json.encodeToString(lessonOrder))
+            .also { editor -> lessonIds.forEach { editor.remove(studySessionKey(it)) } }
             .apply()
     }
 
@@ -323,6 +342,8 @@ class CardRepository(private val context: Context) {
 
     private fun newLessonId(): String = "lesson_${UUID.randomUUID()}"
 
+    private fun studySessionKey(lessonId: String): String = "$KEY_STUDY_SESSION_PREFIX$lessonId"
+
     companion object {
         private const val KEY_LESSONS = "lessons"
         private const val KEY_STATS = "stats"
@@ -336,6 +357,7 @@ class CardRepository(private val context: Context) {
         private const val KEY_SOUND_EFFECTS_ENABLED = "sound_effects_enabled"
         private const val KEY_VIBRATION_ENABLED = "vibration_enabled"
         private const val KEY_INTERFACE_LANGUAGE = "interface_language"
+        private const val KEY_STUDY_SESSION_PREFIX = "study_session_"
     }
 }
 

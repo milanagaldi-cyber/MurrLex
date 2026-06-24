@@ -67,6 +67,7 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material.icons.filled.FormatListNumbered
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
@@ -74,6 +75,8 @@ import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Shuffle
+import androidx.compose.material.icons.filled.SortByAlpha
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.UploadFile
@@ -119,6 +122,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
@@ -1790,7 +1794,8 @@ private fun StudyScreen(
             mode = state.mode,
             showAllCards = !state.excludeMasteredCards,
             onModeChange = onModeChange,
-            onShowAllCardsChange = onShowAllCardsChange
+            onShowAllCardsChange = onShowAllCardsChange,
+            onReset = onNewPortion
         )
 
         CountersRow(
@@ -1868,7 +1873,8 @@ private fun TopControls(
     mode: StudyMode,
     showAllCards: Boolean,
     onModeChange: (StudyMode) -> Unit,
-    onShowAllCardsChange: (Boolean) -> Unit
+    onShowAllCardsChange: (Boolean) -> Unit,
+    onReset: () -> Unit
 ) {
     Row(
         modifier = Modifier
@@ -1877,19 +1883,47 @@ private fun TopControls(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        OutlinedButton(
-            onClick = { onModeChange(mode.nextMode()) },
-            modifier = Modifier.weight(1f),
+        Surface(
+            modifier = Modifier.size(48.dp),
             shape = RoundedCornerShape(16.dp),
-            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+            color = MaterialTheme.colorScheme.surface
         ) {
-            Text("Order: ${mode.displayLabel()}")
+            IconButton(onClick = { onModeChange(mode.nextMode()) }) {
+                Icon(
+                    imageVector = mode.displayIcon(),
+                    contentDescription = mode.displayLabel(),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        Surface(
+            modifier = Modifier.size(48.dp),
+            shape = RoundedCornerShape(16.dp),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+            color = MaterialTheme.colorScheme.surface
+        ) {
+            IconButton(onClick = onReset) {
+                Icon(
+                    imageVector = Icons.Default.Refresh,
+                    contentDescription = "Start over",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
         FilterChip(
             selected = showAllCards,
             onClick = { onShowAllCardsChange(!showAllCards) },
             label = { Text("Show all") }
         )
+    }
+}
+
+private fun StudyMode.displayIcon(): ImageVector {
+    return when (this) {
+        StudyMode.ORIGINAL -> Icons.Default.FormatListNumbered
+        StudyMode.ALPHABETICAL -> Icons.Default.SortByAlpha
+        StudyMode.RANDOM -> Icons.Default.Shuffle
     }
 }
 
@@ -3188,6 +3222,7 @@ private fun sampleLessonJson(): String {
 
 private fun versionLogText(): String {
     return """
+        v0.53 - Replaced the study order label with a compact cycling icon, added a Refresh action to restart the current lesson session, and saved unfinished lesson sessions so returning to a lesson restores the last card, order, answer, and completed progress.
         v0.52 - Made voice recognition choose the answer language from the card, with fallbacks from card text and interface language, and added a five-second silence timeout while keeping press-and-hold microphone behavior.
         v0.51 - Added press-and-hold voice input with recording status, timer, and speech recognition into the answer field; restored a lighter study top area with a single cycling order button; and moved lesson info to the top bar beside Settings.
         v0.50 - Added the Original study order, changed the study order controls to a segmented switch, and made mode changes reorder the current lesson immediately.

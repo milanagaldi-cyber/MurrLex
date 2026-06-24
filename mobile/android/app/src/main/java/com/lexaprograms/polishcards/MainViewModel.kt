@@ -209,6 +209,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             completedCardIds = state.completedCardIds.intersect(validIds),
             message = if (exclude) "Three-star cards hidden" else "Showing all cards"
         )
+        saveCurrentStudySession()
     }
 
     fun setShowAllCards(showAll: Boolean) {
@@ -263,6 +264,66 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun restoreStudySession(lesson: Lesson): Boolean {
+        val session = repository.loadStudySession(lesson.id) ?: return false
+        val mode = runCatching { StudyMode.valueOf(session.mode) }
+            .getOrDefault(StudyMode.ALPHABETICAL)
+        val studyCards = if (session.excludeMasteredCards) {
+            lesson.cards.filterNot { it.starCount() == 3 }
+        } else {
+            lesson.cards
+        }
+        val cardsById = studyCards.associateBy { it.id }
+        val orderedIds = session.portionCardIds.toSet()
+        val savedOrderCards = session.portionCardIds.mapNotNull { cardsById[it] }
+        val newCards = studyCards.filterNot { it.id in orderedIds }
+        val restoredPortion = (savedOrderCards + newCards).ifEmpty {
+            orderStudyCards(studyCards, mode, shuffleRandom = false)
+        }
+        val validIds = restoredPortion.map { it.id }.toSet()
+        val restoredIndex = session.currentCardId
+            .takeIf { it > 0 }
+            ?.let { cardId -> restoredPortion.indexOfFirst { it.id == cardId } }
+            ?.takeIf { it >= 0 }
+            ?: session.currentIndex
+
+        _uiState.value = _uiState.value.copy(
+            selectedLesson = lesson,
+            selectedLessonIds = emptySet(),
+            screen = AppScreen.STUDY,
+            mode = mode,
+            excludeMasteredCards = session.excludeMasteredCards,
+            currentPortion = restoredPortion,
+            currentIndex = restoredIndex.coerceIn(0, (restoredPortion.size - 1).coerceAtLeast(0)),
+            completedCardIds = session.completedCardIds.filter { it in validIds }.toSet(),
+            portionCompletionSaved = session.portionCompletionSaved,
+            isBackVisible = session.isBackVisible,
+            answer = session.answer,
+            message = null
+        )
+        return true
+    }
+
+    private fun saveCurrentStudySession() {
+        val state = _uiState.value
+        val lesson = state.selectedLesson ?: return
+        if (state.openedFromNotification) return
+        repository.saveStudySession(
+            StudySession(
+                lessonId = lesson.id,
+                mode = state.mode.name,
+                currentCardId = state.currentCard?.id ?: 0,
+                currentIndex = state.currentIndex,
+                portionCardIds = state.currentPortion.map { it.id },
+                completedCardIds = state.completedCardIds.toList(),
+                portionCompletionSaved = state.portionCompletionSaved,
+                isBackVisible = state.isBackVisible,
+                answer = state.answer,
+                excludeMasteredCards = state.excludeMasteredCards
+            )
+        )
+    }
+
     private fun detectSystemInterfaceLanguage(): String {
         val language = getApplication<Application>()
             .resources
@@ -285,6 +346,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
     fun openCatalog() {
+        saveCurrentStudySession()
         refreshLessons()
         _uiState.value = _uiState.value.copy(
             screen = AppScreen.CATALOG,
@@ -306,10 +368,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             selectedLessonIds = emptySet(),
             screen = AppScreen.STUDY
         )
-        startNewPortion()
+        if (!restoreStudySession(lesson)) startNewPortion()
     }
 
     fun openNextVisibleLesson() {
+        saveCurrentStudySession()
         val currentLessonId = _uiState.value.selectedLesson?.id ?: return
         val visibleLessons = repository.loadLessons(false).filterNot { it.hidden }
         val currentIndex = visibleLessons.indexOfFirst { it.id == currentLessonId }
@@ -329,7 +392,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             answer = "",
             message = null
         )
-        startNewPortion()
+        if (!restoreStudySession(nextLesson)) startNewPortion()
     }
 
     fun toggleLessonSelection(lessonId: String) {
@@ -420,11 +483,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             answer = "",
             isBackVisible = defaultBackVisible()
         )
+        saveCurrentStudySession()
     }
 
     fun startNewPortion() {
         val state = _uiState.value
         val lesson = state.selectedLesson ?: return
+        repository.clearStudySession(lesson.id)
         val studyCards = if (state.excludeMasteredCards) {
             lesson.cards.filterNot { it.starCount() == 3 }
         } else {
@@ -454,6 +519,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             answer = "",
             message = null
         )
+        saveCurrentStudySession()
     }
 
     fun nextCard() {
@@ -466,6 +532,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             answer = "",
             message = null
         )
+        saveCurrentStudySession()
     }
 
     fun goToFirstRemainingCard() {
@@ -480,6 +547,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             answer = "",
             message = null
         )
+        saveCurrentStudySession()
     }
 
     fun toggleCard() {
@@ -487,10 +555,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             isBackVisible = !_uiState.value.isBackVisible,
             message = null
         )
+        saveCurrentStudySession()
     }
 
     fun updateAnswer(answer: String) {
         _uiState.value = _uiState.value.copy(answer = answer, message = null)
+        saveCurrentStudySession()
     }
 
     fun checkAnswer() {
@@ -568,6 +638,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 closeAfterNotificationAnswer = shouldCloseAfterNotificationAnswer
             )
         }
+        saveCurrentStudySession()
     }
     fun showMessage(message: String) {
         _uiState.value = _uiState.value.copy(message = message)
