@@ -10,6 +10,7 @@ import android.os.Bundle
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import android.speech.tts.TextToSpeech
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.SizeTransform
@@ -82,6 +83,7 @@ import androidx.compose.material.icons.filled.StarBorder
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -274,6 +276,14 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
     var voicePressActive by remember { mutableStateOf(false) }
     var voiceLanguageTag by remember { mutableStateOf(Locale.getDefault().toLanguageTag()) }
     var showHeaderLessonInfo by remember { mutableStateOf(false) }
+    var textToSpeechReady by remember { mutableStateOf(false) }
+    val textToSpeech = remember {
+        var engine: TextToSpeech? = null
+        engine = TextToSpeech(context) { status ->
+            textToSpeechReady = status == TextToSpeech.SUCCESS
+        }
+        engine
+    }
     val speechRecognizer = remember {
         if (SpeechRecognizer.isRecognitionAvailable(context)) {
             SpeechRecognizer.createSpeechRecognizer(context)
@@ -356,6 +366,13 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
         }
     }
 
+    DisposableEffect(textToSpeech) {
+        onDispose {
+            textToSpeech.stop()
+            textToSpeech.shutdown()
+        }
+    }
+
 
     LaunchedEffect(Unit) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -398,6 +415,25 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
         voiceRecording = false
         voiceStatus = "Recognizing..."
         speechRecognizer?.stopListening()
+    }
+
+    fun speakCard(card: Flashcard, isBackVisible: Boolean) {
+        val text = card.displayedCardText(isBackVisible).trim()
+        if (text.isBlank()) {
+            viewModel.showMessage("Nothing to read")
+            return
+        }
+        if (!textToSpeechReady) {
+            viewModel.showMessage("Speech engine is not ready yet")
+            return
+        }
+        val languageTag = card.speechLanguageTagForSide(isBackVisible, state.interfaceLanguage)
+        val languageResult = textToSpeech.setLanguage(Locale.forLanguageTag(languageTag))
+        if (languageResult == TextToSpeech.LANG_MISSING_DATA || languageResult == TextToSpeech.LANG_NOT_SUPPORTED) {
+            viewModel.showMessage("Speech language is not supported on this device")
+            return
+        }
+        textToSpeech.speak(text, TextToSpeech.QUEUE_FLUSH, null, "card-${card.id}-${System.currentTimeMillis()}")
     }
 
     LaunchedEffect(pendingVoiceStart) {
@@ -640,6 +676,10 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
                         viewModel.editCurrentStudyCard()
                     },
                     showCardLog = state.showCardLog,
+                    onSpeakCard = { card ->
+                        performFeedback(context, state.soundEffectsEnabled, state.vibrationEnabled, FeedbackCue.TAP)
+                        speakCard(card, state.isBackVisible)
+                    },
                     onShareCard = { lesson, card ->
                         performFeedback(context, state.soundEffectsEnabled, state.vibrationEnabled, FeedbackCue.TAP)
                         shareSingleCard(context, exportJson, lesson, card)
@@ -1764,6 +1804,7 @@ private fun StudyScreen(
     onToggleStar: (Int, Int) -> Unit,
     onEditCard: () -> Unit,
     showCardLog: Boolean,
+    onSpeakCard: (Flashcard) -> Unit,
     onShareCard: (Lesson, Flashcard) -> Unit
 ) {
     val context = LocalContext.current
@@ -1851,6 +1892,7 @@ private fun StudyScreen(
                             }
                         },
                         showCardLog = showCardLog,
+                        onSpeakCard = onSpeakCard,
                         onShareCard = { card -> state.selectedLesson?.let { lesson -> onShareCard(lesson, card) } },
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -2025,6 +2067,7 @@ private fun StudyCard(
     onSwipePrevious: () -> Unit,
     onSwipeNext: () -> Unit,
     showCardLog: Boolean,
+    onSpeakCard: (Flashcard) -> Unit,
     onShareCard: (Flashcard) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -2125,6 +2168,16 @@ private fun StudyCard(
                         CircleTextButton(text = "M", onClick = { showMistakes = true })
                     }
                     CircleTextButton(text = "?", onClick = { showRule = true })
+                    IconButton(
+                        onClick = { card?.let(onSpeakCard) },
+                        enabled = card != null,
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(RoundedCornerShape(22.dp))
+                            .background(Color.White.copy(alpha = 0.92f))
+                    ) {
+                        Icon(Icons.Default.VolumeUp, contentDescription = "Read card aloud", tint = Color(0xFF111111))
+                    }
                     IconButton(
                         onClick = onEditCard,
                         enabled = card != null,
@@ -2350,6 +2403,20 @@ private fun Flashcard?.speechLanguageTag(interfaceLanguage: String): String {
     }
     correctText().speechLanguageTagFromText()?.let { return it }
     sourceLanguage.speechLanguageTagFromName()?.let { return it }
+    return interfaceLanguage.speechLanguageTagFromName()
+        ?: Locale.getDefault().toLanguageTag()
+}
+
+private fun Flashcard.speechLanguageTagForSide(isBackVisible: Boolean, interfaceLanguage: String): String {
+    val explicitLanguage = if (isBackVisible) {
+        targetLanguage.ifBlank { backLabel() }
+    } else if (kindCode() == "LN") {
+        sourceLanguage.ifBlank { frontLabel() }
+    } else {
+        targetLanguage.ifBlank { sourceLanguage }
+    }
+    explicitLanguage.speechLanguageTagFromName()?.let { return it }
+    displayedCardText(isBackVisible).speechLanguageTagFromText()?.let { return it }
     return interfaceLanguage.speechLanguageTagFromName()
         ?: Locale.getDefault().toLanguageTag()
 }
@@ -3222,6 +3289,7 @@ private fun sampleLessonJson(): String {
 
 private fun versionLogText(): String {
     return """
+        v0.54 - Added text-to-speech playback on study cards with a speaker icon that reads the currently visible side using the card language when available.
         v0.53 - Replaced the study order label with a compact cycling icon, added a Refresh action to restart the current lesson session, and saved unfinished lesson sessions so returning to a lesson restores the last card, order, answer, and completed progress.
         v0.52 - Made voice recognition choose the answer language from the card, with fallbacks from card text and interface language, and added a five-second silence timeout while keeping press-and-hold microphone behavior.
         v0.51 - Added press-and-hold voice input with recording status, timer, and speech recognition into the answer field; restored a lighter study top area with a single cycling order button; and moved lesson info to the top bar beside Settings.
