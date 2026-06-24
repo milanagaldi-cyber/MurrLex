@@ -7,6 +7,9 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.SizeTransform
@@ -67,6 +70,7 @@ import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
@@ -85,12 +89,11 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
@@ -98,9 +101,9 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -259,6 +262,95 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
     }
     val notificationPermissionLauncher =
         rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    var voiceDialogVisible by remember { mutableStateOf(false) }
+    var voiceRecording by remember { mutableStateOf(false) }
+    var voiceStatus by remember { mutableStateOf("Hold to speak") }
+    var voiceElapsedMs by remember { mutableStateOf(0L) }
+    var pendingVoiceStart by remember { mutableStateOf(false) }
+    var voicePressActive by remember { mutableStateOf(false) }
+    var showHeaderLessonInfo by remember { mutableStateOf(false) }
+    val speechRecognizer = remember {
+        if (SpeechRecognizer.isRecognitionAvailable(context)) {
+            SpeechRecognizer.createSpeechRecognizer(context)
+        } else {
+            null
+        }
+    }
+    val voicePermissionLauncher =
+        rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) {
+                pendingVoiceStart = true
+            } else {
+                viewModel.showMessage("Microphone permission denied")
+            }
+        }
+
+    DisposableEffect(speechRecognizer) {
+        val listener = object : RecognitionListener {
+            override fun onReadyForSpeech(params: Bundle?) {
+                voiceStatus = "Listening..."
+            }
+
+            override fun onBeginningOfSpeech() {
+                voiceStatus = "Recording..."
+            }
+
+            override fun onRmsChanged(rmsdB: Float) = Unit
+            override fun onBufferReceived(buffer: ByteArray?) = Unit
+
+            override fun onEndOfSpeech() {
+                voicePressActive = false
+                voiceRecording = false
+                voiceStatus = "Recognizing..."
+            }
+
+            override fun onError(error: Int) {
+                voicePressActive = false
+                voiceRecording = false
+                voiceDialogVisible = false
+                val message = when (error) {
+                    SpeechRecognizer.ERROR_NO_MATCH -> "No speech recognized"
+                    SpeechRecognizer.ERROR_AUDIO -> "Audio recording error"
+                    SpeechRecognizer.ERROR_NETWORK,
+                    SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Speech service network error"
+                    SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission denied"
+                    else -> "Voice input failed"
+                }
+                viewModel.showMessage(message)
+            }
+
+            override fun onResults(results: Bundle?) {
+                voicePressActive = false
+                voiceRecording = false
+                voiceDialogVisible = false
+                val spokenText = results
+                    ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                    ?.firstOrNull()
+                    .orEmpty()
+                    .trim()
+                if (spokenText.isNotBlank()) {
+                    viewModel.updateAnswer(spokenText)
+                    viewModel.showMessage("Voice input added")
+                } else {
+                    viewModel.showMessage("No speech recognized")
+                }
+            }
+
+            override fun onPartialResults(partialResults: Bundle?) {
+                partialResults
+                    ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                    ?.firstOrNull()
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { voiceStatus = it }
+            }
+
+            override fun onEvent(eventType: Int, params: Bundle?) = Unit
+        }
+        speechRecognizer?.setRecognitionListener(listener)
+        onDispose {
+            speechRecognizer?.destroy()
+        }
+    }
 
 
     LaunchedEffect(Unit) {
@@ -279,6 +371,57 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
         splashReady = true
         delay(1300)
         showSplash = false
+    }
+
+    fun startVoiceInput() {
+        voicePressActive = true
+        if (speechRecognizer == null) {
+            voicePressActive = false
+            viewModel.showMessage("Voice input is not available on this device")
+            return
+        }
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            voicePermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            return
+        }
+        pendingVoiceStart = true
+    }
+
+    fun stopVoiceInput() {
+        voicePressActive = false
+        if (!voiceRecording) return
+        voiceRecording = false
+        voiceStatus = "Recognizing..."
+        speechRecognizer?.stopListening()
+    }
+
+    LaunchedEffect(pendingVoiceStart) {
+        if (!pendingVoiceStart || speechRecognizer == null) return@LaunchedEffect
+        pendingVoiceStart = false
+        if (!voicePressActive) return@LaunchedEffect
+        voiceElapsedMs = 0L
+        voiceStatus = "Listening..."
+        voiceDialogVisible = true
+        voiceRecording = true
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().toLanguageTag())
+        }
+        try {
+            speechRecognizer.startListening(intent)
+        } catch (_: Exception) {
+            voiceRecording = false
+            voiceDialogVisible = false
+            viewModel.showMessage("Voice input failed")
+        }
+    }
+
+    LaunchedEffect(voiceRecording) {
+        while (voiceRecording) {
+            delay(100)
+            voiceElapsedMs += 100
+        }
     }
 
     if (showSplash) {
@@ -324,6 +467,21 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
     }
 
     CompositionLocalProvider(LocalUiText provides ui) {
+    if (voiceDialogVisible) {
+        VoiceInputDialog(
+            status = voiceStatus,
+            elapsedMs = voiceElapsedMs,
+            isRecording = voiceRecording
+        )
+    }
+    val headerLessonInfo = state.selectedLesson?.lessonInfo.orEmpty()
+    if (showHeaderLessonInfo && headerLessonInfo.isNotBlank()) {
+        CardTextDialog(
+            title = "Lesson info",
+            text = headerLessonInfo,
+            onDismiss = { showHeaderLessonInfo = false }
+        )
+    }
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
@@ -361,6 +519,17 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
                             )
                         }
                     }
+                    if (state.screen == AppScreen.STUDY && state.selectedLesson?.lessonInfo?.isNotBlank() == true) {
+                        IconButton(onClick = {
+                            titleActivated = true
+                            showHeaderLessonInfo = true
+                        }) {
+                            Icon(
+                                Icons.Default.Info,
+                                contentDescription = "Lesson info"
+                            )
+                        }
+                    }
                     IconButton(onClick = {
                         titleActivated = true
                         viewModel.openSettings()
@@ -395,7 +564,9 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
                     onCopy = { text ->
                         viewModel.updateAnswer(text)
                         viewModel.showMessage(ui.copiedToInput)
-                    }
+                    },
+                    onVoiceStart = { startVoiceInput() },
+                    onVoiceEnd = { stopVoiceInput() }
                 )
             }
         }
@@ -1587,16 +1758,7 @@ private fun StudyScreen(
     onShareCard: (Lesson, Flashcard) -> Unit
 ) {
     val context = LocalContext.current
-    var showLessonInfo by remember { mutableStateOf(false) }
     val selectedLesson = state.selectedLesson
-
-    if (showLessonInfo && selectedLesson?.lessonInfo?.isNotBlank() == true) {
-        CardTextDialog(
-            title = "Lesson info",
-            text = selectedLesson.lessonInfo,
-            onDismiss = { showLessonInfo = false }
-        )
-    }
 
     Column(
         modifier = Modifier
@@ -1617,18 +1779,6 @@ private fun StudyScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.weight(1f)
             )
-            if (selectedLesson?.lessonInfo?.isNotBlank() == true) {
-                IconButton(
-                    onClick = { showLessonInfo = true },
-                    modifier = Modifier.size(36.dp)
-                ) {
-                    Icon(
-                        Icons.Default.Info,
-                        contentDescription = "Lesson info",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
         }
 
         TopControls(
@@ -1715,38 +1865,42 @@ private fun TopControls(
     onModeChange: (StudyMode) -> Unit,
     onShowAllCardsChange: (Boolean) -> Unit
 ) {
-    val ui = rememberUiText()
-    Column(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(top = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        val modes = listOf(
-            StudyMode.ORIGINAL to "Original",
-            StudyMode.ALPHABETICAL to "Alphabetical",
-            StudyMode.RANDOM to "Random"
-        )
-        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-            modes.forEachIndexed { index, item ->
-                SegmentedButton(
-                    selected = mode == item.first,
-                    onClick = { onModeChange(item.first) },
-                    shape = SegmentedButtonDefaults.itemShape(index = index, count = modes.size),
-                    label = { Text(item.second) }
-                )
-            }
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.Start
+        OutlinedButton(
+            onClick = { onModeChange(mode.nextMode()) },
+            modifier = Modifier.weight(1f),
+            shape = RoundedCornerShape(16.dp),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
         ) {
-            FilterChip(
-                selected = showAllCards,
-                onClick = { onShowAllCardsChange(!showAllCards) },
-                label = { Text("Show all") }
-            )
+            Text("Order: ${mode.displayLabel()}")
         }
+        FilterChip(
+            selected = showAllCards,
+            onClick = { onShowAllCardsChange(!showAllCards) },
+            label = { Text("Show all") }
+        )
+    }
+}
+
+private fun StudyMode.nextMode(): StudyMode {
+    return when (this) {
+        StudyMode.ORIGINAL -> StudyMode.ALPHABETICAL
+        StudyMode.ALPHABETICAL -> StudyMode.RANDOM
+        StudyMode.RANDOM -> StudyMode.ORIGINAL
+    }
+}
+
+private fun StudyMode.displayLabel(): String {
+    return when (this) {
+        StudyMode.ORIGINAL -> "Original"
+        StudyMode.ALPHABETICAL -> "Alphabetical"
+        StudyMode.RANDOM -> "Random"
     }
 }
 
@@ -2178,6 +2332,48 @@ private fun buildMistakesAndLog(card: Flashcard): String {
     }
     return "$created\n\nWrong answers:\n$mistakes\n\nWork log (${card.log.size}):\n$logText"
 }
+
+@Composable
+private fun VoiceInputDialog(
+    status: String,
+    elapsedMs: Long,
+    isRecording: Boolean
+) {
+    AlertDialog(
+        onDismissRequest = {},
+        confirmButton = {},
+        title = { Text(if (isRecording) "Recording voice" else "Recognizing") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Text(
+                    text = formatVoiceElapsed(elapsedMs),
+                    style = MaterialTheme.typography.displaySmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    text = status,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                Text(
+                    text = if (isRecording) "Release the microphone to recognize text." else "Please wait...",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    )
+}
+
+private fun formatVoiceElapsed(elapsedMs: Long): String {
+    val totalSeconds = (elapsedMs / 1000).coerceAtLeast(0)
+    val minutes = totalSeconds / 60
+    val seconds = totalSeconds % 60
+    return "%d:%02d".format(Locale.ROOT, minutes, seconds)
+}
+
 @Composable
 private fun AnswerBar(
     answer: String,
@@ -2188,6 +2384,8 @@ private fun AnswerBar(
     onAnswerChange: (String) -> Unit,
     onOk: () -> Unit,
     onCopy: (String) -> Unit,
+    onVoiceStart: () -> Unit,
+    onVoiceEnd: () -> Unit,
 ) {
     val doneLocked = currentCard != null && isCurrentCardDone && answer.none { it.isLetter() }
     val canSubmit = currentCard != null && !doneLocked
@@ -2228,6 +2426,35 @@ private fun AnswerBar(
                     Icon(Icons.Default.ContentCopy, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
                     Text("Copy")
+                }
+                Surface(
+                    modifier = Modifier
+                        .height(48.dp)
+                        .width(58.dp)
+                        .pointerInput(currentCard != null) {
+                            detectTapGestures(
+                                onPress = {
+                                    if (currentCard == null) return@detectTapGestures
+                                    onVoiceStart()
+                                    try {
+                                        tryAwaitRelease()
+                                    } finally {
+                                        onVoiceEnd()
+                                    }
+                                }
+                            )
+                        },
+                    shape = RoundedCornerShape(18.dp),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                    color = if (currentCard != null) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surfaceVariant
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            Icons.Default.Mic,
+                            contentDescription = "Voice input",
+                            tint = if (currentCard != null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.outline
+                        )
+                    }
                 }
                 Button(
                     onClick = onOk,
@@ -2914,6 +3141,7 @@ private fun sampleLessonJson(): String {
 
 private fun versionLogText(): String {
     return """
+        v0.51 - Added press-and-hold voice input with recording status, timer, and speech recognition into the answer field; restored a lighter study top area with a single cycling order button; and moved lesson info to the top bar beside Settings.
         v0.50 - Added the Original study order, changed the study order controls to a segmented switch, and made mode changes reorder the current lesson immediately.
         v0.49 - Fixed the header version to read from BuildConfig, added lessonInfo to bundled lessons so info icons are visible immediately, and kept the lesson instructions feature visible in default content.
         v0.48 - Added lesson-level lessonInfo JSON support with info icons on lesson tiles and the study screen, added lesson info editing, preserved lessonInfo in exports, and updated the sample JSON template.
