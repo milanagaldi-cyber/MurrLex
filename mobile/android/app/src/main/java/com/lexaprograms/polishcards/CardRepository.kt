@@ -7,7 +7,9 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.jsonPrimitive
 import java.util.UUID
 
 class CardRepository(private val context: Context) {
@@ -281,9 +283,13 @@ class CardRepository(private val context: Context) {
             }
             is JsonObject -> {
                 val lesson = json.decodeFromJsonElement<Lesson>(element)
+                val lessonInfo = lesson.lessonInfo.ifBlank {
+                    element["info"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                }
                 lesson.copy(
                     id = lesson.id.ifBlank { newLessonId() },
                     title = lesson.title.ifBlank { fallbackTitle.cleanTitle() }.cleanKindSuffix(),
+                    lessonInfo = lessonInfo,
                     cards = lesson.cards.reindexCards()
                 )
             }

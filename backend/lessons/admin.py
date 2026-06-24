@@ -17,10 +17,11 @@ class LessonAdmin(admin.ModelAdmin):
         "card_kind",
         "source_language",
         "target_language",
+        "lesson_info",
         "cards_total",
         "updated_at",
     )
-    search_fields = ("title", "external_id", "source_language", "target_language")
+    search_fields = ("title", "external_id", "source_language", "target_language", "lesson_info")
     list_filter = ("card_kind", "source_language", "target_language")
     readonly_fields = ("created_at", "updated_at")
     inlines = [CardInline]

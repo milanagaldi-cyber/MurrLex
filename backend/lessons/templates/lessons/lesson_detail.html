@@ -9,6 +9,9 @@
             Kind: {{ lesson.card_kind|default:"-" }} |
             {{ lesson.source_language|default:"-" }} -> {{ lesson.target_language|default:"-" }}
         </p>
+        {% if lesson.lesson_info %}
+            <p>{{ lesson.lesson_info|linebreaksbr }}</p>
+        {% endif %}
     </div>
     {% if lesson.cards.all %}
         <table>

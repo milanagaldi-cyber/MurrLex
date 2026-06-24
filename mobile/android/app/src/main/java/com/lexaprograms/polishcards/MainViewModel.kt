@@ -26,6 +26,7 @@ enum class CardStartSide {
 data class LessonDraft(
     val id: String = "",
     val title: String = "",
+    val lessonInfo: String = "",
     val cards: List<Flashcard> = emptyList(),
     val timesCompleted: Int = 0,
     val editable: Boolean = true
@@ -577,6 +578,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             editorLesson = LessonDraft(
                 id = newLessonId(),
                 title = "New lesson",
+                lessonInfo = "",
                 cards = emptyList(),
                 editable = true
             ),
@@ -591,6 +593,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             editorLesson = LessonDraft(
                 id = lesson.id,
                 title = lesson.title,
+                lessonInfo = lesson.lessonInfo,
                 cards = lesson.cards,
                 timesCompleted = lesson.timesCompleted,
                 editable = true
@@ -620,6 +623,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun updateLessonTitle(title: String) {
         val draft = _uiState.value.editorLesson ?: return
         _uiState.value = _uiState.value.copy(editorLesson = draft.copy(title = title))
+    }
+
+    fun updateLessonInfo(lessonInfo: String) {
+        val draft = _uiState.value.editorLesson ?: return
+        _uiState.value = _uiState.value.copy(editorLesson = draft.copy(lessonInfo = lessonInfo))
     }
 
     fun updateCardDraft(cardDraft: CardDraft) {
@@ -912,6 +920,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val updatedLessonEntity = Lesson(
             id = updatedLesson.id,
             title = updatedLesson.title,
+            lessonInfo = updatedLesson.lessonInfo,
             cards = updatedLesson.cards,
             timesCompleted = updatedLesson.timesCompleted,
             editable = true,
@@ -974,6 +983,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val lesson = Lesson(
             id = draft.id.ifBlank { newLessonId() },
             title = draft.title.trim(),
+            lessonInfo = draft.lessonInfo.trim(),
             cards = draft.cards.reindexCards(),
             timesCompleted = draft.timesCompleted,
             editable = true,

@@ -7,6 +7,7 @@ class Lesson(models.Model):
     card_kind = models.CharField(max_length=20, blank=True)
     source_language = models.CharField(max_length=100, blank=True)
     target_language = models.CharField(max_length=100, blank=True)
+    lesson_info = models.TextField(blank=True)
     raw_json = models.JSONField(default=dict, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

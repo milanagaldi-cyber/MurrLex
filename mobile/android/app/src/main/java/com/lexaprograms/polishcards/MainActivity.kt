@@ -64,6 +64,7 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Refresh
@@ -489,6 +490,7 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
                 AppScreen.EDITOR -> LessonEditorScreen(
                     state = state,
                     onTitleChange = viewModel::updateLessonTitle,
+                    onLessonInfoChange = viewModel::updateLessonInfo,
                     onCardDraftChange = viewModel::updateCardDraft,
                     onAddCard = viewModel::addCardToLesson,
                     onDeleteCard = viewModel::deleteCardFromLesson,
@@ -1382,6 +1384,16 @@ private fun LessonTile(
     onDragEnd: () -> Unit
 ) {
     val ui = rememberUiText()
+    var showLessonInfo by remember { mutableStateOf(false) }
+
+    if (showLessonInfo && lesson.lessonInfo.isNotBlank()) {
+        CardTextDialog(
+            title = "Lesson info",
+            text = lesson.lessonInfo,
+            onDismiss = { showLessonInfo = false }
+        )
+    }
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -1454,15 +1466,31 @@ private fun LessonTile(
                 .height(150.dp)
                 .padding(12.dp)
         ) {
-            if (lesson.hidden) {
-                Icon(
-                    Icons.Default.VisibilityOff,
-                    contentDescription = "Hidden lesson",
-                    tint = BrandSaladColor,
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .size(20.dp)
-                )
+            Row(
+                modifier = Modifier.align(Alignment.BottomEnd),
+                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (lesson.hidden) {
+                    Icon(
+                        Icons.Default.VisibilityOff,
+                        contentDescription = "Hidden lesson",
+                        tint = BrandSaladColor,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+                if (lesson.lessonInfo.isNotBlank()) {
+                    IconButton(
+                        onClick = { showLessonInfo = true },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Info,
+                            contentDescription = "Lesson info",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
             Column(
                 modifier = Modifier
@@ -1556,21 +1584,49 @@ private fun StudyScreen(
     onShareCard: (Lesson, Flashcard) -> Unit
 ) {
     val context = LocalContext.current
+    var showLessonInfo by remember { mutableStateOf(false) }
+    val selectedLesson = state.selectedLesson
+
+    if (showLessonInfo && selectedLesson?.lessonInfo?.isNotBlank() == true) {
+        CardTextDialog(
+            title = "Lesson info",
+            text = selectedLesson.lessonInfo,
+            onDismiss = { showLessonInfo = false }
+        )
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(horizontal = 20.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text(
-            text = state.selectedLesson?.title.orEmpty(),
-            style = MaterialTheme.typography.bodyLarge,
-            fontWeight = FontWeight.Medium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = 2.dp)
-        )
+                .padding(top = 2.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = selectedLesson?.title.orEmpty(),
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f)
+            )
+            if (selectedLesson?.lessonInfo?.isNotBlank() == true) {
+                IconButton(
+                    onClick = { showLessonInfo = true },
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Info,
+                        contentDescription = "Lesson info",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
 
         TopControls(
             mode = state.mode,
@@ -2284,6 +2340,7 @@ private fun FinishedScreen(onNewPortion: () -> Unit, onNextLesson: () -> Unit, o
 private fun LessonEditorScreen(
     state: StudyUiState,
     onTitleChange: (String) -> Unit,
+    onLessonInfoChange: (String) -> Unit,
     onCardDraftChange: (CardDraft) -> Unit,
     onAddCard: () -> Unit,
     onDeleteCard: (Int) -> Unit,
@@ -2432,6 +2489,14 @@ private fun LessonEditorScreen(
                 .padding(top = 4.dp),
             label = { Text("Lesson title") },
             singleLine = true
+        )
+        OutlinedTextField(
+            value = lesson.lessonInfo,
+            onValueChange = onLessonInfoChange,
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Lesson info") },
+            minLines = 2,
+            maxLines = 5
         )
 
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -2755,6 +2820,7 @@ private fun shareSingleCard(context: Context, json: Json, lesson: Lesson, card: 
     val exportedLesson = Lesson(
         id = "shared_${lesson.id}_${card.id}_${System.currentTimeMillis()}",
         title = "$kindTitle - ${lesson.title} - 1 card",
+        lessonInfo = lesson.lessonInfo,
         cards = listOf(exportedCard),
         timesCompleted = 0,
         editable = true,
@@ -2780,9 +2846,10 @@ private fun shareJson(context: Context, fileName: String, jsonText: String) {
 private fun sampleLessonJson(): String {
     return """
         {
-          "prompt": "Export all my mistakes or lesson translation cards into this JSON format. Use cardKind MK for mistake cards and LN for normal lesson/translation cards. For LN fill sourceLanguage and targetLanguage so the app can show language names on the card.",
+          "prompt": "Export all my mistakes or lesson translation cards into this JSON format. Use cardKind MK for mistake cards and LN for normal lesson/translation cards. Fill lessonInfo with instructions for how the learner should work with this specific lesson or card type. For LN fill sourceLanguage and targetLanguage so the app can show language names on the card.",
           "id": "replace_with_unique_lesson_id",
           "title": "Lesson title shown on the main screen",
+          "lessonInfo": "Instructions shown from the lesson info icon. Use this for the purpose of the lesson, how to answer, what to pay attention to, and any workflow notes for this set of cards.",
           "timesCompleted": 0,
           "editable": true,
           "cards": [
@@ -2834,6 +2901,7 @@ private fun sampleLessonJson(): String {
 
 private fun versionLogText(): String {
     return """
+        v0.48 - Added lesson-level lessonInfo JSON support with info icons on lesson tiles and the study screen, added lesson info editing, preserved lessonInfo in exports, and updated the sample JSON template.
         v0.47 - Localized settings descriptions and lesson tile summaries, kept action button labels in English for stable layout, added a Lessons action to the completed-lesson screen, and made the Left counter jump to the first remaining card.
         v0.46 - Added an in-app interface language selector for EN/DE/BY/ES/UA/RU/PL with saved preference and system-language fallback, and shortened the Make Mistake title color transition to three seconds.
         v0.45 - Added EN/DE/BE/ES/UK/RU/PL interface language support based on Android app/device locale, exposed Android app-language configuration, made the red Make Mistake title fade to the brand salad color over five seconds, and added Repeat / Next lesson actions on the completed-lesson screen while skipping hidden lessons.

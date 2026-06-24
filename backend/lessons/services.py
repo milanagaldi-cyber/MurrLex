@@ -35,6 +35,7 @@ def import_lesson_payload(payload: dict[str, Any], source: str) -> LessonImportR
     lesson_card_kind = _text(payload.get("cardKind"))
     lesson_source_language = _text(payload.get("sourceLanguage"))
     lesson_target_language = _text(payload.get("targetLanguage"))
+    lesson_info = _text(payload.get("lessonInfo")) or _text(payload.get("info"))
 
     if not lesson_card_kind:
         lesson_card_kind = _first_card_text(cards_payload, "cardKind")
@@ -51,6 +52,7 @@ def import_lesson_payload(payload: dict[str, Any], source: str) -> LessonImportR
                 "card_kind": lesson_card_kind,
                 "source_language": lesson_source_language,
                 "target_language": lesson_target_language,
+                "lesson_info": lesson_info,
                 "raw_json": payload,
             },
         )

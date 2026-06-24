@@ -14,6 +14,7 @@ def sample_lesson_payload(**overrides):
         "cardKind": "MK",
         "sourceLanguage": "Russian",
         "targetLanguage": "Belarusian",
+        "lessonInfo": "Practice typical spelling mistakes. Type the correct Belarusian form.",
         "cards": [
             {
                 "id": 1,
@@ -68,6 +69,10 @@ class InternalImportLessonApiTests(TestCase):
         )
         lesson = Lesson.objects.get(external_id="lesson-001")
         self.assertEqual(lesson.title, "Belarusian mistakes 1")
+        self.assertEqual(
+            lesson.lesson_info,
+            "Practice typical spelling mistakes. Type the correct Belarusian form.",
+        )
         self.assertEqual(lesson.cards.count(), 2)
         self.assertTrue(
             ImportLog.objects.filter(
@@ -129,6 +134,14 @@ class InternalImportLessonApiTests(TestCase):
 
 
 class LessonImportServiceTests(TestCase):
+    def test_lesson_info_alias_is_supported(self):
+        result = import_lesson_payload(
+            sample_lesson_payload(lessonInfo="", info="Alias lesson instructions."),
+            source="test",
+        )
+
+        self.assertEqual(result.lesson.lesson_info, "Alias lesson instructions.")
+
     def test_duplicate_lesson_is_updated_safely(self):
         initial = sample_lesson_payload()
         updated = sample_lesson_payload(

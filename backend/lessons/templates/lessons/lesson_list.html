@@ -13,6 +13,7 @@
                     <th>Title</th>
                     <th>External ID</th>
                     <th>Kind</th>
+                    <th>Info</th>
                     <th>Languages</th>
                     <th>Cards</th>
                     <th>Updated</th>
@@ -24,6 +25,7 @@
                         <td><a href="{% url 'lessons:lesson_detail' lesson.id %}">{{ lesson.title }}</a></td>
                         <td>{{ lesson.external_id }}</td>
                         <td>{{ lesson.card_kind|default:"-" }}</td>
+                        <td>{{ lesson.lesson_info|truncatechars:80|default:"-" }}</td>
                         <td>{{ lesson.source_language|default:"-" }} -> {{ lesson.target_language|default:"-" }}</td>
                         <td>{{ lesson.cards.count }}</td>
                         <td>{{ lesson.updated_at }}</td>

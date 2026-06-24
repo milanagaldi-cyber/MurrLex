@@ -99,6 +99,9 @@ components:
         targetLanguage:
           type: string
           description: Target language name for LN cards.
+        lessonInfo:
+          type: string
+          description: Lesson-level instructions shown from the info icon in the mobile app. Use it to explain how to work with this specific lesson or card type.
         cards:
           type: array
           minItems: 1

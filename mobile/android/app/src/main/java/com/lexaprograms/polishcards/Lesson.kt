@@ -6,6 +6,7 @@ import kotlinx.serialization.Serializable
 data class Lesson(
     val id: String,
     val title: String,
+    val lessonInfo: String = "",
     val cards: List<Flashcard>,
     val timesCompleted: Int = 0,
     val editable: Boolean = true,

@@ -4,10 +4,11 @@
   "cardKind": "LN",
   "sourceLanguage": "Russian",
   "targetLanguage": "Polish",
+  "lessonInfo": "Practice simple Russian to Polish noun cards. Read the native value, type the Polish answer, then use the hint only if needed.",
   "cards": [
     {
       "id": 1,
-      "nativeValue": "кот",
+      "nativeValue": "cat",
       "correctValue": "kot",
       "hint": "Basic noun.",
       "cardKind": "LN",
@@ -17,7 +18,7 @@
     },
     {
       "id": 2,
-      "nativeValue": "дом",
+      "nativeValue": "house",
       "correctValue": "dom",
       "hint": "Basic noun.",
       "cardKind": "LN",
