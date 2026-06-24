@@ -268,6 +268,7 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
     var voiceElapsedMs by remember { mutableStateOf(0L) }
     var pendingVoiceStart by remember { mutableStateOf(false) }
     var voicePressActive by remember { mutableStateOf(false) }
+    var voiceLanguageTag by remember { mutableStateOf(Locale.getDefault().toLanguageTag()) }
     var showHeaderLessonInfo by remember { mutableStateOf(false) }
     val speechRecognizer = remember {
         if (SpeechRecognizer.isRecognitionAvailable(context)) {
@@ -278,10 +279,9 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
     }
     val voicePermissionLauncher =
         rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            if (granted) {
-                pendingVoiceStart = true
-            } else {
-                viewModel.showMessage("Microphone permission denied")
+            when {
+                granted && voicePressActive -> pendingVoiceStart = true
+                !granted -> viewModel.showMessage("Microphone permission denied")
             }
         }
 
@@ -380,6 +380,7 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
             viewModel.showMessage("Voice input is not available on this device")
             return
         }
+        voiceLanguageTag = state.currentCard.speechLanguageTag(state.interfaceLanguage)
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             voicePermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
             return
@@ -406,7 +407,11 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault().toLanguageTag())
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, voiceLanguageTag)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, voiceLanguageTag)
+            putExtra(RecognizerIntent.EXTRA_ONLY_RETURN_LANGUAGE_PREFERENCE, true)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 5000L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 5000L)
         }
         try {
             speechRecognizer.startListening(intent)
@@ -2301,6 +2306,48 @@ private fun Flashcard.displayedCardText(isBackVisible: Boolean): String {
     }
 }
 
+private fun Flashcard?.speechLanguageTag(interfaceLanguage: String): String {
+    if (this == null) return interfaceLanguage.speechLanguageTagFromName()
+        ?: Locale.getDefault().toLanguageTag()
+
+    targetLanguage.speechLanguageTagFromName()?.let { return it }
+    if (kindCode() == "LN") {
+        backLabel().speechLanguageTagFromName()?.let { return it }
+    }
+    correctText().speechLanguageTagFromText()?.let { return it }
+    sourceLanguage.speechLanguageTagFromName()?.let { return it }
+    return interfaceLanguage.speechLanguageTagFromName()
+        ?: Locale.getDefault().toLanguageTag()
+}
+
+private fun String.speechLanguageTagFromName(): String? {
+    val normalized = trim().lowercase(Locale.ROOT)
+    return when {
+        normalized in listOf("en", "eng", "english", "английский", "англійская", "angielski") -> "en-US"
+        normalized in listOf("de", "deu", "ger", "german", "deutsch", "немецкий", "нямецкая", "niemiecki") -> "de-DE"
+        normalized in listOf("be", "by", "belarusian", "belaruska", "беларуская", "белорусский", "беларусский") -> "be-BY"
+        normalized in listOf("es", "spa", "spanish", "espanol", "español", "испанский", "іспанская") -> "es-ES"
+        normalized in listOf("uk", "ua", "ukrainian", "украинский", "українська", "украінская") -> "uk-UA"
+        normalized in listOf("ru", "rus", "russian", "русский", "руская", "rosyjski") -> "ru-RU"
+        normalized in listOf("pl", "pol", "polish", "polski", "польский", "польская") -> "pl-PL"
+        else -> null
+    }
+}
+
+private fun String.speechLanguageTagFromText(): String? {
+    val text = lowercase(Locale.ROOT)
+    return when {
+        text.any { it in "ўі" } -> "be-BY"
+        text.any { it in "іїєґ" } -> "uk-UA"
+        text.any { it in "ąćęłńóśźż" } -> "pl-PL"
+        text.any { it in "äöüß" } -> "de-DE"
+        text.any { it in "áéíñóúü¿¡" } -> "es-ES"
+        text.any { it in 'а'..'я' || it == 'ё' } -> "ru-RU"
+        text.any { it in 'a'..'z' } -> "en-US"
+        else -> null
+    }
+}
+
 private fun normalizeAnswerText(value: String): String {
     return value
         .replace('\u00A0', ' ')
@@ -3141,6 +3188,7 @@ private fun sampleLessonJson(): String {
 
 private fun versionLogText(): String {
     return """
+        v0.52 - Made voice recognition choose the answer language from the card, with fallbacks from card text and interface language, and added a five-second silence timeout while keeping press-and-hold microphone behavior.
         v0.51 - Added press-and-hold voice input with recording status, timer, and speech recognition into the answer field; restored a lighter study top area with a single cycling order button; and moved lesson info to the top bar beside Settings.
         v0.50 - Added the Original study order, changed the study order controls to a segmented switch, and made mode changes reorder the current lesson immediately.
         v0.49 - Fixed the header version to read from BuildConfig, added lessonInfo to bundled lessons so info icons are visible immediately, and kept the lesson instructions feature visible in default content.
