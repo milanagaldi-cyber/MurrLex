@@ -435,6 +435,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val restoredPortion = (savedOrderCards + newCards).ifEmpty {
             orderStudyCards(studyCards, mode, shuffleRandom = false)
         }
+        if (restoredPortion.isEmpty() && lesson.cards.isNotEmpty()) {
+            repository.clearStudySession(lesson.id)
+            return false
+        }
         val validIds = restoredPortion.map { it.id }.toSet()
         val restoredIndex = session.currentCardId
             .takeIf { it > 0 }
@@ -521,12 +525,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openLesson(lesson: Lesson) {
-        _uiState.value = _uiState.value.copy(
-            selectedLesson = lesson,
+        val state = _uiState.value
+        val lessons = repository.loadLessons(state.showHiddenLessons)
+        val freshLesson = lessons.firstOrNull { it.id == lesson.id } ?: lesson
+        _uiState.value = state.copy(
+            lessons = lessons,
+            selectedLesson = freshLesson,
             selectedLessonIds = emptySet(),
-            screen = AppScreen.STUDY
+            screen = AppScreen.STUDY,
+            currentPortion = emptyList(),
+            currentIndex = 0,
+            answer = "",
+            answerFeedbackVisible = false,
+            message = null
         )
-        if (!restoreStudySession(lesson)) startNewPortion()
+        if (!restoreStudySession(freshLesson)) startNewPortion()
     }
 
     fun openNextVisibleLesson() {
