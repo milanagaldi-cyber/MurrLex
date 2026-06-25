@@ -165,6 +165,11 @@ private val BrandSaladColor = Color(0xFF8EDB67)
 private val BrandRedColor = Color(0xFFD64B42)
 private val CompletedFrameColor = Color(0xFFE8F5E9)
 
+private enum class VoiceInputTarget {
+    ANSWER,
+    QUICK_VOCABULARY
+}
+
 private data class UiText(
     val back: String,
     val hideHiddenLessons: String,
@@ -281,6 +286,8 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
     var voiceElapsedMs by remember { mutableStateOf(0L) }
     var pendingVoiceStart by remember { mutableStateOf(false) }
     var voiceLanguageTag by remember { mutableStateOf(Locale.getDefault().toLanguageTag()) }
+    var voiceTarget by remember { mutableStateOf(VoiceInputTarget.ANSWER) }
+    var voiceNoMatchRetried by remember { mutableStateOf(false) }
     var voiceHoldActive by remember { mutableStateOf(false) }
     var voiceHoldReleasedAt by remember { mutableStateOf(0L) }
     var lastVoiceActivityAt by remember { mutableStateOf(0L) }
@@ -411,7 +418,7 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
         showSplash = false
     }
 
-    fun startVoiceInput() {
+    fun startVoiceInput(target: VoiceInputTarget = VoiceInputTarget.ANSWER) {
         if (voiceRecording) {
             voiceRecording = false
             voiceStatus = "Recognizing..."
@@ -493,7 +500,7 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
             when {
                 voiceHoldActive -> Unit
                 voiceHoldReleasedAt > 0L && now - voiceHoldReleasedAt >= 2000L -> stopVoiceInput()
-                voiceHoldReleasedAt == 0L && now - lastVoiceActivityAt >= 6000L -> stopVoiceInput()
+                voiceHoldReleasedAt == 0L && now - lastVoiceActivityAt >= 10000L -> stopVoiceInput()
             }
         }
     }
@@ -662,7 +669,8 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
                         viewModel.updateAnswer(text)
                         viewModel.showMessage(ui.copiedToInput)
                     },
-                    onVoiceToggle = { startVoiceInput() },
+                    onVoiceToggle = { startVoiceInput(VoiceInputTarget.ANSWER) },
+                    onDismissAnswerFeedback = viewModel::dismissAnswerFeedback,
                     onSpeak = {
                         val card = state.currentCard
                         if (card != null) {
@@ -713,6 +721,10 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
                         shareJson(context, "${lesson.title.exportFileName()}.json", exportJson.encodeToString(lesson))
                     },
                     onSetLessonHidden = { lesson, hidden -> titleActivated = true; viewModel.setLessonHidden(lesson, hidden) },
+                    onQuickVoiceInput = {
+                        titleActivated = true
+                        startVoiceInput(VoiceInputTarget.QUICK_VOCABULARY)
+                    },
                     onImportLessons = {
                         titleActivated = true
                         importLauncher.launch(arrayOf("application/json", "text/*", "*/*"))
@@ -724,7 +736,9 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
                     onShowAllCardsChange = viewModel::setShowAllCards,
                     onPreviousCard = viewModel::previousCard,
                     onNextCard = viewModel::nextCard,
+                    onFirstCard = viewModel::goToFirstCard,
                     onFirstRemainingCard = viewModel::goToFirstRemainingCard,
+                    onLastCompletedCard = viewModel::goToLastCompletedCard,
                     onNewPortion = viewModel::startNewPortion,
                     onNextLesson = viewModel::openNextVisibleLesson,
                     onOpenCatalog = viewModel::openCatalog,
@@ -755,6 +769,8 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
                     vibrationEnabled = state.vibrationEnabled,
                     notificationIntervalDraft = state.notificationIntervalDraft,
                     notificationMaxDraft = state.notificationMaxDraft,
+              quickVocabularySourceLanguage = state.quickVocabularySourceLanguage,
+              quickVocabularyTargetLanguage = state.quickVocabularyTargetLanguage,
                     onCardStartSideChange = viewModel::setCardStartSide,
                     onExcludeMasteredCardsChange = viewModel::setExcludeMasteredCards,
                     onShowCardLogChange = viewModel::setShowCardLog,
@@ -763,6 +779,8 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
                     onVibrationEnabledChange = viewModel::setVibrationEnabled,
                     onNotificationIntervalChange = viewModel::updateNotificationIntervalDraft,
                     onNotificationMaxChange = viewModel::updateNotificationMaxDraft,
+              onQuickVocabularySourceChange = viewModel::setQuickVocabularySourceLanguage,
+              onQuickVocabularyTargetChange = viewModel::setQuickVocabularyTargetLanguage,
                     onSaveNotificationInterval = { viewModel.saveNotificationInterval(context) },
                     onSaveNotificationMax = viewModel::saveNotificationMax,
                     onDownloadSampleJson = {
@@ -1052,6 +1070,8 @@ private fun SettingsScreen(
     vibrationEnabled: Boolean,
     notificationIntervalDraft: String,
     notificationMaxDraft: String,
+    quickVocabularySourceLanguage: String,
+    quickVocabularyTargetLanguage: String,
     onCardStartSideChange: (CardStartSide) -> Unit,
     onExcludeMasteredCardsChange: (Boolean) -> Unit,
     onShowCardLogChange: (Boolean) -> Unit,
@@ -1060,6 +1080,8 @@ private fun SettingsScreen(
     onVibrationEnabledChange: (Boolean) -> Unit,
     onNotificationIntervalChange: (String) -> Unit,
     onNotificationMaxChange: (String) -> Unit,
+    onQuickVocabularySourceChange: (String) -> Unit,
+    onQuickVocabularyTargetChange: (String) -> Unit,
     onSaveNotificationInterval: () -> Unit,
     onSaveNotificationMax: () -> Unit,
     onDownloadSampleJson: () -> Unit
@@ -1276,6 +1298,42 @@ private fun SettingsScreen(
         ) {
             Column(
                 modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = "Quick vocabulary",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "Choose the language pair for phrases captured with the microphone on the Lessons screen. Translation is saved as pending until edited or generated later.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                OutlinedTextField(
+                    value = quickVocabularySourceLanguage,
+                    onValueChange = onQuickVocabularySourceChange,
+                    label = { Text("Source language") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = quickVocabularyTargetLanguage,
+                    onValueChange = onQuickVocabularyTargetChange,
+                    label = { Text("Target language") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(18.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Text(
@@ -1443,6 +1501,7 @@ private fun LessonCatalogScreen(
     onDownloadLesson: (Lesson) -> Unit,
     onShareLesson: (Lesson) -> Unit,
     onSetLessonHidden: (Lesson, Boolean) -> Unit,
+    onQuickVoiceInput: () -> Unit,
     onImportLessons: () -> Unit
 ) {
     val lessonBounds = remember { mutableStateMapOf<String, IntRange>() }
@@ -1503,6 +1562,19 @@ private fun LessonCatalogScreen(
                 Icon(Icons.Default.Add, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
                 Text("New lesson")
+            }
+            Surface(
+                modifier = Modifier
+                    .height(50.dp)
+                    .width(58.dp)
+                    .clickable(onClick = onQuickVoiceInput),
+                shape = RoundedCornerShape(18.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                color = MaterialTheme.colorScheme.surface
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(Icons.Default.Mic, contentDescription = "Add vocabulary by voice")
+                }
             }
         }
 
@@ -1863,7 +1935,9 @@ private fun StudyScreen(
     onShowAllCardsChange: (Boolean) -> Unit,
     onPreviousCard: () -> Unit,
     onNextCard: () -> Unit,
+    onFirstCard: () -> Unit,
     onFirstRemainingCard: () -> Unit,
+    onLastCompletedCard: () -> Unit,
     onNewPortion: () -> Unit,
     onNextLesson: () -> Unit,
     onOpenCatalog: () -> Unit,
@@ -1894,7 +1968,9 @@ private fun StudyScreen(
             portionSize = state.portionSize,
             remainingCount = state.remainingCount,
             completedCount = state.completedCount,
-            onRemainingClick = onFirstRemainingCard
+            onPortionClick = onFirstCard,
+            onRemainingClick = onFirstRemainingCard,
+            onDoneClick = onLastCompletedCard
         )
 
         state.studyEmptyMessage?.let { message ->
@@ -2003,11 +2079,20 @@ private fun TopControls(
                 )
             }
         }
-        FilterChip(
-            selected = showAllCards,
-            onClick = { onShowAllCardsChange(!showAllCards) },
-            label = { Text("Show all") }
-        )
+        Surface(
+            modifier = Modifier.size(48.dp),
+            shape = RoundedCornerShape(16.dp),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+            color = if (showAllCards) Color(0xFFE4F6E8) else MaterialTheme.colorScheme.surface
+        ) {
+            IconButton(onClick = { onShowAllCardsChange(!showAllCards) }) {
+                Icon(
+                    imageVector = if (showAllCards) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                    contentDescription = if (showAllCards) "Show all cards" else "Hide mastered cards",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
     }
 }
 
@@ -2077,7 +2162,9 @@ private fun CountersRow(
     portionSize: Int,
     remainingCount: Int,
     completedCount: Int,
-    onRemainingClick: () -> Unit
+    onPortionClick: () -> Unit,
+    onRemainingClick: () -> Unit,
+    onDoneClick: () -> Unit
 ) {
     val ui = rememberUiText()
     Row(
@@ -2086,12 +2173,12 @@ private fun CountersRow(
             .padding(vertical = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        CounterText("${ui.inPortion}: $portionSize")
+        CounterText("${ui.inPortion}: $portionSize", modifier = Modifier.clickable(enabled = portionSize > 0) { onPortionClick() })
         CounterText(
             "${ui.left}: $remainingCount",
             modifier = Modifier.clickable(enabled = remainingCount > 0) { onRemainingClick() }
         )
-        CounterText("${ui.done}: $completedCount")
+        CounterText("${ui.done}: $completedCount", modifier = Modifier.clickable(enabled = completedCount > 0) { onDoneClick() })
     }
 }
 
@@ -2296,7 +2383,7 @@ private fun StudyCard(
                             .align(Alignment.BottomCenter)
                             .background(
                                 color = Color.White.copy(alpha = 0.78f),
-                                shape = RoundedCornerShape(24.dp)
+                                shape = RoundedCornerShape(22.dp)
                             )
                             .padding(horizontal = 8.dp, vertical = 2.dp)
                     ) {
@@ -2632,6 +2719,7 @@ private fun AnswerBar(
     onCopy: (String) -> Unit,
     onVoiceToggle: () -> Unit,
     onSpeak: () -> Unit,
+    onDismissAnswerFeedback: () -> Unit,
 ) {
     val doneLocked = currentCard != null && isCurrentCardDone && answer.none { it.isLetter() }
     val canSubmit = currentCard != null && !doneLocked
@@ -2663,7 +2751,7 @@ private fun AnswerBar(
                     text = buildAnswerFeedback(answer, currentCard.correctText()),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { onAnswerChange(answer) },
+                        .clickable { onDismissAnswerFeedback() },
                     style = MaterialTheme.typography.bodyLarge,
                     fontWeight = FontWeight.SemiBold
                 )
@@ -2672,7 +2760,7 @@ private fun AnswerBar(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(78.dp)
-                    .clickable(enabled = answerFeedbackVisible) { onAnswerChange(answer) },
+                    .clickable(enabled = answerFeedbackVisible) { onDismissAnswerFeedback() },
                 contentAlignment = Alignment.Center
             ) {
                 Row(
@@ -2696,10 +2784,10 @@ private fun AnswerBar(
 
                 Surface(
                     modifier = Modifier
-                        .size(72.dp)
+                        .size(64.dp)
                         .align(Alignment.Center)
                         .clickable(enabled = currentCard != null) { onVoiceToggle() },
-                    shape = RoundedCornerShape(24.dp),
+                    shape = RoundedCornerShape(22.dp),
                     border = BorderStroke(
                         width = if (isVoiceRecording) 3.dp else 1.dp,
                         color = if (isVoiceRecording) BrandSaladColor else MaterialTheme.colorScheme.outline
@@ -2714,7 +2802,7 @@ private fun AnswerBar(
                         Icon(
                             Icons.Default.Mic,
                             contentDescription = "Voice input",
-                            modifier = Modifier.size(34.dp),
+                            modifier = Modifier.size(31.dp),
                             tint = if (isVoiceRecording) Color(0xFF234231) else if (currentCard != null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.outline
                         )
                     }
@@ -2735,7 +2823,7 @@ private fun AnswerBar(
                         onClick = onOk,
                         modifier = Modifier
                             .height(56.dp)
-                            .width(84.dp),
+                            .width(76.dp),
                         shape = RoundedCornerShape(18.dp),
                         enabled = canSubmit,
                         colors = ButtonDefaults.buttonColors(
@@ -2762,7 +2850,7 @@ private fun AnswerIconButton(
 ) {
     Surface(
         modifier = Modifier
-            .size(56.dp)
+            .size(48.dp)
             .clickable(enabled = enabled, onClick = onClick),
         shape = RoundedCornerShape(18.dp),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
@@ -2792,7 +2880,7 @@ private fun StudyEmptyState(message: String) {
         verticalArrangement = Arrangement.Center
     ) {
         Surface(
-            shape = RoundedCornerShape(24.dp),
+            shape = RoundedCornerShape(22.dp),
             tonalElevation = 2.dp,
             color = MaterialTheme.colorScheme.surface
         ) {
@@ -3443,6 +3531,7 @@ private fun sampleLessonJson(): String {
 
 private fun versionLogText(): String {
     return """
+        v0.58 - Fixed answer-bar spacing, replaced Show all text with an icon, made study counters navigable, added quick voice capture into a New vocabulary lesson with configurable source/target languages, and extended voice silence retry behavior.
         v0.57 - Centered and enlarged voice controls, moved speech playback to the answer bar, added hold-to-keep-recording voice behavior, hid the lesson title behind the info popup, refined missing-letter hints, and kept technical bubbles in English.
         v0.56 - Simplified the Copy action to an icon-only button, kept Check active for empty answers with a white Enter answer bubble, and changed order switching feedback to show the active mode name.
         v0.55 - Made Original the default study order, added a next-order hint when changing order, changed voice input to tap-to-record/tap-to-stop with silence timeout, and added a Check action with visual answer highlighting.
