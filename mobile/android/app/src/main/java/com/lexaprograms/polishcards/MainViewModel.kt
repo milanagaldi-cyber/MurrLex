@@ -590,7 +590,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun goToFirstRemainingCard() {
         val state = _uiState.value
         if (state.currentPortion.isEmpty()) return
-        val targetIndex = state.currentPortion.indexOfFirst { card -> card.id !in state.completedCardIds }
+        val lastCompletedIndex = state.currentPortion.indexOfLast { card -> card.id in state.completedCardIds }
+        val targetIndex = state.currentPortion
+            .drop(lastCompletedIndex + 1)
+            .indexOfFirst { card -> card.id !in state.completedCardIds }
+            .takeIf { it >= 0 }
+            ?.let { it + lastCompletedIndex + 1 }
+            ?: state.currentPortion.indexOfFirst { card -> card.id !in state.completedCardIds }
         if (targetIndex < 0) return
         _uiState.value = state.copy(
             currentIndex = targetIndex,
@@ -1220,6 +1226,59 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
+
+    fun addQuickVocabularyCard(phrase: String) {
+        val cleanPhrase = phrase.trim()
+        if (cleanPhrase.isBlank()) {
+            _uiState.value = _uiState.value.copy(message = "No speech recognized")
+            return
+        }
+        val state = _uiState.value
+        val sourceLanguage = state.quickVocabularySourceLanguage.trim().ifBlank { "Polish" }
+        val targetLanguage = state.quickVocabularyTargetLanguage.trim().ifBlank { "Russian" }
+        val allLessons = repository.loadLessons(includeHidden = true)
+        val existingLesson = allLessons.firstOrNull { it.id == QUICK_VOCABULARY_LESSON_ID }
+        val now = timestamp()
+        val nextCardId = (existingLesson?.cards?.maxOfOrNull { it.id } ?: 0) + 1
+        val newCard = Flashcard(
+            id = nextCardId,
+            nativeValue = cleanPhrase,
+            correctValue = "Translation pending",
+            hint = "Captured by voice. Add or generate the translation later.",
+            madeAt = now,
+            where = "Quick vocabulary microphone",
+            log = listOf("$now - captured by quick vocabulary microphone"),
+            type = "card",
+            cardKind = "LN",
+            sourceLanguage = sourceLanguage,
+            targetLanguage = targetLanguage
+        )
+        val updatedLesson = if (existingLesson == null) {
+            Lesson(
+                id = QUICK_VOCABULARY_LESSON_ID,
+                title = QUICK_VOCABULARY_LESSON_TITLE,
+                lessonInfo = quickVocabularyLessonInfo(sourceLanguage, targetLanguage),
+                cards = listOf(newCard),
+                editable = true
+            )
+        } else {
+            existingLesson.copy(
+                title = existingLesson.title.ifBlank { QUICK_VOCABULARY_LESSON_TITLE },
+                lessonInfo = quickVocabularyLessonInfo(sourceLanguage, targetLanguage),
+                cards = existingLesson.cards + newCard,
+                editable = true,
+                hidden = false
+            )
+        }
+        repository.saveLesson(updatedLesson)
+        val visibleLessons = repository.loadLessons(state.showHiddenLessons)
+        _uiState.value = state.copy(
+            lessons = visibleLessons,
+            selectedLessonIds = emptySet(),
+            screen = AppScreen.CATALOG,
+            message = "Added to New vocabulary"
+        )
+    }
     private fun List<Flashcard>.reindexCards(): List<Flashcard> {
         return mapIndexed { index, card -> card.copy(id = index + 1) }
     }
@@ -1290,6 +1349,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         private const val QUICK_VOCABULARY_LESSON_TITLE = "New vocabulary"
     }
 }
+
+
+
 
 
 

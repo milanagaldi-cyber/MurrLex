@@ -66,6 +66,7 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FormatListNumbered
@@ -259,9 +260,10 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
     var messageBubbleVisible by remember { mutableStateOf(false) }
     var messageBubbleText by remember { mutableStateOf("") }
     var messageBubblePositive by remember { mutableStateOf(false) }
+    var successStarVisible by remember { mutableStateOf(false) }
     val appTitleColor by animateColorAsState(
         targetValue = if (titleActivated) BrandSaladColor else BrandRedColor,
-        animationSpec = tween(durationMillis = 3000),
+        animationSpec = tween(durationMillis = 2000),
         label = "appTitleColor"
     )
     val exportJson = remember { Json { prettyPrint = true; encodeDefaults = true } }
@@ -367,8 +369,13 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
                     .orEmpty()
                     .trim()
                 if (spokenText.isNotBlank()) {
-                    viewModel.updateAnswer(spokenText)
-                    viewModel.showMessage("Voice input added")
+                    when (voiceTarget) {
+                        VoiceInputTarget.ANSWER -> {
+                            viewModel.updateAnswer(spokenText)
+                            viewModel.showMessage("Voice input added")
+                        }
+                        VoiceInputTarget.QUICK_VOCABULARY -> viewModel.addQuickVocabularyCard(spokenText)
+                    }
                 } else {
                     viewModel.showMessage("No speech recognized")
                 }
@@ -429,7 +436,13 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
             viewModel.showMessage("Voice input is not available on this device")
             return
         }
-        voiceLanguageTag = state.currentCard.speechLanguageTag(state.interfaceLanguage)
+        voiceTarget = target
+        voiceLanguageTag = when (target) {
+            VoiceInputTarget.ANSWER -> state.currentCard.speechLanguageTag(state.interfaceLanguage)
+            VoiceInputTarget.QUICK_VOCABULARY -> state.quickVocabularySourceLanguage.speechLanguageTagFromName()
+                ?: state.quickVocabularySourceLanguage.speechLanguageTagFromText()
+                ?: Locale.getDefault().toLanguageTag()
+        }
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             voicePermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
             return
@@ -535,9 +548,14 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
     LaunchedEffect(state.message) {
         val message = state.message
         if (message != null) {
-            if (message in setOf("Correct", "Enter answer", "Original", "Alphabetical", "Random")) {
+            if (message == "Correct") {
+                successStarVisible = true
+                delay(1000)
+                successStarVisible = false
+                viewModel.consumeMessage()
+            } else if (message in setOf("Enter answer", "Original", "Alphabetical", "Random")) {
                 messageBubbleText = message
-                messageBubblePositive = message == "Correct"
+                messageBubblePositive = false
                 messageBubbleVisible = true
                 delay(1000)
                 messageBubbleVisible = false
@@ -823,11 +841,49 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
                     .padding(top = 22.dp)
                     .zIndex(20f)
             )
+            SuccessStar(
+                visible = successStarVisible,
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .zIndex(21f)
+            )
         }
     }
 }
 }
 
+@Composable
+private fun SuccessStar(
+    visible: Boolean,
+    modifier: Modifier = Modifier
+) {
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(animationSpec = tween(120)) + slideInVertically(
+            animationSpec = tween(180),
+            initialOffsetY = { it / 2 }
+        ),
+        exit = fadeOut(animationSpec = tween(420)) + slideOutVertically(
+            animationSpec = tween(700),
+            targetOffsetY = { -220 }
+        ),
+        modifier = modifier
+    ) {
+        Surface(
+            shape = RoundedCornerShape(999.dp),
+            tonalElevation = 8.dp,
+            shadowElevation = 10.dp,
+            color = Color(0xFFFFF6C7)
+        ) {
+            Icon(
+                Icons.Default.Star,
+                contentDescription = "Correct",
+                modifier = Modifier.padding(18.dp).size(46.dp),
+                tint = Color(0xFFFFC107)
+            )
+        }
+    }
+}
 @Composable
 private fun MessageBubble(
     text: String,
@@ -1563,19 +1619,6 @@ private fun LessonCatalogScreen(
                 Spacer(Modifier.width(8.dp))
                 Text("New lesson")
             }
-            Surface(
-                modifier = Modifier
-                    .height(50.dp)
-                    .width(58.dp)
-                    .clickable(onClick = onQuickVoiceInput),
-                shape = RoundedCornerShape(18.dp),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-                color = MaterialTheme.colorScheme.surface
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(Icons.Default.Mic, contentDescription = "Add vocabulary by voice")
-                }
-            }
         }
 
         val selectedLessons = lessons.filter { it.id in selectedLessonIds }
@@ -1637,7 +1680,7 @@ private fun LessonCatalogScreen(
         } else {
             LazyColumn(
                 modifier = Modifier.weight(1f),
-                contentPadding = PaddingValues(top = 10.dp, bottom = 96.dp),
+                contentPadding = PaddingValues(top = 10.dp, bottom = 18.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 items(lessons, key = { it.id }) { lesson ->
@@ -1716,6 +1759,28 @@ private fun LessonCatalogScreen(
                         }
                     )
                 }
+            }
+        }
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 2.dp, bottom = 18.dp)
+                .height(58.dp)
+                .clickable(onClick = onQuickVoiceInput),
+            shape = RoundedCornerShape(20.dp),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.65f)),
+            color = MaterialTheme.colorScheme.surface
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 18.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(Icons.Default.Mic, contentDescription = "Add vocabulary by voice", tint = BrandSaladColor)
+                Spacer(Modifier.width(10.dp))
+                Text("Add vocabulary", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
             }
         }
     }
@@ -2083,13 +2148,13 @@ private fun TopControls(
             modifier = Modifier.size(48.dp),
             shape = RoundedCornerShape(16.dp),
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-            color = if (showAllCards) Color(0xFFE4F6E8) else MaterialTheme.colorScheme.surface
+            color = if (!showAllCards) Color(0xFFE4F6E8) else MaterialTheme.colorScheme.surface
         ) {
             IconButton(onClick = { onShowAllCardsChange(!showAllCards) }) {
                 Icon(
-                    imageVector = if (showAllCards) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                    contentDescription = if (showAllCards) "Show all cards" else "Hide mastered cards",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    imageVector = Icons.Default.DoneAll,
+                    contentDescription = if (showAllCards) "Hide completed cards" else "Completed cards hidden",
+                    tint = if (!showAllCards) BrandSaladColor else MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
@@ -2823,7 +2888,7 @@ private fun AnswerBar(
                         onClick = onOk,
                         modifier = Modifier
                             .height(56.dp)
-                            .width(76.dp),
+                            .width(64.dp),
                         shape = RoundedCornerShape(18.dp),
                         enabled = canSubmit,
                         colors = ButtonDefaults.buttonColors(
@@ -2833,7 +2898,7 @@ private fun AnswerBar(
                             disabledContentColor = Color(0xFF5F685D)
                         )
                     ) {
-                        Text(if (doneLocked) "Done" else "OK")
+                        Text("OK")
                     }
                 }
             }
@@ -3531,6 +3596,7 @@ private fun sampleLessonJson(): String {
 
 private fun versionLogText(): String {
     return """
+        v0.59 - Moved quick vocabulary voice capture below the lesson list, fixed quick voice lesson creation and source-language recognition, tightened the OK button, changed Correct feedback into a flying star, refined hide-completed controls, and improved Left-counter navigation.
         v0.58 - Fixed answer-bar spacing, replaced Show all text with an icon, made study counters navigable, added quick voice capture into a New vocabulary lesson with configurable source/target languages, and extended voice silence retry behavior.
         v0.57 - Centered and enlarged voice controls, moved speech playback to the answer bar, added hold-to-keep-recording voice behavior, hid the lesson title behind the info popup, refined missing-letter hints, and kept technical bubbles in English.
         v0.56 - Simplified the Copy action to an icon-only button, kept Check active for empty answers with a white Enter answer bubble, and changed order switching feedback to show the active mode name.
@@ -3570,6 +3636,12 @@ private fun versionLogText(): String {
         v0.22 - Made Share visible on configured lesson cards, improved download icons, made Copy fill the input with the currently visible card side, added outside-tap exit for lesson configuration, and improved lesson list spacing/highlight.
     """.trimIndent()
 }
+
+
+
+
+
+
 
 
 

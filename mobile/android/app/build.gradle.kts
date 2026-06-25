@@ -13,8 +13,8 @@ android {
         applicationId = "com.lexaprograms.polishcards"
         minSdk = 24
         targetSdk = 35
-        versionCode = 58
-        versionName = "0.58"
+        versionCode = 59
+        versionName = "0.59"
     }
 
     buildTypes {
@@ -58,6 +58,7 @@ dependencies {
 
     debugImplementation(libs.androidx.compose.ui.tooling)
 }
+
 
 
 
