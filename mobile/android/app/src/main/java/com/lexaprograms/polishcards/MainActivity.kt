@@ -474,21 +474,29 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
         val lessonSampleCard = state.editorLesson?.cards?.firstOrNull() ?: state.selectedLesson?.cards?.firstOrNull()
         val language = when (target) {
             VoiceInputTarget.ANSWER -> if (quickEditActive) {
-                state.currentCard.voiceLanguageForDisplayedSide(state.isBackVisible, state.interfaceLanguage)
+                state.currentCard.voiceLanguageForDisplayedSide(state.isBackVisible, state.interfaceLanguage, state.selectedLesson)
             } else {
-                state.currentCard.voiceLanguageForCorrectSide(state.interfaceLanguage)
+                state.currentCard.voiceLanguageForCorrectSide(state.interfaceLanguage, state.selectedLesson)
             }
             VoiceInputTarget.QUICK_VOCABULARY -> languageForVoice(state.quickVocabularyTargetLanguage, "", state.interfaceLanguage)
             VoiceInputTarget.CARD_NATIVE -> languageForVoice(
-                draftCard?.sourceLanguage?.ifBlank { draftCard.frontLabel() }
-                    ?: lessonSampleCard?.sourceLanguage?.ifBlank { lessonSampleCard.frontLabel() }
+                draftCard?.sourceLanguage.asLessonLanguage()
+                    ?: state.editorLesson?.sourceLanguage.asLessonLanguage()
+                    ?: state.selectedLesson?.sourceLanguage.asLessonLanguage()
+                    ?: lessonSampleCard?.sourceLanguage.asLessonLanguage()
+                    ?: draftCard?.frontLabel()
+                    ?: lessonSampleCard?.frontLabel()
                     ?: state.quickVocabularySourceLanguage,
                 state.cardDraft.nativeValue,
                 state.interfaceLanguage
             )
             VoiceInputTarget.CARD_CORRECT -> languageForVoice(
-                draftCard?.targetLanguage?.ifBlank { draftCard.backLabel() }
-                    ?: lessonSampleCard?.targetLanguage?.ifBlank { lessonSampleCard.backLabel() }
+                draftCard?.targetLanguage.asLessonLanguage()
+                    ?: state.editorLesson?.targetLanguage.asLessonLanguage()
+                    ?: state.selectedLesson?.targetLanguage.asLessonLanguage()
+                    ?: lessonSampleCard?.targetLanguage.asLessonLanguage()
+                    ?: draftCard?.backLabel()
+                    ?: lessonSampleCard?.backLabel()
                     ?: state.quickVocabularyTargetLanguage,
                 state.cardDraft.correctValue,
                 state.interfaceLanguage
@@ -838,9 +846,9 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
                             val inputText = state.answer.trim()
                             val textToRead = inputText.ifBlank { card.displayedCardText(state.isBackVisible) }
                             val languageTag = if (inputText.isNotBlank()) {
-                                inputText.speechLanguageTagFromText() ?: card.speechLanguageTag(state.interfaceLanguage)
+                                inputText.speechLanguageTagFromText() ?: card.speechLanguageTag(state.interfaceLanguage, state.selectedLesson)
                             } else {
-                                card.speechLanguageTagForSide(state.isBackVisible, state.interfaceLanguage)
+                                card.speechLanguageTagForSide(state.isBackVisible, state.interfaceLanguage, state.selectedLesson)
                             }
                             performFeedback(context, state.soundEffectsEnabled, state.vibrationEnabled, FeedbackCue.TAP)
                             speakText(textToRead, languageTag)
@@ -904,6 +912,7 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
                     onNextLesson = viewModel::openNextVisibleLesson,
                     onOpenCatalog = viewModel::openCatalog,
                     onToggleCard = {
+                        quickEditCardId = null
                         viewModel.toggleCard()
                     },
                     onToggleStar = { cardId, starIndex ->
@@ -924,6 +933,7 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
                         performFeedback(context, state.soundEffectsEnabled, state.vibrationEnabled, FeedbackCue.TAP)
                         viewModel.editCurrentStudyCard()
                     },
+                    quickEditMode = quickEditActive,
                     showCardLog = state.showCardLog,
                     onShareCard = { lesson, card ->
                         performFeedback(context, state.soundEffectsEnabled, state.vibrationEnabled, FeedbackCue.TAP)
@@ -973,6 +983,8 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
                     state = state,
                     onTitleChange = viewModel::updateLessonTitle,
                     onLessonInfoChange = viewModel::updateLessonInfo,
+                    onLessonSourceLanguageChange = viewModel::updateLessonSourceLanguage,
+                    onLessonTargetLanguageChange = viewModel::updateLessonTargetLanguage,
                     onCardDraftChange = viewModel::updateCardDraft,
                     onAddCard = viewModel::addCardToLesson,
                     onDeleteCard = viewModel::deleteCardFromLesson,
@@ -1772,12 +1784,13 @@ private val DictionaryLanguageOptions = listOf(
 private fun DictionaryLanguageDropdown(
     label: String,
     value: String,
-    onValueChange: (String) -> Unit
+    onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier
 ) {
     var expanded by remember { mutableStateOf(false) }
     val selectedLabel = DictionaryLanguageOptions.firstOrNull { it.first.equals(value, ignoreCase = true) }?.second
         ?: value.ifBlank { "Select language" }
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(
             text = label,
             style = MaterialTheme.typography.bodyMedium,
@@ -2314,6 +2327,7 @@ private fun StudyScreen(
     onToggleStar: (Int, Int) -> Unit,
     onQuickEditCard: () -> Unit,
     onEditCard: () -> Unit,
+    quickEditMode: Boolean,
     showCardLog: Boolean,
     onShareCard: (Lesson, Flashcard) -> Unit
 ) {
@@ -2369,6 +2383,7 @@ private fun StudyScreen(
                         onToggleStar = onToggleStar,
                         onQuickEditCard = onQuickEditCard,
                         onEditCard = onEditCard,
+                        quickEditMode = quickEditMode,
                         displayTextSize = state.displayTextSize,
                         controlSize = state.controlSize,
                         isCompleted = animatedCard?.id in state.completedCardIds,
@@ -2598,6 +2613,7 @@ private fun StudyCard(
     onToggleStar: (Int, Int) -> Unit,
     onQuickEditCard: () -> Unit,
     onEditCard: () -> Unit,
+    quickEditMode: Boolean,
     displayTextSize: DisplayTextSize,
     controlSize: ControlSize,
     isCompleted: Boolean,
@@ -2710,7 +2726,7 @@ private fun StudyCard(
                             .size(44.dp)
                             .clip(RoundedCornerShape(22.dp))
                             .background(Color.White.copy(alpha = 0.92f))
-                            .pointerInput(card?.id) {
+                            .pointerInput(card?.id, quickEditMode) {
                                 detectTapGestures(
                                     onTap = { if (card != null) onQuickEditCard() },
                                     onLongPress = { if (card != null) onEditCard() }
@@ -2963,27 +2979,32 @@ private fun Flashcard.answerInputLabel(): String {
     }
 }
 
-private fun Flashcard?.speechLanguageTag(interfaceLanguage: String): String {
+private fun Flashcard?.speechLanguageTag(interfaceLanguage: String, lesson: Lesson? = null): String {
     if (this == null) return interfaceLanguage.speechLanguageTagFromName()
         ?: Locale.getDefault().toLanguageTag()
 
-    targetLanguage.speechLanguageTagFromName()?.let { return it }
+    (targetLanguage.asLessonLanguage() ?: lesson?.targetLanguage.asLessonLanguage())
+        ?.speechLanguageTagFromName()
+        ?.let { return it }
     if (kindCode() == "LN") {
         backLabel().speechLanguageTagFromName()?.let { return it }
     }
     correctText().speechLanguageTagFromText()?.let { return it }
-    sourceLanguage.speechLanguageTagFromName()?.let { return it }
+    (sourceLanguage.asLessonLanguage() ?: lesson?.sourceLanguage.asLessonLanguage())
+        ?.speechLanguageTagFromName()
+        ?.let { return it }
     return interfaceLanguage.speechLanguageTagFromName()
         ?: Locale.getDefault().toLanguageTag()
 }
 
-private fun Flashcard.speechLanguageTagForSide(isBackVisible: Boolean, interfaceLanguage: String): String {
+private fun Flashcard.speechLanguageTagForSide(isBackVisible: Boolean, interfaceLanguage: String, lesson: Lesson? = null): String {
     val explicitLanguage = if (isBackVisible || hasPendingNativeTranslation()) {
-        targetLanguage.ifBlank { backLabel() }
+        targetLanguage.asLessonLanguage() ?: lesson?.targetLanguage.asLessonLanguage() ?: backLabel()
     } else if (kindCode() == "LN") {
-        sourceLanguage.ifBlank { frontLabel() }
+        sourceLanguage.asLessonLanguage() ?: lesson?.sourceLanguage.asLessonLanguage() ?: frontLabel()
     } else {
-        targetLanguage.ifBlank { sourceLanguage }
+        targetLanguage.asLessonLanguage() ?: lesson?.targetLanguage.asLessonLanguage()
+            ?: sourceLanguage.asLessonLanguage() ?: lesson?.sourceLanguage.asLessonLanguage().orEmpty()
     }
     explicitLanguage.speechLanguageTagFromName()?.let { return it }
     displayedCardText(isBackVisible).speechLanguageTagFromText()?.let { return it }
@@ -2991,22 +3012,28 @@ private fun Flashcard.speechLanguageTagForSide(isBackVisible: Boolean, interface
         ?: Locale.getDefault().toLanguageTag()
 }
 
-private fun Flashcard?.voiceLanguageForDisplayedSide(isBackVisible: Boolean, interfaceLanguage: String): Pair<String, String> {
+private fun Flashcard?.voiceLanguageForDisplayedSide(
+    isBackVisible: Boolean,
+    interfaceLanguage: String,
+    lesson: Lesson? = null
+): Pair<String, String> {
     val card = this ?: return languageForVoice(interfaceLanguage, "", interfaceLanguage)
     val languageName = if (isBackVisible) {
-        card.targetLanguage.ifBlank { card.backLabel() }
+        card.targetLanguage.asLessonLanguage() ?: lesson?.targetLanguage.asLessonLanguage() ?: card.backLabel()
     } else {
-        card.sourceLanguage.ifBlank { card.frontLabel() }
+        card.sourceLanguage.asLessonLanguage() ?: lesson?.sourceLanguage.asLessonLanguage() ?: card.frontLabel()
     }
     return languageForVoice(languageName, card.displayedCardText(isBackVisible), interfaceLanguage)
 }
 
-private fun Flashcard?.voiceLanguageForCorrectSide(interfaceLanguage: String): Pair<String, String> {
+private fun Flashcard?.voiceLanguageForCorrectSide(interfaceLanguage: String, lesson: Lesson? = null): Pair<String, String> {
     val card = this ?: return languageForVoice(interfaceLanguage, "", interfaceLanguage)
     val languageName = when {
-        card.nativeText().isEmptyPlaceholder() -> card.sourceLanguage.ifBlank { card.frontLabel() }
-        card.correctText().isEmptyPlaceholder() -> card.targetLanguage.ifBlank { card.backLabel() }
-        else -> card.targetLanguage.ifBlank { card.backLabel() }
+        card.nativeText().isEmptyPlaceholder() -> card.sourceLanguage.asLessonLanguage()
+            ?: lesson?.sourceLanguage.asLessonLanguage() ?: card.frontLabel()
+        card.correctText().isEmptyPlaceholder() -> card.targetLanguage.asLessonLanguage()
+            ?: lesson?.targetLanguage.asLessonLanguage() ?: card.backLabel()
+        else -> card.targetLanguage.asLessonLanguage() ?: lesson?.targetLanguage.asLessonLanguage() ?: card.backLabel()
     }
     val sampleText = when {
         card.nativeText().isEmptyPlaceholder() -> card.nativeText()
@@ -3014,6 +3041,11 @@ private fun Flashcard?.voiceLanguageForCorrectSide(interfaceLanguage: String): P
         else -> card.correctText()
     }
     return languageForVoice(languageName, sampleText, interfaceLanguage)
+}
+
+private fun String?.asLessonLanguage(): String? {
+    val cleaned = orEmpty().trim()
+    return cleaned.takeIf { it.isNotBlank() && !it.equals("Mixed", ignoreCase = true) }
 }
 
 private fun languageForVoice(languageName: String, sampleText: String, interfaceLanguage: String): Pair<String, String> {
@@ -3530,6 +3562,8 @@ private fun LessonEditorScreen(
     state: StudyUiState,
     onTitleChange: (String) -> Unit,
     onLessonInfoChange: (String) -> Unit,
+    onLessonSourceLanguageChange: (String) -> Unit,
+    onLessonTargetLanguageChange: (String) -> Unit,
     onCardDraftChange: (CardDraft) -> Unit,
     onAddCard: () -> Unit,
     onDeleteCard: (Int) -> Unit,
@@ -3724,6 +3758,20 @@ private fun LessonEditorScreen(
             minLines = 2,
             maxLines = 5
         )
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            DictionaryLanguageDropdown(
+                label = "Front side input language",
+                value = lesson.sourceLanguage,
+                onValueChange = onLessonSourceLanguageChange,
+                modifier = Modifier.weight(1f)
+            )
+            DictionaryLanguageDropdown(
+                label = "Back side input language",
+                value = lesson.targetLanguage,
+                onValueChange = onLessonTargetLanguageChange,
+                modifier = Modifier.weight(1f)
+            )
+        }
 
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Button(
@@ -4114,6 +4162,8 @@ private fun sampleLessonJson(): String {
           "id": "replace_with_unique_lesson_id",
           "title": "Lesson title shown on the main screen",
           "lessonInfo": "Instructions shown from the lesson info icon. Use this for the purpose of the lesson, how to answer, what to pay attention to, and any workflow notes for this set of cards.",
+          "sourceLanguage": "Front side input language selected from the app settings list, for example Russian.",
+          "targetLanguage": "Back side input language selected from the app settings list, for example Polish.",
           "timesCompleted": 0,
           "editable": true,
           "cards": [
@@ -4165,6 +4215,7 @@ private fun sampleLessonJson(): String {
 
 private fun versionLogText(): String {
     return """
+        v0.78 - Added lesson-level source/target input languages with editor dropdowns and JSON export support, used lesson languages as voice fallback for Mixed cards, and refreshed quick Edit taps so the second tap opens the full editor.
         v0.77 - Made the second quick Edit tap open the full card editor, reset lesson stars together with progress, and kept study-plus cards appended while quick voice vocabulary cards stay at the top.
         v0.76 - Restored study counter navigation, moved reset progress into the lesson info popup, placed Add next to lesson info, added study-plus cards at the end, renamed quick vocabulary lessons with language codes and creation date, and kept quick voice lessons opening at the first card.
         v0.75 - Kept quick vocabulary voice capture on the current screen for bulk entry, made Done jump to the last card, created new lessons and study-plus cards with an empty starter card, and changed Refresh into confirmed progress reset.

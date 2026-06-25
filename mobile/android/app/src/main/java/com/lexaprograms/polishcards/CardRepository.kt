@@ -249,7 +249,7 @@ class CardRepository(private val context: Context) {
         } else {
             loadHiddenLessonIds().filterNot { it == lesson.id }
         }
-        val lessons = loadStoredLessons().filterNot { it.id == lesson.id } + lesson.copy(
+        val lessons = loadStoredLessons().filterNot { it.id == lesson.id } + lesson.withHeaderLanguages().copy(
             title = lesson.title.cleanKindSuffix(),
             editable = true
         )
@@ -323,7 +323,9 @@ class CardRepository(private val context: Context) {
 
     private fun loadStoredLessons(): List<Lesson> {
         val raw = preferences.getString(KEY_LESSONS, null) ?: return emptyList()
-        return runCatching { json.decodeFromString<List<Lesson>>(raw) }.getOrDefault(emptyList())
+        return runCatching { json.decodeFromString<List<Lesson>>(raw) }
+            .getOrDefault(emptyList())
+            .map { it.withHeaderLanguages() }
     }
 
     private fun loadStats(): Map<String, Int> {
@@ -357,6 +359,8 @@ class CardRepository(private val context: Context) {
                 Lesson(
                     id = newLessonId(),
                     title = fallbackTitle.cleanTitle().cleanKindSuffix(),
+                    sourceLanguage = cards.firstOrNull()?.sourceLanguage.lessonLanguageOrEmpty(),
+                    targetLanguage = cards.firstOrNull()?.targetLanguage.lessonLanguageOrEmpty(),
                     cards = cards.reindexCards()
                 )
             }
@@ -369,6 +373,10 @@ class CardRepository(private val context: Context) {
                     id = lesson.id.ifBlank { newLessonId() },
                     title = lesson.title.ifBlank { fallbackTitle.cleanTitle() }.cleanKindSuffix(),
                     lessonInfo = lessonInfo,
+                    sourceLanguage = lesson.sourceLanguage.lessonLanguageOrEmpty()
+                        .ifBlank { lesson.cards.firstOrNull()?.sourceLanguage.lessonLanguageOrEmpty() },
+                    targetLanguage = lesson.targetLanguage.lessonLanguageOrEmpty()
+                        .ifBlank { lesson.cards.firstOrNull()?.targetLanguage.lessonLanguageOrEmpty() },
                     cards = lesson.cards.reindexCards()
                 )
             }
@@ -378,6 +386,20 @@ class CardRepository(private val context: Context) {
 
     private fun List<Flashcard>.reindexCards(): List<Flashcard> {
         return mapIndexed { index, card -> card.copy(id = index + 1) }
+    }
+
+    private fun Lesson.withHeaderLanguages(): Lesson {
+        return copy(
+            sourceLanguage = sourceLanguage.lessonLanguageOrEmpty()
+                .ifBlank { cards.firstOrNull()?.sourceLanguage.lessonLanguageOrEmpty() },
+            targetLanguage = targetLanguage.lessonLanguageOrEmpty()
+                .ifBlank { cards.firstOrNull()?.targetLanguage.lessonLanguageOrEmpty() }
+        )
+    }
+
+    private fun String?.lessonLanguageOrEmpty(): String {
+        val cleaned = orEmpty().trim()
+        return if (cleaned.equals("Mixed", ignoreCase = true)) "" else cleaned
     }
 
     private fun String.cleanTitle(): String {

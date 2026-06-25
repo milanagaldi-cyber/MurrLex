@@ -45,6 +45,8 @@ data class LessonDraft(
     val id: String = "",
     val title: String = "",
     val lessonInfo: String = "",
+    val sourceLanguage: String = "",
+    val targetLanguage: String = "",
     val cards: List<Flashcard> = emptyList(),
     val timesCompleted: Int = 0,
     val editable: Boolean = true
@@ -950,6 +952,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             id = newLessonId(),
             title = "$targetLanguage New lesson",
             lessonInfo = quickVocabularyLessonInfo(sourceLanguage, targetLanguage),
+            sourceLanguage = sourceLanguage,
+            targetLanguage = targetLanguage,
             cards = listOf(emptyLessonCard(1, sourceLanguage, targetLanguage, now, "Created with new lesson")),
             editable = true
         )
@@ -978,9 +982,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val state = _uiState.value
         val lesson = state.selectedLesson ?: return
         val sampleCard = lesson.cards.firstOrNull()
-        val sourceLanguage = sampleCard?.sourceLanguage?.takeIf { it.isNotBlank() }
+        val sourceLanguage = lesson.sourceLanguage.lessonLanguageOrNull()
+            ?: sampleCard?.sourceLanguage.lessonLanguageOrNull()
             ?: state.quickVocabularySourceLanguage.trim().ifBlank { "Native" }
-        val targetLanguage = sampleCard?.targetLanguage?.takeIf { it.isNotBlank() }
+        val targetLanguage = lesson.targetLanguage.lessonLanguageOrNull()
+            ?: sampleCard?.targetLanguage.lessonLanguageOrNull()
             ?: state.quickVocabularyTargetLanguage.trim().ifBlank { "Target" }
         val now = timestamp()
         val nextCardId = (lesson.cards.maxOfOrNull { it.id } ?: 0) + 1
@@ -1061,6 +1067,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 id = lesson.id,
                 title = lesson.title,
                 lessonInfo = lesson.lessonInfo,
+                sourceLanguage = lesson.sourceLanguage.lessonLanguageOrNull()
+                    ?: lesson.cards.firstOrNull()?.sourceLanguage.lessonLanguageOrNull().orEmpty(),
+                targetLanguage = lesson.targetLanguage.lessonLanguageOrNull()
+                    ?: lesson.cards.firstOrNull()?.targetLanguage.lessonLanguageOrNull().orEmpty(),
                 cards = lesson.cards,
                 timesCompleted = lesson.timesCompleted,
                 editable = true
@@ -1097,6 +1107,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.value = _uiState.value.copy(editorLesson = draft.copy(lessonInfo = lessonInfo))
     }
 
+    fun updateLessonSourceLanguage(language: String) {
+        val draft = _uiState.value.editorLesson ?: return
+        _uiState.value = _uiState.value.copy(editorLesson = draft.copy(sourceLanguage = language.trim()))
+    }
+
+    fun updateLessonTargetLanguage(language: String) {
+        val draft = _uiState.value.editorLesson ?: return
+        _uiState.value = _uiState.value.copy(editorLesson = draft.copy(targetLanguage = language.trim()))
+    }
+
     fun updateCardDraft(cardDraft: CardDraft) {
         _uiState.value = _uiState.value.copy(cardDraft = cardDraft)
     }
@@ -1121,7 +1141,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             hint = cardDraft.hint.trim(),
                             madeAt = cardDraft.madeAt.trim(),
                             where = cardDraft.where.trim(),
-                            type = cardDraft.type.trim().ifBlank { "card" }
+                            type = cardDraft.type.trim().ifBlank { "card" },
+                            sourceLanguage = card.sourceLanguage.lessonLanguageOrNull() ?: lesson.sourceLanguage,
+                            targetLanguage = card.targetLanguage.lessonLanguageOrNull() ?: lesson.targetLanguage
                         )
                     } else {
                         card.copy(
@@ -1130,7 +1152,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             hint = cardDraft.hint.trim(),
                             madeAt = cardDraft.madeAt.trim(),
                             where = cardDraft.where.trim(),
-                            type = cardDraft.type.trim().ifBlank { "card" }
+                            type = cardDraft.type.trim().ifBlank { "card" },
+                            sourceLanguage = card.sourceLanguage.lessonLanguageOrNull() ?: lesson.sourceLanguage,
+                            targetLanguage = card.targetLanguage.lessonLanguageOrNull() ?: lesson.targetLanguage
                         )
                     }
                 } else {
@@ -1145,7 +1169,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 hint = cardDraft.hint.trim(),
                 madeAt = cardDraft.madeAt.trim(),
                 where = cardDraft.where.trim(),
-                type = cardDraft.type.trim().ifBlank { "card" }
+                type = cardDraft.type.trim().ifBlank { "card" },
+                sourceLanguage = lesson.sourceLanguage.lessonLanguageOrNull()
+                    ?: lesson.cards.firstOrNull()?.sourceLanguage.lessonLanguageOrNull().orEmpty(),
+                targetLanguage = lesson.targetLanguage.lessonLanguageOrNull()
+                    ?: lesson.cards.firstOrNull()?.targetLanguage.lessonLanguageOrNull().orEmpty()
             )
         }
 
@@ -1385,6 +1413,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             id = updatedLesson.id,
             title = updatedLesson.title,
             lessonInfo = updatedLesson.lessonInfo,
+            sourceLanguage = updatedLesson.sourceLanguage,
+            targetLanguage = updatedLesson.targetLanguage,
             cards = updatedLesson.cards,
             timesCompleted = updatedLesson.timesCompleted,
             editable = true,
@@ -1442,6 +1472,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 id = newLessonId(),
                 title = "${sourceLesson.title.ifBlank { "Cards" }} copy",
                 lessonInfo = sourceLesson.lessonInfo,
+                sourceLanguage = sourceLesson.sourceLanguage,
+                targetLanguage = sourceLesson.targetLanguage,
                 cards = selectedCards.mapIndexed { index, card ->
                     card.copy(id = index + 1, log = (card.log + "$now - copied from ${sourceLesson.title}").takeLast(100))
                 },
@@ -1491,6 +1523,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             id = draft.id.ifBlank { newLessonId() },
             title = draft.title.trim(),
             lessonInfo = draft.lessonInfo.trim(),
+            sourceLanguage = draft.sourceLanguage.lessonLanguageOrNull()
+                ?: draft.cards.firstOrNull()?.sourceLanguage.lessonLanguageOrNull().orEmpty(),
+            targetLanguage = draft.targetLanguage.lessonLanguageOrNull()
+                ?: draft.cards.firstOrNull()?.targetLanguage.lessonLanguageOrNull().orEmpty(),
             cards = draft.cards.reindexCards(),
             timesCompleted = draft.timesCompleted,
             editable = true,
@@ -1595,6 +1631,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 id = lessonId,
                 title = lessonTitle,
                 lessonInfo = quickVocabularyLessonInfo(sourceLanguage, targetLanguage),
+                sourceLanguage = sourceLanguage,
+                targetLanguage = targetLanguage,
                 cards = listOf(newCard),
                 editable = true
             )
@@ -1602,6 +1640,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             existingLesson.copy(
                 title = existingLesson.title.ifBlank { lessonTitle },
                 lessonInfo = quickVocabularyLessonInfo(sourceLanguage, targetLanguage),
+                sourceLanguage = existingLesson.sourceLanguage.lessonLanguageOrNull() ?: sourceLanguage,
+                targetLanguage = existingLesson.targetLanguage.lessonLanguageOrNull() ?: targetLanguage,
                 cards = listOf(newCard) + existingLesson.cards,
                 editable = true,
                 hidden = false
@@ -1776,6 +1816,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .replace('\u202F', ' ')
             .replace(Regex("[\\p{P}\\s]+"), "")
             .lowercase(Locale.getDefault())
+    }
+
+    private fun String?.lessonLanguageOrNull(): String? {
+        val cleaned = orEmpty().trim()
+        return cleaned.takeIf { it.isNotBlank() && !it.equals("Mixed", ignoreCase = true) }
     }
 
     private fun quickVocabularyLessonTitle(sourceLanguage: String, targetLanguage: String, createdAt: String): String {

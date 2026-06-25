@@ -7,6 +7,8 @@ data class Lesson(
     val id: String,
     val title: String,
     val lessonInfo: String = "",
+    val sourceLanguage: String = "",
+    val targetLanguage: String = "",
     val cards: List<Flashcard>,
     val timesCompleted: Int = 0,
     val editable: Boolean = true,
