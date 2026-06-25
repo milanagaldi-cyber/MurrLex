@@ -4,15 +4,23 @@ import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.google.android.gms.tasks.Task
+import com.google.mlkit.common.model.DownloadConditions
+import com.google.mlkit.nl.translate.TranslateLanguage
+import com.google.mlkit.nl.translate.Translation
+import com.google.mlkit.nl.translate.TranslatorOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.suspendCancellableCoroutine
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -67,6 +75,7 @@ data class StudyUiState(
     val interfaceLanguage: String = "en",
     val quickVocabularySourceLanguage: String = "Polish",
     val quickVocabularyTargetLanguage: String = "Russian",
+    val useLocalTranslation: Boolean = true,
     val translationApiUrl: String = "",
     val translationApiToken: String = "",
     val soundEffectsEnabled: Boolean = true,
@@ -114,6 +123,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             interfaceLanguage = repository.loadInterfaceLanguage(detectSystemInterfaceLanguage()),
             quickVocabularySourceLanguage = repository.loadQuickVocabularySourceLanguage(),
             quickVocabularyTargetLanguage = repository.loadQuickVocabularyTargetLanguage(),
+            useLocalTranslation = repository.loadUseLocalTranslation(),
             translationApiUrl = repository.loadTranslationApiUrl(),
             translationApiToken = repository.loadTranslationApiToken(),
             soundEffectsEnabled = repository.loadSoundEffectsEnabled(),
@@ -268,6 +278,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
 
+
+    fun setUseLocalTranslation(enabled: Boolean) {
+        repository.saveUseLocalTranslation(enabled)
+        _uiState.value = _uiState.value.copy(
+            useLocalTranslation = enabled,
+            message = if (enabled) "Local translation enabled" else "Server translation preferred"
+        )
+    }
     fun setTranslationApiUrl(url: String) {
         repository.saveTranslationApiUrl(url)
         _uiState.value = _uiState.value.copy(translationApiUrl = url.trim())
@@ -1293,7 +1311,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         repository.saveLesson(updatedLesson)
         val visibleLessons = repository.loadLessons(state.showHiddenLessons)
-        val canTranslate = state.translationApiUrl.isNotBlank() && state.translationApiToken.isNotBlank()
+        val canTranslate = state.useLocalTranslation || (state.translationApiUrl.isNotBlank() && state.translationApiToken.isNotBlank())
         _uiState.value = state.copy(
             lessons = visibleLessons,
             selectedLessonIds = emptySet(),
@@ -1356,6 +1374,49 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+
+    private suspend fun requestLocalTranslation(
+        phrase: String,
+        sourceLanguage: String,
+        targetLanguage: String
+    ): String {
+        val source = sourceLanguage.mlKitLanguageCode() ?: return ""
+        val target = targetLanguage.mlKitLanguageCode() ?: return ""
+        if (source == target) return phrase
+        val options = TranslatorOptions.Builder()
+            .setSourceLanguage(source)
+            .setTargetLanguage(target)
+            .build()
+        val translator = Translation.getClient(options)
+        return try {
+            val conditions = DownloadConditions.Builder().build()
+            awaitMlKitTask(translator.downloadModelIfNeeded(conditions))
+            awaitMlKitTask(translator.translate(phrase))
+        } finally {
+            translator.close()
+        }
+    }
+
+    private suspend fun <T> awaitMlKitTask(task: Task<T>): T = suspendCancellableCoroutine { continuation ->
+        task.addOnSuccessListener { value ->
+            if (continuation.isActive) continuation.resume(value)
+        }.addOnFailureListener { error ->
+            if (continuation.isActive) continuation.resumeWithException(error)
+        }
+    }
+
+    private fun String.mlKitLanguageCode(): String? {
+        val normalized = trim().lowercase(Locale.ROOT)
+        return when {
+            normalized in listOf("en", "eng", "english") || normalized.contains("\u0430\u043d\u0433\u043b") || normalized.contains("angiels") -> TranslateLanguage.ENGLISH
+            normalized in listOf("de", "deu", "ger", "german", "deutsch") || normalized.contains("\u043d\u0435\u043c\u0435\u0446") || normalized.contains("\u043d\u044f\u043c\u0435\u0446") -> TranslateLanguage.GERMAN
+            normalized in listOf("es", "spa", "spanish", "espanol") || normalized.contains("\u0438\u0441\u043f\u0430\u043d") || normalized.contains("\u0456\u0441\u043f\u0430\u043d") -> TranslateLanguage.SPANISH
+            normalized in listOf("pl", "pol", "polish", "polski") || normalized.contains("\u043f\u043e\u043b\u044c") -> TranslateLanguage.POLISH
+            normalized in listOf("ru", "rus", "russian") || normalized.contains("\u0440\u0443\u0441") || normalized.contains("\u0440\u043e\u0441") -> TranslateLanguage.RUSSIAN
+            normalized in listOf("uk", "ua", "ukr", "ukrainian") || normalized.contains("\u0443\u043a\u0440\u0430") -> TranslateLanguage.UKRAINIAN
+            else -> null
+        }
+    }
     private suspend fun requestTranslation(
         apiUrl: String,
         apiToken: String,
@@ -1445,7 +1506,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun quickVocabularyLessonInfo(sourceLanguage: String, targetLanguage: String): String {
-        return "Quick voice captures. Source language: $sourceLanguage. Target language: $targetLanguage. Translation is generated by the configured server when available, otherwise saved as pending."
+        return "Quick voice captures. Source language: $sourceLanguage. Target language: $targetLanguage. Translation is generated locally first when supported, then by the configured server when available; otherwise it is saved as pending."
     }
 
     private fun newLessonId(): String = "lesson_${UUID.randomUUID()}"

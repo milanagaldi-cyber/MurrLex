@@ -104,6 +104,14 @@ class CardRepository(private val context: Context) {
     }
 
 
+
+    fun loadUseLocalTranslation(): Boolean {
+        return preferences.getBoolean(KEY_USE_LOCAL_TRANSLATION, true)
+    }
+
+    fun saveUseLocalTranslation(enabled: Boolean) {
+        preferences.edit().putBoolean(KEY_USE_LOCAL_TRANSLATION, enabled).apply()
+    }
     fun loadTranslationApiUrl(): String {
         return preferences.getString(KEY_TRANSLATION_API_URL, "") ?: ""
     }
@@ -391,6 +399,7 @@ class CardRepository(private val context: Context) {
         private const val KEY_INTERFACE_LANGUAGE = "interface_language"
         private const val KEY_QUICK_VOCABULARY_SOURCE_LANGUAGE = "quick_vocabulary_source_language"
         private const val KEY_QUICK_VOCABULARY_TARGET_LANGUAGE = "quick_vocabulary_target_language"
+        private const val KEY_USE_LOCAL_TRANSLATION = "use_local_translation"
         private const val KEY_TRANSLATION_API_URL = "translation_api_url"
         private const val KEY_TRANSLATION_API_TOKEN = "translation_api_token"
         private const val KEY_STUDY_SESSION_PREFIX = "study_session_"

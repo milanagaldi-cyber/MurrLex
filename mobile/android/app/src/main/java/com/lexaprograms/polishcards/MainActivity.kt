@@ -822,6 +822,7 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
                     notificationMaxDraft = state.notificationMaxDraft,
               quickVocabularySourceLanguage = state.quickVocabularySourceLanguage,
               quickVocabularyTargetLanguage = state.quickVocabularyTargetLanguage,
+              useLocalTranslation = state.useLocalTranslation,
               translationApiUrl = state.translationApiUrl,
               translationApiToken = state.translationApiToken,
                     onCardStartSideChange = viewModel::setCardStartSide,
@@ -834,6 +835,7 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
                     onNotificationMaxChange = viewModel::updateNotificationMaxDraft,
               onQuickVocabularySourceChange = viewModel::setQuickVocabularySourceLanguage,
               onQuickVocabularyTargetChange = viewModel::setQuickVocabularyTargetLanguage,
+        onUseLocalTranslationChange = viewModel::setUseLocalTranslation,
         onTranslationApiUrlChange = viewModel::setTranslationApiUrl,
         onTranslationApiTokenChange = viewModel::setTranslationApiToken,
                     onSaveNotificationInterval = { viewModel.saveNotificationInterval(context) },
@@ -1165,6 +1167,7 @@ private fun SettingsScreen(
     notificationMaxDraft: String,
     quickVocabularySourceLanguage: String,
     quickVocabularyTargetLanguage: String,
+    useLocalTranslation: Boolean,
     translationApiUrl: String,
     translationApiToken: String,
     onCardStartSideChange: (CardStartSide) -> Unit,
@@ -1177,6 +1180,7 @@ private fun SettingsScreen(
     onNotificationMaxChange: (String) -> Unit,
     onQuickVocabularySourceChange: (String) -> Unit,
     onQuickVocabularyTargetChange: (String) -> Unit,
+    onUseLocalTranslationChange: (Boolean) -> Unit,
     onTranslationApiUrlChange: (String) -> Unit,
     onTranslationApiTokenChange: (String) -> Unit,
     onSaveNotificationInterval: () -> Unit,
@@ -1403,7 +1407,7 @@ private fun SettingsScreen(
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
-                    text = "Choose the language pair for phrases captured with the microphone on the Lessons screen. If a translation API is configured, the app fills the other side automatically.",
+                    text = "Choose the language pair for phrases captured with the microphone on the Lessons screen. Local translation is tried first when enabled; the server API is used as a fallback.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1420,6 +1424,12 @@ private fun SettingsScreen(
                     label = { Text("Target language") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
+                )
+                SettingsSwitchRow(
+                    title = "Local translation",
+                    description = "Use Android on-device translation first when the selected languages are supported. The first use may download a language model.",
+                    checked = useLocalTranslation,
+                    onCheckedChange = onUseLocalTranslationChange
                 )
                 OutlinedTextField(
                     value = translationApiUrl,
@@ -3420,7 +3430,7 @@ private fun EmptyState(text: String) {
 
 private fun String.exportFileName(): String {
     return lowercase()
-        .replace(Regex("[^a-z0-9Ð°-ÑÑ‘Ä…Ä‡Ä™Å‚Å„Ã³Å›ÅºÅ¼]+"), "_")
+        .replace(Regex("[^a-z0-9\\u0430-\\u044f\\u0451\\u0105\\u0107\\u0119\\u0142\\u0144\\u00f3\\u015b\\u017a\\u017c]+"), "_")
         .trim('_')
         .ifBlank { "lesson" }
 }
@@ -3660,7 +3670,9 @@ private fun sampleLessonJson(): String {
 
 private fun versionLogText(): String {
     return """
-        v0.60 - Moved study order, restart, and hide-starred controls into the top bar, replaced the hide-done icon with a crossed star state, enlarged the study card, centered the answer action row, and added server-backed translation settings for quick voice vocabulary.`r`n        v0.59 - Moved quick vocabulary voice capture below the lesson list, fixed quick voice lesson creation and source-language recognition, tightened the OK button, changed Correct feedback into a flying star, refined hide-completed controls, and improved Left-counter navigation.
+        v0.61 - Added local on-device translation as the default quick vocabulary translation path, with server translation kept as a fallback when configured.
+        v0.60 - Moved study order, restart, and hide-starred controls into the top bar, replaced the hide-done icon with a crossed star state, enlarged the study card, centered the answer action row, and added server-backed translation settings for quick voice vocabulary.
+        v0.59 - Moved quick vocabulary voice capture below the lesson list, fixed quick voice lesson creation and source-language recognition, tightened the OK button, changed Correct feedback into a flying star, refined hide-completed controls, and improved Left-counter navigation.
         v0.58 - Fixed answer-bar spacing, replaced Show all text with an icon, made study counters navigable, added quick voice capture into a New vocabulary lesson with configurable source/target languages, and extended voice silence retry behavior.
         v0.57 - Centered and enlarged voice controls, moved speech playback to the answer bar, added hold-to-keep-recording voice behavior, hid the lesson title behind the info popup, refined missing-letter hints, and kept technical bubbles in English.
         v0.56 - Simplified the Copy action to an icon-only button, kept Check active for empty answers with a white Enter answer bubble, and changed order switching feedback to show the active mode name.
