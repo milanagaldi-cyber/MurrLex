@@ -383,8 +383,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             message = if (enabled) "Vibration enabled" else "Vibration disabled"
         )
     }
-    private fun defaultBackVisible(): Boolean {
+    private fun defaultBackVisible(card: Flashcard? = _uiState.value.currentCard): Boolean {
+        if (card?.shouldStartOnBackSide() == true) return true
         return _uiState.value.cardStartSide == CardStartSide.TRANSLATION
+    }
+
+    private fun Flashcard.shouldStartOnBackSide(): Boolean {
+        if (kindCode() != "LN" || correctText().isBlank()) return false
+        val native = nativeText().trim()
+        return native.isBlank() || native.contains("translation pending", ignoreCase = true)
     }
 
     private fun orderStudyCards(
@@ -620,7 +627,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             currentIndex = nextIndex.coerceAtMost((cards.size - 1).coerceAtLeast(0)),
             answer = "",
             answerFeedbackVisible = false,
-            isBackVisible = defaultBackVisible(),
+            isBackVisible = defaultBackVisible(cards.getOrNull(nextIndex)),
             message = mode.displayLabel()
         )
         saveCurrentStudySession()
@@ -638,7 +645,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             currentIndex = 0,
             completedCardIds = emptySet(),
             portionCompletionSaved = false,
-            isBackVisible = defaultBackVisible(),
+            isBackVisible = defaultBackVisible(cards.firstOrNull()),
             answer = "",
             answerFeedbackVisible = false,
             message = null
@@ -649,10 +656,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun previousCard() {
         val state = _uiState.value
         if (state.currentPortion.isEmpty()) return
+        val nextIndex = (state.currentIndex - 1).coerceAtLeast(0)
         _uiState.value = state.copy(
-            currentIndex = (state.currentIndex - 1).coerceAtLeast(0),
+            currentIndex = nextIndex,
             cardTransitionDirection = -1,
-            isBackVisible = defaultBackVisible(),
+            isBackVisible = defaultBackVisible(state.currentPortion.getOrNull(nextIndex)),
             answer = "",
             answerFeedbackVisible = false,
             message = null
@@ -663,10 +671,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun nextCard() {
         val state = _uiState.value
         if (state.currentPortion.isEmpty()) return
+        val nextIndex = (state.currentIndex + 1).coerceAtMost(state.currentPortion.lastIndex)
         _uiState.value = state.copy(
-            currentIndex = (state.currentIndex + 1).coerceAtMost(state.currentPortion.lastIndex),
+            currentIndex = nextIndex,
             cardTransitionDirection = 1,
-            isBackVisible = defaultBackVisible(),
+            isBackVisible = defaultBackVisible(state.currentPortion.getOrNull(nextIndex)),
             answer = "",
             answerFeedbackVisible = false,
             message = null
@@ -680,7 +689,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.value = state.copy(
             currentIndex = 0,
             cardTransitionDirection = -1,
-            isBackVisible = defaultBackVisible(),
+            isBackVisible = defaultBackVisible(state.currentPortion.firstOrNull()),
             answer = "",
             answerFeedbackVisible = false,
             message = null
@@ -702,7 +711,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.value = state.copy(
             currentIndex = targetIndex,
             cardTransitionDirection = if (targetIndex >= state.currentIndex) 1 else -1,
-            isBackVisible = defaultBackVisible(),
+            isBackVisible = defaultBackVisible(state.currentPortion.getOrNull(targetIndex)),
             answer = "",
             answerFeedbackVisible = false,
             message = null
@@ -718,7 +727,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.value = state.copy(
             currentIndex = targetIndex,
             cardTransitionDirection = if (targetIndex >= state.currentIndex) 1 else -1,
-            isBackVisible = defaultBackVisible(),
+            isBackVisible = defaultBackVisible(state.currentPortion.getOrNull(targetIndex)),
             answer = "",
             answerFeedbackVisible = false,
             message = null
