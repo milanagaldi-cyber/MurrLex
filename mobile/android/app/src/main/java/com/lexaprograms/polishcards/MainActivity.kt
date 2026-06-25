@@ -171,7 +171,12 @@ private val CompletedFrameColor = Color(0xFFE8F5E9)
 
 private enum class VoiceInputTarget {
     ANSWER,
-    QUICK_VOCABULARY
+    QUICK_VOCABULARY,
+    CARD_NATIVE,
+    CARD_CORRECT,
+    CARD_HINT,
+    CARD_MADE_AT,
+    CARD_WHERE
 }
 
 private data class UiText(
@@ -291,6 +296,7 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
     var voiceElapsedMs by remember { mutableStateOf(0L) }
     var pendingVoiceStart by remember { mutableStateOf(false) }
     var voiceLanguageTag by remember { mutableStateOf(Locale.getDefault().toLanguageTag()) }
+    var voiceExpectedLanguage by remember { mutableStateOf("System language") }
     var voiceTarget by remember { mutableStateOf(VoiceInputTarget.ANSWER) }
     var voiceNoMatchRetried by remember { mutableStateOf(false) }
     var voiceHoldActive by remember { mutableStateOf(false) }
@@ -378,6 +384,11 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
                             viewModel.showMessage("Voice input added")
                         }
                         VoiceInputTarget.QUICK_VOCABULARY -> viewModel.addQuickVocabularyCard(spokenText)
+                        VoiceInputTarget.CARD_NATIVE -> viewModel.updateCardDraft(state.cardDraft.copy(nativeValue = spokenText))
+                        VoiceInputTarget.CARD_CORRECT -> viewModel.updateCardDraft(state.cardDraft.copy(correctValue = spokenText))
+                        VoiceInputTarget.CARD_HINT -> viewModel.updateCardDraft(state.cardDraft.copy(hint = spokenText))
+                        VoiceInputTarget.CARD_MADE_AT -> viewModel.updateCardDraft(state.cardDraft.copy(madeAt = spokenText))
+                        VoiceInputTarget.CARD_WHERE -> viewModel.updateCardDraft(state.cardDraft.copy(where = spokenText))
                     }
                 } else {
                     viewModel.showMessage("No speech recognized")
@@ -439,13 +450,36 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
             viewModel.showMessage("Voice input is not available on this device")
             return
         }
-        voiceTarget = target
-        voiceLanguageTag = when (target) {
-            VoiceInputTarget.ANSWER -> state.currentCard.speechLanguageTag(state.interfaceLanguage)
-            VoiceInputTarget.QUICK_VOCABULARY -> state.quickVocabularySourceLanguage.speechLanguageTagFromName()
-                ?: state.quickVocabularySourceLanguage.speechLanguageTagFromText()
-                ?: Locale.getDefault().toLanguageTag()
+        val draftCard = state.cardDraft.editingCardId?.let { id ->
+            state.selectedLesson?.cards?.firstOrNull { it.id == id }
+                ?: state.editorLesson?.cards?.firstOrNull { it.id == id }
         }
+        val lessonSampleCard = state.editorLesson?.cards?.firstOrNull() ?: state.selectedLesson?.cards?.firstOrNull()
+        val language = when (target) {
+            VoiceInputTarget.ANSWER -> state.currentCard.voiceLanguageForCorrectSide(state.interfaceLanguage)
+            VoiceInputTarget.QUICK_VOCABULARY -> languageForVoice(state.quickVocabularySourceLanguage, "", state.interfaceLanguage)
+            VoiceInputTarget.CARD_NATIVE -> languageForVoice(
+                draftCard?.sourceLanguage?.ifBlank { draftCard.frontLabel() }
+                    ?: lessonSampleCard?.sourceLanguage?.ifBlank { lessonSampleCard.frontLabel() }
+                    ?: state.quickVocabularySourceLanguage,
+                state.cardDraft.nativeValue,
+                state.interfaceLanguage
+            )
+            VoiceInputTarget.CARD_CORRECT -> languageForVoice(
+                draftCard?.targetLanguage?.ifBlank { draftCard.backLabel() }
+                    ?: lessonSampleCard?.targetLanguage?.ifBlank { lessonSampleCard.backLabel() }
+                    ?: state.quickVocabularyTargetLanguage,
+                state.cardDraft.correctValue,
+                state.interfaceLanguage
+            )
+            VoiceInputTarget.CARD_HINT,
+            VoiceInputTarget.CARD_MADE_AT,
+            VoiceInputTarget.CARD_WHERE -> languageForVoice(state.interfaceLanguage, "", state.interfaceLanguage)
+        }
+        voiceTarget = target
+        voiceLanguageTag = language.first
+        voiceExpectedLanguage = language.second
+        viewModel.showMessage("Speak ${language.second}")
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             voicePermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
             return
@@ -551,20 +585,17 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
     LaunchedEffect(state.message) {
         val message = state.message
         if (message != null) {
-            if (message == "Correct") {
+            if (message == "CorrectStar") {
                 successStarVisible = true
                 delay(1000)
                 successStarVisible = false
                 viewModel.consumeMessage()
-            } else if (message in setOf("Enter answer", "Original", "Alphabetical", "Random")) {
+            } else {
                 messageBubbleText = message
                 messageBubblePositive = false
                 messageBubbleVisible = true
-                delay(1000)
+                delay(1400)
                 messageBubbleVisible = false
-                viewModel.consumeMessage()
-            } else {
-                snackbarHostState.showSnackbar(message)
                 viewModel.consumeMessage()
             }
         }
@@ -574,6 +605,7 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
     if (voiceDialogVisible) {
         VoiceInputDialog(
             status = voiceStatus,
+            languageLabel = voiceExpectedLanguage,
             elapsedMs = voiceElapsedMs,
             isRecording = voiceRecording,
             onHoldStart = {
@@ -612,7 +644,7 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
                     if (state.screen != AppScreen.CATALOG) {
                         IconButton(onClick = {
                             titleActivated = true
-                            viewModel.openCatalog()
+                            viewModel.navigateBack()
                         }) {
                             Icon(Icons.Default.ArrowBack, contentDescription = ui.back)
                         }
@@ -872,7 +904,8 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
                     onCancelCardEditing = viewModel::cancelCardEditing,
                     onToggleCardStar = viewModel::toggleCardStar,
                     onSave = viewModel::saveEditedLesson,
-                    onDeleteLesson = viewModel::deleteLesson
+                    onDeleteLesson = viewModel::deleteLesson,
+                    onVoiceInputForCardField = { target -> startVoiceInput(target) }
                 )
             }
             if (state.screen == AppScreen.STUDY && state.cardDraft.editingCardId != null) {
@@ -881,7 +914,8 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
                     onCardDraftChange = viewModel::updateCardDraft,
                     onSave = viewModel::saveCurrentStudyCard,
                     onDelete = viewModel::deleteCurrentStudyCard,
-                    onDismiss = viewModel::cancelCardEditing
+                    onDismiss = viewModel::cancelCardEditing,
+                    onVoiceInput = { target -> startVoiceInput(target) }
                 )
             }
             MessageBubble(
@@ -973,12 +1007,38 @@ private fun MessageBubble(
 }
 
 @Composable
+private fun VoiceDraftField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    singleLine: Boolean = false,
+    onVoiceInput: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = onValueChange,
+            modifier = Modifier.weight(1f),
+            label = { Text(label) },
+            singleLine = singleLine
+        )
+        IconButton(onClick = onVoiceInput) {
+            Icon(Icons.Default.Mic, contentDescription = "Voice input for $label")
+        }
+    }
+}
+@Composable
 private fun StudyCardEditorDialog(
     cardDraft: CardDraft,
     onCardDraftChange: (CardDraft) -> Unit,
     onSave: () -> Unit,
     onDelete: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onVoiceInput: (VoiceInputTarget) -> Unit
 ) {
     val ui = rememberUiText()
     var showDeleteConfirm by remember { mutableStateOf(false) }
@@ -1031,43 +1091,38 @@ private fun StudyCardEditorDialog(
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    OutlinedTextField(
+                    VoiceDraftField(
                         value = cardDraft.nativeValue,
                         onValueChange = { onCardDraftChange(cardDraft.copy(nativeValue = it)) },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text(ui.mistakeSource) },
-                        singleLine = false
+                        label = ui.mistakeSource,
+                        onVoiceInput = { onVoiceInput(VoiceInputTarget.CARD_NATIVE) }
                     )
-                    OutlinedTextField(
+                    VoiceDraftField(
                         value = cardDraft.correctValue,
                         onValueChange = { onCardDraftChange(cardDraft.copy(correctValue = it)) },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text(ui.makeItRight) },
-                        singleLine = false
+                        label = ui.makeItRight,
+                        onVoiceInput = { onVoiceInput(VoiceInputTarget.CARD_CORRECT) }
                     )
-                    OutlinedTextField(
+                    VoiceDraftField(
                         value = cardDraft.hint,
                         onValueChange = { onCardDraftChange(cardDraft.copy(hint = it)) },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text(ui.hintOrRule) },
-                        singleLine = false
+                        label = ui.hintOrRule,
+                        onVoiceInput = { onVoiceInput(VoiceInputTarget.CARD_HINT) }
                     )
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        OutlinedTextField(
-                            value = cardDraft.madeAt,
-                            onValueChange = { onCardDraftChange(cardDraft.copy(madeAt = it)) },
-                            modifier = Modifier.weight(1f),
-                            label = { Text(ui.madeAt) },
-                            singleLine = true
-                        )
-                        OutlinedTextField(
-                            value = cardDraft.where,
-                            onValueChange = { onCardDraftChange(cardDraft.copy(where = it)) },
-                            modifier = Modifier.weight(1f),
-                            label = { Text(ui.where) },
-                            singleLine = true
-                        )
-                    }
+                    VoiceDraftField(
+                        value = cardDraft.madeAt,
+                        onValueChange = { onCardDraftChange(cardDraft.copy(madeAt = it)) },
+                        label = ui.madeAt,
+                        singleLine = true,
+                        onVoiceInput = { onVoiceInput(VoiceInputTarget.CARD_MADE_AT) }
+                    )
+                    VoiceDraftField(
+                        value = cardDraft.where,
+                        onValueChange = { onCardDraftChange(cardDraft.copy(where = it)) },
+                        label = ui.where,
+                        singleLine = true,
+                        onVoiceInput = { onVoiceInput(VoiceInputTarget.CARD_WHERE) }
+                    )
                 }
             }
         },
@@ -2288,53 +2343,22 @@ private fun StudyMode.displayLabel(): String {
 
 @Composable
 private fun StudyHideStarIcon(active: Boolean, modifier: Modifier = Modifier) {
-    Box(
+    Icon(
+        imageVector = Icons.Default.Star,
+        contentDescription = if (active) "Starred cards hidden" else "Hide starred cards",
         modifier = modifier.size(24.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        val slashColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f)
-        Icon(
-            imageVector = Icons.Default.Star,
-            contentDescription = if (active) "Starred cards hidden" else "Hide starred cards",
-            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f)
-        )
-        if (active) {
-            Canvas(modifier = Modifier.size(24.dp)) {
-                drawLine(
-                    color = slashColor,
-                    start = Offset(size.width * 0.18f, size.height * 0.82f),
-                    end = Offset(size.width * 0.82f, size.height * 0.18f),
-                    strokeWidth = 2.dp.toPx()
-                )
-            }
-        }
-    }
+        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (active) 0.96f else 0.34f)
+    )
 }
-
 
 @Composable
 private fun StudyHideDoneIcon(active: Boolean, modifier: Modifier = Modifier) {
-    Box(
+    Icon(
+        imageVector = Icons.Default.DoneAll,
+        contentDescription = if (active) "Done cards hidden" else "Hide done cards",
         modifier = modifier.size(24.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        val slashColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f)
-        Icon(
-            imageVector = Icons.Default.DoneAll,
-            contentDescription = if (active) "Done cards hidden" else "Hide done cards",
-            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f)
-        )
-        if (active) {
-            Canvas(modifier = Modifier.size(24.dp)) {
-                drawLine(
-                    color = slashColor,
-                    start = Offset(size.width * 0.18f, size.height * 0.82f),
-                    end = Offset(size.width * 0.82f, size.height * 0.18f),
-                    strokeWidth = 2.dp.toPx()
-                )
-            }
-        }
-    }
+        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (active) 0.96f else 0.34f)
+    )
 }
 @Composable
 private fun CardNavigation(
@@ -2785,6 +2809,33 @@ private fun Flashcard.speechLanguageTagForSide(isBackVisible: Boolean, interface
         ?: Locale.getDefault().toLanguageTag()
 }
 
+private fun Flashcard?.voiceLanguageForCorrectSide(interfaceLanguage: String): Pair<String, String> {
+    val languageName = this?.targetLanguage?.ifBlank { this.backLabel() }.orEmpty()
+    val sampleText = this?.correctText().orEmpty()
+    return languageForVoice(languageName, sampleText, interfaceLanguage)
+}
+
+private fun languageForVoice(languageName: String, sampleText: String, interfaceLanguage: String): Pair<String, String> {
+    val tag = languageName.speechLanguageTagFromName()
+        ?: sampleText.speechLanguageTagFromText()
+        ?: interfaceLanguage.speechLanguageTagFromName()
+        ?: Locale.getDefault().toLanguageTag()
+    val label = languageName.trim().ifBlank { tag.speechLanguageDisplayName() }
+    return tag to label
+}
+
+private fun String.speechLanguageDisplayName(): String {
+    return when (substringBefore('-').lowercase(Locale.ROOT)) {
+        "en" -> "English"
+        "de" -> "German"
+        "be" -> "Belarusian"
+        "es" -> "Spanish"
+        "uk" -> "Ukrainian"
+        "ru" -> "Russian"
+        "pl" -> "Polish"
+        else -> "System language"
+    }
+}
 private fun String.speechLanguageTagFromName(): String? {
     val normalized = trim().lowercase(Locale.ROOT)
     return when {
@@ -2848,6 +2899,7 @@ private fun buildMistakesAndLog(card: Flashcard): String {
 @Composable
 private fun VoiceInputDialog(
     status: String,
+    languageLabel: String,
     elapsedMs: Long,
     isRecording: Boolean,
     onHoldStart: () -> Unit,
@@ -2883,6 +2935,12 @@ private fun VoiceInputDialog(
                     style = MaterialTheme.typography.displaySmall,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    text = "Expected speech: $languageLabel",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
                     text = status,
@@ -3217,7 +3275,8 @@ private fun LessonEditorScreen(
     onCancelCardEditing: () -> Unit,
     onToggleCardStar: (Int, Int) -> Unit,
     onSave: () -> Unit,
-    onDeleteLesson: (String) -> Unit
+    onDeleteLesson: (String) -> Unit,
+    onVoiceInputForCardField: (VoiceInputTarget) -> Unit
 ) {
     val lesson = state.editorLesson ?: return
     val cardDraft = state.cardDraft
@@ -3278,40 +3337,37 @@ private fun LessonEditorScreen(
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    OutlinedTextField(
+                    VoiceDraftField(
                         value = cardDraft.nativeValue,
                         onValueChange = { onCardDraftChange(cardDraft.copy(nativeValue = it)) },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Native value") },
-                        singleLine = false
+                        label = "Native value",
+                        onVoiceInput = { onVoiceInputForCardField(VoiceInputTarget.CARD_NATIVE) }
                     )
-                    OutlinedTextField(
+                    VoiceDraftField(
                         value = cardDraft.correctValue,
                         onValueChange = { onCardDraftChange(cardDraft.copy(correctValue = it)) },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Make it right") },
-                        singleLine = false
+                        label = "Make it right",
+                        onVoiceInput = { onVoiceInputForCardField(VoiceInputTarget.CARD_CORRECT) }
                     )
-                    OutlinedTextField(
+                    VoiceDraftField(
                         value = cardDraft.hint,
                         onValueChange = { onCardDraftChange(cardDraft.copy(hint = it)) },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Hint or rule") },
-                        singleLine = false
+                        label = "Hint or rule",
+                        onVoiceInput = { onVoiceInputForCardField(VoiceInputTarget.CARD_HINT) }
                     )
-                    OutlinedTextField(
+                    VoiceDraftField(
                         value = cardDraft.madeAt,
                         onValueChange = { onCardDraftChange(cardDraft.copy(madeAt = it)) },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Made at") },
-                        singleLine = true
+                        label = "Made at",
+                        singleLine = true,
+                        onVoiceInput = { onVoiceInputForCardField(VoiceInputTarget.CARD_MADE_AT) }
                     )
-                    OutlinedTextField(
+                    VoiceDraftField(
                         value = cardDraft.where,
                         onValueChange = { onCardDraftChange(cardDraft.copy(where = it)) },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Where") },
-                        singleLine = true
+                        label = "Where",
+                        singleLine = true,
+                        onVoiceInput = { onVoiceInputForCardField(VoiceInputTarget.CARD_WHERE) }
                     )
                 }
             },
@@ -3768,6 +3824,7 @@ private fun sampleLessonJson(): String {
 
 private fun versionLogText(): String {
     return """
+        v0.64 - Improved settings back navigation, added fast white service bubbles, voice input for card editor fields, and clearer filter toggle icons.
         v0.63 - Disabled the unreliable on-device translator, removed the heavy ML Kit translation dependency, and made voice vocabulary cards save with a clear pending-translation message when no server translator is configured.
         v0.62 - Added study text/control size settings, star and done filters, better answer feedback, and quieter study interactions.
         v0.61 - Added local on-device translation as the default quick vocabulary translation path, with server translation kept as a fallback when configured.

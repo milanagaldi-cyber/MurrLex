@@ -62,6 +62,7 @@ data class CardDraft(
 
 data class StudyUiState(
     val screen: AppScreen = AppScreen.CATALOG,
+    val settingsReturnScreen: AppScreen = AppScreen.CATALOG,
     val lessons: List<Lesson> = emptyList(),
     val selectedLessonIds: Set<String> = emptySet(),
     val showHiddenLessons: Boolean = false,
@@ -210,7 +211,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
     fun openSettings() {
-        _uiState.value = _uiState.value.copy(screen = AppScreen.SETTINGS)
+        val state = _uiState.value
+        if (state.screen == AppScreen.SETTINGS) {
+            closeSettings()
+        } else {
+            _uiState.value = state.copy(
+                screen = AppScreen.SETTINGS,
+                settingsReturnScreen = state.screen
+            )
+        }
+    }
+
+    fun navigateBack() {
+        if (_uiState.value.screen == AppScreen.SETTINGS) {
+            closeSettings()
+        } else {
+            openCatalog()
+        }
+    }
+
+    private fun closeSettings() {
+        val state = _uiState.value
+        val hasUnsavedDrafts = state.notificationIntervalDraft != repository.loadNotificationIntervalMinutes().toString() ||
+            state.notificationMaxDraft != repository.loadMaxActiveNotifications().toString()
+        _uiState.value = state.copy(
+            screen = state.settingsReturnScreen,
+            message = if (hasUnsavedDrafts) "Some settings were not saved" else null
+        )
     }
 
     fun setCardStartSide(side: CardStartSide) {
@@ -741,7 +768,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (normalize(state.answer) == normalize(card.correctText())) {
             recordCardWork(card.id, "correct")
             addStarForCorrectTypedAnswer(card.id)
-            completeCurrentCard(message = "Correct")
+            completeCurrentCard(message = "CorrectStar")
         } else {
             recordWrongAnswer(card.id, state.answer)
             _uiState.value = _uiState.value.copy(answerFeedbackVisible = true, message = "Try again")
@@ -781,7 +808,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val shouldSavePortionCompletion = portionComplete && !state.portionCompletionSaved && selectedLesson != null
         val shouldCloseAfterNotificationAnswer = state.openedFromNotification &&
             newCompletion &&
-            (message == null || message == "Correct")
+            (message == null || message == "Correct" || message == "CorrectStar")
 
         if (shouldSavePortionCompletion) {
             repository.incrementCompletedCount(selectedLesson.id)
