@@ -258,7 +258,7 @@ class CardRepository(private val context: Context) {
             .putString(KEY_LESSONS, json.encodeToString(lessons))
             .putString(KEY_HIDDEN_LESSONS, json.encodeToString(hiddenLessonIds))
             .putString(KEY_LESSON_ORDER, json.encodeToString(lessonOrder))
-            .apply()
+            .commit()
     }
 
     fun saveLessonOrder(lessonIds: List<String>) {

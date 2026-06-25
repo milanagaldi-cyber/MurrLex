@@ -1010,7 +1010,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             hideCompletedCards = false,
             currentPortion = updatedPortion,
             currentIndex = targetIndex,
-            cardTransitionDirection = -1,
+            cardTransitionDirection = 1,
             completedCardIds = emptySet(),
             portionCompletionSaved = false,
             isBackVisible = defaultBackVisible(updatedPortion.getOrNull(targetIndex)),
@@ -1607,14 +1607,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val existingLesson = visibleLessonsForQuickVocabulary
             .filter { lesson ->
                 lesson.id.startsWith(QUICK_VOCABULARY_LESSON_ID) &&
-                    lesson.cards.any { card -> card.targetLanguage.equals(targetLanguage, ignoreCase = true) }
+                    (lesson.targetLanguage.equals(targetLanguage, ignoreCase = true) ||
+                        lesson.cards.any { card -> card.targetLanguage.equals(targetLanguage, ignoreCase = true) })
             }
-            .maxByOrNull { lesson -> lesson.cards.maxOfOrNull { it.madeAt } ?: "" }
+            .maxByOrNull { lesson -> lesson.cards.firstOrNull()?.madeAt ?: "" }
         val lessonId = existingLesson?.id ?: "${QUICK_VOCABULARY_LESSON_ID}_${targetLanguage.safeIdPart()}_${UUID.randomUUID()}"
         val now = timestamp()
-        val nextCardId = (existingLesson?.cards?.maxOfOrNull { it.id } ?: 0) + 1
         val newCard = Flashcard(
-            id = nextCardId,
+            id = 1,
             nativeValue = "Empty",
             correctValue = cleanPhrase,
             hint = "Captured by voice in the target language. Fill the Empty native side later.",
@@ -1633,7 +1633,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 lessonInfo = quickVocabularyLessonInfo(sourceLanguage, targetLanguage),
                 sourceLanguage = sourceLanguage,
                 targetLanguage = targetLanguage,
-                cards = listOf(newCard),
+                cards = listOf(newCard).reindexCards(),
                 editable = true
             )
         } else {
@@ -1642,7 +1642,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 lessonInfo = quickVocabularyLessonInfo(sourceLanguage, targetLanguage),
                 sourceLanguage = existingLesson.sourceLanguage.lessonLanguageOrNull() ?: sourceLanguage,
                 targetLanguage = existingLesson.targetLanguage.lessonLanguageOrNull() ?: targetLanguage,
-                cards = listOf(newCard) + existingLesson.cards,
+                cards = (listOf(newCard) + existingLesson.cards).reindexCards(),
                 editable = true,
                 hidden = false
             )
