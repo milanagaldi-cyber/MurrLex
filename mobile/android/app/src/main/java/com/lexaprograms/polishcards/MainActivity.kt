@@ -319,6 +319,8 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
     var voiceHoldActive by remember { mutableStateOf(false) }
     var voiceHoldReleasedAt by remember { mutableStateOf(0L) }
     var lastVoiceActivityAt by remember { mutableStateOf(0L) }
+    var quickEditCardId by remember { mutableStateOf<Int?>(null) }
+    val quickEditActive = quickEditCardId != null && state.currentCard?.id == quickEditCardId
     var showHeaderLessonInfo by remember { mutableStateOf(false) }
     var textToSpeechReady by remember { mutableStateOf(false) }
     val textToSpeech = remember {
@@ -470,7 +472,11 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
         }
         val lessonSampleCard = state.editorLesson?.cards?.firstOrNull() ?: state.selectedLesson?.cards?.firstOrNull()
         val language = when (target) {
-            VoiceInputTarget.ANSWER -> state.currentCard.voiceLanguageForCorrectSide(state.interfaceLanguage)
+            VoiceInputTarget.ANSWER -> if (quickEditActive) {
+                state.currentCard.voiceLanguageForDisplayedSide(state.isBackVisible, state.interfaceLanguage)
+            } else {
+                state.currentCard.voiceLanguageForCorrectSide(state.interfaceLanguage)
+            }
             VoiceInputTarget.QUICK_VOCABULARY -> languageForVoice(state.quickVocabularyTargetLanguage, "", state.interfaceLanguage)
             VoiceInputTarget.CARD_NATIVE -> languageForVoice(
                 draftCard?.sourceLanguage?.ifBlank { draftCard.frontLabel() }
@@ -605,19 +611,31 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
     LaunchedEffect(state.message) {
         val message = state.message
         if (message != null) {
-            if (message == "CorrectStar") {
-                successStarVisible = true
-                delay(1000)
+            var completed = false
+            try {
+                if (message == "CorrectStar") {
+                    successStarVisible = true
+                    delay(900)
+                    completed = true
+                    viewModel.consumeMessage()
+                } else {
+                    messageBubbleText = message
+                    messageBubblePositive = false
+                    messageBubbleVisible = true
+                    delay(1000)
+                    completed = true
+                    viewModel.consumeMessage()
+                }
+            } finally {
                 successStarVisible = false
-                viewModel.consumeMessage()
-            } else {
-                messageBubbleText = message
-                messageBubblePositive = false
-                messageBubbleVisible = true
-                delay(1400)
                 messageBubbleVisible = false
-                viewModel.consumeMessage()
+                if (!completed && state.message == message) {
+                    viewModel.consumeMessage()
+                }
             }
+        } else {
+            messageBubbleVisible = false
+            successStarVisible = false
         }
     }
 
@@ -765,6 +783,7 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
                     isCurrentCardDone = state.currentCard?.id in state.completedCardIds,
                     answerFeedbackVisible = state.answerFeedbackVisible,
                     isVoiceRecording = voiceRecording,
+                    quickEditMode = quickEditActive,
                     onAnswerChange = viewModel::updateAnswer,
                     onCheck = viewModel::previewAnswer,
                     onOk = {
@@ -777,8 +796,14 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
                         }
                         viewModel.acceptCurrentCard()
                     },
-                    onSaveEmptySide = viewModel::saveEmptySideFromAnswer,
-                    onClearAnswer = { viewModel.updateAnswer("") },
+                    onSaveEmptySide = {
+                        viewModel.saveVisibleSideFromAnswer(state.isBackVisible)
+                        quickEditCardId = null
+                    },
+                    onClearAnswer = {
+                        viewModel.updateAnswer("")
+                        quickEditCardId = null
+                    },
                     onCopy = { text ->
                         viewModel.updateAnswer(text)
                         viewModel.showMessage(ui.copiedToInput)
@@ -863,6 +888,11 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
                     onToggleStar = { cardId, starIndex ->
                         performFeedback(context, state.soundEffectsEnabled, state.vibrationEnabled, FeedbackCue.TAP)
                         viewModel.toggleCardStar(cardId, starIndex)
+                    },
+                    onQuickEditCard = {
+                        performFeedback(context, state.soundEffectsEnabled, state.vibrationEnabled, FeedbackCue.TAP)
+                        quickEditCardId = state.currentCard?.id
+                        viewModel.updateAnswer("")
                     },
                     onEditCard = {
                         performFeedback(context, state.soundEffectsEnabled, state.vibrationEnabled, FeedbackCue.TAP)
@@ -2256,6 +2286,7 @@ private fun StudyScreen(
     onOpenCatalog: () -> Unit,
     onToggleCard: () -> Unit,
     onToggleStar: (Int, Int) -> Unit,
+    onQuickEditCard: () -> Unit,
     onEditCard: () -> Unit,
     showCardLog: Boolean,
     onShareCard: (Lesson, Flashcard) -> Unit
@@ -2310,6 +2341,7 @@ private fun StudyScreen(
                         isBackVisible = state.isBackVisible,
                         onClick = onToggleCard,
                         onToggleStar = onToggleStar,
+                        onQuickEditCard = onQuickEditCard,
                         onEditCard = onEditCard,
                         displayTextSize = state.displayTextSize,
                         controlSize = state.controlSize,
@@ -2538,6 +2570,7 @@ private fun StudyCard(
     isBackVisible: Boolean,
     onClick: () -> Unit,
     onToggleStar: (Int, Int) -> Unit,
+    onQuickEditCard: () -> Unit,
     onEditCard: () -> Unit,
     displayTextSize: DisplayTextSize,
     controlSize: ControlSize,
@@ -2646,13 +2679,18 @@ private fun StudyCard(
                         CircleTextButton(text = "M", onClick = { showMistakes = true })
                     }
                     CircleTextButton(text = "?", onClick = { showRule = true })
-                    IconButton(
-                        onClick = onEditCard,
-                        enabled = card != null,
+                    Box(
                         modifier = Modifier
                             .size(44.dp)
                             .clip(RoundedCornerShape(22.dp))
                             .background(Color.White.copy(alpha = 0.92f))
+                            .pointerInput(card?.id) {
+                                detectTapGestures(
+                                    onTap = { if (card != null) onQuickEditCard() },
+                                    onLongPress = { if (card != null) onEditCard() }
+                                )
+                            },
+                        contentAlignment = Alignment.Center
                     ) {
                         Icon(Icons.Default.Edit, contentDescription = "Edit card", tint = Color(0xFF111111))
                     }
@@ -2917,6 +2955,16 @@ private fun Flashcard.speechLanguageTagForSide(isBackVisible: Boolean, interface
         ?: Locale.getDefault().toLanguageTag()
 }
 
+private fun Flashcard?.voiceLanguageForDisplayedSide(isBackVisible: Boolean, interfaceLanguage: String): Pair<String, String> {
+    val card = this ?: return languageForVoice(interfaceLanguage, "", interfaceLanguage)
+    val languageName = if (isBackVisible) {
+        card.targetLanguage.ifBlank { card.backLabel() }
+    } else {
+        card.sourceLanguage.ifBlank { card.frontLabel() }
+    }
+    return languageForVoice(languageName, card.displayedCardText(isBackVisible), interfaceLanguage)
+}
+
 private fun Flashcard?.voiceLanguageForCorrectSide(interfaceLanguage: String): Pair<String, String> {
     val card = this ?: return languageForVoice(interfaceLanguage, "", interfaceLanguage)
     val languageName = when {
@@ -3124,6 +3172,7 @@ private fun AnswerBar(
     isCurrentCardDone: Boolean,
     answerFeedbackVisible: Boolean,
     isVoiceRecording: Boolean,
+    quickEditMode: Boolean,
     onAnswerChange: (String) -> Unit,
     onCheck: () -> Unit,
     onOk: () -> Unit,
@@ -3138,8 +3187,12 @@ private fun AnswerBar(
     val isDisplayedEmptySide = currentCard
         ?.displayedCardText(isBackVisible)
         ?.let { text -> text.isBlank() || text.isEmptyPlaceholder() } == true
+    val usesEditActionBar = quickEditMode || isDisplayedEmptySide
+    val typedAnswerCorrect = currentCard?.let { card ->
+        answer.isNotBlank() && normalizeAnswerText(answer) == normalizeAnswerText(card.correctText())
+    } == true
     val doneLocked = currentCard != null && isCurrentCardDone && answer.none { it.isLetter() }
-    val canSubmit = currentCard != null && !doneLocked
+    val canSubmit = currentCard != null && !doneLocked && typedAnswerCorrect && !usesEditActionBar
     Surface(
         tonalElevation = 4.dp,
         color = MaterialTheme.colorScheme.surface,
@@ -3181,15 +3234,15 @@ private fun AnswerBar(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                if (isDisplayedEmptySide) {
+                if (usesEditActionBar) {
                     Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
                         OutlinedButton(
                             onClick = onClearAnswer,
-                            enabled = answer.isNotBlank(),
+                            enabled = quickEditMode || answer.isNotBlank(),
                             shape = RoundedCornerShape(18.dp),
                             contentPadding = PaddingValues(horizontal = 10.dp)
                         ) {
-                            Text("Clear")
+                            Text("Cancel")
                         }
                     }
                     Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
@@ -4076,6 +4129,7 @@ private fun sampleLessonJson(): String {
 
 private fun versionLogText(): String {
     return """
+        v0.73 - Added quick visible-side editing from the study card Edit button, kept long-press full editing, shortened transient messages, and made OK require a correct typed answer.
         v0.69 - Reverted segmented voice recognition to the previous single-pass flow for stability, keeping the pending-translation and lesson action refinements.
         v0.68 - Extended voice capture pauses to six seconds with segmented recognition, restored pending-translation cards so the missing side remains visible after flipping, and refined lesson delete/share actions with confirmation.
         v0.67 - Changed quick vocabulary languages to dropdowns, made quick voice capture listen in the target language, showed pending-translation cards on their filled side, and removed voice input from card meta/log fields.

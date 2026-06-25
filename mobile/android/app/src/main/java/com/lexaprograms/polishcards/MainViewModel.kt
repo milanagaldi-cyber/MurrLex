@@ -802,7 +802,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         completeCurrentCard(message = "Skipped")
     }
 
-    fun saveEmptySideFromAnswer() {
+    fun saveVisibleSideFromAnswer(isBackVisible: Boolean) {
         val state = _uiState.value
         val lesson = state.selectedLesson ?: return
         val card = state.currentCard ?: return
@@ -815,25 +815,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val updatedCards = lesson.cards.map { lessonCard ->
             if (lessonCard.id != card.id) {
                 lessonCard
-            } else if (lessonCard.nativeText().isEmptyPlaceholder()) {
-                lessonCard.copy(
-                    nativeValue = cleanAnswer,
-                    log = lessonCard.log + "$now - filled Empty native side"
-                )
-            } else if (lessonCard.correctText().isEmptyPlaceholder()) {
+            } else if (isBackVisible) {
                 lessonCard.copy(
                     correctValue = cleanAnswer,
-                    log = lessonCard.log + "$now - filled Empty correct side"
+                    log = lessonCard.log + "$now - updated visible correct side"
+                )
+            } else if (lessonCard.kindCode() == "MK") {
+                lessonCard.copy(
+                    mistake = cleanAnswer,
+                    log = lessonCard.log + "$now - updated visible mistake side"
                 )
             } else {
-                lessonCard
+                lessonCard.copy(
+                    nativeValue = cleanAnswer,
+                    log = lessonCard.log + "$now - updated visible native side"
+                )
             }
         }
         val updatedCard = updatedCards.firstOrNull { it.id == card.id } ?: card
-        if (updatedCard == card) {
-            _uiState.value = state.copy(message = "Nothing to fill", answerFeedbackVisible = false)
-            return
-        }
         val updatedLesson = lesson.copy(cards = updatedCards, editable = true)
         repository.saveLesson(updatedLesson)
         val lessons = repository.loadLessons(state.showHiddenLessons)
