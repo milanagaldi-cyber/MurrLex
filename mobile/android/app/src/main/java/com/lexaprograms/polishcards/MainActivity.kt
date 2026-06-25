@@ -66,6 +66,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
@@ -3182,10 +3183,10 @@ private fun AnswerBar(
                 if (isEmptySideCard) {
                     Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
                         AnswerIconButton(
-                            icon = Icons.Default.Check,
-                            contentDescription = "Save empty side",
-                            enabled = currentCard != null,
-                            onClick = onSaveEmptySide,
+                            icon = Icons.Default.Clear,
+                            contentDescription = "Clear input",
+                            enabled = answer.isNotBlank(),
+                            onClick = onClearAnswer,
                             size = controlSize.answerIconButtonSize()
                         )
                     }
@@ -3217,10 +3218,10 @@ private fun AnswerBar(
                     }
                     Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
                         AnswerIconButton(
-                            icon = Icons.Default.Delete,
-                            contentDescription = "Clear input",
-                            enabled = answer.isNotBlank(),
-                            onClick = onClearAnswer,
+                            icon = Icons.Default.Edit,
+                            contentDescription = "Write empty side",
+                            enabled = currentCard != null,
+                            onClick = onSaveEmptySide,
                             size = controlSize.answerIconButtonSize()
                         )
                     }
