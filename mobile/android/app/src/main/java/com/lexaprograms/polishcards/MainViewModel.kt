@@ -391,8 +391,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun Flashcard.shouldStartOnBackSide(): Boolean {
         if (kindCode() != "LN" || correctText().isBlank()) return false
         val native = nativeText().trim()
-        return native.isBlank() || native.contains("translation pending", ignoreCase = true)
+        return native.isBlank() || native.isEmptyPlaceholder() || native.contains("translation pending", ignoreCase = true)
     }
+
+    private fun String.isEmptyPlaceholder(): Boolean = trim().equals("Empty", ignoreCase = true)
 
     private fun orderStudyCards(
         cards: List<Flashcard>,
@@ -798,6 +800,55 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun skipCurrentCard() {
         _uiState.value.currentCard?.let { recordCardWork(it.id, "skipped") }
         completeCurrentCard(message = "Skipped")
+    }
+
+    fun saveEmptySideFromAnswer() {
+        val state = _uiState.value
+        val lesson = state.selectedLesson ?: return
+        val card = state.currentCard ?: return
+        val cleanAnswer = state.answer.trim()
+        if (cleanAnswer.isBlank()) {
+            _uiState.value = state.copy(message = "Enter answer", answerFeedbackVisible = false)
+            return
+        }
+        val now = timestamp()
+        val updatedCards = lesson.cards.map { lessonCard ->
+            if (lessonCard.id != card.id) {
+                lessonCard
+            } else if (lessonCard.nativeText().isEmptyPlaceholder()) {
+                lessonCard.copy(
+                    nativeValue = cleanAnswer,
+                    log = lessonCard.log + "$now - filled Empty native side"
+                )
+            } else if (lessonCard.correctText().isEmptyPlaceholder()) {
+                lessonCard.copy(
+                    correctValue = cleanAnswer,
+                    log = lessonCard.log + "$now - filled Empty correct side"
+                )
+            } else {
+                lessonCard
+            }
+        }
+        val updatedCard = updatedCards.firstOrNull { it.id == card.id } ?: card
+        if (updatedCard == card) {
+            _uiState.value = state.copy(message = "Nothing to fill", answerFeedbackVisible = false)
+            return
+        }
+        val updatedLesson = lesson.copy(cards = updatedCards, editable = true)
+        repository.saveLesson(updatedLesson)
+        val lessons = repository.loadLessons(state.showHiddenLessons)
+        val savedLesson = lessons.firstOrNull { it.id == updatedLesson.id } ?: updatedLesson
+        _uiState.value = state.copy(
+            lessons = lessons,
+            selectedLesson = savedLesson,
+            currentPortion = state.currentPortion.map { portionCard ->
+                if (portionCard.id == updatedCard.id) updatedCard else portionCard
+            },
+            answer = "",
+            answerFeedbackVisible = false,
+            message = "Saved"
+        )
+        saveCurrentStudySession()
     }
 
     private fun completeCurrentCard(message: String?) {
@@ -1408,9 +1459,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val nextCardId = (existingLesson?.cards?.maxOfOrNull { it.id } ?: 0) + 1
         val newCard = Flashcard(
             id = nextCardId,
-            nativeValue = "Native translation pending",
+            nativeValue = "Empty",
             correctValue = cleanPhrase,
-            hint = "Captured by voice in the target language. Add the native translation later.",
+            hint = "Captured by voice in the target language. Fill the Empty native side later.",
             madeAt = now,
             where = "Quick vocabulary microphone",
             log = listOf("$now - captured by quick vocabulary microphone as $targetLanguage"),
@@ -1431,35 +1482,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             existingLesson.copy(
                 title = existingLesson.title.ifBlank { lessonTitle },
                 lessonInfo = quickVocabularyLessonInfo(sourceLanguage, targetLanguage),
-                cards = existingLesson.cards + newCard,
+                cards = listOf(newCard) + existingLesson.cards,
                 editable = true,
                 hidden = false
             )
         }
         repository.saveLesson(updatedLesson)
         val visibleLessons = repository.loadLessons(state.showHiddenLessons)
-        val hasServerTranslation = state.translationApiUrl.isNotBlank() && state.translationApiToken.isNotBlank()
+        val savedLesson = visibleLessons.firstOrNull { it.id == updatedLesson.id } ?: updatedLesson
+        val studyCards = filterStudyCards(savedLesson.cards, state.excludeMasteredCards, false, state.completedCardIds)
+        val focusedPortion = orderStudyCards(studyCards, StudyMode.ORIGINAL, shuffleRandom = false)
+        val focusedIndex = focusedPortion.indexOfFirst { it.id == newCard.id }.takeIf { it >= 0 } ?: 0
         _uiState.value = state.copy(
             lessons = visibleLessons,
+            selectedLesson = savedLesson,
             selectedLessonIds = emptySet(),
-            screen = AppScreen.CATALOG,
-            message = when {
-                hasServerTranslation -> "Added: $cleanPhrase. Translating native side..."
-                state.useLocalTranslation -> "Added: $cleanPhrase. Native translation pending"
-                else -> "Added: $cleanPhrase. Native translation pending"
-            }
+            screen = AppScreen.STUDY,
+            mode = StudyMode.ORIGINAL,
+            hideCompletedCards = false,
+            currentPortion = focusedPortion,
+            currentIndex = focusedIndex,
+            cardTransitionDirection = -1,
+            isBackVisible = defaultBackVisible(focusedPortion.getOrNull(focusedIndex)),
+            answer = "",
+            answerFeedbackVisible = false,
+            message = "Added: $cleanPhrase"
         )
-        if (hasServerTranslation) {
-            translateQuickVocabularyCard(
-                lessonId = updatedLesson.id,
-                cardId = newCard.id,
-                phrase = cleanPhrase,
-                sourceLanguage = targetLanguage,
-                targetLanguage = sourceLanguage,
-                apiUrl = state.translationApiUrl,
-                apiToken = state.translationApiToken
-            )
-        }
+        saveCurrentStudySession()
     }
 
     private fun translateQuickVocabularyCard(

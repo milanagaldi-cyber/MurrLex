@@ -759,7 +759,7 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
             if (state.screen == AppScreen.STUDY && !state.isPortionFinished && state.currentCard != null) {
                 AnswerBar(
                     answer = state.answer,
-                    answerLabel = state.currentCard?.backLabel().orEmpty().ifBlank { ui.makeItRight },
+                    answerLabel = state.currentCard?.answerInputLabel().orEmpty().ifBlank { ui.makeItRight },
                     currentCard = state.currentCard,
                     isBackVisible = state.isBackVisible,
                     isCurrentCardDone = state.currentCard?.id in state.completedCardIds,
@@ -777,6 +777,8 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
                         }
                         viewModel.acceptCurrentCard()
                     },
+                    onSaveEmptySide = viewModel::saveEmptySideFromAnswer,
+                    onClearAnswer = { viewModel.updateAnswer("") },
                     onCopy = { text ->
                         viewModel.updateAnswer(text)
                         viewModel.showMessage(ui.copiedToInput)
@@ -2872,7 +2874,19 @@ private fun Flashcard.frontDisplayText(): String {
 private fun Flashcard.hasPendingNativeTranslation(): Boolean {
     if (kindCode() != "LN" || correctText().isBlank()) return false
     val native = nativeText().trim()
-    return native.isBlank() || native.contains("translation pending", ignoreCase = true)
+    return native.isBlank() || native.isEmptyPlaceholder() || native.contains("translation pending", ignoreCase = true)
+}
+
+private fun String.isEmptyPlaceholder(): Boolean = trim().equals("Empty", ignoreCase = true)
+
+private fun Flashcard.hasEmptySide(): Boolean = nativeText().isEmptyPlaceholder() || correctText().isEmptyPlaceholder()
+
+private fun Flashcard.answerInputLabel(): String {
+    return when {
+        nativeText().isEmptyPlaceholder() -> sourceLanguage.ifBlank { frontLabel() }
+        correctText().isEmptyPlaceholder() -> targetLanguage.ifBlank { backLabel() }
+        else -> backLabel()
+    }
 }
 
 private fun Flashcard?.speechLanguageTag(interfaceLanguage: String): String {
@@ -2904,8 +2918,17 @@ private fun Flashcard.speechLanguageTagForSide(isBackVisible: Boolean, interface
 }
 
 private fun Flashcard?.voiceLanguageForCorrectSide(interfaceLanguage: String): Pair<String, String> {
-    val languageName = this?.targetLanguage?.ifBlank { this.backLabel() }.orEmpty()
-    val sampleText = this?.correctText().orEmpty()
+    val card = this ?: return languageForVoice(interfaceLanguage, "", interfaceLanguage)
+    val languageName = when {
+        card.nativeText().isEmptyPlaceholder() -> card.sourceLanguage.ifBlank { card.frontLabel() }
+        card.correctText().isEmptyPlaceholder() -> card.targetLanguage.ifBlank { card.backLabel() }
+        else -> card.targetLanguage.ifBlank { card.backLabel() }
+    }
+    val sampleText = when {
+        card.nativeText().isEmptyPlaceholder() -> card.nativeText()
+        card.correctText().isEmptyPlaceholder() -> card.correctText()
+        else -> card.correctText()
+    }
     return languageForVoice(languageName, sampleText, interfaceLanguage)
 }
 
@@ -3104,12 +3127,15 @@ private fun AnswerBar(
     onAnswerChange: (String) -> Unit,
     onCheck: () -> Unit,
     onOk: () -> Unit,
+    onSaveEmptySide: () -> Unit,
+    onClearAnswer: () -> Unit,
     onCopy: (String) -> Unit,
     onVoiceToggle: () -> Unit,
     onSpeak: () -> Unit,
     onDismissAnswerFeedback: () -> Unit,
     controlSize: ControlSize = ControlSize.MEDIUM,
 ) {
+    val isEmptySideCard = currentCard?.hasEmptySide() == true
     val doneLocked = currentCard != null && isCurrentCardDone && answer.none { it.isLetter() }
     val canSubmit = currentCard != null && !doneLocked
     Surface(
@@ -3153,75 +3179,122 @@ private fun AnswerBar(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                    AnswerIconButton(
-                        icon = Icons.Default.ContentCopy,
-                        contentDescription = "Copy visible card text",
-                        enabled = currentCard != null,
-                        onClick = { currentCard?.displayedCardText(isBackVisible)?.let(onCopy) },
-                        size = controlSize.answerIconButtonSize()
-                    )
-                }
-                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                    AnswerIconButton(
-                        icon = Icons.Default.VolumeUp,
-                        contentDescription = "Read aloud",
-                        enabled = currentCard != null,
-                        onClick = onSpeak,
-                        size = controlSize.answerIconButtonSize()
-                    )
-                }
-                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                    Surface(
-                        modifier = Modifier
-                            .size(controlSize.micButtonSize())
-                            .clickable(enabled = currentCard != null) { onVoiceToggle() },
-                        shape = RoundedCornerShape(23.dp),
-                        border = BorderStroke(
-                            width = if (isVoiceRecording) 3.dp else 1.dp,
-                            color = if (isVoiceRecording) BrandSaladColor else MaterialTheme.colorScheme.outline
-                        ),
-                        color = when {
-                            isVoiceRecording -> BrandSaladColor.copy(alpha = 0.24f)
-                            currentCard != null -> MaterialTheme.colorScheme.surface
-                            else -> MaterialTheme.colorScheme.surfaceVariant
-                        }
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(
-                                Icons.Default.Mic,
-                                contentDescription = "Voice input",
-                                modifier = Modifier.size(36.dp),
-                                tint = if (isVoiceRecording) Color(0xFF234231) else if (currentCard != null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.outline
-                            )
+                if (isEmptySideCard) {
+                    Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                        AnswerIconButton(
+                            icon = Icons.Default.Check,
+                            contentDescription = "Save empty side",
+                            enabled = currentCard != null,
+                            onClick = onSaveEmptySide,
+                            size = controlSize.answerIconButtonSize()
+                        )
+                    }
+                    Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                        Surface(
+                            modifier = Modifier
+                                .size(controlSize.micButtonSize())
+                                .clickable(enabled = currentCard != null) { onVoiceToggle() },
+                            shape = RoundedCornerShape(23.dp),
+                            border = BorderStroke(
+                                width = if (isVoiceRecording) 3.dp else 1.dp,
+                                color = if (isVoiceRecording) BrandSaladColor else MaterialTheme.colorScheme.outline
+                            ),
+                            color = when {
+                                isVoiceRecording -> BrandSaladColor.copy(alpha = 0.24f)
+                                currentCard != null -> MaterialTheme.colorScheme.surface
+                                else -> MaterialTheme.colorScheme.surfaceVariant
+                            }
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    Icons.Default.Mic,
+                                    contentDescription = "Voice input",
+                                    modifier = Modifier.size(36.dp),
+                                    tint = if (isVoiceRecording) Color(0xFF234231) else if (currentCard != null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.outline
+                                )
+                            }
                         }
                     }
-                }
-                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                    AnswerIconButton(
-                        icon = Icons.Default.Check,
-                        contentDescription = "Check answer",
-                        enabled = currentCard != null,
-                        onClick = onCheck,
-                        size = controlSize.answerIconButtonSize()
-                    )
-                }
-                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                    Button(
-                        onClick = onOk,
-                        modifier = Modifier
-                            .size(controlSize.okButtonSize()),
-                        shape = RoundedCornerShape(18.dp),
-                        enabled = canSubmit,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFFE4F6E8),
-                            contentColor = Color(0xFF234231),
-                            disabledContainerColor = Color(0xFFC8CEC4),
-                            disabledContentColor = Color(0xFF5F685D)
-                        ),
-                        contentPadding = PaddingValues(horizontal = 0.dp)
-                    ) {
-                        Text("OK")
+                    Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                        AnswerIconButton(
+                            icon = Icons.Default.Delete,
+                            contentDescription = "Clear input",
+                            enabled = answer.isNotBlank(),
+                            onClick = onClearAnswer,
+                            size = controlSize.answerIconButtonSize()
+                        )
+                    }
+                } else {
+                    Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                        AnswerIconButton(
+                            icon = Icons.Default.ContentCopy,
+                            contentDescription = "Copy visible card text",
+                            enabled = currentCard != null,
+                            onClick = { currentCard?.displayedCardText(isBackVisible)?.let(onCopy) },
+                            size = controlSize.answerIconButtonSize()
+                        )
+                    }
+                    Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                        AnswerIconButton(
+                            icon = Icons.Default.VolumeUp,
+                            contentDescription = "Read aloud",
+                            enabled = currentCard != null,
+                            onClick = onSpeak,
+                            size = controlSize.answerIconButtonSize()
+                        )
+                    }
+                    Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                        Surface(
+                            modifier = Modifier
+                                .size(controlSize.micButtonSize())
+                                .clickable(enabled = currentCard != null) { onVoiceToggle() },
+                            shape = RoundedCornerShape(23.dp),
+                            border = BorderStroke(
+                                width = if (isVoiceRecording) 3.dp else 1.dp,
+                                color = if (isVoiceRecording) BrandSaladColor else MaterialTheme.colorScheme.outline
+                            ),
+                            color = when {
+                                isVoiceRecording -> BrandSaladColor.copy(alpha = 0.24f)
+                                currentCard != null -> MaterialTheme.colorScheme.surface
+                                else -> MaterialTheme.colorScheme.surfaceVariant
+                            }
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    Icons.Default.Mic,
+                                    contentDescription = "Voice input",
+                                    modifier = Modifier.size(36.dp),
+                                    tint = if (isVoiceRecording) Color(0xFF234231) else if (currentCard != null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.outline
+                                )
+                            }
+                        }
+                    }
+                    Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                        AnswerIconButton(
+                            icon = Icons.Default.Check,
+                            contentDescription = "Check answer",
+                            enabled = currentCard != null,
+                            onClick = onCheck,
+                            size = controlSize.answerIconButtonSize()
+                        )
+                    }
+                    Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                        Button(
+                            onClick = onOk,
+                            modifier = Modifier
+                                .size(controlSize.okButtonSize()),
+                            shape = RoundedCornerShape(18.dp),
+                            enabled = canSubmit,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFFE4F6E8),
+                                contentColor = Color(0xFF234231),
+                                disabledContainerColor = Color(0xFFC8CEC4),
+                                disabledContentColor = Color(0xFF5F685D)
+                            ),
+                            contentPadding = PaddingValues(horizontal = 0.dp)
+                        ) {
+                            Text("OK")
+                        }
                     }
                 }
             }
