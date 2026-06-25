@@ -126,7 +126,7 @@ class CardRepository(private val context: Context) {
 
 
     fun loadUseLocalTranslation(): Boolean {
-        return preferences.getBoolean(KEY_USE_LOCAL_TRANSLATION, true)
+        return preferences.getBoolean(KEY_USE_LOCAL_TRANSLATION, false)
     }
 
     fun saveUseLocalTranslation(enabled: Boolean) {
