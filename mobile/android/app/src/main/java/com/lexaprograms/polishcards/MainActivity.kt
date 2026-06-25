@@ -249,7 +249,9 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
     var showSplash by remember { mutableStateOf(true) }
     var splashReady by remember { mutableStateOf(false) }
     var titleActivated by remember { mutableStateOf(false) }
-    var correctBubbleVisible by remember { mutableStateOf(false) }
+    var messageBubbleVisible by remember { mutableStateOf(false) }
+    var messageBubbleText by remember { mutableStateOf("") }
+    var messageBubblePositive by remember { mutableStateOf(false) }
     val appTitleColor by animateColorAsState(
         targetValue = if (titleActivated) BrandSaladColor else BrandRedColor,
         animationSpec = tween(durationMillis = 3000),
@@ -500,10 +502,12 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
     LaunchedEffect(state.message) {
         val message = state.message
         if (message != null) {
-            if (message == "Correct") {
-                correctBubbleVisible = true
+            if (message in setOf("Correct", "Enter answer", "Original", "Alphabetical", "Random")) {
+                messageBubbleText = if (message == "Correct") ui.correct else message
+                messageBubblePositive = message == "Correct"
+                messageBubbleVisible = true
                 delay(1000)
-                correctBubbleVisible = false
+                messageBubbleVisible = false
                 viewModel.consumeMessage()
             } else {
                 snackbarHostState.showSnackbar(message)
@@ -738,8 +742,10 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
                     onDismiss = viewModel::cancelCardEditing
                 )
             }
-            CorrectBubble(
-                visible = correctBubbleVisible,
+            MessageBubble(
+                text = messageBubbleText,
+                visible = messageBubbleVisible,
+                positive = messageBubblePositive,
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .padding(top = 22.dp)
@@ -751,8 +757,12 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
 }
 
 @Composable
-private fun CorrectBubble(visible: Boolean, modifier: Modifier = Modifier) {
-    val ui = rememberUiText()
+private fun MessageBubble(
+    text: String,
+    visible: Boolean,
+    positive: Boolean,
+    modifier: Modifier = Modifier
+) {
     AnimatedVisibility(
         visible = visible,
         enter = fadeIn(animationSpec = tween(140)) + slideInVertically(
@@ -769,14 +779,14 @@ private fun CorrectBubble(visible: Boolean, modifier: Modifier = Modifier) {
             shape = RoundedCornerShape(999.dp),
             tonalElevation = 6.dp,
             shadowElevation = 8.dp,
-            color = BrandSaladColor.copy(alpha = 0.96f)
+            color = if (positive) BrandSaladColor.copy(alpha = 0.96f) else Color.White.copy(alpha = 0.98f)
         ) {
             Text(
-                text = ui.correct,
+                text = text,
                 modifier = Modifier.padding(horizontal = 22.dp, vertical = 10.dp),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
-                color = Color(0xFF17351F)
+                color = if (positive) Color(0xFF17351F) else Color(0xFF202821)
             )
         }
     }
@@ -2616,8 +2626,6 @@ private fun AnswerBar(
                     enabled = currentCard != null
                 ) {
                     Icon(Icons.Default.ContentCopy, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Copy")
                 }
                 Surface(
                     modifier = Modifier
@@ -2647,16 +2655,16 @@ private fun AnswerBar(
                     modifier = Modifier
                         .height(48.dp)
                         .width(58.dp)
-                        .clickable(enabled = currentCard != null && answer.isNotBlank()) { onCheck() },
+                        .clickable(enabled = currentCard != null) { onCheck() },
                     shape = RoundedCornerShape(18.dp),
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-                    color = if (currentCard != null && answer.isNotBlank()) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surfaceVariant
+                    color = if (currentCard != null) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surfaceVariant
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
                             Icons.Default.Check,
                             contentDescription = "Check answer",
-                            tint = if (currentCard != null && answer.isNotBlank()) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.outline
+                            tint = if (currentCard != null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.outline
                         )
                     }
                 }
@@ -3345,6 +3353,7 @@ private fun sampleLessonJson(): String {
 
 private fun versionLogText(): String {
     return """
+        v0.56 - Simplified the Copy action to an icon-only button, kept Check active for empty answers with a white Enter answer bubble, and changed order switching feedback to show the active mode name.
         v0.55 - Made Original the default study order, added a next-order hint when changing order, changed voice input to tap-to-record/tap-to-stop with silence timeout, and added a Check action with visual answer highlighting.
         v0.54 - Added text-to-speech playback on study cards with a speaker icon that reads the currently visible side using the card language when available.
         v0.53 - Replaced the study order label with a compact cycling icon, added a Refresh action to restart the current lesson session, and saved unfinished lesson sessions so returning to a lesson restores the last card, order, answer, and completed progress.

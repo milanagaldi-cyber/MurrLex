@@ -265,11 +265,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun StudyMode.nextModeLabel(): String {
+    private fun StudyMode.displayLabel(): String {
         return when (this) {
-            StudyMode.ORIGINAL -> "Alphabetical"
-            StudyMode.ALPHABETICAL -> "Random"
-            StudyMode.RANDOM -> "Original"
+            StudyMode.ORIGINAL -> "Original"
+            StudyMode.ALPHABETICAL -> "Alphabetical"
+            StudyMode.RANDOM -> "Random"
         }
     }
 
@@ -494,7 +494,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             answer = "",
             answerFeedbackVisible = false,
             isBackVisible = defaultBackVisible(),
-            message = "Next: ${mode.nextModeLabel()}"
+            message = mode.displayLabel()
         )
         saveCurrentStudySession()
     }
@@ -584,7 +584,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val state = _uiState.value
         val card = state.currentCard ?: return
         if (state.answer.isBlank()) {
-            _uiState.value = state.copy(answerFeedbackVisible = true, message = "Type an answer first")
+            _uiState.value = state.copy(answerFeedbackVisible = false, message = "Enter answer")
         } else if (normalize(state.answer) == normalize(card.correctText())) {
             _uiState.value = state.copy(answerFeedbackVisible = false, message = "Correct")
         } else {
