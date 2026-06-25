@@ -128,6 +128,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
@@ -273,7 +276,6 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
     var voiceStatus by remember { mutableStateOf("Hold to speak") }
     var voiceElapsedMs by remember { mutableStateOf(0L) }
     var pendingVoiceStart by remember { mutableStateOf(false) }
-    var voicePressActive by remember { mutableStateOf(false) }
     var voiceLanguageTag by remember { mutableStateOf(Locale.getDefault().toLanguageTag()) }
     var showHeaderLessonInfo by remember { mutableStateOf(false) }
     var textToSpeechReady by remember { mutableStateOf(false) }
@@ -294,7 +296,7 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
     val voicePermissionLauncher =
         rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             when {
-                granted && voicePressActive -> pendingVoiceStart = true
+                granted -> pendingVoiceStart = true
                 !granted -> viewModel.showMessage("Microphone permission denied")
             }
         }
@@ -313,13 +315,11 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
             override fun onBufferReceived(buffer: ByteArray?) = Unit
 
             override fun onEndOfSpeech() {
-                voicePressActive = false
                 voiceRecording = false
                 voiceStatus = "Recognizing..."
             }
 
             override fun onError(error: Int) {
-                voicePressActive = false
                 voiceRecording = false
                 voiceDialogVisible = false
                 val message = when (error) {
@@ -334,7 +334,6 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
             }
 
             override fun onResults(results: Bundle?) {
-                voicePressActive = false
                 voiceRecording = false
                 voiceDialogVisible = false
                 val spokenText = results
@@ -395,9 +394,13 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
     }
 
     fun startVoiceInput() {
-        voicePressActive = true
+        if (voiceRecording) {
+            voiceRecording = false
+            voiceStatus = "Recognizing..."
+            speechRecognizer?.stopListening()
+            return
+        }
         if (speechRecognizer == null) {
-            voicePressActive = false
             viewModel.showMessage("Voice input is not available on this device")
             return
         }
@@ -410,7 +413,6 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
     }
 
     fun stopVoiceInput() {
-        voicePressActive = false
         if (!voiceRecording) return
         voiceRecording = false
         voiceStatus = "Recognizing..."
@@ -439,7 +441,6 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
     LaunchedEffect(pendingVoiceStart) {
         if (!pendingVoiceStart || speechRecognizer == null) return@LaunchedEffect
         pendingVoiceStart = false
-        if (!voicePressActive) return@LaunchedEffect
         voiceElapsedMs = 0L
         voiceStatus = "Listening..."
         voiceDialogVisible = true
@@ -595,7 +596,10 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
                     currentCard = state.currentCard,
                     isBackVisible = state.isBackVisible,
                     isCurrentCardDone = state.currentCard?.id in state.completedCardIds,
+                    answerFeedbackVisible = state.answerFeedbackVisible,
+                    isVoiceRecording = voiceRecording,
                     onAnswerChange = viewModel::updateAnswer,
+                    onCheck = viewModel::previewAnswer,
                     onOk = {
                         val typedCorrect = state.answer.isNotBlank() &&
                             state.currentCard?.let { card ->
@@ -610,8 +614,7 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
                         viewModel.updateAnswer(text)
                         viewModel.showMessage(ui.copiedToInput)
                     },
-                    onVoiceStart = { startVoiceInput() },
-                    onVoiceEnd = { stopVoiceInput() }
+                    onVoiceToggle = { startVoiceInput() }
                 )
             }
         }
@@ -2522,6 +2525,37 @@ private fun formatVoiceElapsed(elapsedMs: Long): String {
     return "%d:%02d".format(Locale.ROOT, minutes, seconds)
 }
 
+private fun buildAnswerFeedback(answer: String, expected: String): AnnotatedString {
+    val typed = answer.trim()
+    val target = expected.trim()
+    return buildAnnotatedString {
+        val maxLength = maxOf(typed.length, target.length)
+        for (index in 0 until maxLength) {
+            val typedChar = typed.getOrNull(index)
+            val targetChar = target.getOrNull(index)
+            when {
+                targetChar == null && typedChar != null -> {
+                    pushStyle(SpanStyle(color = BrandRedColor, fontWeight = FontWeight.Bold))
+                    append(typedChar)
+                    pop()
+                }
+                typedChar == null && targetChar != null -> {
+                    pushStyle(SpanStyle(color = Color(0xFFE3B400), fontWeight = FontWeight.Bold))
+                    append(if (targetChar.isWhitespace()) " " else "★")
+                    pop()
+                }
+                typedChar != null && targetChar != null &&
+                    typedChar.lowercaseChar() == targetChar.lowercaseChar() -> append(typedChar)
+                typedChar != null -> {
+                    pushStyle(SpanStyle(color = BrandRedColor, fontWeight = FontWeight.Bold))
+                    append(typedChar)
+                    pop()
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun AnswerBar(
     answer: String,
@@ -2529,11 +2563,13 @@ private fun AnswerBar(
     currentCard: Flashcard?,
     isBackVisible: Boolean,
     isCurrentCardDone: Boolean,
+    answerFeedbackVisible: Boolean,
+    isVoiceRecording: Boolean,
     onAnswerChange: (String) -> Unit,
+    onCheck: () -> Unit,
     onOk: () -> Unit,
     onCopy: (String) -> Unit,
-    onVoiceStart: () -> Unit,
-    onVoiceEnd: () -> Unit,
+    onVoiceToggle: () -> Unit,
 ) {
     val doneLocked = currentCard != null && isCurrentCardDone && answer.none { it.isLetter() }
     val canSubmit = currentCard != null && !doneLocked
@@ -2560,6 +2596,14 @@ private fun AnswerBar(
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                 keyboardActions = KeyboardActions(onDone = { if (canSubmit) onOk() })
             )
+            if (answerFeedbackVisible && currentCard != null) {
+                Text(
+                    text = buildAnswerFeedback(answer, currentCard.correctText()),
+                    modifier = Modifier.fillMaxWidth(),
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -2579,28 +2623,40 @@ private fun AnswerBar(
                     modifier = Modifier
                         .height(48.dp)
                         .width(58.dp)
-                        .pointerInput(currentCard != null) {
-                            detectTapGestures(
-                                onPress = {
-                                    if (currentCard == null) return@detectTapGestures
-                                    onVoiceStart()
-                                    try {
-                                        tryAwaitRelease()
-                                    } finally {
-                                        onVoiceEnd()
-                                    }
-                                }
-                            )
-                        },
+                        .clickable(enabled = currentCard != null) { onVoiceToggle() },
                     shape = RoundedCornerShape(18.dp),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-                    color = if (currentCard != null) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surfaceVariant
+                    border = BorderStroke(
+                        width = if (isVoiceRecording) 2.dp else 1.dp,
+                        color = if (isVoiceRecording) BrandSaladColor else MaterialTheme.colorScheme.outline
+                    ),
+                    color = when {
+                        isVoiceRecording -> BrandSaladColor.copy(alpha = 0.22f)
+                        currentCard != null -> MaterialTheme.colorScheme.surface
+                        else -> MaterialTheme.colorScheme.surfaceVariant
+                    }
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
                             Icons.Default.Mic,
                             contentDescription = "Voice input",
-                            tint = if (currentCard != null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.outline
+                            tint = if (isVoiceRecording) Color(0xFF234231) else if (currentCard != null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.outline
+                        )
+                    }
+                }
+                Surface(
+                    modifier = Modifier
+                        .height(48.dp)
+                        .width(58.dp)
+                        .clickable(enabled = currentCard != null && answer.isNotBlank()) { onCheck() },
+                    shape = RoundedCornerShape(18.dp),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                    color = if (currentCard != null && answer.isNotBlank()) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surfaceVariant
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            Icons.Default.Check,
+                            contentDescription = "Check answer",
+                            tint = if (currentCard != null && answer.isNotBlank()) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.outline
                         )
                     }
                 }
@@ -3289,6 +3345,7 @@ private fun sampleLessonJson(): String {
 
 private fun versionLogText(): String {
     return """
+        v0.55 - Made Original the default study order, added a next-order hint when changing order, changed voice input to tap-to-record/tap-to-stop with silence timeout, and added a Check action with visual answer highlighting.
         v0.54 - Added text-to-speech playback on study cards with a speaker icon that reads the currently visible side using the card language when available.
         v0.53 - Replaced the study order label with a compact cycling icon, added a Refresh action to restart the current lesson session, and saved unfinished lesson sessions so returning to a lesson restores the last card, order, answer, and completed progress.
         v0.52 - Made voice recognition choose the answer language from the card, with fallbacks from card text and interface language, and added a five-second silence timeout while keeping press-and-hold microphone behavior.

@@ -53,7 +53,7 @@ data class StudyUiState(
     val cardTransitionDirection: Int = 1,
     val completedCardIds: Set<Int> = emptySet(),
     val portionCompletionSaved: Boolean = false,
-    val mode: StudyMode = StudyMode.ALPHABETICAL,
+    val mode: StudyMode = StudyMode.ORIGINAL,
     val cardStartSide: CardStartSide = CardStartSide.POLISH,
     val excludeMasteredCards: Boolean = false,
     val showCardLog: Boolean = false,
@@ -65,6 +65,7 @@ data class StudyUiState(
     val notificationMaxDraft: String = "1",
     val isBackVisible: Boolean = false,
     val answer: String = "",
+    val answerFeedbackVisible: Boolean = false,
     val message: String? = null,
     val editorLesson: LessonDraft? = null,
     val cardDraft: CardDraft = CardDraft(),
@@ -264,10 +265,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun StudyMode.nextModeLabel(): String {
+        return when (this) {
+            StudyMode.ORIGINAL -> "Alphabetical"
+            StudyMode.ALPHABETICAL -> "Random"
+            StudyMode.RANDOM -> "Original"
+        }
+    }
+
     private fun restoreStudySession(lesson: Lesson): Boolean {
         val session = repository.loadStudySession(lesson.id) ?: return false
         val mode = runCatching { StudyMode.valueOf(session.mode) }
-            .getOrDefault(StudyMode.ALPHABETICAL)
+            .getOrDefault(StudyMode.ORIGINAL)
         val studyCards = if (session.excludeMasteredCards) {
             lesson.cards.filterNot { it.starCount() == 3 }
         } else {
@@ -299,6 +308,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             portionCompletionSaved = session.portionCompletionSaved,
             isBackVisible = session.isBackVisible,
             answer = session.answer,
+            answerFeedbackVisible = session.answerFeedbackVisible,
             message = null
         )
         return true
@@ -319,6 +329,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 portionCompletionSaved = state.portionCompletionSaved,
                 isBackVisible = state.isBackVisible,
                 answer = state.answer,
+                answerFeedbackVisible = state.answerFeedbackVisible,
                 excludeMasteredCards = state.excludeMasteredCards
             )
         )
@@ -481,7 +492,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             currentPortion = cards,
             currentIndex = nextIndex.coerceAtMost((cards.size - 1).coerceAtLeast(0)),
             answer = "",
-            isBackVisible = defaultBackVisible()
+            answerFeedbackVisible = false,
+            isBackVisible = defaultBackVisible(),
+            message = "Next: ${mode.nextModeLabel()}"
         )
         saveCurrentStudySession()
     }
@@ -504,6 +517,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             portionCompletionSaved = false,
             isBackVisible = defaultBackVisible(),
             answer = "",
+            answerFeedbackVisible = false,
             message = null
         )
     }
@@ -517,6 +531,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             cardTransitionDirection = -1,
             isBackVisible = defaultBackVisible(),
             answer = "",
+            answerFeedbackVisible = false,
             message = null
         )
         saveCurrentStudySession()
@@ -530,6 +545,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             cardTransitionDirection = 1,
             isBackVisible = defaultBackVisible(),
             answer = "",
+            answerFeedbackVisible = false,
             message = null
         )
         saveCurrentStudySession()
@@ -545,6 +561,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             cardTransitionDirection = if (targetIndex >= state.currentIndex) 1 else -1,
             isBackVisible = defaultBackVisible(),
             answer = "",
+            answerFeedbackVisible = false,
             message = null
         )
         saveCurrentStudySession()
@@ -559,7 +576,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateAnswer(answer: String) {
-        _uiState.value = _uiState.value.copy(answer = answer, message = null)
+        _uiState.value = _uiState.value.copy(answer = answer, answerFeedbackVisible = false, message = null)
+        saveCurrentStudySession()
+    }
+
+    fun previewAnswer() {
+        val state = _uiState.value
+        val card = state.currentCard ?: return
+        if (state.answer.isBlank()) {
+            _uiState.value = state.copy(answerFeedbackVisible = true, message = "Type an answer first")
+        } else if (normalize(state.answer) == normalize(card.correctText())) {
+            _uiState.value = state.copy(answerFeedbackVisible = false, message = "Correct")
+        } else {
+            _uiState.value = state.copy(answerFeedbackVisible = true, message = null)
+        }
         saveCurrentStudySession()
     }
 
@@ -573,7 +603,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             completeCurrentCard(message = "Correct")
         } else {
             recordWrongAnswer(card.id, state.answer)
-            _uiState.value = _uiState.value.copy(message = "Try again")
+            _uiState.value = _uiState.value.copy(answerFeedbackVisible = true, message = "Try again")
+            saveCurrentStudySession()
         }
     }
 
@@ -623,6 +654,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 portionCompletionSaved = true,
                 isBackVisible = defaultBackVisible(),
                 answer = "",
+                answerFeedbackVisible = false,
                 message = message,
                 closeAfterNotificationAnswer = shouldCloseAfterNotificationAnswer
             )
@@ -634,6 +666,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 portionCompletionSaved = state.portionCompletionSaved || portionComplete,
                 isBackVisible = defaultBackVisible(),
                 answer = "",
+                answerFeedbackVisible = false,
                 message = if (newCompletion) message else message,
                 closeAfterNotificationAnswer = shouldCloseAfterNotificationAnswer
             )
