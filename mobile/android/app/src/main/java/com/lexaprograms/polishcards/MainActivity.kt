@@ -316,8 +316,6 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
     var voiceExpectedLanguage by remember { mutableStateOf("System language") }
     var voiceTarget by remember { mutableStateOf(VoiceInputTarget.ANSWER) }
     var voiceNoMatchRetried by remember { mutableStateOf(false) }
-    var voiceAccumulatedText by remember { mutableStateOf("") }
-    var voiceStopRequested by remember { mutableStateOf(false) }
     var voiceHoldActive by remember { mutableStateOf(false) }
     var voiceHoldReleasedAt by remember { mutableStateOf(0L) }
     var lastVoiceActivityAt by remember { mutableStateOf(0L) }
@@ -344,26 +342,6 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
                 !granted -> viewModel.showMessage("Microphone permission denied")
             }
         }
-
-
-    fun commitVoiceInput(spokenText: String) {
-        if (spokenText.isBlank()) {
-            viewModel.showMessage("No speech recognized")
-            return
-        }
-        when (voiceTarget) {
-            VoiceInputTarget.ANSWER -> {
-                viewModel.updateAnswer(spokenText)
-                viewModel.showMessage("Voice input added")
-            }
-            VoiceInputTarget.QUICK_VOCABULARY -> viewModel.addQuickVocabularyCard(spokenText)
-            VoiceInputTarget.CARD_NATIVE -> viewModel.updateCardDraft(state.cardDraft.copy(nativeValue = spokenText))
-            VoiceInputTarget.CARD_CORRECT -> viewModel.updateCardDraft(state.cardDraft.copy(correctValue = spokenText))
-            VoiceInputTarget.CARD_HINT -> viewModel.updateCardDraft(state.cardDraft.copy(hint = spokenText))
-            VoiceInputTarget.CARD_MADE_AT -> viewModel.updateCardDraft(state.cardDraft.copy(madeAt = spokenText))
-            VoiceInputTarget.CARD_WHERE -> viewModel.updateCardDraft(state.cardDraft.copy(where = spokenText))
-        }
-    }
     DisposableEffect(speechRecognizer) {
         val listener = object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) {
@@ -393,14 +371,7 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
                 voiceRecording = false
                 voiceHoldActive = false
                 voiceHoldReleasedAt = 0L
-                val accumulated = voiceAccumulatedText.trim()
-                voiceAccumulatedText = ""
-                voiceStopRequested = false
                 voiceDialogVisible = false
-                if (accumulated.isNotBlank() && (error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT)) {
-                    commitVoiceInput(accumulated)
-                    return
-                }
                 val message = when (error) {
                     SpeechRecognizer.ERROR_NO_MATCH -> "No speech recognized"
                     SpeechRecognizer.ERROR_AUDIO -> "Audio recording error"
@@ -415,33 +386,27 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
                 voiceRecording = false
                 voiceHoldActive = false
                 voiceHoldReleasedAt = 0L
+                voiceDialogVisible = false
                 val spokenText = results
                     ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                     ?.firstOrNull()
                     .orEmpty()
                     .trim()
-                if (spokenText.isBlank()) {
-                    val accumulated = voiceAccumulatedText.trim()
-                    voiceAccumulatedText = ""
-                    voiceStopRequested = false
-                    voiceDialogVisible = false
-                    commitVoiceInput(accumulated)
-                    return
-                }
-                voiceAccumulatedText = listOf(voiceAccumulatedText, spokenText)
-                    .map { it.trim() }
-                    .filter { it.isNotBlank() }
-                    .joinToString(" ")
-                    .trim()
-                if (voiceStopRequested) {
-                    val accumulated = voiceAccumulatedText
-                    voiceAccumulatedText = ""
-                    voiceStopRequested = false
-                    voiceDialogVisible = false
-                    commitVoiceInput(accumulated)
+                if (spokenText.isNotBlank()) {
+                    when (voiceTarget) {
+                        VoiceInputTarget.ANSWER -> {
+                            viewModel.updateAnswer(spokenText)
+                            viewModel.showMessage("Voice input added")
+                        }
+                        VoiceInputTarget.QUICK_VOCABULARY -> viewModel.addQuickVocabularyCard(spokenText)
+                        VoiceInputTarget.CARD_NATIVE -> viewModel.updateCardDraft(state.cardDraft.copy(nativeValue = spokenText))
+                        VoiceInputTarget.CARD_CORRECT -> viewModel.updateCardDraft(state.cardDraft.copy(correctValue = spokenText))
+                        VoiceInputTarget.CARD_HINT -> viewModel.updateCardDraft(state.cardDraft.copy(hint = spokenText))
+                        VoiceInputTarget.CARD_MADE_AT -> viewModel.updateCardDraft(state.cardDraft.copy(madeAt = spokenText))
+                        VoiceInputTarget.CARD_WHERE -> viewModel.updateCardDraft(state.cardDraft.copy(where = spokenText))
+                    }
                 } else {
-                    voiceStatus = voiceAccumulatedText
-                    pendingVoiceStart = true
+                    viewModel.showMessage("No speech recognized")
                 }
             }
             override fun onPartialResults(partialResults: Bundle?) {
@@ -490,7 +455,6 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
 
     fun startVoiceInput(target: VoiceInputTarget = VoiceInputTarget.ANSWER) {
         if (voiceRecording) {
-            voiceStopRequested = true
             voiceRecording = false
             voiceStatus = "Recognizing..."
             speechRecognizer?.stopListening()
@@ -527,8 +491,6 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
             VoiceInputTarget.CARD_WHERE -> languageForVoice(state.interfaceLanguage, "", state.interfaceLanguage)
         }
         voiceTarget = target
-        voiceAccumulatedText = ""
-        voiceStopRequested = false
         voiceLanguageTag = language.first
         voiceExpectedLanguage = language.second
         viewModel.showMessage("Speak ${language.second}")
@@ -541,7 +503,6 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
 
     fun stopVoiceInput() {
         if (!voiceRecording) return
-        voiceStopRequested = true
         voiceRecording = false
         voiceHoldActive = false
         voiceHoldReleasedAt = 0L
@@ -589,9 +550,8 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, voiceLanguageTag)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, voiceLanguageTag)
             putExtra(RecognizerIntent.EXTRA_ONLY_RETURN_LANGUAGE_PREFERENCE, true)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 6000L)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 6000L)
-            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 6000L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 60000L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 60000L)
         }
         try {
             speechRecognizer.startListening(intent)
@@ -610,7 +570,7 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
             when {
                 voiceHoldActive -> Unit
                 voiceHoldReleasedAt > 0L && now - voiceHoldReleasedAt >= 2000L -> stopVoiceInput()
-                voiceHoldReleasedAt == 0L && now - lastVoiceActivityAt >= 6000L -> stopVoiceInput()
+                voiceHoldReleasedAt == 0L && now - lastVoiceActivityAt >= 10000L -> stopVoiceInput()
             }
         }
     }
@@ -4035,6 +3995,7 @@ private fun sampleLessonJson(): String {
 
 private fun versionLogText(): String {
     return """
+        v0.69 - Reverted segmented voice recognition to the previous single-pass flow for stability, keeping the pending-translation and lesson action refinements.
         v0.68 - Extended voice capture pauses to six seconds with segmented recognition, restored pending-translation cards so the missing side remains visible after flipping, and refined lesson delete/share actions with confirmation.
         v0.67 - Changed quick vocabulary languages to dropdowns, made quick voice capture listen in the target language, showed pending-translation cards on their filled side, and removed voice input from card meta/log fields.
         v0.66 - Added a 1x1 quick voice home-screen widget with a white microphone tile and red MM mark that opens directly into quick vocabulary capture.
