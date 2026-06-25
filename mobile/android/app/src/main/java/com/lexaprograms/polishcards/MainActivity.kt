@@ -688,7 +688,11 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
         CardTextDialog(
             title = "Lesson info",
             text = headerLessonInfo,
-            onDismiss = { showHeaderLessonInfo = false }
+            onDismiss = { showHeaderLessonInfo = false },
+            onResetProgress = {
+                showHeaderLessonInfo = false
+                showResetProgressConfirm = true
+            }
         )
     }
     Scaffold(
@@ -743,26 +747,6 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
                         }
                         IconButton(onClick = {
                             titleActivated = true
-                            viewModel.addEmptyCardToCurrentLesson()
-                        }) {
-                            Icon(
-                                imageVector = Icons.Default.Add,
-                                contentDescription = "Add empty card",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        IconButton(onClick = {
-                            titleActivated = true
-                            showResetProgressConfirm = true
-                        }) {
-                            Icon(
-                                imageVector = Icons.Default.Refresh,
-                                contentDescription = "Reset lesson progress",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        IconButton(onClick = {
-                            titleActivated = true
                             val showAll = state.excludeMasteredCards
                             viewModel.setShowAllCards(showAll)
                             viewModel.showMessage(if (showAll) "Show all" else "Hide starred")
@@ -775,6 +759,16 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
                             viewModel.showMessage(if (!state.hideCompletedCards) "Hide done" else "Show done")
                         }) {
                             StudyHideDoneIcon(active = !state.hideCompletedCards)
+                        }
+                        IconButton(onClick = {
+                            titleActivated = true
+                            viewModel.addEmptyCardToCurrentLesson()
+                        }) {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = "Add empty card",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
                     }
                     if (state.screen == AppScreen.STUDY && headerLessonInfo.isNotBlank()) {
@@ -2557,9 +2551,9 @@ private fun CountersRow(
         CounterText("${ui.inPortion}: $portionSize", modifier = Modifier.clickable(enabled = portionSize > 0) { onPortionClick() })
         CounterText(
             "${ui.left}: $remainingCount",
-            modifier = Modifier.clickable(enabled = remainingCount > 0) { onRemainingClick() }
+            modifier = Modifier.clickable(enabled = portionSize > 0) { onRemainingClick() }
         )
-        CounterText("${ui.done}: $completedCount", modifier = Modifier.clickable(enabled = completedCount > 0) { onDoneClick() })
+        CounterText("${ui.done}: $completedCount", modifier = Modifier.clickable(enabled = portionSize > 0) { onDoneClick() })
     }
 }
 
@@ -2821,11 +2815,21 @@ private fun CircleTextButton(text: String, onClick: () -> Unit) {
 }
 
 @Composable
-private fun CardTextDialog(title: String, text: String, onDismiss: () -> Unit) {
+private fun CardTextDialog(
+    title: String,
+    text: String,
+    onDismiss: () -> Unit,
+    onResetProgress: (() -> Unit)? = null
+) {
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text("Close") }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (onResetProgress != null) {
+                    TextButton(onClick = onResetProgress) { Text("Reset progress") }
+                }
+                TextButton(onClick = onDismiss) { Text("Close") }
+            }
         },
         title = { Text(title) },
         text = {
@@ -4156,6 +4160,7 @@ private fun sampleLessonJson(): String {
 
 private fun versionLogText(): String {
     return """
+        v0.76 - Restored study counter navigation, moved reset progress into the lesson info popup, placed Add next to lesson info, added study-plus cards at the end, renamed quick vocabulary lessons with language codes and creation date, and kept quick voice lessons opening at the first card.
         v0.75 - Kept quick vocabulary voice capture on the current screen for bulk entry, made Done jump to the last card, created new lessons and study-plus cards with an empty starter card, and changed Refresh into confirmed progress reset.
         v0.74 - Made only cards with an actually missing side auto-open on the filled side; completed normal cards now return to the configured start side during navigation and session restore.
         v0.73 - Added quick visible-side editing from the study card Edit button, kept long-press full editing, shortened transient messages, and made OK require a correct typed answer.

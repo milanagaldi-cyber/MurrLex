@@ -714,7 +714,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .takeIf { it >= 0 }
             ?.let { it + lastCompletedIndex + 1 }
             ?: state.currentPortion.indexOfFirst { card -> card.id !in state.completedCardIds }
-        if (targetIndex < 0) return
+        if (targetIndex < 0) {
+            goToLastCompletedCard()
+            return
+        }
         _uiState.value = state.copy(
             currentIndex = targetIndex,
             cardTransitionDirection = if (targetIndex >= state.currentIndex) 1 else -1,
@@ -982,7 +985,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val now = timestamp()
         val nextCardId = (lesson.cards.maxOfOrNull { it.id } ?: 0) + 1
         val newCard = emptyLessonCard(nextCardId, sourceLanguage, targetLanguage, now, "Created from study plus button")
-        val updatedLesson = lesson.copy(cards = listOf(newCard) + lesson.cards, editable = true)
+        val updatedLesson = lesson.copy(cards = lesson.cards + newCard, editable = true)
         repository.saveLesson(updatedLesson)
         repository.clearStudySession(updatedLesson.id)
         val lessons = repository.loadLessons(state.showHiddenLessons)
@@ -1548,7 +1551,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val state = _uiState.value
         val sourceLanguage = state.quickVocabularySourceLanguage.trim().ifBlank { "Native" }
         val targetLanguage = state.quickVocabularyTargetLanguage.trim().ifBlank { "Target" }
-        val lessonTitle = quickVocabularyLessonTitle(targetLanguage)
+        val lessonTitle = quickVocabularyLessonTitle(sourceLanguage, targetLanguage, createdAt = displayTimestamp())
         val visibleLessonsForQuickVocabulary = repository.loadLessons(includeHidden = false)
         val existingLesson = visibleLessonsForQuickVocabulary
             .filter { lesson ->
@@ -1590,6 +1593,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         repository.saveLesson(updatedLesson)
+        repository.clearStudySession(updatedLesson.id)
         val visibleLessons = repository.loadLessons(state.showHiddenLessons)
         val savedSelectedLesson = state.selectedLesson?.let { selected ->
             visibleLessons.firstOrNull { it.id == selected.id }
@@ -1759,8 +1763,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .lowercase(Locale.getDefault())
     }
 
-        private fun quickVocabularyLessonTitle(targetLanguage: String): String {
-        return "${targetLanguage.trim().ifBlank { "Target" }} New vocabulary"
+    private fun quickVocabularyLessonTitle(sourceLanguage: String, targetLanguage: String, createdAt: String): String {
+        return "${targetLanguage.shortLanguageCode()} - ${sourceLanguage.shortLanguageCode()} Vocabulary $createdAt"
+    }
+
+    private fun displayTimestamp(): String {
+        return SimpleDateFormat("dd.MM.yy HH:mm", Locale.getDefault()).format(Date())
+    }
+
+    private fun String.shortLanguageCode(): String {
+        val normalized = trim().lowercase(Locale.ROOT)
+        return when {
+            normalized in listOf("pl", "pol", "polish", "polski") -> "PL"
+            normalized in listOf("ru", "rus", "russian") -> "RU"
+            normalized in listOf("en", "eng", "english") -> "EN"
+            normalized in listOf("de", "deu", "ger", "german", "deutsch") -> "DE"
+            normalized in listOf("es", "spa", "spanish", "espanol") -> "ES"
+            normalized in listOf("be", "bel", "by", "belarusian") -> "BY"
+            normalized in listOf("uk", "ua", "ukr", "ukrainian") -> "UA"
+            normalized.length >= 2 -> normalized.take(2).uppercase(Locale.ROOT)
+            else -> "XX"
+        }
     }
 
     private fun quickVocabularyLessonInfo(sourceLanguage: String, targetLanguage: String): String {
