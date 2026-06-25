@@ -248,25 +248,38 @@ private fun uiTextFor(languageCode: String): UiText {
 }
 
 class MainActivity : ComponentActivity() {
+    private var quickVoiceLaunchSignal by mutableStateOf(0)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (intent?.action == ACTION_START_QUICK_VOICE) {
+            quickVoiceLaunchSignal++
+        }
         enableEdgeToEdge()
         setContent {
             MakeMistakeTheme {
-                MakeMistakeApp()
+                MakeMistakeApp(quickVoiceLaunchSignal = quickVoiceLaunchSignal)
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.action == ACTION_START_QUICK_VOICE) {
+            quickVoiceLaunchSignal++
         }
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
+fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSignal: Int = 0) {
     val state by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
     val ui = remember(state.interfaceLanguage) { uiTextFor(state.interfaceLanguage) }
-    var showSplash by remember { mutableStateOf(true) }
+    var showSplash by remember { mutableStateOf(quickVoiceLaunchSignal == 0) }
     var splashReady by remember { mutableStateOf(false) }
     var titleActivated by remember { mutableStateOf(false) }
     var messageBubbleVisible by remember { mutableStateOf(false) }
@@ -500,6 +513,12 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
         speechRecognizer?.stopListening()
     }
 
+    LaunchedEffect(quickVoiceLaunchSignal, showSplash) {
+        if (quickVoiceLaunchSignal > 0 && !showSplash) {
+            titleActivated = true
+            startVoiceInput(VoiceInputTarget.QUICK_VOCABULARY)
+        }
+    }
     fun speakText(text: String, languageTag: String) {
         val cleanText = text.trim()
         if (cleanText.isBlank()) {
@@ -3916,6 +3935,7 @@ private fun sampleLessonJson(): String {
 
 private fun versionLogText(): String {
     return """
+        v0.66 - Added a 1x1 quick voice home-screen widget with a white microphone tile and red MM mark that opens directly into quick vocabulary capture.
         v0.65 - Fixed show-filter toggle semantics, made answer input grow for multiple lines, switched interface language to a dropdown, saved quick voice vocabulary as target-language text, and added bulk card copy/delete tools.
         v0.64 - Improved settings back navigation, added fast white service bubbles, voice input for card editor fields, and clearer filter toggle icons.
         v0.63 - Disabled the unreliable on-device translator, removed the heavy ML Kit translation dependency, and made voice vocabulary cards save with a clear pending-translation message when no server translator is configured.

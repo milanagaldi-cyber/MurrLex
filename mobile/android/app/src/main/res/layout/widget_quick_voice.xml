@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/quick_voice_widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_quick_voice_background"
+    android:padding="3dp">
+
+    <TextView
+        android:id="@+id/quick_voice_widget_letters"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|center_horizontal"
+        android:gravity="center"
+        android:includeFontPadding="false"
+        android:text="MM"
+        android:textColor="#D64B42"
+        android:textSize="13sp"
+        android:textStyle="bold" />
+
+    <ImageView
+        android:id="@+id/quick_voice_widget_mic"
+        android:layout_width="28dp"
+        android:layout_height="28dp"
+        android:layout_gravity="center"
+        android:contentDescription="@string/quick_voice_widget_name"
+        android:src="@drawable/ic_widget_microphone" />
+</FrameLayout>
