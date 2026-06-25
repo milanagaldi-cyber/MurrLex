@@ -729,8 +729,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun goToLastCompletedCard() {
         val state = _uiState.value
         if (state.currentPortion.isEmpty()) return
-        val targetIndex = state.currentPortion.indexOfLast { card -> card.id in state.completedCardIds }
-        if (targetIndex < 0) return
+        val targetIndex = state.currentPortion.lastIndex
         _uiState.value = state.copy(
             currentIndex = targetIndex,
             cardTransitionDirection = if (targetIndex >= state.currentIndex) 1 else -1,
@@ -940,18 +939,100 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun createLesson() {
-        _uiState.value = _uiState.value.copy(
-            screen = AppScreen.EDITOR,
-            selectedLessonIds = emptySet(),
-            editorLesson = LessonDraft(
-                id = newLessonId(),
-                title = "New lesson",
-                lessonInfo = "",
-                cards = emptyList(),
-                editable = true
-            ),
-            cardDraft = CardDraft()
+        val state = _uiState.value
+        val sourceLanguage = state.quickVocabularySourceLanguage.trim().ifBlank { "Native" }
+        val targetLanguage = state.quickVocabularyTargetLanguage.trim().ifBlank { "Target" }
+        val now = timestamp()
+        val lesson = Lesson(
+            id = newLessonId(),
+            title = "$targetLanguage New lesson",
+            lessonInfo = quickVocabularyLessonInfo(sourceLanguage, targetLanguage),
+            cards = listOf(emptyLessonCard(1, sourceLanguage, targetLanguage, now, "Created with new lesson")),
+            editable = true
         )
+        repository.saveLesson(lesson)
+        val lessons = repository.loadLessons(state.showHiddenLessons)
+        val savedLesson = lessons.firstOrNull { it.id == lesson.id } ?: lesson
+        _uiState.value = state.copy(
+            lessons = lessons,
+            selectedLesson = savedLesson,
+            selectedLessonIds = emptySet(),
+            screen = AppScreen.STUDY,
+            mode = StudyMode.ORIGINAL,
+            currentPortion = savedLesson.cards,
+            currentIndex = 0,
+            completedCardIds = emptySet(),
+            portionCompletionSaved = false,
+            isBackVisible = defaultBackVisible(savedLesson.cards.firstOrNull()),
+            answer = "",
+            answerFeedbackVisible = false,
+            message = "New lesson created"
+        )
+        saveCurrentStudySession()
+    }
+
+    fun addEmptyCardToCurrentLesson() {
+        val state = _uiState.value
+        val lesson = state.selectedLesson ?: return
+        val sampleCard = lesson.cards.firstOrNull()
+        val sourceLanguage = sampleCard?.sourceLanguage?.takeIf { it.isNotBlank() }
+            ?: state.quickVocabularySourceLanguage.trim().ifBlank { "Native" }
+        val targetLanguage = sampleCard?.targetLanguage?.takeIf { it.isNotBlank() }
+            ?: state.quickVocabularyTargetLanguage.trim().ifBlank { "Target" }
+        val now = timestamp()
+        val nextCardId = (lesson.cards.maxOfOrNull { it.id } ?: 0) + 1
+        val newCard = emptyLessonCard(nextCardId, sourceLanguage, targetLanguage, now, "Created from study plus button")
+        val updatedLesson = lesson.copy(cards = listOf(newCard) + lesson.cards, editable = true)
+        repository.saveLesson(updatedLesson)
+        repository.clearStudySession(updatedLesson.id)
+        val lessons = repository.loadLessons(state.showHiddenLessons)
+        val savedLesson = lessons.firstOrNull { it.id == updatedLesson.id } ?: updatedLesson
+        val updatedPortion = orderStudyCards(
+            filterStudyCards(savedLesson.cards, state.excludeMasteredCards, false, emptySet()),
+            StudyMode.ORIGINAL,
+            shuffleRandom = false
+        )
+        val targetIndex = updatedPortion.indexOfFirst { it.id == newCard.id }.takeIf { it >= 0 } ?: 0
+        _uiState.value = state.copy(
+            lessons = lessons,
+            selectedLesson = savedLesson,
+            selectedLessonIds = emptySet(),
+            mode = StudyMode.ORIGINAL,
+            hideCompletedCards = false,
+            currentPortion = updatedPortion,
+            currentIndex = targetIndex,
+            cardTransitionDirection = -1,
+            completedCardIds = emptySet(),
+            portionCompletionSaved = false,
+            isBackVisible = defaultBackVisible(updatedPortion.getOrNull(targetIndex)),
+            answer = "",
+            answerFeedbackVisible = false,
+            message = "Empty card added"
+        )
+        saveCurrentStudySession()
+    }
+
+    fun resetLessonProgress() {
+        val state = _uiState.value
+        val lesson = state.selectedLesson ?: return
+        repository.clearStudySession(lesson.id)
+        val cards = orderStudyCards(
+            filterStudyCards(lesson.cards, state.excludeMasteredCards, false, emptySet()),
+            state.mode,
+            shuffleRandom = false
+        )
+        _uiState.value = state.copy(
+            currentPortion = cards,
+            currentIndex = 0,
+            completedCardIds = emptySet(),
+            portionCompletionSaved = false,
+            hideCompletedCards = false,
+            isBackVisible = defaultBackVisible(cards.firstOrNull()),
+            answer = "",
+            answerFeedbackVisible = false,
+            message = "Progress reset"
+        )
+        saveCurrentStudySession()
     }
 
     fun editLesson(lesson: Lesson) {
@@ -1442,6 +1523,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
 
+    private fun emptyLessonCard(id: Int, sourceLanguage: String, targetLanguage: String, now: String, logText: String): Flashcard {
+        return Flashcard(
+            id = id,
+            nativeValue = "Empty",
+            correctValue = "Empty",
+            hint = "Fill this empty card with voice input or typed text.",
+            madeAt = now,
+            where = "Make Mistake",
+            log = listOf("$now - $logText"),
+            type = "card",
+            cardKind = "LN",
+            sourceLanguage = sourceLanguage,
+            targetLanguage = targetLanguage
+        )
+    }
+
     fun addQuickVocabularyCard(phrase: String) {
         val cleanPhrase = phrase.trim()
         if (cleanPhrase.isBlank()) {
@@ -1494,26 +1591,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         repository.saveLesson(updatedLesson)
         val visibleLessons = repository.loadLessons(state.showHiddenLessons)
-        val savedLesson = visibleLessons.firstOrNull { it.id == updatedLesson.id } ?: updatedLesson
-        val studyCards = filterStudyCards(savedLesson.cards, state.excludeMasteredCards, false, state.completedCardIds)
-        val focusedPortion = orderStudyCards(studyCards, StudyMode.ORIGINAL, shuffleRandom = false)
-        val focusedIndex = focusedPortion.indexOfFirst { it.id == newCard.id }.takeIf { it >= 0 } ?: 0
+        val savedSelectedLesson = state.selectedLesson?.let { selected ->
+            visibleLessons.firstOrNull { it.id == selected.id }
+        } ?: state.selectedLesson
         _uiState.value = state.copy(
             lessons = visibleLessons,
-            selectedLesson = savedLesson,
+            selectedLesson = savedSelectedLesson,
             selectedLessonIds = emptySet(),
-            screen = AppScreen.STUDY,
-            mode = StudyMode.ORIGINAL,
-            hideCompletedCards = false,
-            currentPortion = focusedPortion,
-            currentIndex = focusedIndex,
-            cardTransitionDirection = -1,
-            isBackVisible = defaultBackVisible(focusedPortion.getOrNull(focusedIndex)),
-            answer = "",
-            answerFeedbackVisible = false,
             message = "Added: $cleanPhrase"
         )
-        saveCurrentStudySession()
     }
 
     private fun translateQuickVocabularyCard(

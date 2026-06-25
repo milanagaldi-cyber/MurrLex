@@ -322,6 +322,7 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
     var quickEditCardId by remember { mutableStateOf<Int?>(null) }
     val quickEditActive = quickEditCardId != null && state.currentCard?.id == quickEditCardId
     var showHeaderLessonInfo by remember { mutableStateOf(false) }
+    var showResetProgressConfirm by remember { mutableStateOf(false) }
     var textToSpeechReady by remember { mutableStateOf(false) }
     val textToSpeech = remember {
         var engine: TextToSpeech? = null
@@ -640,6 +641,22 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
     }
 
     CompositionLocalProvider(LocalUiText provides ui) {
+    if (showResetProgressConfirm) {
+        AlertDialog(
+            onDismissRequest = { showResetProgressConfirm = false },
+            title = { Text("Reset progress?") },
+            text = { Text("Are you sure you want to reset progress for this lesson?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showResetProgressConfirm = false
+                    viewModel.resetLessonProgress()
+                }) { Text("Reset") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showResetProgressConfirm = false }) { Text("Cancel") }
+            }
+        )
+    }
     if (voiceDialogVisible) {
         VoiceInputDialog(
             status = voiceStatus,
@@ -726,11 +743,21 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
                         }
                         IconButton(onClick = {
                             titleActivated = true
-                            viewModel.startNewPortion()
+                            viewModel.addEmptyCardToCurrentLesson()
+                        }) {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = "Add empty card",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        IconButton(onClick = {
+                            titleActivated = true
+                            showResetProgressConfirm = true
                         }) {
                             Icon(
                                 imageVector = Icons.Default.Refresh,
-                                contentDescription = "Start over",
+                                contentDescription = "Reset lesson progress",
                                 tint = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
@@ -4129,6 +4156,7 @@ private fun sampleLessonJson(): String {
 
 private fun versionLogText(): String {
     return """
+        v0.75 - Kept quick vocabulary voice capture on the current screen for bulk entry, made Done jump to the last card, created new lessons and study-plus cards with an empty starter card, and changed Refresh into confirmed progress reset.
         v0.74 - Made only cards with an actually missing side auto-open on the filled side; completed normal cards now return to the configured start side during navigation and session restore.
         v0.73 - Added quick visible-side editing from the study card Edit button, kept long-press full editing, shortened transient messages, and made OK require a correct typed answer.
         v0.69 - Reverted segmented voice recognition to the previous single-pass flow for stability, keeping the pending-translation and lesson action refinements.
