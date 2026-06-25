@@ -49,6 +49,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -92,6 +93,9 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -702,14 +706,14 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
                             viewModel.setShowAllCards(showAll)
                             viewModel.showMessage(if (showAll) "Show all" else "Hide starred")
                         }) {
-                            StudyHideStarIcon(active = state.excludeMasteredCards)
+                            StudyHideStarIcon(active = !state.excludeMasteredCards)
                         }
                         IconButton(onClick = {
                             titleActivated = true
                             viewModel.setHideCompletedCards(!state.hideCompletedCards)
                             viewModel.showMessage(if (!state.hideCompletedCards) "Hide done" else "Show done")
                         }) {
-                            StudyHideDoneIcon(active = state.hideCompletedCards)
+                            StudyHideDoneIcon(active = !state.hideCompletedCards)
                         }
                     }
                     if (state.screen == AppScreen.STUDY && headerLessonInfo.isNotBlank()) {
@@ -905,7 +909,9 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
                     onToggleCardStar = viewModel::toggleCardStar,
                     onSave = viewModel::saveEditedLesson,
                     onDeleteLesson = viewModel::deleteLesson,
-                    onVoiceInputForCardField = { target -> startVoiceInput(target) }
+                    onVoiceInputForCardField = { target -> startVoiceInput(target) },
+                    onDeleteCards = viewModel::deleteCardsFromLesson,
+                    onCopyCardsToLesson = viewModel::copyCardsFromEditorToLesson
                 )
             }
             if (state.screen == AppScreen.STUDY && state.cardDraft.editingCardId != null) {
@@ -1300,24 +1306,31 @@ private fun SettingsScreen(
                     fontWeight = FontWeight.SemiBold
                 )
                 val languageOptions = listOf(
-                    "en" to "EN",
-                    "de" to "DE",
-                    "be" to "BY",
-                    "es" to "ES",
-                    "uk" to "UA",
-                    "ru" to "RU",
-                    "pl" to "PL"
+                    "en" to "EN - English",
+                    "es" to "ES - Espanol",
+                    "pl" to "PL - Polski",
+                    "ru" to "RU - Russian",
+                    "be" to "BY - Belarusian",
+                    "uk" to "UA - Ukrainian",
+                    "de" to "DE - Deutsch"
                 )
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    languageOptions.chunked(4).forEach { row ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            row.forEach { (code, label) ->
-                                FilterChip(
-                                    selected = interfaceLanguage == code,
-                                    onClick = { onInterfaceLanguageChange(code) },
-                                    label = { Text(label) }
-                                )
-                            }
+                var languageMenuExpanded by remember { mutableStateOf(false) }
+                Box {
+                    OutlinedButton(onClick = { languageMenuExpanded = true }) {
+                        Text(languageOptions.firstOrNull { it.first == interfaceLanguage }?.second ?: "EN - English")
+                    }
+                    DropdownMenu(
+                        expanded = languageMenuExpanded,
+                        onDismissRequest = { languageMenuExpanded = false }
+                    ) {
+                        languageOptions.forEach { (code, label) ->
+                            DropdownMenuItem(
+                                text = { Text(label) },
+                                onClick = {
+                                    languageMenuExpanded = false
+                                    onInterfaceLanguageChange(code)
+                                }
+                            )
                         }
                     }
                 }
@@ -2308,10 +2321,10 @@ private fun TopControls(
             modifier = Modifier.size(48.dp),
             shape = RoundedCornerShape(16.dp),
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-            color = if (!showAllCards) Color(0xFFE4F6E8) else MaterialTheme.colorScheme.surface
+            color = if (showAllCards) Color(0xFFE4F6E8) else MaterialTheme.colorScheme.surface
         ) {
             IconButton(onClick = { onShowAllCardsChange(!showAllCards) }) {
-                StudyHideStarIcon(active = !showAllCards)
+                StudyHideStarIcon(active = showAllCards)
             }
         }
     }
@@ -2345,7 +2358,7 @@ private fun StudyMode.displayLabel(): String {
 private fun StudyHideStarIcon(active: Boolean, modifier: Modifier = Modifier) {
     Icon(
         imageVector = Icons.Default.Star,
-        contentDescription = if (active) "Starred cards hidden" else "Hide starred cards",
+        contentDescription = if (active) "Starred cards visible" else "Starred cards hidden",
         modifier = modifier.size(24.dp),
         tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (active) 0.96f else 0.34f)
     )
@@ -2355,7 +2368,7 @@ private fun StudyHideStarIcon(active: Boolean, modifier: Modifier = Modifier) {
 private fun StudyHideDoneIcon(active: Boolean, modifier: Modifier = Modifier) {
     Icon(
         imageVector = Icons.Default.DoneAll,
-        contentDescription = if (active) "Done cards hidden" else "Hide done cards",
+        contentDescription = if (active) "Done cards visible" else "Done cards hidden",
         modifier = modifier.size(24.dp),
         tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (active) 0.96f else 0.34f)
     )
@@ -2981,9 +2994,7 @@ private fun buildAnswerFeedback(answer: String, expected: String): AnnotatedStri
                 }
                 typedChar == null && targetChar != null -> {
                     if (targetChar.isLetterOrDigit()) {
-                        pushStyle(SpanStyle(color = Color(0xFFE3B400), fontWeight = FontWeight.Bold))
                         append("*")
-                        pop()
                     } else {
                         append(targetChar)
                     }
@@ -3038,9 +3049,11 @@ private fun AnswerBar(
             OutlinedTextField(
                 value = answer,
                 onValueChange = onAnswerChange,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp, max = 150.dp),
                 label = { Text(answerLabel) },
-                singleLine = true,
+                singleLine = false,
+                minLines = 1,
+                maxLines = 4,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                 keyboardActions = KeyboardActions(onDone = { if (canSubmit) onOk() })
             )
@@ -3276,18 +3289,59 @@ private fun LessonEditorScreen(
     onToggleCardStar: (Int, Int) -> Unit,
     onSave: () -> Unit,
     onDeleteLesson: (String) -> Unit,
-    onVoiceInputForCardField: (VoiceInputTarget) -> Unit
+    onVoiceInputForCardField: (VoiceInputTarget) -> Unit,
+    onDeleteCards: (Set<Int>) -> Unit,
+    onCopyCardsToLesson: (Set<Int>, String?) -> Unit
 ) {
     val lesson = state.editorLesson ?: return
     val cardDraft = state.cardDraft
     var showDeleteLessonDialog by remember { mutableStateOf(false) }
     var pendingDeleteCardId by remember { mutableStateOf<Int?>(null) }
     var showCardDialog by remember { mutableStateOf(false) }
+    var selectedCardIds by remember { mutableStateOf<Set<Int>>(emptySet()) }
+    var pendingCopyCardIds by remember { mutableStateOf<Set<Int>>(emptySet()) }
+    var showCopyCardsDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(state.returnToStudyAfterEdit, cardDraft.editingCardId) {
         if (state.returnToStudyAfterEdit && cardDraft.editingCardId != null) {
             showCardDialog = true
         }
+    }
+
+    if (showCopyCardsDialog) {
+        AlertDialog(
+            onDismissRequest = { showCopyCardsDialog = false },
+            title = { Text("Copy cards to...") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Choose an existing lesson or create a new one.")
+                    OutlinedButton(
+                        onClick = {
+                            onCopyCardsToLesson(pendingCopyCardIds, null)
+                            selectedCardIds = emptySet()
+                            pendingCopyCardIds = emptySet()
+                            showCopyCardsDialog = false
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("New lesson") }
+                    state.lessons.filterNot { it.hidden }.forEach { targetLesson ->
+                        OutlinedButton(
+                            onClick = {
+                                onCopyCardsToLesson(pendingCopyCardIds, targetLesson.id)
+                                selectedCardIds = emptySet()
+                                pendingCopyCardIds = emptySet()
+                                showCopyCardsDialog = false
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text(targetLesson.title.ifBlank { "Untitled lesson" }) }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showCopyCardsDialog = false }) { Text("Cancel") }
+            }
+        )
     }
 
     if (showDeleteLessonDialog) {
@@ -3459,6 +3513,41 @@ private fun LessonEditorScreen(
             }
         }
 
+        if (lesson.cards.isNotEmpty()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedButton(
+                    onClick = {
+                        pendingCopyCardIds = selectedCardIds
+                        showCopyCardsDialog = true
+                    },
+                    enabled = selectedCardIds.isNotEmpty(),
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(16.dp)
+                ) { Text("Copy selected") }
+                OutlinedButton(
+                    onClick = {
+                        pendingCopyCardIds = lesson.cards.map { it.id }.toSet()
+                        showCopyCardsDialog = true
+                    },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(16.dp)
+                ) { Text("Copy all") }
+                OutlinedButton(
+                    onClick = {
+                        onDeleteCards(selectedCardIds)
+                        selectedCardIds = emptySet()
+                    },
+                    enabled = selectedCardIds.isNotEmpty(),
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(16.dp)
+                ) { Text("Delete") }
+            }
+        }
+
         if (lesson.cards.isEmpty()) {
             EmptyState("This lesson has no cards yet.")
         } else {
@@ -3468,7 +3557,7 @@ private fun LessonEditorScreen(
                 contentPadding = PaddingValues(bottom = 18.dp)
             ) {
                 items(lesson.cards, key = { it.id }) { card ->
-                    EditableCardRow(card = card, onMoveUp = { onMoveCard(card.id, -1) }, onMoveDown = { onMoveCard(card.id, 1) }, onEdit = {
+                    EditableCardRow(card = card, selected = card.id in selectedCardIds, onToggleSelection = { checked -> selectedCardIds = if (checked) selectedCardIds + card.id else selectedCardIds - card.id }, onMoveUp = { onMoveCard(card.id, -1) }, onMoveDown = { onMoveCard(card.id, 1) }, onEdit = {
                         onEditCard(card)
                         showCardDialog = true
                     }, onCopy = { onCopyCard(card.id) }, onToggleStar = { starIndex -> onToggleCardStar(card.id, starIndex) }, onDelete = { pendingDeleteCardId = card.id })
@@ -3481,6 +3570,8 @@ private fun LessonEditorScreen(
 @Composable
 private fun EditableCardRow(
     card: Flashcard,
+    selected: Boolean,
+    onToggleSelection: (Boolean) -> Unit,
     onMoveUp: () -> Unit,
     onMoveDown: () -> Unit,
     onEdit: () -> Unit,
@@ -3504,6 +3595,7 @@ private fun EditableCardRow(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                Checkbox(checked = selected, onCheckedChange = onToggleSelection)
                 Column(modifier = Modifier.weight(1f)) {
                     Text(card.nativeText(), fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(4.dp))
@@ -3824,6 +3916,7 @@ private fun sampleLessonJson(): String {
 
 private fun versionLogText(): String {
     return """
+        v0.65 - Fixed show-filter toggle semantics, made answer input grow for multiple lines, switched interface language to a dropdown, saved quick voice vocabulary as target-language text, and added bulk card copy/delete tools.
         v0.64 - Improved settings back navigation, added fast white service bubbles, voice input for card editor fields, and clearer filter toggle icons.
         v0.63 - Disabled the unreliable on-device translator, removed the heavy ML Kit translation dependency, and made voice vocabulary cards save with a clear pending-translation message when no server translator is configured.
         v0.62 - Added study text/control size settings, star and done filters, better answer feedback, and quieter study interactions.

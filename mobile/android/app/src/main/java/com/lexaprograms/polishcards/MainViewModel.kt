@@ -1253,6 +1253,52 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
+    fun deleteCardsFromLesson(cardIds: Set<Int>) {
+        val state = _uiState.value
+        val lesson = state.editorLesson ?: return
+        if (cardIds.isEmpty()) return
+        val cards = lesson.cards.filterNot { it.id in cardIds }.reindexCards()
+        _uiState.value = state.copy(
+            editorLesson = lesson.copy(cards = cards),
+            cardDraft = if (state.cardDraft.editingCardId in cardIds) CardDraft() else state.cardDraft,
+            message = "Deleted ${cardIds.size} cards"
+        )
+    }
+
+    fun copyCardsFromEditorToLesson(cardIds: Set<Int>, destinationLessonId: String?) {
+        val state = _uiState.value
+        val sourceLesson = state.editorLesson ?: return
+        val selectedCards = sourceLesson.cards.filter { it.id in cardIds }
+        if (selectedCards.isEmpty()) return
+        val now = timestamp()
+        val destination = destinationLessonId
+            ?.let { id -> repository.loadLessons(includeHidden = false).firstOrNull { it.id == id } }
+        val updatedDestination = if (destination == null) {
+            Lesson(
+                id = newLessonId(),
+                title = "${sourceLesson.title.ifBlank { "Cards" }} copy",
+                lessonInfo = sourceLesson.lessonInfo,
+                cards = selectedCards.mapIndexed { index, card ->
+                    card.copy(id = index + 1, log = (card.log + "$now - copied from ${sourceLesson.title}").takeLast(100))
+                },
+                editable = true
+            )
+        } else {
+            val startId = destination.cards.maxOfOrNull { it.id } ?: 0
+            destination.copy(
+                cards = destination.cards + selectedCards.mapIndexed { index, card ->
+                    card.copy(id = startId + index + 1, log = (card.log + "$now - copied from ${sourceLesson.title}").takeLast(100))
+                },
+                editable = true,
+                hidden = false
+            )
+        }
+        repository.saveLesson(updatedDestination)
+        _uiState.value = state.copy(
+            lessons = repository.loadLessons(state.showHiddenLessons),
+            message = "Copied ${selectedCards.size} cards"
+        )
+    }
     fun copyCardInLesson(cardId: Int) {
         val state = _uiState.value
         val lesson = state.editorLesson ?: return
@@ -1338,21 +1384,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         val state = _uiState.value
-        val sourceLanguage = state.quickVocabularySourceLanguage.trim().ifBlank { "Polish" }
-        val targetLanguage = state.quickVocabularyTargetLanguage.trim().ifBlank { "Russian" }
+        val sourceLanguage = state.quickVocabularySourceLanguage.trim().ifBlank { "Native" }
+        val targetLanguage = state.quickVocabularyTargetLanguage.trim().ifBlank { "Target" }
+        val lessonTitle = quickVocabularyLessonTitle(targetLanguage)
         val visibleLessonsForQuickVocabulary = repository.loadLessons(includeHidden = false)
-        val existingLesson = visibleLessonsForQuickVocabulary.firstOrNull { it.id.startsWith(QUICK_VOCABULARY_LESSON_ID) }
-        val lessonId = existingLesson?.id ?: "${QUICK_VOCABULARY_LESSON_ID}_${UUID.randomUUID()}"
+        val existingLesson = visibleLessonsForQuickVocabulary
+            .filter { lesson ->
+                lesson.id.startsWith(QUICK_VOCABULARY_LESSON_ID) &&
+                    lesson.cards.any { card -> card.targetLanguage.equals(targetLanguage, ignoreCase = true) }
+            }
+            .maxByOrNull { lesson -> lesson.cards.maxOfOrNull { it.madeAt } ?: "" }
+        val lessonId = existingLesson?.id ?: "${QUICK_VOCABULARY_LESSON_ID}_${targetLanguage.safeIdPart()}_${UUID.randomUUID()}"
         val now = timestamp()
         val nextCardId = (existingLesson?.cards?.maxOfOrNull { it.id } ?: 0) + 1
         val newCard = Flashcard(
             id = nextCardId,
-            nativeValue = cleanPhrase,
-            correctValue = "Translation pending",
-            hint = "Captured by voice. Add or generate the translation later.",
+            nativeValue = "Native translation pending",
+            correctValue = cleanPhrase,
+            hint = "Captured by voice in the target language. Add the native translation later.",
             madeAt = now,
             where = "Quick vocabulary microphone",
-            log = listOf("$now - captured by quick vocabulary microphone"),
+            log = listOf("$now - captured by quick vocabulary microphone as $targetLanguage"),
             type = "card",
             cardKind = "LN",
             sourceLanguage = sourceLanguage,
@@ -1361,14 +1413,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val updatedLesson = if (existingLesson == null) {
             Lesson(
                 id = lessonId,
-                title = QUICK_VOCABULARY_LESSON_TITLE,
+                title = lessonTitle,
                 lessonInfo = quickVocabularyLessonInfo(sourceLanguage, targetLanguage),
                 cards = listOf(newCard),
                 editable = true
             )
         } else {
             existingLesson.copy(
-                title = existingLesson.title.ifBlank { QUICK_VOCABULARY_LESSON_TITLE },
+                title = existingLesson.title.ifBlank { lessonTitle },
                 lessonInfo = quickVocabularyLessonInfo(sourceLanguage, targetLanguage),
                 cards = existingLesson.cards + newCard,
                 editable = true,
@@ -1383,9 +1435,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             selectedLessonIds = emptySet(),
             screen = AppScreen.CATALOG,
             message = when {
-                hasServerTranslation -> "Added: $cleanPhrase. Translating..."
-                state.useLocalTranslation -> "Added: $cleanPhrase. Local translation unavailable in this build"
-                else -> "Added: $cleanPhrase"
+                hasServerTranslation -> "Added: $cleanPhrase. Translating native side..."
+                state.useLocalTranslation -> "Added: $cleanPhrase. Native translation pending"
+                else -> "Added: $cleanPhrase. Native translation pending"
             }
         )
         if (hasServerTranslation) {
@@ -1393,8 +1445,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 lessonId = updatedLesson.id,
                 cardId = newCard.id,
                 phrase = cleanPhrase,
-                sourceLanguage = sourceLanguage,
-                targetLanguage = targetLanguage,
+                sourceLanguage = targetLanguage,
+                targetLanguage = sourceLanguage,
                 apiUrl = state.translationApiUrl,
                 apiToken = state.translationApiToken
             )
@@ -1419,7 +1471,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }.getOrNull().orEmpty().trim()
             if (translated.isBlank()) {
-                _uiState.value = _uiState.value.copy(message = "Added: $phrase. Translation pending")
+                _uiState.value = _uiState.value.copy(message = "Added: $phrase. Native translation pending")
                 return@launch
             }
             val lesson = repository.loadLessons(includeHidden = true).firstOrNull { it.id == lessonId }
@@ -1429,8 +1481,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 cards = lesson.cards.map { card ->
                     if (card.id == cardId) {
                         card.copy(
-                            correctValue = translated,
-                            hint = "Captured by voice and translated automatically.",
+                            nativeValue = translated,
+                            hint = "Captured by voice and translated automatically into the native side.",
                             log = (card.log + "$now - translated automatically from $sourceLanguage to $targetLanguage").takeLast(100)
                         )
                     } else {
@@ -1445,7 +1497,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val currentState = _uiState.value
             _uiState.value = currentState.copy(
                 lessons = repository.loadLessons(currentState.showHiddenLessons),
-                message = "Translation added: $phrase"
+                message = "Native translation added: $phrase"
             )
         }
     }
@@ -1558,8 +1610,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .lowercase(Locale.getDefault())
     }
 
+        private fun quickVocabularyLessonTitle(targetLanguage: String): String {
+        return "${targetLanguage.trim().ifBlank { "Target" }} New vocabulary"
+    }
+
     private fun quickVocabularyLessonInfo(sourceLanguage: String, targetLanguage: String): String {
-        return "Quick voice captures. Source language: $sourceLanguage. Target language: $targetLanguage. Translation is generated by the configured server API when available; otherwise it is saved as pending. Local translation is disabled in this build because on-device models were not reliable enough."
+        return "Quick voice captures. Target language: $targetLanguage. Native language: $sourceLanguage. The captured phrase is saved as the target value; native translation can be added later or generated by the configured server API."
+    }
+
+    private fun String.safeIdPart(): String {
+        return trim().lowercase(Locale.ROOT).replace(Regex("[^a-z0-9]+"), "_").trim('_').ifBlank { "target" }
     }
 
     private fun newLessonId(): String = "lesson_${UUID.randomUUID()}"
@@ -1567,6 +1627,5 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     companion object {
         private const val PORTION_SIZE = 20
         private const val QUICK_VOCABULARY_LESSON_ID = "quick_vocabulary"
-        private const val QUICK_VOCABULARY_LESSON_TITLE = "New vocabulary"
-    }
+            }
 }
