@@ -1,4 +1,6 @@
 import json
+import urllib.error
+import urllib.request
 
 from django.conf import settings
 from django.contrib import messages
@@ -122,3 +124,83 @@ def internal_import_lesson(request):
             "cardsImported": result.cards_imported,
         }
     )
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def translate_text(request):
+    expected_token = settings.INTERNAL_IMPORT_TOKEN
+    if not expected_token:
+        return JsonResponse(
+            {"status": "error", "error": "INTERNAL_IMPORT_TOKEN is not configured."},
+            status=500,
+        )
+
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header != f"Bearer {expected_token}":
+        return JsonResponse({"status": "error", "error": "Unauthorized."}, status=401)
+
+    if not settings.OPENAI_API_KEY:
+        return JsonResponse({"status": "error", "error": "OPENAI_API_KEY is not configured."}, status=503)
+
+    try:
+        payload = json.loads(request.body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        return JsonResponse({"status": "error", "error": f"Invalid JSON: {exc}"}, status=400)
+
+    text = str(payload.get("text", "")).strip()
+    source_language = str(payload.get("sourceLanguage", "")).strip() or "source language"
+    target_language = str(payload.get("targetLanguage", "")).strip() or "target language"
+    if not text:
+        return JsonResponse({"status": "error", "error": "Text is required."}, status=400)
+
+    request_body = {
+        "model": settings.OPENAI_TRANSLATION_MODEL,
+        "input": (
+            "Translate the text from "
+            f"{source_language} to {target_language}. Return only the translation, "
+            "without comments or alternatives.\n\n"
+            f"Text: {text}"
+        ),
+    }
+    request_data = json.dumps(request_body).encode("utf-8")
+    openai_request = urllib.request.Request(
+        "https://api.openai.com/v1/responses",
+        data=request_data,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {settings.OPENAI_API_KEY}",
+            "Content-Type": "application/json",
+        },
+    )
+
+    try:
+        with urllib.request.urlopen(openai_request, timeout=30) as response:
+            response_payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        error_text = exc.read().decode("utf-8", errors="replace")
+        return JsonResponse({"status": "error", "error": error_text}, status=502)
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        return JsonResponse({"status": "error", "error": str(exc)}, status=502)
+
+    translation = _extract_openai_text(response_payload).strip()
+    if not translation:
+        return JsonResponse({"status": "error", "error": "Translation response was empty."}, status=502)
+    return JsonResponse({"status": "ok", "translation": translation})
+
+
+def _extract_openai_text(payload):
+    output_text = payload.get("output_text")
+    if isinstance(output_text, str) and output_text.strip():
+        return output_text
+
+    parts = []
+    for item in payload.get("output", []):
+        if not isinstance(item, dict):
+            continue
+        for content in item.get("content", []):
+            if not isinstance(content, dict):
+                continue
+            text = content.get("text")
+            if isinstance(text, str):
+                parts.append(text)
+    return "".join(parts)

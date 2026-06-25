@@ -27,4 +27,5 @@ urlpatterns = [
     path("lab/", include("lessons.urls")),
     path("api/health", lesson_views.api_health, name="api_health"),
     path("api/internal/import-lesson", lesson_views.internal_import_lesson, name="internal_import_lesson"),
+    path("api/translate", lesson_views.translate_text, name="translate_text"),
 ]

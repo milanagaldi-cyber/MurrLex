@@ -1,4 +1,4 @@
-﻿package com.lexaprograms.polishcards
+package com.lexaprograms.polishcards
 
 import android.content.Context
 import android.net.Uri
@@ -103,6 +103,22 @@ class CardRepository(private val context: Context) {
         preferences.edit().putString(KEY_QUICK_VOCABULARY_TARGET_LANGUAGE, language.trim().ifBlank { "Russian" }).apply()
     }
 
+
+    fun loadTranslationApiUrl(): String {
+        return preferences.getString(KEY_TRANSLATION_API_URL, "") ?: ""
+    }
+
+    fun saveTranslationApiUrl(url: String) {
+        preferences.edit().putString(KEY_TRANSLATION_API_URL, url.trim()).apply()
+    }
+
+    fun loadTranslationApiToken(): String {
+        return preferences.getString(KEY_TRANSLATION_API_TOKEN, "") ?: ""
+    }
+
+    fun saveTranslationApiToken(token: String) {
+        preferences.edit().putString(KEY_TRANSLATION_API_TOKEN, token.trim()).apply()
+    }
     fun loadStudySession(lessonId: String): StudySession? {
         val raw = preferences.getString(studySessionKey(lessonId), null) ?: return null
         return runCatching { json.decodeFromString<StudySession>(raw) }
@@ -375,14 +391,8 @@ class CardRepository(private val context: Context) {
         private const val KEY_INTERFACE_LANGUAGE = "interface_language"
         private const val KEY_QUICK_VOCABULARY_SOURCE_LANGUAGE = "quick_vocabulary_source_language"
         private const val KEY_QUICK_VOCABULARY_TARGET_LANGUAGE = "quick_vocabulary_target_language"
+        private const val KEY_TRANSLATION_API_URL = "translation_api_url"
+        private const val KEY_TRANSLATION_API_TOKEN = "translation_api_token"
         private const val KEY_STUDY_SESSION_PREFIX = "study_session_"
     }
 }
-
-
-
-
-
-
-
-

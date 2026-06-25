@@ -1,11 +1,18 @@
-﻿package com.lexaprograms.polishcards
+package com.lexaprograms.polishcards
 
 import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -60,6 +67,8 @@ data class StudyUiState(
     val interfaceLanguage: String = "en",
     val quickVocabularySourceLanguage: String = "Polish",
     val quickVocabularyTargetLanguage: String = "Russian",
+    val translationApiUrl: String = "",
+    val translationApiToken: String = "",
     val soundEffectsEnabled: Boolean = true,
     val vibrationEnabled: Boolean = true,
     val notificationIntervalMinutes: Int = 30,
@@ -105,6 +114,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             interfaceLanguage = repository.loadInterfaceLanguage(detectSystemInterfaceLanguage()),
             quickVocabularySourceLanguage = repository.loadQuickVocabularySourceLanguage(),
             quickVocabularyTargetLanguage = repository.loadQuickVocabularyTargetLanguage(),
+            translationApiUrl = repository.loadTranslationApiUrl(),
+            translationApiToken = repository.loadTranslationApiToken(),
             soundEffectsEnabled = repository.loadSoundEffectsEnabled(),
             vibrationEnabled = repository.loadVibrationEnabled(),
             notificationIntervalMinutes = repository.loadNotificationIntervalMinutes(),
@@ -256,6 +267,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
+
+    fun setTranslationApiUrl(url: String) {
+        repository.saveTranslationApiUrl(url)
+        _uiState.value = _uiState.value.copy(translationApiUrl = url.trim())
+    }
+
+    fun setTranslationApiToken(token: String) {
+        repository.saveTranslationApiToken(token)
+        _uiState.value = _uiState.value.copy(translationApiToken = token.trim())
+    }
     fun setSoundEffectsEnabled(enabled: Boolean) {
         repository.saveSoundEffectsEnabled(enabled)
         _uiState.value = _uiState.value.copy(
@@ -1272,12 +1293,98 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         repository.saveLesson(updatedLesson)
         val visibleLessons = repository.loadLessons(state.showHiddenLessons)
+        val canTranslate = state.translationApiUrl.isNotBlank() && state.translationApiToken.isNotBlank()
         _uiState.value = state.copy(
             lessons = visibleLessons,
             selectedLessonIds = emptySet(),
             screen = AppScreen.CATALOG,
-            message = "Added to New vocabulary"
+            message = if (canTranslate) "Added to New vocabulary. Translating..." else "Added to New vocabulary"
         )
+        if (canTranslate) {
+            translateQuickVocabularyCard(
+                cardId = newCard.id,
+                phrase = cleanPhrase,
+                sourceLanguage = sourceLanguage,
+                targetLanguage = targetLanguage,
+                apiUrl = state.translationApiUrl,
+                apiToken = state.translationApiToken
+            )
+        }
+    }
+
+    private fun translateQuickVocabularyCard(
+        cardId: Int,
+        phrase: String,
+        sourceLanguage: String,
+        targetLanguage: String,
+        apiUrl: String,
+        apiToken: String
+    ) {
+        viewModelScope.launch {
+            val translated = runCatching {
+                requestTranslation(apiUrl, apiToken, phrase, sourceLanguage, targetLanguage)
+            }.getOrNull().orEmpty().trim()
+            if (translated.isBlank()) {
+                _uiState.value = _uiState.value.copy(message = "Translation unavailable")
+                return@launch
+            }
+            val lesson = repository.loadLessons(includeHidden = true).firstOrNull { it.id == QUICK_VOCABULARY_LESSON_ID }
+                ?: return@launch
+            val now = timestamp()
+            val updatedLesson = lesson.copy(
+                cards = lesson.cards.map { card ->
+                    if (card.id == cardId) {
+                        card.copy(
+                            correctValue = translated,
+                            hint = "Captured by voice and translated automatically.",
+                            log = (card.log + "$now - translated automatically from $sourceLanguage to $targetLanguage").takeLast(100)
+                        )
+                    } else {
+                        card
+                    }
+                },
+                lessonInfo = quickVocabularyLessonInfo(sourceLanguage, targetLanguage),
+                editable = true,
+                hidden = false
+            )
+            repository.saveLesson(updatedLesson)
+            val currentState = _uiState.value
+            _uiState.value = currentState.copy(
+                lessons = repository.loadLessons(currentState.showHiddenLessons),
+                message = "Translation added"
+            )
+        }
+    }
+
+    private suspend fun requestTranslation(
+        apiUrl: String,
+        apiToken: String,
+        phrase: String,
+        sourceLanguage: String,
+        targetLanguage: String
+    ): String = withContext(Dispatchers.IO) {
+        val connection = (URL(apiUrl).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            connectTimeout = 15_000
+            readTimeout = 30_000
+            doOutput = true
+            setRequestProperty("Authorization", "Bearer $apiToken")
+            setRequestProperty("Content-Type", "application/json; charset=utf-8")
+        }
+        val payload = JSONObject()
+            .put("text", phrase)
+            .put("sourceLanguage", sourceLanguage)
+            .put("targetLanguage", targetLanguage)
+            .toString()
+        connection.outputStream.use { stream ->
+            stream.write(payload.toByteArray(Charsets.UTF_8))
+        }
+        val status = connection.responseCode
+        val responseStream = if (status in 200..299) connection.inputStream else connection.errorStream
+        val responseText = responseStream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
+        connection.disconnect()
+        if (status !in 200..299) return@withContext ""
+        JSONObject(responseText).optString("translation", "").trim()
     }
     private fun List<Flashcard>.reindexCards(): List<Flashcard> {
         return mapIndexed { index, card -> card.copy(id = index + 1) }
@@ -1338,7 +1445,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun quickVocabularyLessonInfo(sourceLanguage: String, targetLanguage: String): String {
-        return "Quick voice captures. Source language: $sourceLanguage. Target language: $targetLanguage. Translation is saved as pending until edited or generated by a server later."
+        return "Quick voice captures. Source language: $sourceLanguage. Target language: $targetLanguage. Translation is generated by the configured server when available, otherwise saved as pending."
     }
 
     private fun newLessonId(): String = "lesson_${UUID.randomUUID()}"
@@ -1349,25 +1456,3 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         private const val QUICK_VOCABULARY_LESSON_TITLE = "New vocabulary"
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

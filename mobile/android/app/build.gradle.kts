@@ -1,4 +1,4 @@
-﻿plugins {
+plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
@@ -13,8 +13,8 @@ android {
         applicationId = "com.lexaprograms.polishcards"
         minSdk = 24
         targetSdk = 35
-        versionCode = 59
-        versionName = "0.59"
+        versionCode = 60
+        versionName = "0.60"
     }
 
     buildTypes {
@@ -58,13 +58,3 @@ dependencies {
 
     debugImplementation(libs.androidx.compose.ui.tooling)
 }
-
-
-
-
-
-
-
-
-
-

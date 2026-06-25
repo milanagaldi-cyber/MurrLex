@@ -1,4 +1,4 @@
-﻿package com.lexaprograms.polishcards
+package com.lexaprograms.polishcards
 
 import android.Manifest
 import android.content.ClipData
@@ -32,6 +32,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.clickable
@@ -66,7 +67,6 @@ import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FormatListNumbered
@@ -125,6 +125,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.changedToDownIgnoreConsumed
@@ -638,6 +639,38 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
                             )
                         }
                     }
+                    if (state.screen == AppScreen.STUDY) {
+                        IconButton(onClick = {
+                            titleActivated = true
+                            val nextMode = state.mode.nextMode()
+                            viewModel.setMode(nextMode)
+                            viewModel.showMessage(nextMode.displayLabel())
+                        }) {
+                            Icon(
+                                imageVector = state.mode.displayIcon(),
+                                contentDescription = state.mode.displayLabel(),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        IconButton(onClick = {
+                            titleActivated = true
+                            viewModel.startNewPortion()
+                        }) {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = "Start over",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        IconButton(onClick = {
+                            titleActivated = true
+                            val showAll = state.excludeMasteredCards
+                            viewModel.setShowAllCards(showAll)
+                            viewModel.showMessage(if (showAll) "Show all" else "Hide starred")
+                        }) {
+                            StudyHideStarIcon(active = state.excludeMasteredCards)
+                        }
+                    }
                     if (state.screen == AppScreen.STUDY && headerLessonInfo.isNotBlank()) {
                         IconButton(onClick = {
                             titleActivated = true
@@ -789,6 +822,8 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
                     notificationMaxDraft = state.notificationMaxDraft,
               quickVocabularySourceLanguage = state.quickVocabularySourceLanguage,
               quickVocabularyTargetLanguage = state.quickVocabularyTargetLanguage,
+              translationApiUrl = state.translationApiUrl,
+              translationApiToken = state.translationApiToken,
                     onCardStartSideChange = viewModel::setCardStartSide,
                     onExcludeMasteredCardsChange = viewModel::setExcludeMasteredCards,
                     onShowCardLogChange = viewModel::setShowCardLog,
@@ -799,6 +834,8 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
                     onNotificationMaxChange = viewModel::updateNotificationMaxDraft,
               onQuickVocabularySourceChange = viewModel::setQuickVocabularySourceLanguage,
               onQuickVocabularyTargetChange = viewModel::setQuickVocabularyTargetLanguage,
+        onTranslationApiUrlChange = viewModel::setTranslationApiUrl,
+        onTranslationApiTokenChange = viewModel::setTranslationApiToken,
                     onSaveNotificationInterval = { viewModel.saveNotificationInterval(context) },
                     onSaveNotificationMax = viewModel::saveNotificationMax,
                     onDownloadSampleJson = {
@@ -1128,6 +1165,8 @@ private fun SettingsScreen(
     notificationMaxDraft: String,
     quickVocabularySourceLanguage: String,
     quickVocabularyTargetLanguage: String,
+    translationApiUrl: String,
+    translationApiToken: String,
     onCardStartSideChange: (CardStartSide) -> Unit,
     onExcludeMasteredCardsChange: (Boolean) -> Unit,
     onShowCardLogChange: (Boolean) -> Unit,
@@ -1138,6 +1177,8 @@ private fun SettingsScreen(
     onNotificationMaxChange: (String) -> Unit,
     onQuickVocabularySourceChange: (String) -> Unit,
     onQuickVocabularyTargetChange: (String) -> Unit,
+    onTranslationApiUrlChange: (String) -> Unit,
+    onTranslationApiTokenChange: (String) -> Unit,
     onSaveNotificationInterval: () -> Unit,
     onSaveNotificationMax: () -> Unit,
     onDownloadSampleJson: () -> Unit
@@ -1362,7 +1403,7 @@ private fun SettingsScreen(
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
-                    text = "Choose the language pair for phrases captured with the microphone on the Lessons screen. Translation is saved as pending until edited or generated later.",
+                    text = "Choose the language pair for phrases captured with the microphone on the Lessons screen. If a translation API is configured, the app fills the other side automatically.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1377,6 +1418,20 @@ private fun SettingsScreen(
                     value = quickVocabularyTargetLanguage,
                     onValueChange = onQuickVocabularyTargetChange,
                     label = { Text("Target language") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = translationApiUrl,
+                    onValueChange = onTranslationApiUrlChange,
+                    label = { Text("Translation API URL") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    value = translationApiToken,
+                    onValueChange = onTranslationApiTokenChange,
+                    label = { Text("Translation API token") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -2021,13 +2076,7 @@ private fun StudyScreen(
             .padding(horizontal = 20.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        TopControls(
-            mode = state.mode,
-            showAllCards = !state.excludeMasteredCards,
-            onModeChange = onModeChange,
-            onShowAllCardsChange = onShowAllCardsChange,
-            onReset = onNewPortion
-        )
+
 
         CountersRow(
             portionSize = state.portionSize,
@@ -2151,11 +2200,7 @@ private fun TopControls(
             color = if (!showAllCards) Color(0xFFE4F6E8) else MaterialTheme.colorScheme.surface
         ) {
             IconButton(onClick = { onShowAllCardsChange(!showAllCards) }) {
-                Icon(
-                    imageVector = Icons.Default.DoneAll,
-                    contentDescription = if (showAllCards) "Hide completed cards" else "Completed cards hidden",
-                    tint = if (!showAllCards) BrandSaladColor else MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                StudyHideStarIcon(active = !showAllCards)
             }
         }
     }
@@ -2182,6 +2227,30 @@ private fun StudyMode.displayLabel(): String {
         StudyMode.ORIGINAL -> "Original"
         StudyMode.ALPHABETICAL -> "Alphabetical"
         StudyMode.RANDOM -> "Random"
+    }
+}
+
+@Composable
+private fun StudyHideStarIcon(active: Boolean, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier.size(24.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = if (active) Icons.Default.Star else Icons.Default.StarBorder,
+            contentDescription = if (active) "Starred cards hidden" else "Hide starred cards",
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        if (active) {
+            Canvas(modifier = Modifier.size(24.dp)) {
+                drawLine(
+                    color = BrandRedColor,
+                    start = Offset(size.width * 0.18f, size.height * 0.82f),
+                    end = Offset(size.width * 0.82f, size.height * 0.18f),
+                    strokeWidth = 3.dp.toPx()
+                )
+            }
+        }
     }
 }
 
@@ -2306,7 +2375,7 @@ private fun StudyCard(
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(300.dp)
+                .height(340.dp)
                 .pointerInput(card?.id) {
                     detectHorizontalDragGestures(
                         onDragStart = { swipeDistance = 0f },
@@ -2799,6 +2868,7 @@ private fun AnswerBar(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .clickable(enabled = answerFeedbackVisible) { onDismissAnswerFeedback() }
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
@@ -2814,31 +2884,27 @@ private fun AnswerBar(
             if (answerFeedbackVisible && currentCard != null) {
                 Text(
                     text = buildAnswerFeedback(answer, currentCard.correctText()),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onDismissAnswerFeedback() },
+                    modifier = Modifier.fillMaxWidth(),
                     style = MaterialTheme.typography.bodyLarge,
                     fontWeight = FontWeight.SemiBold
                 )
             }
-            Box(
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(78.dp)
-                    .clickable(enabled = answerFeedbackVisible) { onDismissAnswerFeedback() },
-                contentAlignment = Alignment.Center
+                    .height(70.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    modifier = Modifier.align(Alignment.CenterStart),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
                     AnswerIconButton(
                         icon = Icons.Default.ContentCopy,
                         contentDescription = "Copy visible card text",
                         enabled = currentCard != null,
                         onClick = { currentCard?.displayedCardText(isBackVisible)?.let(onCopy) }
                     )
+                }
+                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
                     AnswerIconButton(
                         icon = Icons.Default.VolumeUp,
                         contentDescription = "Read aloud",
@@ -2846,49 +2912,46 @@ private fun AnswerBar(
                         onClick = onSpeak
                     )
                 }
-
-                Surface(
-                    modifier = Modifier
-                        .size(64.dp)
-                        .align(Alignment.Center)
-                        .clickable(enabled = currentCard != null) { onVoiceToggle() },
-                    shape = RoundedCornerShape(22.dp),
-                    border = BorderStroke(
-                        width = if (isVoiceRecording) 3.dp else 1.dp,
-                        color = if (isVoiceRecording) BrandSaladColor else MaterialTheme.colorScheme.outline
-                    ),
-                    color = when {
-                        isVoiceRecording -> BrandSaladColor.copy(alpha = 0.24f)
-                        currentCard != null -> MaterialTheme.colorScheme.surface
-                        else -> MaterialTheme.colorScheme.surfaceVariant
-                    }
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            Icons.Default.Mic,
-                            contentDescription = "Voice input",
-                            modifier = Modifier.size(31.dp),
-                            tint = if (isVoiceRecording) Color(0xFF234231) else if (currentCard != null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.outline
-                        )
+                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                    Surface(
+                        modifier = Modifier
+                            .size(66.dp)
+                            .clickable(enabled = currentCard != null) { onVoiceToggle() },
+                        shape = RoundedCornerShape(23.dp),
+                        border = BorderStroke(
+                            width = if (isVoiceRecording) 3.dp else 1.dp,
+                            color = if (isVoiceRecording) BrandSaladColor else MaterialTheme.colorScheme.outline
+                        ),
+                        color = when {
+                            isVoiceRecording -> BrandSaladColor.copy(alpha = 0.24f)
+                            currentCard != null -> MaterialTheme.colorScheme.surface
+                            else -> MaterialTheme.colorScheme.surfaceVariant
+                        }
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                Icons.Default.Mic,
+                                contentDescription = "Voice input",
+                                modifier = Modifier.size(32.dp),
+                                tint = if (isVoiceRecording) Color(0xFF234231) else if (currentCard != null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.outline
+                            )
+                        }
                     }
                 }
-
-                Row(
-                    modifier = Modifier.align(Alignment.CenterEnd),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
                     AnswerIconButton(
                         icon = Icons.Default.Check,
                         contentDescription = "Check answer",
                         enabled = currentCard != null,
                         onClick = onCheck
                     )
+                }
+                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
                     Button(
                         onClick = onOk,
                         modifier = Modifier
-                            .height(56.dp)
-                            .width(64.dp),
+                            .fillMaxWidth()
+                            .height(56.dp),
                         shape = RoundedCornerShape(18.dp),
                         enabled = canSubmit,
                         colors = ButtonDefaults.buttonColors(
@@ -2896,7 +2959,8 @@ private fun AnswerBar(
                             contentColor = Color(0xFF234231),
                             disabledContainerColor = Color(0xFFC8CEC4),
                             disabledContentColor = Color(0xFF5F685D)
-                        )
+                        ),
+                        contentPadding = PaddingValues(horizontal = 0.dp)
                     ) {
                         Text("OK")
                     }
@@ -3596,7 +3660,7 @@ private fun sampleLessonJson(): String {
 
 private fun versionLogText(): String {
     return """
-        v0.59 - Moved quick vocabulary voice capture below the lesson list, fixed quick voice lesson creation and source-language recognition, tightened the OK button, changed Correct feedback into a flying star, refined hide-completed controls, and improved Left-counter navigation.
+        v0.60 - Moved study order, restart, and hide-starred controls into the top bar, replaced the hide-done icon with a crossed star state, enlarged the study card, centered the answer action row, and added server-backed translation settings for quick voice vocabulary.`r`n        v0.59 - Moved quick vocabulary voice capture below the lesson list, fixed quick voice lesson creation and source-language recognition, tightened the OK button, changed Correct feedback into a flying star, refined hide-completed controls, and improved Left-counter navigation.
         v0.58 - Fixed answer-bar spacing, replaced Show all text with an icon, made study counters navigable, added quick voice capture into a New vocabulary lesson with configurable source/target languages, and extended voice silence retry behavior.
         v0.57 - Centered and enlarged voice controls, moved speech playback to the answer bar, added hold-to-keep-recording voice behavior, hid the lesson title behind the info popup, refined missing-letter hints, and kept technical bubbles in English.
         v0.56 - Simplified the Copy action to an icon-only button, kept Check active for empty answers with a white Enter answer bubble, and changed order switching feedback to show the active mode name.
@@ -3636,46 +3700,3 @@ private fun versionLogText(): String {
         v0.22 - Made Share visible on configured lesson cards, improved download icons, made Copy fill the input with the currently visible card side, added outside-tap exit for lesson configuration, and improved lesson list spacing/highlight.
     """.trimIndent()
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
