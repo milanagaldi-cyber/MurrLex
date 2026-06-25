@@ -66,7 +66,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
@@ -3136,7 +3135,9 @@ private fun AnswerBar(
     onDismissAnswerFeedback: () -> Unit,
     controlSize: ControlSize = ControlSize.MEDIUM,
 ) {
-    val isEmptySideCard = currentCard?.hasEmptySide() == true
+    val isDisplayedEmptySide = currentCard
+        ?.displayedCardText(isBackVisible)
+        ?.let { text -> text.isBlank() || text.isEmptyPlaceholder() } == true
     val doneLocked = currentCard != null && isCurrentCardDone && answer.none { it.isLetter() }
     val canSubmit = currentCard != null && !doneLocked
     Surface(
@@ -3180,21 +3181,22 @@ private fun AnswerBar(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                if (isEmptySideCard) {
+                if (isDisplayedEmptySide) {
                     Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                        AnswerIconButton(
-                            icon = Icons.Default.Clear,
-                            contentDescription = "Clear input",
-                            enabled = answer.isNotBlank(),
+                        OutlinedButton(
                             onClick = onClearAnswer,
-                            size = controlSize.answerIconButtonSize()
-                        )
+                            enabled = answer.isNotBlank(),
+                            shape = RoundedCornerShape(18.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp)
+                        ) {
+                            Text("Clear")
+                        }
                     }
                     Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
                         Surface(
                             modifier = Modifier
                                 .size(controlSize.micButtonSize())
-                                .clickable(enabled = currentCard != null) { onVoiceToggle() },
+                                .clickable { onVoiceToggle() },
                             shape = RoundedCornerShape(23.dp),
                             border = BorderStroke(
                                 width = if (isVoiceRecording) 3.dp else 1.dp,
@@ -3202,8 +3204,7 @@ private fun AnswerBar(
                             ),
                             color = when {
                                 isVoiceRecording -> BrandSaladColor.copy(alpha = 0.24f)
-                                currentCard != null -> MaterialTheme.colorScheme.surface
-                                else -> MaterialTheme.colorScheme.surfaceVariant
+                                else -> MaterialTheme.colorScheme.surface
                             }
                         ) {
                             Box(contentAlignment = Alignment.Center) {
@@ -3211,19 +3212,26 @@ private fun AnswerBar(
                                     Icons.Default.Mic,
                                     contentDescription = "Voice input",
                                     modifier = Modifier.size(36.dp),
-                                    tint = if (isVoiceRecording) Color(0xFF234231) else if (currentCard != null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.outline
+                                    tint = if (isVoiceRecording) Color(0xFF234231) else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
                     }
                     Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                        AnswerIconButton(
-                            icon = Icons.Default.Edit,
-                            contentDescription = "Write empty side",
-                            enabled = currentCard != null,
+                        Button(
                             onClick = onSaveEmptySide,
-                            size = controlSize.answerIconButtonSize()
-                        )
+                            enabled = true,
+                            shape = RoundedCornerShape(18.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFFE4F6E8),
+                                contentColor = Color(0xFF234231),
+                                disabledContainerColor = Color(0xFFC8CEC4),
+                                disabledContentColor = Color(0xFF5F685D)
+                            )
+                        ) {
+                            Text("Save")
+                        }
                     }
                 } else {
                     Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
@@ -3248,7 +3256,7 @@ private fun AnswerBar(
                         Surface(
                             modifier = Modifier
                                 .size(controlSize.micButtonSize())
-                                .clickable(enabled = currentCard != null) { onVoiceToggle() },
+                                .clickable { onVoiceToggle() },
                             shape = RoundedCornerShape(23.dp),
                             border = BorderStroke(
                                 width = if (isVoiceRecording) 3.dp else 1.dp,
@@ -3256,8 +3264,7 @@ private fun AnswerBar(
                             ),
                             color = when {
                                 isVoiceRecording -> BrandSaladColor.copy(alpha = 0.24f)
-                                currentCard != null -> MaterialTheme.colorScheme.surface
-                                else -> MaterialTheme.colorScheme.surfaceVariant
+                                else -> MaterialTheme.colorScheme.surface
                             }
                         ) {
                             Box(contentAlignment = Alignment.Center) {
@@ -3265,7 +3272,7 @@ private fun AnswerBar(
                                     Icons.Default.Mic,
                                     contentDescription = "Voice input",
                                     modifier = Modifier.size(36.dp),
-                                    tint = if (isVoiceRecording) Color(0xFF234231) else if (currentCard != null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.outline
+                                    tint = if (isVoiceRecording) Color(0xFF234231) else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
