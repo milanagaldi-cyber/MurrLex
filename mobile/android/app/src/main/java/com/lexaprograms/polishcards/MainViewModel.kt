@@ -579,6 +579,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.value = _uiState.value.copy(answer = answer, answerFeedbackVisible = false, message = null)
         saveCurrentStudySession()
     }
+    fun dismissAnswerFeedback() {
+        val state = _uiState.value
+        if (!state.answerFeedbackVisible) return
+        _uiState.value = state.copy(answerFeedbackVisible = false)
+        saveCurrentStudySession()
+    }
 
     fun previewAnswer() {
         val state = _uiState.value
