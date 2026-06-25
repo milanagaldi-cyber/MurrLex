@@ -38,6 +38,17 @@ enum class CardStartSide {
     TRANSLATION
 }
 
+enum class DisplayTextSize {
+    SMALL,
+    MEDIUM,
+    LARGE
+}
+
+enum class ControlSize {
+    SMALL,
+    MEDIUM
+}
+
 data class LessonDraft(
     val id: String = "",
     val title: String = "",
@@ -71,7 +82,10 @@ data class StudyUiState(
     val mode: StudyMode = StudyMode.ORIGINAL,
     val cardStartSide: CardStartSide = CardStartSide.POLISH,
     val excludeMasteredCards: Boolean = false,
+    val hideCompletedCards: Boolean = false,
     val showCardLog: Boolean = false,
+    val displayTextSize: DisplayTextSize = DisplayTextSize.MEDIUM,
+    val controlSize: ControlSize = ControlSize.MEDIUM,
     val interfaceLanguage: String = "en",
     val quickVocabularySourceLanguage: String = "Polish",
     val quickVocabularyTargetLanguage: String = "Russian",
@@ -104,7 +118,7 @@ data class StudyUiState(
     val studyEmptyMessage: String? = when {
         selectedLesson == null || currentPortion.isNotEmpty() -> null
         selectedLesson.cards.isEmpty() -> "Nothing to show yet."
-        excludeMasteredCards -> "All done. Every visible card already has three stars."
+        excludeMasteredCards || hideCompletedCards -> "All done. Every visible card already has three stars."
         else -> "Nothing to show yet."
     }
     val currentPositionLabel: String = if (currentPortion.isEmpty()) "0 / 0" else "${currentIndex + 1} / ${currentPortion.size}"
@@ -118,8 +132,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     init {
         _uiState.value = _uiState.value.copy(
             cardStartSide = repository.loadCardStartSide(),
-            excludeMasteredCards = repository.loadExcludeMasteredCards(),
+            excludeMasteredCards = false,
+            hideCompletedCards = false,
             showCardLog = repository.loadShowCardLog(),
+            displayTextSize = repository.loadDisplayTextSize(),
+            controlSize = repository.loadControlSize(),
             interfaceLanguage = repository.loadInterfaceLanguage(detectSystemInterfaceLanguage()),
             quickVocabularySourceLanguage = repository.loadQuickVocabularySourceLanguage(),
             quickVocabularyTargetLanguage = repository.loadQuickVocabularyTargetLanguage(),
@@ -218,7 +235,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val state = _uiState.value
         val lesson = state.selectedLesson
         val studyCards = if (lesson != null) {
-            if (exclude) lesson.cards.filterNot { it.starCount() == 3 } else lesson.cards
+            filterStudyCards(lesson.cards, exclude, state.hideCompletedCards, state.completedCardIds)
         } else {
             state.currentPortion
         }
@@ -240,6 +257,43 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setShowAllCards(showAll: Boolean) {
         setExcludeMasteredCards(!showAll)
+    }
+
+    fun setHideCompletedCards(hide: Boolean) {
+        val state = _uiState.value
+        val lesson = state.selectedLesson
+        val rebuiltPortion = if (lesson != null) {
+            orderStudyCards(
+                filterStudyCards(lesson.cards, state.excludeMasteredCards, hide, state.completedCardIds),
+                state.mode,
+                shuffleRandom = false
+            )
+        } else {
+            state.currentPortion
+        }
+        _uiState.value = state.copy(
+            hideCompletedCards = hide,
+            currentPortion = rebuiltPortion,
+            currentIndex = state.currentIndex.coerceAtMost((rebuiltPortion.size - 1).coerceAtLeast(0)),
+            message = if (hide) "Done hidden" else "Done visible"
+        )
+        saveCurrentStudySession()
+    }
+
+    fun setDisplayTextSize(size: DisplayTextSize) {
+        repository.saveDisplayTextSize(size)
+        _uiState.value = _uiState.value.copy(
+            displayTextSize = size,
+            message = "Text size: ${size.name.lowercase().replaceFirstChar { it.titlecase(Locale.ROOT) }}"
+        )
+    }
+
+    fun setControlSize(size: ControlSize) {
+        repository.saveControlSize(size)
+        _uiState.value = _uiState.value.copy(
+            controlSize = size,
+            message = "Controls: ${size.name.lowercase().replaceFirstChar { it.titlecase(Locale.ROOT) }}"
+        )
     }
 
     fun setShowCardLog(show: Boolean) {
@@ -338,11 +392,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val session = repository.loadStudySession(lesson.id) ?: return false
         val mode = runCatching { StudyMode.valueOf(session.mode) }
             .getOrDefault(StudyMode.ORIGINAL)
-        val studyCards = if (session.excludeMasteredCards) {
-            lesson.cards.filterNot { it.starCount() == 3 }
-        } else {
-            lesson.cards
-        }
+        val studyCards = filterStudyCards(lesson.cards, session.excludeMasteredCards, false, session.completedCardIds.toSet())
         val cardsById = studyCards.associateBy { it.id }
         val orderedIds = session.portionCardIds.toSet()
         val savedOrderCards = session.portionCardIds.mapNotNull { cardsById[it] }
@@ -363,6 +413,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             screen = AppScreen.STUDY,
             mode = mode,
             excludeMasteredCards = session.excludeMasteredCards,
+            hideCompletedCards = false,
             currentPortion = restoredPortion,
             currentIndex = restoredIndex.coerceIn(0, (restoredPortion.size - 1).coerceAtLeast(0)),
             completedCardIds = session.completedCardIds.filter { it in validIds }.toSet(),
@@ -537,11 +588,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         val currentCardId = state.currentCard?.id
-        val studyCards = if (state.excludeMasteredCards) {
-            lesson.cards.filterNot { it.starCount() == 3 }
-        } else {
-            lesson.cards
-        }
+        val studyCards = filterStudyCards(lesson.cards, state.excludeMasteredCards, state.hideCompletedCards, state.completedCardIds)
         val cards = orderStudyCards(studyCards, mode, shuffleRandom = mode == StudyMode.RANDOM)
         val nextIndex = currentCardId
             ?.let { id -> cards.indexOfFirst { it.id == id } }
@@ -564,11 +611,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val state = _uiState.value
         val lesson = state.selectedLesson ?: return
         repository.clearStudySession(lesson.id)
-        val studyCards = if (state.excludeMasteredCards) {
-            lesson.cards.filterNot { it.starCount() == 3 }
-        } else {
-            lesson.cards
-        }
+        val studyCards = filterStudyCards(lesson.cards, state.excludeMasteredCards, state.hideCompletedCards, state.completedCardIds)
         val cards = orderStudyCards(studyCards, state.mode, shuffleRandom = true)
 
         _uiState.value = state.copy(
@@ -691,7 +734,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } else if (normalize(state.answer) == normalize(card.correctText())) {
             _uiState.value = state.copy(answerFeedbackVisible = false, message = "Correct")
         } else {
-            _uiState.value = state.copy(answerFeedbackVisible = true, message = null)
+            _uiState.value = state.copy(
+                answerFeedbackVisible = true,
+                message = if (wrongLetterRatio(state.answer, card.correctText()) > 0.5) "Wrong" else null
+            )
         }
         saveCurrentStudySession()
     }
@@ -745,7 +791,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             newCompletion &&
             (message == null || message == "Correct")
 
-        if (shouldSavePortionCompletion && selectedLesson != null) {
+        if (shouldSavePortionCompletion) {
             repository.incrementCompletedCount(selectedLesson.id)
             val lessons = repository.loadLessons(state.showHiddenLessons)
             _uiState.value = state.copy(
@@ -1275,8 +1321,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val state = _uiState.value
         val sourceLanguage = state.quickVocabularySourceLanguage.trim().ifBlank { "Polish" }
         val targetLanguage = state.quickVocabularyTargetLanguage.trim().ifBlank { "Russian" }
-        val allLessons = repository.loadLessons(includeHidden = true)
-        val existingLesson = allLessons.firstOrNull { it.id == QUICK_VOCABULARY_LESSON_ID }
+        val visibleLessonsForQuickVocabulary = repository.loadLessons(includeHidden = false)
+        val existingLesson = visibleLessonsForQuickVocabulary.firstOrNull { it.id.startsWith(QUICK_VOCABULARY_LESSON_ID) }
+        val lessonId = existingLesson?.id ?: "${QUICK_VOCABULARY_LESSON_ID}_${UUID.randomUUID()}"
         val now = timestamp()
         val nextCardId = (existingLesson?.cards?.maxOfOrNull { it.id } ?: 0) + 1
         val newCard = Flashcard(
@@ -1294,7 +1341,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
         val updatedLesson = if (existingLesson == null) {
             Lesson(
-                id = QUICK_VOCABULARY_LESSON_ID,
+                id = lessonId,
                 title = QUICK_VOCABULARY_LESSON_TITLE,
                 lessonInfo = quickVocabularyLessonInfo(sourceLanguage, targetLanguage),
                 cards = listOf(newCard),
@@ -1316,14 +1363,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             lessons = visibleLessons,
             selectedLessonIds = emptySet(),
             screen = AppScreen.CATALOG,
-            message = if (canTranslate) "Added to New vocabulary. Translating..." else "Added to New vocabulary"
+            message = if (canTranslate) "Added: $cleanPhrase. Translating..." else "Added: $cleanPhrase"
         )
         if (canTranslate) {
             translateQuickVocabularyCard(
+                lessonId = updatedLesson.id,
                 cardId = newCard.id,
                 phrase = cleanPhrase,
                 sourceLanguage = sourceLanguage,
                 targetLanguage = targetLanguage,
+                useLocalTranslation = state.useLocalTranslation,
                 apiUrl = state.translationApiUrl,
                 apiToken = state.translationApiToken
             )
@@ -1331,22 +1380,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun translateQuickVocabularyCard(
+        lessonId: String,
         cardId: Int,
         phrase: String,
         sourceLanguage: String,
         targetLanguage: String,
+        useLocalTranslation: Boolean,
         apiUrl: String,
         apiToken: String
     ) {
         viewModelScope.launch {
             val translated = runCatching {
-                requestTranslation(apiUrl, apiToken, phrase, sourceLanguage, targetLanguage)
+                val localTranslation = if (useLocalTranslation) {
+                    requestLocalTranslation(phrase, sourceLanguage, targetLanguage)
+                } else {
+                    ""
+                }
+                localTranslation.ifBlank {
+                    if (apiUrl.isNotBlank() && apiToken.isNotBlank()) {
+                        requestTranslation(apiUrl, apiToken, phrase, sourceLanguage, targetLanguage)
+                    } else {
+                        ""
+                    }
+                }
             }.getOrNull().orEmpty().trim()
             if (translated.isBlank()) {
                 _uiState.value = _uiState.value.copy(message = "Translation unavailable")
                 return@launch
             }
-            val lesson = repository.loadLessons(includeHidden = true).firstOrNull { it.id == QUICK_VOCABULARY_LESSON_ID }
+            val lesson = repository.loadLessons(includeHidden = true).firstOrNull { it.id == lessonId }
                 ?: return@launch
             val now = timestamp()
             val updatedLesson = lesson.copy(
@@ -1369,7 +1431,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val currentState = _uiState.value
             _uiState.value = currentState.copy(
                 lessons = repository.loadLessons(currentState.showHiddenLessons),
-                message = "Translation added"
+                message = "Translation added: $phrase"
             )
         }
     }
@@ -1496,6 +1558,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun timestamp(): String {
         return SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date())
     }
+    private fun filterStudyCards(
+        cards: List<Flashcard>,
+        excludeMastered: Boolean,
+        hideCompleted: Boolean,
+        completedIds: Set<Int>
+    ): List<Flashcard> {
+        return cards.filter { card ->
+            (!excludeMastered || card.starCount() < 3) && (!hideCompleted || card.id !in completedIds)
+        }
+    }
+
+    private fun wrongLetterRatio(answer: String, expected: String): Double {
+        val typed = normalize(answer)
+        val target = normalize(expected)
+        val maxLength = maxOf(typed.length, target.length)
+        if (maxLength == 0) return 0.0
+        val wrongCount = (0 until maxLength).count { index -> typed.getOrNull(index) != target.getOrNull(index) }
+        return wrongCount.toDouble() / maxLength.toDouble()
+    }
+
     private fun normalize(value: String): String {
         return value
             .replace('\u00A0', ' ')

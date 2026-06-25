@@ -62,6 +62,26 @@ class CardRepository(private val context: Context) {
         preferences.edit().putBoolean(KEY_SHOW_CARD_LOG, show).apply()
     }
 
+    fun loadDisplayTextSize(): DisplayTextSize {
+        val raw = preferences.getString(KEY_DISPLAY_TEXT_SIZE, DisplayTextSize.MEDIUM.name)
+        return runCatching { DisplayTextSize.valueOf(raw ?: DisplayTextSize.MEDIUM.name) }
+            .getOrDefault(DisplayTextSize.MEDIUM)
+    }
+
+    fun saveDisplayTextSize(size: DisplayTextSize) {
+        preferences.edit().putString(KEY_DISPLAY_TEXT_SIZE, size.name).apply()
+    }
+
+    fun loadControlSize(): ControlSize {
+        val raw = preferences.getString(KEY_CONTROL_SIZE, ControlSize.MEDIUM.name)
+        return runCatching { ControlSize.valueOf(raw ?: ControlSize.MEDIUM.name) }
+            .getOrDefault(ControlSize.MEDIUM)
+    }
+
+    fun saveControlSize(size: ControlSize) {
+        preferences.edit().putString(KEY_CONTROL_SIZE, size.name).apply()
+    }
+
     fun loadSoundEffectsEnabled(): Boolean {
         return preferences.getBoolean(KEY_SOUND_EFFECTS_ENABLED, true)
     }
@@ -394,6 +414,8 @@ class CardRepository(private val context: Context) {
         private const val KEY_MAX_ACTIVE_NOTIFICATIONS = "max_active_notifications"
         private const val KEY_EXCLUDE_MASTERED_CARDS = "exclude_mastered_cards"
         private const val KEY_SHOW_CARD_LOG = "show_card_log"
+        private const val KEY_DISPLAY_TEXT_SIZE = "display_text_size"
+        private const val KEY_CONTROL_SIZE = "control_size"
         private const val KEY_SOUND_EFFECTS_ENABLED = "sound_effects_enabled"
         private const val KEY_VIBRATION_ENABLED = "vibration_enabled"
         private const val KEY_INTERFACE_LANGUAGE = "interface_language"

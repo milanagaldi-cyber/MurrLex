@@ -65,6 +65,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
@@ -139,6 +140,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.serialization.encodeToString
@@ -670,6 +672,13 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
                         }) {
                             StudyHideStarIcon(active = state.excludeMasteredCards)
                         }
+                        IconButton(onClick = {
+                            titleActivated = true
+                            viewModel.setHideCompletedCards(!state.hideCompletedCards)
+                            viewModel.showMessage(if (!state.hideCompletedCards) "Hide done" else "Show done")
+                        }) {
+                            StudyHideDoneIcon(active = state.hideCompletedCards)
+                        }
                     }
                     if (state.screen == AppScreen.STUDY && headerLessonInfo.isNotBlank()) {
                         IconButton(onClick = {
@@ -722,6 +731,7 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
                     },
                     onVoiceToggle = { startVoiceInput(VoiceInputTarget.ANSWER) },
                     onDismissAnswerFeedback = viewModel::dismissAnswerFeedback,
+                    controlSize = state.controlSize,
                     onSpeak = {
                         val card = state.currentCard
                         if (card != null) {
@@ -794,7 +804,6 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
                     onNextLesson = viewModel::openNextVisibleLesson,
                     onOpenCatalog = viewModel::openCatalog,
                     onToggleCard = {
-                        performFeedback(context, state.soundEffectsEnabled, state.vibrationEnabled, FeedbackCue.TAP)
                         viewModel.toggleCard()
                     },
                     onToggleStar = { cardId, starIndex ->
@@ -816,6 +825,8 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
                     excludeMasteredCards = state.excludeMasteredCards,
                     showCardLog = state.showCardLog,
                     interfaceLanguage = state.interfaceLanguage,
+                    displayTextSize = state.displayTextSize,
+                    controlSize = state.controlSize,
                     soundEffectsEnabled = state.soundEffectsEnabled,
                     vibrationEnabled = state.vibrationEnabled,
                     notificationIntervalDraft = state.notificationIntervalDraft,
@@ -829,6 +840,8 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel()) {
                     onExcludeMasteredCardsChange = viewModel::setExcludeMasteredCards,
                     onShowCardLogChange = viewModel::setShowCardLog,
                     onInterfaceLanguageChange = viewModel::setInterfaceLanguage,
+                    onDisplayTextSizeChange = viewModel::setDisplayTextSize,
+                    onControlSizeChange = viewModel::setControlSize,
                     onSoundEffectsEnabledChange = viewModel::setSoundEffectsEnabled,
                     onVibrationEnabledChange = viewModel::setVibrationEnabled,
                     onNotificationIntervalChange = viewModel::updateNotificationIntervalDraft,
@@ -917,7 +930,7 @@ private fun SuccessStar(
             Icon(
                 Icons.Default.Star,
                 contentDescription = "Correct",
-                modifier = Modifier.padding(18.dp).size(46.dp),
+                modifier = Modifier.padding(16.dp).size(46.dp),
                 tint = Color(0xFFFFC107)
             )
         }
@@ -1161,6 +1174,8 @@ private fun SettingsScreen(
     excludeMasteredCards: Boolean,
     showCardLog: Boolean,
     interfaceLanguage: String,
+    displayTextSize: DisplayTextSize,
+    controlSize: ControlSize,
     soundEffectsEnabled: Boolean,
     vibrationEnabled: Boolean,
     notificationIntervalDraft: String,
@@ -1174,6 +1189,8 @@ private fun SettingsScreen(
     onExcludeMasteredCardsChange: (Boolean) -> Unit,
     onShowCardLogChange: (Boolean) -> Unit,
     onInterfaceLanguageChange: (String) -> Unit,
+    onDisplayTextSizeChange: (DisplayTextSize) -> Unit,
+    onControlSizeChange: (ControlSize) -> Unit,
     onSoundEffectsEnabledChange: (Boolean) -> Unit,
     onVibrationEnabledChange: (Boolean) -> Unit,
     onNotificationIntervalChange: (String) -> Unit,
@@ -1347,6 +1364,35 @@ private fun SettingsScreen(
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
+                Text(
+                    text = "Display size",
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Medium
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    DisplayTextSize.entries.forEach { size ->
+                        FilterChip(
+                            selected = displayTextSize == size,
+                            onClick = { onDisplayTextSizeChange(size) },
+                            label = { Text(size.name.lowercase(Locale.ROOT).replaceFirstChar { it.titlecase(Locale.ROOT) }) }
+                        )
+                    }
+                }
+                Text(
+                    text = "Button and icon size",
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Medium
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    ControlSize.entries.forEach { size ->
+                        FilterChip(
+                            selected = controlSize == size,
+                            onClick = { onControlSizeChange(size) },
+                            label = { Text(size.name.lowercase(Locale.ROOT).replaceFirstChar { it.titlecase(Locale.ROOT) }) }
+                        )
+                    }
+                }
+
                 SettingsSwitchRow(
                     title = st("Show card log", "Kartenlog anzeigen", "Паказваць лог карткі", "Mostrar registro de tarjeta", "Показувати лог картки", "Показывать лог карточки", "Pokaż log karty"),
                     description = st(
@@ -1974,7 +2020,7 @@ private fun LessonTile(
                 if (lesson.lessonInfo.isNotBlank()) {
                     IconButton(
                         onClick = { showLessonInfo = true },
-                        modifier = Modifier.size(32.dp)
+                        modifier = Modifier.size(36.dp)
                     ) {
                         Icon(
                             Icons.Default.Info,
@@ -2128,17 +2174,17 @@ private fun StudyScreen(
                         onClick = onToggleCard,
                         onToggleStar = onToggleStar,
                         onEditCard = onEditCard,
+                        displayTextSize = state.displayTextSize,
+                        controlSize = state.controlSize,
                         isCompleted = animatedCard?.id in state.completedCardIds,
                         positionLabel = (animatedIndex + 1).toString(),
                         onSwipePrevious = {
                             if (state.currentIndex > 0) {
-                                performFeedback(context, state.soundEffectsEnabled, state.vibrationEnabled, FeedbackCue.SWIPE)
                                 onPreviousCard()
                             }
                         },
                         onSwipeNext = {
                             if (state.currentIndex < state.currentPortion.lastIndex) {
-                                performFeedback(context, state.soundEffectsEnabled, state.vibrationEnabled, FeedbackCue.SWIPE)
                                 onNextCard()
                             }
                         },
@@ -2246,24 +2292,50 @@ private fun StudyHideStarIcon(active: Boolean, modifier: Modifier = Modifier) {
         modifier = modifier.size(24.dp),
         contentAlignment = Alignment.Center
     ) {
+        val slashColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f)
         Icon(
-            imageVector = if (active) Icons.Default.Star else Icons.Default.StarBorder,
+            imageVector = Icons.Default.Star,
             contentDescription = if (active) "Starred cards hidden" else "Hide starred cards",
-            tint = MaterialTheme.colorScheme.onSurfaceVariant
+            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f)
         )
         if (active) {
             Canvas(modifier = Modifier.size(24.dp)) {
                 drawLine(
-                    color = BrandRedColor,
+                    color = slashColor,
                     start = Offset(size.width * 0.18f, size.height * 0.82f),
                     end = Offset(size.width * 0.82f, size.height * 0.18f),
-                    strokeWidth = 3.dp.toPx()
+                    strokeWidth = 2.dp.toPx()
                 )
             }
         }
     }
 }
 
+
+@Composable
+private fun StudyHideDoneIcon(active: Boolean, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier.size(24.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        val slashColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f)
+        Icon(
+            imageVector = Icons.Default.DoneAll,
+            contentDescription = if (active) "Done cards hidden" else "Hide done cards",
+            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f)
+        )
+        if (active) {
+            Canvas(modifier = Modifier.size(24.dp)) {
+                drawLine(
+                    color = slashColor,
+                    start = Offset(size.width * 0.18f, size.height * 0.82f),
+                    end = Offset(size.width * 0.82f, size.height * 0.18f),
+                    strokeWidth = 2.dp.toPx()
+                )
+            }
+        }
+    }
+}
 @Composable
 private fun CardNavigation(
     position: String,
@@ -2336,6 +2408,24 @@ private fun CounterText(text: String, modifier: Modifier = Modifier) {
     )
 }
 
+private fun DisplayTextSize.cardMainTextSize() = when (this) {
+    DisplayTextSize.SMALL -> 27.sp
+    DisplayTextSize.MEDIUM -> 32.sp
+    DisplayTextSize.LARGE -> 38.sp
+}
+
+private fun DisplayTextSize.studyCardHeight() = when (this) {
+    DisplayTextSize.SMALL -> 350.dp
+    DisplayTextSize.MEDIUM -> 382.dp
+    DisplayTextSize.LARGE -> 420.dp
+}
+
+private fun ControlSize.cardIconButtonSize() = if (this == ControlSize.SMALL) 38.dp else 44.dp
+private fun ControlSize.answerIconButtonSize() = if (this == ControlSize.SMALL) 44.dp else 48.dp
+private fun ControlSize.micButtonSize() = if (this == ControlSize.SMALL) 58.dp else 66.dp
+private fun ControlSize.micIconSize() = if (this == ControlSize.SMALL) 28.dp else 32.dp
+private fun ControlSize.answerRowHeight() = if (this == ControlSize.SMALL) 62.dp else 70.dp
+private fun ControlSize.okButtonSize() = if (this == ControlSize.SMALL) 58.dp else 66.dp
 @Composable
 private fun StudyCard(
     card: Flashcard?,
@@ -2343,6 +2433,8 @@ private fun StudyCard(
     onClick: () -> Unit,
     onToggleStar: (Int, Int) -> Unit,
     onEditCard: () -> Unit,
+    displayTextSize: DisplayTextSize,
+    controlSize: ControlSize,
     isCompleted: Boolean,
     positionLabel: String,
     onSwipePrevious: () -> Unit,
@@ -2385,7 +2477,7 @@ private fun StudyCard(
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(340.dp)
+                .height(displayTextSize.studyCardHeight())
                 .pointerInput(card?.id) {
                     detectHorizontalDragGestures(
                         onDragStart = { swipeDistance = 0f },
@@ -2427,7 +2519,7 @@ private fun StudyCard(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(18.dp)
+                    .padding(if (controlSize == ControlSize.SMALL) 14.dp else 16.dp)
                     .graphicsLayer {
                         rotationY = if (rotation > 90f) 180f else 0f
                     }
@@ -2474,7 +2566,7 @@ private fun StudyCard(
                     modifier = Modifier
                         .align(Alignment.Center)
                         .fillMaxWidth()
-                        .padding(top = 54.dp, bottom = 56.dp)
+                        .padding(top = 48.dp, bottom = 42.dp)
                 ) {
                     Column(
                         modifier = Modifier
@@ -2499,6 +2591,7 @@ private fun StudyCard(
                                     }
                                 }.orEmpty(),
                                 style = MaterialTheme.typography.headlineMedium,
+                                fontSize = displayTextSize.cardMainTextSize(),
                                 fontWeight = FontWeight.SemiBold,
                                 textAlign = TextAlign.Center,
                                 color = MaterialTheme.colorScheme.onSurface
@@ -2513,6 +2606,7 @@ private fun StudyCard(
                             Text(
                                 text = card?.correctText().orEmpty(),
                                 style = MaterialTheme.typography.headlineMedium,
+                                fontSize = displayTextSize.cardMainTextSize(),
                                 fontWeight = FontWeight.SemiBold,
                                 textAlign = TextAlign.Center,
                                 color = Color(0xFF183D22)
@@ -2830,7 +2924,7 @@ private fun buildAnswerFeedback(answer: String, expected: String): AnnotatedStri
                 typedChar == null && targetChar != null -> {
                     if (targetChar.isLetterOrDigit()) {
                         pushStyle(SpanStyle(color = Color(0xFFE3B400), fontWeight = FontWeight.Bold))
-                        append("★")
+                        append("*")
                         pop()
                     } else {
                         append(targetChar)
@@ -2864,6 +2958,7 @@ private fun AnswerBar(
     onVoiceToggle: () -> Unit,
     onSpeak: () -> Unit,
     onDismissAnswerFeedback: () -> Unit,
+    controlSize: ControlSize = ControlSize.MEDIUM,
 ) {
     val doneLocked = currentCard != null && isCurrentCardDone && answer.none { it.isLetter() }
     val canSubmit = currentCard != null && !doneLocked
@@ -2902,7 +2997,7 @@ private fun AnswerBar(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(70.dp),
+                    .height(controlSize.answerRowHeight()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -2911,7 +3006,8 @@ private fun AnswerBar(
                         icon = Icons.Default.ContentCopy,
                         contentDescription = "Copy visible card text",
                         enabled = currentCard != null,
-                        onClick = { currentCard?.displayedCardText(isBackVisible)?.let(onCopy) }
+                        onClick = { currentCard?.displayedCardText(isBackVisible)?.let(onCopy) },
+                        size = controlSize.answerIconButtonSize()
                     )
                 }
                 Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
@@ -2919,13 +3015,14 @@ private fun AnswerBar(
                         icon = Icons.Default.VolumeUp,
                         contentDescription = "Read aloud",
                         enabled = currentCard != null,
-                        onClick = onSpeak
+                        onClick = onSpeak,
+                        size = controlSize.answerIconButtonSize()
                     )
                 }
                 Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
                     Surface(
                         modifier = Modifier
-                            .size(66.dp)
+                            .size(controlSize.micButtonSize())
                             .clickable(enabled = currentCard != null) { onVoiceToggle() },
                         shape = RoundedCornerShape(23.dp),
                         border = BorderStroke(
@@ -2942,7 +3039,7 @@ private fun AnswerBar(
                             Icon(
                                 Icons.Default.Mic,
                                 contentDescription = "Voice input",
-                                modifier = Modifier.size(32.dp),
+                                modifier = Modifier.size(36.dp),
                                 tint = if (isVoiceRecording) Color(0xFF234231) else if (currentCard != null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.outline
                             )
                         }
@@ -2953,15 +3050,15 @@ private fun AnswerBar(
                         icon = Icons.Default.Check,
                         contentDescription = "Check answer",
                         enabled = currentCard != null,
-                        onClick = onCheck
+                        onClick = onCheck,
+                        size = controlSize.answerIconButtonSize()
                     )
                 }
                 Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
                     Button(
                         onClick = onOk,
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .height(56.dp),
+                            .size(controlSize.okButtonSize()),
                         shape = RoundedCornerShape(18.dp),
                         enabled = canSubmit,
                         colors = ButtonDefaults.buttonColors(
@@ -2985,11 +3082,12 @@ private fun AnswerIconButton(
     icon: ImageVector,
     contentDescription: String,
     enabled: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    size: androidx.compose.ui.unit.Dp = 48.dp
 ) {
     Surface(
         modifier = Modifier
-            .size(48.dp)
+            .size(size)
             .clickable(enabled = enabled, onClick = onClick),
         shape = RoundedCornerShape(18.dp),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
