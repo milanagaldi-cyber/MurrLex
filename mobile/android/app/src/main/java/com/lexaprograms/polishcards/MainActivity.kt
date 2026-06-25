@@ -474,7 +474,7 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
         val lessonSampleCard = state.editorLesson?.cards?.firstOrNull() ?: state.selectedLesson?.cards?.firstOrNull()
         val language = when (target) {
             VoiceInputTarget.ANSWER -> state.currentCard.voiceLanguageForCorrectSide(state.interfaceLanguage)
-            VoiceInputTarget.QUICK_VOCABULARY -> languageForVoice(state.quickVocabularySourceLanguage, "", state.interfaceLanguage)
+            VoiceInputTarget.QUICK_VOCABULARY -> languageForVoice(state.quickVocabularyTargetLanguage, "", state.interfaceLanguage)
             VoiceInputTarget.CARD_NATIVE -> languageForVoice(
                 draftCard?.sourceLanguage?.ifBlank { draftCard.frontLabel() }
                     ?: lessonSampleCard?.sourceLanguage?.ifBlank { lessonSampleCard.frontLabel() }
@@ -1037,7 +1037,7 @@ private fun VoiceDraftField(
     onValueChange: (String) -> Unit,
     label: String,
     singleLine: Boolean = false,
-    onVoiceInput: () -> Unit
+    onVoiceInput: (() -> Unit)? = null
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -1051,8 +1051,10 @@ private fun VoiceDraftField(
             label = { Text(label) },
             singleLine = singleLine
         )
-        IconButton(onClick = onVoiceInput) {
-            Icon(Icons.Default.Mic, contentDescription = "Voice input for $label")
+        if (onVoiceInput != null) {
+            IconButton(onClick = onVoiceInput) {
+                Icon(Icons.Default.Mic, contentDescription = "Voice input for $label")
+            }
         }
     }
 }
@@ -1138,15 +1140,13 @@ private fun StudyCardEditorDialog(
                         value = cardDraft.madeAt,
                         onValueChange = { onCardDraftChange(cardDraft.copy(madeAt = it)) },
                         label = ui.madeAt,
-                        singleLine = true,
-                        onVoiceInput = { onVoiceInput(VoiceInputTarget.CARD_MADE_AT) }
+                        singleLine = true
                     )
                     VoiceDraftField(
                         value = cardDraft.where,
                         onValueChange = { onCardDraftChange(cardDraft.copy(where = it)) },
                         label = ui.where,
-                        singleLine = true,
-                        onVoiceInput = { onVoiceInput(VoiceInputTarget.CARD_WHERE) }
+                        singleLine = true
                     )
                 }
             }
@@ -1544,19 +1544,15 @@ private fun SettingsScreen(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                OutlinedTextField(
+                DictionaryLanguageDropdown(
+                    label = "Native language",
                     value = quickVocabularySourceLanguage,
-                    onValueChange = onQuickVocabularySourceChange,
-                    label = { Text("Source language") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                    onValueChange = onQuickVocabularySourceChange
                 )
-                OutlinedTextField(
+                DictionaryLanguageDropdown(
+                    label = "Target language",
                     value = quickVocabularyTargetLanguage,
-                    onValueChange = onQuickVocabularyTargetChange,
-                    label = { Text("Target language") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                    onValueChange = onQuickVocabularyTargetChange
                 )
                 SettingsSwitchRow(
                     title = "Local translation",
@@ -1705,6 +1701,61 @@ private fun SettingsScreen(
             }
         }
         Spacer(Modifier.height(8.dp))
+    }
+}
+private val DictionaryLanguageOptions = listOf(
+    "English" to "EN - English",
+    "Spanish" to "ES - Spanish",
+    "Polish" to "PL - Polish",
+    "Russian" to "RU - Russian",
+    "Belarusian" to "BY - Belarusian",
+    "Ukrainian" to "UA - Ukrainian",
+    "German" to "DE - German"
+)
+
+@Composable
+private fun DictionaryLanguageDropdown(
+    label: String,
+    value: String,
+    onValueChange: (String) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val selectedLabel = DictionaryLanguageOptions.firstOrNull { it.first.equals(value, ignoreCase = true) }?.second
+        ?: value.ifBlank { "Select language" }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Box {
+            OutlinedButton(
+                onClick = { expanded = true },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Text(
+                    text = selectedLabel,
+                    modifier = Modifier.weight(1f),
+                    textAlign = TextAlign.Start
+                )
+                Icon(Icons.Default.KeyboardArrowDown, contentDescription = null)
+            }
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false }
+            ) {
+                DictionaryLanguageOptions.forEach { (language, optionLabel) ->
+                    DropdownMenuItem(
+                        text = { Text(optionLabel) },
+                        onClick = {
+                            expanded = false
+                            onValueChange(language)
+                        }
+                    )
+                }
+            }
+        }
     }
 }
 @Composable
@@ -2633,7 +2684,7 @@ private fun StudyCard(
                     ) {
                         if (showingFront) {
                             Text(
-                                text = card?.frontLabel().orEmpty(),
+                                text = card?.frontDisplayLabel().orEmpty(),
                                 style = MaterialTheme.typography.titleMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -2641,7 +2692,7 @@ private fun StudyCard(
                             Text(
                                 text = card?.let { flashcard ->
                                     if (flashcard.kindCode() == "LN") {
-                                        flashcard.nativeText()
+                                        flashcard.frontDisplayText()
                                     } else {
                                         flashcard.mistakeText().ifBlank { "No mistake recorded yet" }
                                     }
@@ -2807,10 +2858,24 @@ private fun Flashcard.displayedCardText(isBackVisible: Boolean): String {
     return if (isBackVisible) {
         correctText()
     } else if (kindCode() == "LN") {
-        nativeText()
+        frontDisplayText()
     } else {
         mistakeText().ifBlank { nativeText().ifBlank { correctText() } }
     }
+}
+
+private fun Flashcard.frontDisplayLabel(): String {
+    return if (hasPendingNativeTranslation()) backLabel() else frontLabel()
+}
+
+private fun Flashcard.frontDisplayText(): String {
+    return if (hasPendingNativeTranslation()) correctText() else nativeText()
+}
+
+private fun Flashcard.hasPendingNativeTranslation(): Boolean {
+    if (kindCode() != "LN" || correctText().isBlank()) return false
+    val native = nativeText().trim()
+    return native.isBlank() || native.contains("translation pending", ignoreCase = true)
 }
 
 private fun Flashcard?.speechLanguageTag(interfaceLanguage: String): String {
@@ -2828,7 +2893,7 @@ private fun Flashcard?.speechLanguageTag(interfaceLanguage: String): String {
 }
 
 private fun Flashcard.speechLanguageTagForSide(isBackVisible: Boolean, interfaceLanguage: String): String {
-    val explicitLanguage = if (isBackVisible) {
+    val explicitLanguage = if (isBackVisible || hasPendingNativeTranslation()) {
         targetLanguage.ifBlank { backLabel() }
     } else if (kindCode() == "LN") {
         sourceLanguage.ifBlank { frontLabel() }
@@ -3432,15 +3497,13 @@ private fun LessonEditorScreen(
                         value = cardDraft.madeAt,
                         onValueChange = { onCardDraftChange(cardDraft.copy(madeAt = it)) },
                         label = "Made at",
-                        singleLine = true,
-                        onVoiceInput = { onVoiceInputForCardField(VoiceInputTarget.CARD_MADE_AT) }
+                        singleLine = true
                     )
                     VoiceDraftField(
                         value = cardDraft.where,
                         onValueChange = { onCardDraftChange(cardDraft.copy(where = it)) },
                         label = "Where",
-                        singleLine = true,
-                        onVoiceInput = { onVoiceInputForCardField(VoiceInputTarget.CARD_WHERE) }
+                        singleLine = true
                     )
                 }
             },
@@ -3935,6 +3998,7 @@ private fun sampleLessonJson(): String {
 
 private fun versionLogText(): String {
     return """
+        v0.67 - Changed quick vocabulary languages to dropdowns, made quick voice capture listen in the target language, showed pending-translation cards on their filled side, and removed voice input from card meta/log fields.
         v0.66 - Added a 1x1 quick voice home-screen widget with a white microphone tile and red MM mark that opens directly into quick vocabulary capture.
         v0.65 - Fixed show-filter toggle semantics, made answer input grow for multiple lines, switched interface language to a dropdown, saved quick voice vocabulary as target-language text, and added bulk card copy/delete tools.
         v0.64 - Improved settings back navigation, added fast white service bubbles, voice input for card editor fields, and clearer filter toggle icons.
