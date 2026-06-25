@@ -384,14 +384,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
     private fun defaultBackVisible(card: Flashcard? = _uiState.value.currentCard): Boolean {
-        if (card?.shouldStartOnBackSide() == true) return true
-        return _uiState.value.cardStartSide == CardStartSide.TRANSLATION
+        val currentCard = card ?: return _uiState.value.cardStartSide == CardStartSide.TRANSLATION
+        val frontMissing = currentCard.nativeText().isMissingCardSide()
+        val backMissing = currentCard.correctText().isMissingCardSide()
+        return when {
+            frontMissing && !backMissing -> true
+            backMissing && !frontMissing -> false
+            else -> _uiState.value.cardStartSide == CardStartSide.TRANSLATION
+        }
     }
 
-    private fun Flashcard.shouldStartOnBackSide(): Boolean {
-        if (kindCode() != "LN" || correctText().isBlank()) return false
-        val native = nativeText().trim()
-        return native.isBlank() || native.isEmptyPlaceholder() || native.contains("translation pending", ignoreCase = true)
+    private fun String.isMissingCardSide(): Boolean {
+        val clean = trim()
+        return clean.isBlank() || clean.isEmptyPlaceholder() || clean.equals("Translation pending", ignoreCase = true)
     }
 
     private fun String.isEmptyPlaceholder(): Boolean = trim().equals("Empty", ignoreCase = true)
@@ -446,7 +451,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             currentIndex = restoredIndex.coerceIn(0, (restoredPortion.size - 1).coerceAtLeast(0)),
             completedCardIds = session.completedCardIds.filter { it in validIds }.toSet(),
             portionCompletionSaved = session.portionCompletionSaved,
-            isBackVisible = session.isBackVisible,
+            isBackVisible = defaultBackVisible(restoredPortion.getOrNull(restoredIndex.coerceIn(0, (restoredPortion.size - 1).coerceAtLeast(0)))),
             answer = session.answer,
             answerFeedbackVisible = session.answerFeedbackVisible,
             message = null
@@ -843,6 +848,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             currentPortion = state.currentPortion.map { portionCard ->
                 if (portionCard.id == updatedCard.id) updatedCard else portionCard
             },
+            isBackVisible = defaultBackVisible(updatedCard),
             answer = "",
             answerFeedbackVisible = false,
             message = "Saved"
