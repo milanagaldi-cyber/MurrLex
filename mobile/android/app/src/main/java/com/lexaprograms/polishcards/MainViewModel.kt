@@ -1019,12 +1019,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val state = _uiState.value
         val lesson = state.selectedLesson ?: return
         repository.clearStudySession(lesson.id)
+        val now = timestamp()
+        val resetCards = lesson.cards.map { card ->
+            if (card.stars == 0) {
+                card
+            } else {
+                card.copy(
+                    stars = 0,
+                    log = (card.log + "$now - stars reset with lesson progress").takeLast(100)
+                )
+            }
+        }
+        val updatedLesson = lesson.copy(cards = resetCards, editable = true)
+        repository.saveLesson(updatedLesson)
         val cards = orderStudyCards(
-            filterStudyCards(lesson.cards, state.excludeMasteredCards, false, emptySet()),
+            filterStudyCards(updatedLesson.cards, state.excludeMasteredCards, false, emptySet()),
             state.mode,
             shuffleRandom = false
         )
         _uiState.value = state.copy(
+            lessons = repository.loadLessons(state.showHiddenLessons),
+            selectedLesson = updatedLesson,
             currentPortion = cards,
             currentIndex = 0,
             completedCardIds = emptySet(),
@@ -1033,7 +1048,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             isBackVisible = defaultBackVisible(cards.firstOrNull()),
             answer = "",
             answerFeedbackVisible = false,
-            message = "Progress reset"
+            message = "Progress and stars reset"
         )
         saveCurrentStudySession()
     }
