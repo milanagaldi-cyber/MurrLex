@@ -14,7 +14,7 @@
         android:gravity="center"
         android:includeFontPadding="false"
         android:text="MM"
-        android:textColor="#D64B42"
+        android:textColor="#C45F59"
         android:textSize="13sp"
         android:textStyle="bold" />
 

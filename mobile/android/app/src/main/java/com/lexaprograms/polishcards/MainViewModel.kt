@@ -101,6 +101,7 @@ data class StudyUiState(
     val returnToStudyAfterEdit: Boolean = false,
     val returnStudyCardId: Int? = null,
     val openedFromNotification: Boolean = false,
+    val notificationAnswered: Boolean = false,
     val closeAfterNotificationAnswer: Boolean = false
 ) {
     val currentCard: Flashcard? = currentPortion.getOrNull(currentIndex.coerceIn(0, (currentPortion.size - 1).coerceAtLeast(0)))
@@ -209,6 +210,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             screen = AppScreen.STUDY,
             message = null,
             openedFromNotification = true,
+            notificationAnswered = false,
             closeAfterNotificationAnswer = false
         )
     }
@@ -489,6 +491,41 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
+    private fun downgradeOpenedNotificationIfNeeded() {
+        val state = _uiState.value
+        if (!state.openedFromNotification || state.notificationAnswered) return
+        val lesson = state.selectedLesson ?: return
+        val card = state.currentCard ?: return
+        if (card.starCount() != 2) {
+            _uiState.value = state.copy(openedFromNotification = false)
+            return
+        }
+
+        val logEntry = "${timestamp()} - notification opened without answer, stars changed to 1"
+        val updatedCards = lesson.cards.map { lessonCard ->
+            if (lessonCard.id == card.id) {
+                lessonCard.copy(
+                    stars = starsForCount(1),
+                    log = (lessonCard.log + logEntry).takeLast(100)
+                )
+            } else {
+                lessonCard
+            }
+        }
+        val updatedLesson = lesson.copy(cards = updatedCards, editable = true)
+        repository.saveLesson(updatedLesson)
+        val lessons = repository.loadLessons(state.showHiddenLessons)
+        val savedLesson = lessons.firstOrNull { it.id == lesson.id } ?: updatedLesson
+        _uiState.value = state.copy(
+            lessons = lessons,
+            selectedLesson = savedLesson,
+            currentPortion = state.currentPortion.map { portionCard ->
+                savedLesson.cards.firstOrNull { it.id == portionCard.id } ?: portionCard
+            },
+            openedFromNotification = false,
+            notificationAnswered = true
+        )
+    }
     private fun saveCurrentStudySession() {
         val state = _uiState.value
         val lesson = state.selectedLesson ?: return
@@ -532,6 +569,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
     fun openCatalog() {
+        downgradeOpenedNotificationIfNeeded()
         saveCurrentStudySession()
         refreshLessons()
         _uiState.value = _uiState.value.copy(
@@ -919,6 +957,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 answer = "",
                 answerFeedbackVisible = false,
                 message = message,
+                notificationAnswered = state.openedFromNotification || state.notificationAnswered,
                 closeAfterNotificationAnswer = shouldCloseAfterNotificationAnswer
             )
         } else {
@@ -931,6 +970,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 answer = "",
                 answerFeedbackVisible = false,
                 message = if (newCompletion) message else message,
+                notificationAnswered = state.openedFromNotification || state.notificationAnswered,
                 closeAfterNotificationAnswer = shouldCloseAfterNotificationAnswer
             )
         }

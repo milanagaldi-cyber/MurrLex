@@ -15,7 +15,7 @@
         android:fillColor="#00000000"
         android:pathData="M24,78 L24,30 L40,30 L54,55 L68,30 L84,30 L84,78 L70,78 L70,50 L58,72 L50,72 L38,50 L38,78 Z" />
     <path
-        android:fillColor="#D71920"
+        android:fillColor="#C45F59"
         android:pathData="M29,74 L29,35 L39,35 L54,62 L69,35 L79,35 L79,74 L70,74 L70,51 L58,73 L50,73 L38,51 L38,74 Z" />
     <path
         android:fillColor="#FFFFFF"

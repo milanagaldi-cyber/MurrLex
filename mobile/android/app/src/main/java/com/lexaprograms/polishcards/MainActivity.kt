@@ -143,6 +143,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
@@ -169,8 +170,8 @@ import android.os.Vibrator
 import androidx.core.content.FileProvider
 import java.io.File
 
-private val BrandSaladColor = Color(0xFF8EDB67)
-private val BrandRedColor = Color(0xFFD64B42)
+private val BrandSaladColor = Color(0xFF8FDCC4)
+private val BrandRedColor = Color(0xFFC45F59)
 private val CompletedFrameColor = Color(0xFFE8F5E9)
 
 private enum class VoiceInputTarget {
@@ -1273,7 +1274,7 @@ private fun SplashScreen(soundEffectsEnabled: Boolean, vibrationEnabled: Boolean
                     text = "M",
                     style = MaterialTheme.typography.displayLarge,
                     fontWeight = FontWeight.Black,
-                    color = Color(0xFFE53935),
+                    color = BrandRedColor,
                     modifier = Modifier.graphicsLayer {
                         translationX = -56f * (1f - progress)
                         alpha = (1f - progress).coerceIn(0f, 1f)
@@ -1283,7 +1284,7 @@ private fun SplashScreen(soundEffectsEnabled: Boolean, vibrationEnabled: Boolean
                     text = "M",
                     style = MaterialTheme.typography.displayLarge,
                     fontWeight = FontWeight.Black,
-                    color = Color(0xFFE53935),
+                    color = BrandRedColor,
                     modifier = Modifier.graphicsLayer {
                         translationX = 56f * (1f - progress)
                         alpha = (1f - progress).coerceIn(0f, 1f)
@@ -3735,130 +3736,145 @@ private fun LessonEditorScreen(
         )
     }
 
-    Column(
+    LazyColumn(
         modifier = Modifier
             .fillMaxSize()
             .padding(horizontal = 20.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = PaddingValues(top = 4.dp, bottom = 24.dp)
     ) {
-        OutlinedTextField(
-            value = lesson.title,
-            onValueChange = onTitleChange,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 4.dp),
-            label = { Text("Lesson title") },
-            singleLine = true
-        )
-        OutlinedTextField(
-            value = lesson.lessonInfo,
-            onValueChange = onLessonInfoChange,
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("Lesson info") },
-            minLines = 2,
-            maxLines = 5
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            DictionaryLanguageDropdown(
-                label = "Front side input language",
-                value = lesson.sourceLanguage,
-                onValueChange = onLessonSourceLanguageChange,
-                modifier = Modifier.weight(1f)
-            )
-            DictionaryLanguageDropdown(
-                label = "Back side input language",
-                value = lesson.targetLanguage,
-                onValueChange = onLessonTargetLanguageChange,
-                modifier = Modifier.weight(1f)
+        item {
+            OutlinedTextField(
+                value = lesson.title,
+                onValueChange = onTitleChange,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Lesson title") },
+                singleLine = true
             )
         }
-
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Button(
-                onClick = onSave,
-                modifier = Modifier.weight(1f),
-                shape = RoundedCornerShape(18.dp)
-            ) {
-                Text("Save lesson")
-            }
-            OutlinedButton(
-                onClick = { showDeleteLessonDialog = true },
-                modifier = Modifier.weight(1f),
-                shape = RoundedCornerShape(18.dp)
-            ) {
-                Icon(Icons.Default.Delete, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("Delete")
-            }
-        }
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "Cards (${lesson.cards.size})",
-                modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold
+        item {
+            OutlinedTextField(
+                value = lesson.lessonInfo,
+                onValueChange = onLessonInfoChange,
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Lesson info") },
+                minLines = 2,
+                maxLines = 6
             )
-            IconButton(onClick = {
-                onCancelCardEditing()
-                showCardDialog = true
-            }) {
-                Icon(Icons.Default.Add, contentDescription = "Add card")
+        }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                DictionaryLanguageDropdown(
+                    label = "Front side input language",
+                    value = lesson.sourceLanguage,
+                    onValueChange = onLessonSourceLanguageChange,
+                    modifier = Modifier.weight(1f)
+                )
+                DictionaryLanguageDropdown(
+                    label = "Back side input language",
+                    value = lesson.targetLanguage,
+                    onValueChange = onLessonTargetLanguageChange,
+                    modifier = Modifier.weight(1f)
+                )
             }
         }
-
-        if (lesson.cards.isNotEmpty()) {
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Button(
+                    onClick = onSave,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(18.dp)
+                ) {
+                    Text("Save lesson")
+                }
+                OutlinedButton(
+                    onClick = { showDeleteLessonDialog = true },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(18.dp)
+                ) {
+                    Icon(Icons.Default.Delete, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Delete")
+                }
+            }
+        }
+        item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                OutlinedButton(
-                    onClick = {
-                        pendingCopyCardIds = selectedCardIds
-                        showCopyCardsDialog = true
-                    },
-                    enabled = selectedCardIds.isNotEmpty(),
+                Text(
+                    text = "Cards (${lesson.cards.size})",
                     modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(16.dp)
-                ) { Text("Copy selected") }
-                OutlinedButton(
-                    onClick = {
-                        pendingCopyCardIds = lesson.cards.map { it.id }.toSet()
-                        showCopyCardsDialog = true
-                    },
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(16.dp)
-                ) { Text("Copy all") }
-                OutlinedButton(
-                    onClick = {
-                        onDeleteCards(selectedCardIds)
-                        selectedCardIds = emptySet()
-                    },
-                    enabled = selectedCardIds.isNotEmpty(),
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(16.dp)
-                ) { Text("Delete") }
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                IconButton(onClick = {
+                    onCancelCardEditing()
+                    showCardDialog = true
+                }) {
+                    Icon(Icons.Default.Add, contentDescription = "Add card")
+                }
             }
         }
-
+        if (lesson.cards.isNotEmpty()) {
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                pendingCopyCardIds = selectedCardIds
+                                showCopyCardsDialog = true
+                            },
+                            enabled = selectedCardIds.isNotEmpty(),
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(16.dp)
+                        ) { Text("Copy selected") }
+                        OutlinedButton(
+                            onClick = {
+                                pendingCopyCardIds = lesson.cards.map { it.id }.toSet()
+                                showCopyCardsDialog = true
+                            },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(16.dp)
+                        ) { Text("Copy all") }
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            onDeleteCards(selectedCardIds)
+                            selectedCardIds = emptySet()
+                        },
+                        enabled = selectedCardIds.isNotEmpty(),
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp)
+                    ) { Text("Delete selected") }
+                }
+            }
+        }
         if (lesson.cards.isEmpty()) {
-            EmptyState("This lesson has no cards yet.")
+            item { EmptyState("This lesson has no cards yet.") }
         } else {
-            LazyColumn(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = PaddingValues(bottom = 18.dp)
-            ) {
-                items(lesson.cards, key = { it.id }) { card ->
-                    EditableCardRow(card = card, selected = card.id in selectedCardIds, onToggleSelection = { checked -> selectedCardIds = if (checked) selectedCardIds + card.id else selectedCardIds - card.id }, onMoveUp = { onMoveCard(card.id, -1) }, onMoveDown = { onMoveCard(card.id, 1) }, onEdit = {
+            items(lesson.cards, key = { it.id }) { card ->
+                EditableCardRow(
+                    card = card,
+                    selected = card.id in selectedCardIds,
+                    onToggleSelection = { checked ->
+                        selectedCardIds = if (checked) selectedCardIds + card.id else selectedCardIds - card.id
+                    },
+                    onMoveUp = { onMoveCard(card.id, -1) },
+                    onMoveDown = { onMoveCard(card.id, 1) },
+                    onEdit = {
                         onEditCard(card)
                         showCardDialog = true
-                    }, onCopy = { onCopyCard(card.id) }, onToggleStar = { starIndex -> onToggleCardStar(card.id, starIndex) }, onDelete = { pendingDeleteCardId = card.id })
-                }
+                    },
+                    onCopy = { onCopyCard(card.id) },
+                    onToggleStar = { starIndex -> onToggleCardStar(card.id, starIndex) },
+                    onDelete = { pendingDeleteCardId = card.id }
+                )
             }
         }
     }
@@ -3880,41 +3896,36 @@ private fun EditableCardRow(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.Top
             ) {
                 Checkbox(checked = selected, onCheckedChange = onToggleSelection)
+                Spacer(Modifier.width(4.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(card.nativeText(), fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.height(4.dp))
                     Text(
-                        card.correctText(),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodyMedium
+                        text = card.nativeText().ifBlank { "Empty" },
+                        fontWeight = FontWeight.SemiBold,
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 6,
+                        overflow = TextOverflow.Ellipsis
                     )
-                }
-                OutlinedButton(
-                    onClick = onEdit,
-                    shape = RoundedCornerShape(18.dp)
-                ) {
-                    Icon(Icons.Default.Edit, contentDescription = null)
-                    Spacer(Modifier.width(6.dp))
-                    Text("Edit")
-                }
-                IconButton(onClick = onCopy) {
-                    Icon(Icons.Default.ContentCopy, contentDescription = "Copy card")
-                }
-                IconButton(onClick = onDelete) {
-                    Icon(Icons.Default.Delete, contentDescription = "Delete card")
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = card.correctText().ifBlank { "Empty" },
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodyLarge,
+                        maxLines = 6,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
             }
             Row(
@@ -3928,6 +3939,27 @@ private fun EditableCardRow(
                 }
                 IconButton(onClick = onMoveDown) {
                     Icon(Icons.Default.KeyboardArrowDown, contentDescription = "Move card down")
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedButton(
+                    onClick = onEdit,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(18.dp)
+                ) {
+                    Icon(Icons.Default.Edit, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("Edit")
+                }
+                IconButton(onClick = onCopy) {
+                    Icon(Icons.Default.ContentCopy, contentDescription = "Copy card")
+                }
+                IconButton(onClick = onDelete) {
+                    Icon(Icons.Default.Delete, contentDescription = "Delete card")
                 }
             }
         }
@@ -4215,6 +4247,7 @@ private fun sampleLessonJson(): String {
 
 private fun versionLogText(): String {
     return """
+        v0.82 - Updated notification selection to use 1/2/3-star weighted cards, downgraded unanswered 2-star notification cards, made the lesson editor fully scrollable with card controls underneath, and softened the red/mint brand colors.
         v0.81 - Made lesson opening atomic so the study screen receives a ready card portion immediately instead of briefly rendering an empty lesson state.
         v0.80 - Made lesson opening reload the latest saved lesson, discard broken empty restored sessions, and rebuild the study portion immediately so newly recorded voice cards appear on the first open.
         v0.79 - Made quick voice vocabulary save each card immediately at the top of the target lesson, keep the latest spoken card first, use synchronous lesson persistence, and show Added bubbles longer.

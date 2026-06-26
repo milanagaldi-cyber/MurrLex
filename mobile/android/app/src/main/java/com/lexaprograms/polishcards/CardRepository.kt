@@ -170,9 +170,9 @@ class CardRepository(private val context: Context) {
             .flatMap { lesson -> lesson.cards.map { card -> lesson to card } }
             .flatMap { pair ->
                 val weight = when (pair.second.starCount()) {
-                    0 -> 4
-                    1 -> 2
-                    2 -> 1
+                    1 -> 79
+                    2 -> 20
+                    3 -> 1
                     else -> 0
                 }
                 List(weight) { pair }
