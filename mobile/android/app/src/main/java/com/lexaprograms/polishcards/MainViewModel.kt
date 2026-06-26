@@ -921,13 +921,47 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun submitTestAnswer(choice: String) {
         val state = _uiState.value
         val card = state.currentCard ?: return
-        _uiState.value = state.copy(answer = choice)
         if (normalize(choice) == normalize(card.correctText())) {
             recordCardWork(card.id, "test correct")
-            completeCurrentCard(message = "CorrectStar")
+            val latest = _uiState.value
+            val nextCompletedCardIds = latest.completedCardIds + card.id
+            val selectedLesson = latest.selectedLesson
+            val currentPortionIds = latest.currentPortion.map { it.id }.toSet()
+            val portionComplete = latest.currentPortion.isNotEmpty() &&
+                nextCompletedCardIds.intersect(currentPortionIds).size == latest.currentPortion.size
+            val shouldSavePortionCompletion = portionComplete && !latest.portionCompletionSaved && selectedLesson != null
+            if (shouldSavePortionCompletion) {
+                repository.incrementCompletedCount(selectedLesson.id)
+                val lessons = repository.loadLessons(latest.showHiddenLessons)
+                _uiState.value = latest.copy(
+                    lessons = lessons,
+                    selectedLesson = lessons.firstOrNull { it.id == selectedLesson.id } ?: selectedLesson,
+                    answer = choice,
+                    answerFeedbackVisible = false,
+                    completedCardIds = nextCompletedCardIds,
+                    portionCompletionSaved = true,
+                    isBackVisible = true,
+                    message = "CorrectStar"
+                )
+            } else {
+                _uiState.value = latest.copy(
+                    answer = choice,
+                    answerFeedbackVisible = false,
+                    completedCardIds = nextCompletedCardIds,
+                    portionCompletionSaved = latest.portionCompletionSaved || portionComplete,
+                    isBackVisible = true,
+                    message = "CorrectStar"
+                )
+            }
+            saveCurrentStudySession()
         } else {
             recordWrongAnswer(card.id, choice)
-            _uiState.value = _uiState.value.copy(answerFeedbackVisible = true, message = "Try again")
+            _uiState.value = _uiState.value.copy(
+                answer = choice,
+                isBackVisible = false,
+                answerFeedbackVisible = true,
+                message = "Try again"
+            )
             saveCurrentStudySession()
         }
     }

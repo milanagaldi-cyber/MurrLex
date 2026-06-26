@@ -1823,7 +1823,8 @@ private fun DictionaryLanguageDropdown(
     var expanded by remember { mutableStateOf(false) }
     val selectedLabel = DictionaryLanguageOptions.firstOrNull { it.first.equals(value, ignoreCase = true) }?.second
         ?: value.ifBlank { "Select language" }
-    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        val selectedCode = selectedLabel.substringBefore(" - ").ifBlank { selectedLabel }
+Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(
             text = label,
             style = MaterialTheme.typography.bodyMedium,
@@ -1836,11 +1837,15 @@ private fun DictionaryLanguageDropdown(
                 shape = RoundedCornerShape(14.dp)
             ) {
                 Text(
-                    text = selectedLabel,
+                    text = selectedCode,
                     modifier = Modifier.weight(1f),
                     textAlign = TextAlign.Start
                 )
-                Icon(Icons.Default.KeyboardArrowDown, contentDescription = null)
+                Icon(
+                    Icons.Default.KeyboardArrowDown,
+                    contentDescription = null,
+                    modifier = Modifier.size(32.dp)
+                )
             }
             DropdownMenu(
                 expanded = expanded,
@@ -2019,14 +2024,29 @@ private fun TranslateScreen(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                OutlinedButton(onClick = onAddCard, modifier = Modifier.weight(1f), shape = RoundedCornerShape(18.dp)) {
-                    Icon(Icons.Default.Add, contentDescription = "Add card")
+                OutlinedButton(
+                    onClick = onAddCard,
+                    modifier = Modifier.weight(0.82f).height(52.dp),
+                    shape = RoundedCornerShape(18.dp),
+                    contentPadding = PaddingValues(horizontal = 0.dp)
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = "Add card", modifier = Modifier.size(22.dp))
                 }
-                Button(onClick = onVoiceInput, modifier = Modifier.weight(1f), shape = RoundedCornerShape(18.dp)) {
-                    Icon(Icons.Default.Mic, contentDescription = "Speak")
+                Button(
+                    onClick = onVoiceInput,
+                    modifier = Modifier.weight(1.28f).height(66.dp),
+                    shape = RoundedCornerShape(22.dp),
+                    contentPadding = PaddingValues(horizontal = 0.dp)
+                ) {
+                    Icon(Icons.Default.Mic, contentDescription = "Speak", modifier = Modifier.size(38.dp))
                 }
-                OutlinedButton(onClick = onClear, modifier = Modifier.weight(1f), shape = RoundedCornerShape(18.dp)) {
-                    Icon(Icons.Default.Refresh, contentDescription = "Clear")
+                OutlinedButton(
+                    onClick = onClear,
+                    modifier = Modifier.weight(0.82f).height(52.dp),
+                    shape = RoundedCornerShape(18.dp),
+                    contentPadding = PaddingValues(horizontal = 0.dp)
+                ) {
+                    Icon(Icons.Default.Refresh, contentDescription = "Clear", modifier = Modifier.size(22.dp))
                 }
             }
         }
@@ -2079,12 +2099,14 @@ private fun TestAnswerOptions(
     modifier: Modifier = Modifier
 ) {
     if (card == null) return
-    val choices = testChoices(card, cards)
+    val choices = remember(card.id, card.correctText(), cards.map { it.id to it.correctText() }) {
+        testChoices(card, cards)
+    }
     Column(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        choices.forEach { choice ->
+        choices.forEachIndexed { index, choice ->
             val selected = selectedAnswer == choice
             OutlinedButton(
                 onClick = { onAnswer(choice) },
@@ -2119,6 +2141,7 @@ private fun testChoices(card: Flashcard, cards: List<Flashcard>): List<String> {
     return (listOf(correct) + distractors + fallback)
         .distinctBy { normalizeAnswerText(it) }
         .take(4)
+        .shuffled(Random(System.nanoTime()))
 }
 @Composable
 private fun LessonCatalogScreen(
@@ -2660,7 +2683,7 @@ private fun StudyScreen(
                     StudyCard(
                         card = animatedCard,
                         isBackVisible = state.isBackVisible,
-                        onClick = onToggleCard,
+                        onClick = if (state.workMode == WorkMode.TESTS) ({}) else onToggleCard,
                         onToggleStar = onToggleStar,
                         onQuickEditCard = onQuickEditCard,
                         onEditCard = onEditCard,
@@ -4566,6 +4589,7 @@ private fun sampleLessonJson(): String {
 
 private fun versionLogText(): String {
     return """
+        v0.88 - Compact language pickers to codes, emphasized the Translate microphone, made Tests reveal the answer only after a correct choice without auto-navigation, randomized choices with A-D markers, and made Test quick edit save the displayed side.
         v0.87 - Clears Translate input on entry, adds language swapping, includes the target vocabulary lesson in Add messages, and makes quick Edit work from Tests with refreshed answers.
         v0.86 - Simplified Translate controls so Add is left, Speak stays centered, Clear is right, and the buttons use icons only.
         v0.85 - Moved Translate original input below the translation result and added a plus action that saves the current translation pair as a vocabulary card.
