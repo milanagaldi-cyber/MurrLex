@@ -2010,18 +2010,14 @@ private fun TranslateScreen(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                OutlinedButton(onClick = onClear, modifier = Modifier.weight(1f), shape = RoundedCornerShape(18.dp)) {
-                    Icon(Icons.Default.Refresh, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Clear")
-                }
                 OutlinedButton(onClick = onAddCard, modifier = Modifier.weight(1f), shape = RoundedCornerShape(18.dp)) {
-                    Icon(Icons.Default.Add, contentDescription = null)
+                    Icon(Icons.Default.Add, contentDescription = "Add card")
                 }
                 Button(onClick = onVoiceInput, modifier = Modifier.weight(1f), shape = RoundedCornerShape(18.dp)) {
-                    Icon(Icons.Default.Mic, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Speak")
+                    Icon(Icons.Default.Mic, contentDescription = "Speak")
+                }
+                OutlinedButton(onClick = onClear, modifier = Modifier.weight(1f), shape = RoundedCornerShape(18.dp)) {
+                    Icon(Icons.Default.Refresh, contentDescription = "Clear")
                 }
             }
         }
@@ -4562,6 +4558,7 @@ private fun sampleLessonJson(): String {
 
 private fun versionLogText(): String {
     return """
+        v0.86 - Simplified Translate controls so Add is left, Speak stays centered, Clear is right, and the buttons use icons only.
         v0.85 - Moved Translate original input below the translation result and added a plus action that saves the current translation pair as a vocabulary card.
         v0.84 - Moved Translate/Split language selectors to the bottom, made Tests use a compact card with scrollable answer choices, and added Very small display/control size settings.
         v0.83 - Replaced the Check action with Clear input, made OK handle answer checking, added Cards/Tests/Translate/Split work modes, introduced multiple-choice tests, and added placeholder Translate/Split voice screens.
