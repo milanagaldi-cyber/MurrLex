@@ -920,6 +920,7 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
                     onTargetLanguageChange = viewModel::setQuickVocabularySourceLanguage,
                     onInputChange = viewModel::updateTranslationInput,
                     onClear = viewModel::clearTranslationInput,
+                    onAddCard = viewModel::addTranslationCard,
                     onVoiceInput = { startVoiceInput(VoiceInputTarget.TRANSLATE_INPUT) }
                 )
                 AppScreen.STUDY -> StudyScreen(
@@ -1939,6 +1940,7 @@ private fun TranslateScreen(
     onTargetLanguageChange: (String) -> Unit,
     onInputChange: (String) -> Unit,
     onClear: () -> Unit,
+    onAddCard: () -> Unit,
     onVoiceInput: () -> Unit
 ) {
     val splitMode = state.workMode == WorkMode.SPLIT
@@ -1962,13 +1964,6 @@ private fun TranslateScreen(
                 modifier = Modifier.weight(1f)
             )
         } else {
-            OutlinedTextField(
-                value = state.translationInput,
-                onValueChange = onInputChange,
-                modifier = Modifier.fillMaxWidth().weight(1f),
-                label = { Text("Original") },
-                minLines = 8
-            )
             Surface(
                 modifier = Modifier.fillMaxWidth().weight(1f),
                 shape = RoundedCornerShape(22.dp),
@@ -1984,6 +1979,13 @@ private fun TranslateScreen(
                     )
                 }
             }
+            OutlinedTextField(
+                value = state.translationInput,
+                onValueChange = onInputChange,
+                modifier = Modifier.fillMaxWidth().weight(1f),
+                label = { Text("Original") },
+                minLines = 8
+            )
         }
         Column(
             modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 12.dp),
@@ -2012,6 +2014,9 @@ private fun TranslateScreen(
                     Icon(Icons.Default.Refresh, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
                     Text("Clear")
+                }
+                OutlinedButton(onClick = onAddCard, modifier = Modifier.weight(1f), shape = RoundedCornerShape(18.dp)) {
+                    Icon(Icons.Default.Add, contentDescription = null)
                 }
                 Button(onClick = onVoiceInput, modifier = Modifier.weight(1f), shape = RoundedCornerShape(18.dp)) {
                     Icon(Icons.Default.Mic, contentDescription = null)
@@ -4557,6 +4562,7 @@ private fun sampleLessonJson(): String {
 
 private fun versionLogText(): String {
     return """
+        v0.85 - Moved Translate original input below the translation result and added a plus action that saves the current translation pair as a vocabulary card.
         v0.84 - Moved Translate/Split language selectors to the bottom, made Tests use a compact card with scrollable answer choices, and added Very small display/control size settings.
         v0.83 - Replaced the Check action with Clear input, made OK handle answer checking, added Cards/Tests/Translate/Split work modes, introduced multiple-choice tests, and added placeholder Translate/Split voice screens.
         v0.82 - Updated notification selection to use 1/2/3-star weighted cards, downgraded unanswered 2-star notification cards, made the lesson editor fully scrollable with card controls underneath, and softened the red/mint brand colors.

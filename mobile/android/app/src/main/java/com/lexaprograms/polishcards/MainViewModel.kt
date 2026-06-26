@@ -1779,6 +1779,79 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
+
+    fun addTranslationCard() {
+        val state = _uiState.value
+        val originalText = state.translationInput.trim()
+        if (originalText.isBlank()) {
+            _uiState.value = state.copy(message = "Enter text")
+            return
+        }
+        val translatedText = state.translationOutput.trim().ifBlank { "Empty" }
+        val sourceLanguage = state.quickVocabularySourceLanguage.trim().ifBlank { "Native" }
+        val targetLanguage = state.quickVocabularyTargetLanguage.trim().ifBlank { "Target" }
+        val lessonTitle = quickVocabularyLessonTitle(sourceLanguage, targetLanguage, createdAt = displayTimestamp())
+        val visibleLessonsForQuickVocabulary = repository.loadLessons(includeHidden = false)
+        val existingLesson = visibleLessonsForQuickVocabulary
+            .filter { lesson ->
+                lesson.id.startsWith(QUICK_VOCABULARY_LESSON_ID) &&
+                    (lesson.targetLanguage.equals(targetLanguage, ignoreCase = true) ||
+                        lesson.cards.any { card -> card.targetLanguage.equals(targetLanguage, ignoreCase = true) })
+            }
+            .maxByOrNull { lesson -> lesson.cards.firstOrNull()?.madeAt ?: "" }
+        val lessonId = existingLesson?.id ?: "${QUICK_VOCABULARY_LESSON_ID}_${targetLanguage.safeIdPart()}_${UUID.randomUUID()}"
+        val now = timestamp()
+        val newCard = Flashcard(
+            id = 1,
+            nativeValue = translatedText,
+            correctValue = originalText,
+            hint = if (translatedText == "Empty") {
+                "Created from Translate mode. Translation is pending."
+            } else {
+                "Created from Translate mode. Original: $targetLanguage. Translation: $sourceLanguage."
+            },
+            madeAt = now,
+            where = "Translate mode",
+            log = listOf("$now - created from Translate mode as $targetLanguage to $sourceLanguage"),
+            type = "card",
+            cardKind = "LN",
+            sourceLanguage = sourceLanguage,
+            targetLanguage = targetLanguage
+        )
+        val updatedLesson = if (existingLesson == null) {
+            Lesson(
+                id = lessonId,
+                title = lessonTitle,
+                lessonInfo = quickVocabularyLessonInfo(sourceLanguage, targetLanguage),
+                sourceLanguage = sourceLanguage,
+                targetLanguage = targetLanguage,
+                cards = listOf(newCard).reindexCards(),
+                editable = true
+            )
+        } else {
+            existingLesson.copy(
+                title = existingLesson.title.ifBlank { lessonTitle },
+                lessonInfo = quickVocabularyLessonInfo(sourceLanguage, targetLanguage),
+                sourceLanguage = existingLesson.sourceLanguage.lessonLanguageOrNull() ?: sourceLanguage,
+                targetLanguage = existingLesson.targetLanguage.lessonLanguageOrNull() ?: targetLanguage,
+                cards = (listOf(newCard) + existingLesson.cards).reindexCards(),
+                editable = true,
+                hidden = false
+            )
+        }
+        repository.saveLesson(updatedLesson)
+        repository.clearStudySession(updatedLesson.id)
+        val visibleLessons = repository.loadLessons(state.showHiddenLessons)
+        val savedSelectedLesson = state.selectedLesson?.let { selected ->
+            visibleLessons.firstOrNull { it.id == selected.id }
+        } ?: state.selectedLesson
+        _uiState.value = state.copy(
+            lessons = visibleLessons,
+            selectedLesson = savedSelectedLesson,
+            selectedLessonIds = emptySet(),
+            message = if (translatedText == "Empty") "Added: $originalText. Translation pending" else "Added: $originalText"
+        )
+    }
     private fun translateQuickVocabularyCard(
         lessonId: String,
         cardId: Int,
