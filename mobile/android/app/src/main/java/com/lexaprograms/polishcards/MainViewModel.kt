@@ -21,8 +21,16 @@ import java.util.UUID
 enum class AppScreen {
     CATALOG,
     STUDY,
+    TRANSLATE,
     EDITOR,
     SETTINGS
+}
+
+enum class WorkMode {
+    CARDS,
+    TESTS,
+    TRANSLATE,
+    SPLIT
 }
 
 enum class CardStartSide {
@@ -69,6 +77,9 @@ data class StudyUiState(
     val selectedLessonIds: Set<String> = emptySet(),
     val showHiddenLessons: Boolean = false,
     val selectedLesson: Lesson? = null,
+    val workMode: WorkMode = WorkMode.CARDS,
+    val translationInput: String = "",
+    val translationOutput: String = "",
     val currentPortion: List<Flashcard> = emptyList(),
     val currentIndex: Int = 0,
     val cardTransitionDirection: Int = 1,
@@ -193,6 +204,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             notificationIntervalDraft = minutes.toString(),
             message = "Notifications every $minutes minutes"
         )
+    }
+
+    fun setWorkMode(mode: WorkMode) {
+        _uiState.value = _uiState.value.copy(
+            workMode = mode,
+            screen = if (mode == WorkMode.TRANSLATE || mode == WorkMode.SPLIT) AppScreen.TRANSLATE else _uiState.value.screen,
+            message = mode.displayLabel()
+        )
+    }
+
+    fun openTranslationMode(mode: WorkMode = _uiState.value.workMode) {
+        val nextMode = if (mode == WorkMode.SPLIT) WorkMode.SPLIT else WorkMode.TRANSLATE
+        _uiState.value = _uiState.value.copy(
+            workMode = nextMode,
+            screen = AppScreen.TRANSLATE,
+            message = nextMode.displayLabel()
+        )
+    }
+
+    fun updateTranslationInput(value: String) {
+        _uiState.value = _uiState.value.copy(translationInput = value, message = null)
+    }
+
+    fun clearTranslationInput() {
+        _uiState.value = _uiState.value.copy(translationInput = "", translationOutput = "", message = "Cleared")
     }
 
     fun openCardFromNotification(lessonId: String?, cardId: Int) {
@@ -595,6 +631,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             selectedLesson = freshLesson,
             selectedLessonIds = emptySet(),
             screen = AppScreen.STUDY,
+            workMode = if (state.workMode == WorkMode.TESTS) WorkMode.TESTS else WorkMode.CARDS,
             currentIndex = 0,
             answer = "",
             answerFeedbackVisible = false,
@@ -860,6 +897,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun submitTestAnswer(choice: String) {
+        val state = _uiState.value
+        val card = state.currentCard ?: return
+        _uiState.value = state.copy(answer = choice)
+        if (normalize(choice) == normalize(card.correctText())) {
+            recordCardWork(card.id, "test correct")
+            completeCurrentCard(message = "CorrectStar")
+        } else {
+            recordWrongAnswer(card.id, choice)
+            _uiState.value = _uiState.value.copy(answerFeedbackVisible = true, message = "Try again")
+            saveCurrentStudySession()
+        }
+    }
     fun acceptCurrentCard() {
         val state = _uiState.value
         if (state.answer.isBlank()) {
@@ -1926,4 +1976,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         private const val PORTION_SIZE = 20
         private const val QUICK_VOCABULARY_LESSON_ID = "quick_vocabulary"
             }
+}
+
+private fun WorkMode.displayLabel(): String {
+    return when (this) {
+        WorkMode.CARDS -> "Cards"
+        WorkMode.TESTS -> "Tests"
+        WorkMode.TRANSLATE -> "Translate"
+        WorkMode.SPLIT -> "Split"
+    }
 }

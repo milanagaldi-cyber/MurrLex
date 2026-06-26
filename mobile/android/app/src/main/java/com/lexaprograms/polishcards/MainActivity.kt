@@ -65,7 +65,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Translate
+import androidx.compose.material.icons.filled.Style
+import androidx.compose.material.icons.filled.Quiz
+import androidx.compose.material.icons.filled.CallSplit
 import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
@@ -177,6 +180,7 @@ private val CompletedFrameColor = Color(0xFFE8F5E9)
 private enum class VoiceInputTarget {
     ANSWER,
     QUICK_VOCABULARY,
+    TRANSLATE_INPUT,
     CARD_NATIVE,
     CARD_CORRECT,
     CARD_HINT,
@@ -403,6 +407,7 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
                             viewModel.showMessage("Voice input added")
                         }
                         VoiceInputTarget.QUICK_VOCABULARY -> viewModel.addQuickVocabularyCard(spokenText)
+                        VoiceInputTarget.TRANSLATE_INPUT -> viewModel.updateTranslationInput(spokenText)
                         VoiceInputTarget.CARD_NATIVE -> viewModel.updateCardDraft(state.cardDraft.copy(nativeValue = spokenText))
                         VoiceInputTarget.CARD_CORRECT -> viewModel.updateCardDraft(state.cardDraft.copy(correctValue = spokenText))
                         VoiceInputTarget.CARD_HINT -> viewModel.updateCardDraft(state.cardDraft.copy(hint = spokenText))
@@ -480,6 +485,7 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
                 state.currentCard.voiceLanguageForCorrectSide(state.interfaceLanguage, state.selectedLesson)
             }
             VoiceInputTarget.QUICK_VOCABULARY -> languageForVoice(state.quickVocabularyTargetLanguage, "", state.interfaceLanguage)
+            VoiceInputTarget.TRANSLATE_INPUT -> languageForVoice(state.quickVocabularyTargetLanguage, state.translationInput, state.interfaceLanguage)
             VoiceInputTarget.CARD_NATIVE -> languageForVoice(
                 draftCard?.sourceLanguage.asLessonLanguage()
                     ?: state.editorLesson?.sourceLanguage.asLessonLanguage()
@@ -804,7 +810,7 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
             )
         },
         bottomBar = {
-            if (state.screen == AppScreen.STUDY && !state.isPortionFinished && state.currentCard != null) {
+            if (state.screen == AppScreen.STUDY && state.workMode == WorkMode.CARDS && !state.isPortionFinished && state.currentCard != null) {
                 AnswerBar(
                     answer = state.answer,
                     answerLabel = state.currentCard?.answerInputLabel().orEmpty().ifBlank { ui.makeItRight },
@@ -869,6 +875,7 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
                 AppScreen.CATALOG -> LessonCatalogScreen(
                     lessons = state.lessons,
                     selectedLessonIds = state.selectedLessonIds,
+                    workMode = state.workMode,
                     onOpenLesson = { titleActivated = true; viewModel.openLesson(it) },
                     onEditLesson = { titleActivated = true; viewModel.editLesson(it) },
                     onToggleLessonSelection = { titleActivated = true; viewModel.toggleLessonSelection(it) },
@@ -893,12 +900,26 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
                     onSetLessonHidden = { lesson, hidden -> titleActivated = true; viewModel.setLessonHidden(lesson, hidden) },
                     onQuickVoiceInput = {
                         titleActivated = true
-                        startVoiceInput(VoiceInputTarget.QUICK_VOCABULARY)
+                        if (state.workMode == WorkMode.TRANSLATE || state.workMode == WorkMode.SPLIT) {
+                            viewModel.openTranslationMode(state.workMode)
+                            startVoiceInput(VoiceInputTarget.TRANSLATE_INPUT)
+                        } else {
+                            startVoiceInput(VoiceInputTarget.QUICK_VOCABULARY)
+                        }
                     },
+                    onWorkModeChange = { mode -> titleActivated = true; viewModel.setWorkMode(mode) },
                     onImportLessons = {
                         titleActivated = true
                         importLauncher.launch(arrayOf("application/json", "text/*", "*/*"))
                     }
+                )
+                AppScreen.TRANSLATE -> TranslateScreen(
+                    state = state,
+                    onSourceLanguageChange = viewModel::setQuickVocabularyTargetLanguage,
+                    onTargetLanguageChange = viewModel::setQuickVocabularySourceLanguage,
+                    onInputChange = viewModel::updateTranslationInput,
+                    onClear = viewModel::clearTranslationInput,
+                    onVoiceInput = { startVoiceInput(VoiceInputTarget.TRANSLATE_INPUT) }
                 )
                 AppScreen.STUDY -> StudyScreen(
                     state = state,
@@ -936,6 +957,7 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
                     },
                     quickEditMode = quickEditActive,
                     showCardLog = state.showCardLog,
+                    onTestAnswer = viewModel::submitTestAnswer,
                     onShareCard = { lesson, card ->
                         performFeedback(context, state.soundEffectsEnabled, state.vibrationEnabled, FeedbackCue.TAP)
                         shareSingleCard(context, exportJson, lesson, card)
@@ -1858,6 +1880,225 @@ private fun SettingsSwitchRow(
     }
 }
 
+
+@Composable
+private fun WorkModeToggleRow(
+    workMode: WorkMode,
+    onWorkModeChange: (WorkMode) -> Unit
+) {
+    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        WorkMode.values().forEach { mode ->
+            Surface(
+                modifier = Modifier.size(38.dp).clickable { onWorkModeChange(mode) },
+                shape = RoundedCornerShape(13.dp),
+                border = BorderStroke(1.dp, if (workMode == mode) BrandSaladColor else MaterialTheme.colorScheme.outline.copy(alpha = 0.55f)),
+                color = if (workMode == mode) BrandSaladColor.copy(alpha = 0.22f) else MaterialTheme.colorScheme.surface
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = mode.icon(),
+                        contentDescription = mode.label(),
+                        modifier = Modifier.size(20.dp),
+                        tint = if (workMode == mode) Color(0xFF234231) else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun WorkMode.icon(): ImageVector {
+    return when (this) {
+        WorkMode.CARDS -> Icons.Default.Style
+        WorkMode.TESTS -> Icons.Default.Quiz
+        WorkMode.TRANSLATE -> Icons.Default.Translate
+        WorkMode.SPLIT -> Icons.Default.CallSplit
+    }
+}
+
+private fun WorkMode.label(): String {
+    return when (this) {
+        WorkMode.CARDS -> "Cards"
+        WorkMode.TESTS -> "Tests"
+        WorkMode.TRANSLATE -> "Translate"
+        WorkMode.SPLIT -> "Split"
+    }
+}
+
+@Composable
+private fun TranslateScreen(
+    state: StudyUiState,
+    onSourceLanguageChange: (String) -> Unit,
+    onTargetLanguageChange: (String) -> Unit,
+    onInputChange: (String) -> Unit,
+    onClear: () -> Unit,
+    onVoiceInput: () -> Unit
+) {
+    val splitMode = state.workMode == WorkMode.SPLIT
+    Column(
+        modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            DictionaryLanguageDropdown(
+                label = "Source",
+                value = state.quickVocabularyTargetLanguage,
+                onValueChange = onSourceLanguageChange,
+                modifier = Modifier.weight(1f)
+            )
+            DictionaryLanguageDropdown(
+                label = "Target",
+                value = state.quickVocabularySourceLanguage,
+                onValueChange = onTargetLanguageChange,
+                modifier = Modifier.weight(1f)
+            )
+        }
+        if (splitMode) {
+            SplitTranslationPanel(
+                title = "Translation",
+                text = state.translationOutput.ifBlank { "Translation will appear here" },
+                flipped = true,
+                modifier = Modifier.weight(1f)
+            )
+            SplitTranslationPanel(
+                title = "Original",
+                text = state.translationInput,
+                flipped = false,
+                editable = true,
+                onValueChange = onInputChange,
+                modifier = Modifier.weight(1f)
+            )
+        } else {
+            OutlinedTextField(
+                value = state.translationInput,
+                onValueChange = onInputChange,
+                modifier = Modifier.fillMaxWidth().weight(1f),
+                label = { Text("Original") },
+                minLines = 8
+            )
+            Surface(
+                modifier = Modifier.fillMaxWidth().weight(1f),
+                shape = RoundedCornerShape(22.dp),
+                color = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
+            ) {
+                Column(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Translation", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        text = state.translationOutput.ifBlank { "Translation will appear here" },
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 18.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            OutlinedButton(onClick = onClear, modifier = Modifier.weight(1f), shape = RoundedCornerShape(18.dp)) {
+                Icon(Icons.Default.Refresh, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Clear")
+            }
+            Button(onClick = onVoiceInput, modifier = Modifier.weight(1f), shape = RoundedCornerShape(18.dp)) {
+                Icon(Icons.Default.Mic, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Speak")
+            }
+        }
+    }
+}
+
+@Composable
+private fun SplitTranslationPanel(
+    title: String,
+    text: String,
+    flipped: Boolean,
+    modifier: Modifier = Modifier,
+    editable: Boolean = false,
+    onValueChange: (String) -> Unit = {}
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(22.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
+    ) {
+        Box(modifier = Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
+            Column(
+                modifier = Modifier.graphicsLayer { rotationZ = if (flipped) 180f else 0f },
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (editable) {
+                    OutlinedTextField(
+                        value = text,
+                        onValueChange = onValueChange,
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 5
+                    )
+                } else {
+                    Text(text, style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TestAnswerOptions(
+    card: Flashcard?,
+    cards: List<Flashcard>,
+    selectedAnswer: String,
+    answerFeedbackVisible: Boolean,
+    onAnswer: (String) -> Unit
+) {
+    if (card == null) return
+    val choices = remember(card.id, cards.size) { testChoices(card, cards) }
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        choices.forEach { choice ->
+            val selected = selectedAnswer == choice
+            OutlinedButton(
+                onClick = { onAnswer(choice) },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(18.dp),
+                border = BorderStroke(
+                    1.dp,
+                    when {
+                        selected && normalizeAnswerText(choice) == normalizeAnswerText(card.correctText()) -> BrandSaladColor
+                        selected && answerFeedbackVisible -> BrandRedColor
+                        else -> MaterialTheme.colorScheme.outline.copy(alpha = 0.55f)
+                    }
+                )
+            ) {
+                Text(choice, modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+            }
+        }
+    }
+}
+
+private fun testChoices(card: Flashcard, cards: List<Flashcard>): List<String> {
+    val correct = card.correctText().ifBlank { card.nativeText() }.ifBlank { "Correct" }
+    val distractors = cards
+        .filterNot { it.id == card.id }
+        .map { it.correctText().ifBlank { it.nativeText() } }
+        .filter { it.isNotBlank() && normalizeAnswerText(it) != normalizeAnswerText(correct) }
+        .distinctBy { normalizeAnswerText(it) }
+        .shuffled(Random(card.id + cards.size))
+        .take(3)
+    val fallback = listOf("I am not sure", "Review later", "Skip this one")
+        .filter { normalizeAnswerText(it) != normalizeAnswerText(correct) && distractors.none { d -> normalizeAnswerText(d) == normalizeAnswerText(it) } }
+    return (listOf(correct) + distractors + fallback)
+        .distinctBy { normalizeAnswerText(it) }
+        .take(4)
+        .shuffled(Random(card.id * 31 + 7))
+}
 @Composable
 private fun LessonCatalogScreen(
     lessons: List<Lesson>,
@@ -1875,6 +2116,8 @@ private fun LessonCatalogScreen(
     onDownloadLesson: (Lesson) -> Unit,
     onShareLesson: (Lesson) -> Unit,
     onSetLessonHidden: (Lesson, Boolean) -> Unit,
+    workMode: WorkMode,
+    onWorkModeChange: (WorkMode) -> Unit,
     onQuickVoiceInput: () -> Unit,
     onImportLessons: () -> Unit
 ) {
@@ -1986,12 +2229,18 @@ private fun LessonCatalogScreen(
             }
         }
 
-        Text(
-            text = "Lessons",
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(top = 8.dp)
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "Lessons",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f)
+            )
+            WorkModeToggleRow(workMode = workMode, onWorkModeChange = onWorkModeChange)
+        }
 
         if (lessons.isEmpty()) {
             EmptyState("No lessons yet. Import JSON files or create a lesson.")
@@ -2330,6 +2579,7 @@ private fun StudyScreen(
     onEditCard: () -> Unit,
     quickEditMode: Boolean,
     showCardLog: Boolean,
+    onTestAnswer: (String) -> Unit,
     onShareCard: (Lesson, Flashcard) -> Unit
 ) {
     val context = LocalContext.current
@@ -2411,6 +2661,15 @@ private fun StudyScreen(
                     onPreviousCard = onPreviousCard,
                     onNextCard = onNextCard
                 )
+                if (state.workMode == WorkMode.TESTS) {
+                    TestAnswerOptions(
+                        card = state.currentCard,
+                        cards = state.currentPortion,
+                        selectedAnswer = state.answer,
+                        answerFeedbackVisible = state.answerFeedbackVisible,
+                        onAnswer = onTestAnswer
+                    )
+                }
             }
         }
     }
@@ -3261,7 +3520,7 @@ private fun AnswerBar(
         answer.isNotBlank() && normalizeAnswerText(answer) == normalizeAnswerText(card.correctText())
     } == true
     val doneLocked = currentCard != null && isCurrentCardDone && answer.none { it.isLetter() }
-    val canSubmit = currentCard != null && !doneLocked && typedAnswerCorrect && !usesEditActionBar
+    val canSubmit = currentCard != null && !doneLocked && !usesEditActionBar
     Surface(
         tonalElevation = 4.dp,
         color = MaterialTheme.colorScheme.surface,
@@ -3401,10 +3660,10 @@ private fun AnswerBar(
                     }
                     Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
                         AnswerIconButton(
-                            icon = Icons.Default.Check,
-                            contentDescription = "Check answer",
-                            enabled = currentCard != null,
-                            onClick = onCheck,
+                            icon = Icons.Default.Refresh,
+                            contentDescription = "Clear input",
+                            enabled = answer.isNotBlank(),
+                            onClick = onClearAnswer,
                             size = controlSize.answerIconButtonSize()
                         )
                     }
@@ -4247,6 +4506,7 @@ private fun sampleLessonJson(): String {
 
 private fun versionLogText(): String {
     return """
+        v0.83 - Replaced the Check action with Clear input, made OK handle answer checking, added Cards/Tests/Translate/Split work modes, introduced multiple-choice tests, and added placeholder Translate/Split voice screens.
         v0.82 - Updated notification selection to use 1/2/3-star weighted cards, downgraded unanswered 2-star notification cards, made the lesson editor fully scrollable with card controls underneath, and softened the red/mint brand colors.
         v0.81 - Made lesson opening atomic so the study screen receives a ready card portion immediately instead of briefly rendering an empty lesson state.
         v0.80 - Made lesson opening reload the latest saved lesson, discard broken empty restored sessions, and rebuild the study portion immediately so newly recorded voice cards appear on the first open.
