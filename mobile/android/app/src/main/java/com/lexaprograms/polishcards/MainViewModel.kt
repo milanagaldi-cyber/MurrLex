@@ -1,4 +1,4 @@
-﻿package com.lexaprograms.polishcards
+package com.lexaprograms.polishcards
 
 import android.app.Application
 import android.net.Uri
@@ -235,7 +235,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateTranslationOutput(value: String) {
-        _uiState.value = _uiState.value.copy(translationOutput = value, message = null)
+        val state = _uiState.value
+        val cleanOutput = value.trim()
+        val cleanInput = state.translationInput.trim()
+        if (state.translationOutput == value) return
+        _uiState.value = state.copy(translationOutput = value, message = null)
+        if (cleanInput.isNotBlank() && cleanOutput.isNotBlank()) {
+            saveTranslatedCardFromTranslator(cleanInput, cleanOutput)
+        }
     }
 
     fun clearTranslationInput() {
@@ -401,8 +408,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.value = state.copy(
             quickVocabularySourceLanguage = target,
             quickVocabularyTargetLanguage = source,
-            translationInput = "",
-            translationOutput = "",
+            translationInput = state.translationOutput,
+            translationOutput = state.translationInput,
             message = "Languages swapped"
         )
     }
@@ -1968,6 +1975,96 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         saveCurrentStudySession()
     }
 
+
+    private fun saveTranslatedCardFromTranslator(originalText: String, translatedText: String) {
+        val state = _uiState.value
+        val sourceLanguage = state.quickVocabularySourceLanguage.trim().ifBlank { "Native" }
+        val targetLanguage = state.quickVocabularyTargetLanguage.trim().ifBlank { "Target" }
+        val lessonTitle = quickVocabularyLessonTitle(sourceLanguage, targetLanguage, createdAt = displayTimestamp())
+        val visibleLessonsForQuickVocabulary = repository.loadLessons(includeHidden = false)
+        val existingLesson = visibleLessonsForQuickVocabulary
+            .filter { lesson ->
+                lesson.id.startsWith(QUICK_VOCABULARY_LESSON_ID) &&
+                    (lesson.targetLanguage.equals(targetLanguage, ignoreCase = true) ||
+                        lesson.cards.any { card -> card.targetLanguage.equals(targetLanguage, ignoreCase = true) })
+            }
+            .maxByOrNull { lesson -> lesson.cards.firstOrNull()?.madeAt ?: "" }
+        val lessonId = existingLesson?.id ?: "${QUICK_VOCABULARY_LESSON_ID}_${targetLanguage.safeIdPart()}_${UUID.randomUUID()}"
+        val now = timestamp()
+        var cardCreated = false
+        val newCard = Flashcard(
+            id = 1,
+            nativeValue = translatedText,
+            correctValue = originalText,
+            hint = "Created automatically from Translate mode.\nPowered by Google Translate",
+            madeAt = now,
+            where = "Translate mode",
+            log = listOf("$now - created automatically from Translate mode with Google Translate"),
+            type = "card",
+            cardKind = "LN",
+            sourceLanguage = sourceLanguage,
+            targetLanguage = targetLanguage
+        )
+        val updatedLesson = if (existingLesson == null) {
+            cardCreated = true
+            Lesson(
+                id = lessonId,
+                title = lessonTitle,
+                lessonInfo = quickVocabularyLessonInfo(sourceLanguage, targetLanguage),
+                sourceLanguage = sourceLanguage,
+                targetLanguage = targetLanguage,
+                cards = listOf(newCard).reindexCards(),
+                editable = true
+            )
+        } else {
+            var updatedExisting = false
+            val updatedCards = existingLesson.cards.map { card ->
+                if (!updatedExisting && card.correctText().trim().equals(originalText, ignoreCase = true)) {
+                    updatedExisting = true
+                    if (card.nativeText().trim() == translatedText) {
+                        card
+                    } else {
+                        card.copy(
+                            nativeValue = translatedText,
+                            hint = card.hint.withGoogleTranslateAttribution(),
+                            log = (card.log + "$now - translation updated automatically with Google Translate").takeLast(100)
+                        )
+                    }
+                } else {
+                    card
+                }
+            }
+            val nextCards = if (updatedExisting) {
+                updatedCards
+            } else {
+                cardCreated = true
+                (listOf(newCard) + existingLesson.cards).reindexCards()
+            }
+            existingLesson.copy(
+                title = existingLesson.title.ifBlank { lessonTitle },
+                lessonInfo = quickVocabularyLessonInfo(sourceLanguage, targetLanguage),
+                sourceLanguage = existingLesson.sourceLanguage.lessonLanguageOrNull() ?: sourceLanguage,
+                targetLanguage = existingLesson.targetLanguage.lessonLanguageOrNull() ?: targetLanguage,
+                cards = nextCards,
+                editable = true,
+                hidden = false
+            )
+        }
+        repository.saveLesson(updatedLesson)
+        if (cardCreated) repository.clearStudySession(updatedLesson.id)
+        val currentState = _uiState.value
+        val visibleLessons = repository.loadLessons(currentState.showHiddenLessons)
+        val selectedLesson = currentState.selectedLesson?.let { selected ->
+            visibleLessons.firstOrNull { it.id == selected.id }
+        } ?: currentState.selectedLesson
+        _uiState.value = currentState.copy(
+            lessons = visibleLessons,
+            selectedLesson = selectedLesson,
+            selectedLessonIds = emptySet(),
+            screen = AppScreen.TRANSLATE,
+            message = if (cardCreated) "Card created" else "Card updated"
+        )
+    }
     fun addTranslationCard() {
         val state = _uiState.value
         val originalText = state.translationInput.trim()
@@ -2266,4 +2363,3 @@ private fun WorkMode.displayLabel(): String {
         WorkMode.SPLIT -> "Split"
     }
 }
-
