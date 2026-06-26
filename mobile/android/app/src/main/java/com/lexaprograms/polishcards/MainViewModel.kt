@@ -209,9 +209,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setWorkMode(mode: WorkMode) {
+        val opensTranslator = mode == WorkMode.TRANSLATE || mode == WorkMode.SPLIT
         _uiState.value = _uiState.value.copy(
             workMode = mode,
-            screen = if (mode == WorkMode.TRANSLATE || mode == WorkMode.SPLIT) AppScreen.TRANSLATE else _uiState.value.screen,
+            screen = if (opensTranslator) AppScreen.TRANSLATE else _uiState.value.screen,
+            translationInput = if (opensTranslator) "" else _uiState.value.translationInput,
+            translationOutput = if (opensTranslator) "" else _uiState.value.translationOutput,
             message = mode.displayLabel()
         )
     }
@@ -221,6 +224,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.value = _uiState.value.copy(
             workMode = nextMode,
             screen = AppScreen.TRANSLATE,
+            translationInput = "",
+            translationOutput = "",
             message = nextMode.displayLabel()
         )
     }
@@ -383,6 +388,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
+    fun swapQuickVocabularyLanguages() {
+        val state = _uiState.value
+        val source = state.quickVocabularySourceLanguage
+        val target = state.quickVocabularyTargetLanguage
+        repository.saveQuickVocabularySourceLanguage(target)
+        repository.saveQuickVocabularyTargetLanguage(source)
+        _uiState.value = state.copy(
+            quickVocabularySourceLanguage = target,
+            quickVocabularyTargetLanguage = source,
+            translationInput = "",
+            translationOutput = "",
+            message = "Languages swapped"
+        )
+    }
     fun setQuickVocabularyTargetLanguage(language: String) {
         val cleaned = language.trim().ifBlank { "Russian" }
         repository.saveQuickVocabularyTargetLanguage(cleaned)
@@ -927,6 +946,44 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         completeCurrentCard(message = "Skipped")
     }
 
+    fun saveCorrectSideFromAnswer() {
+        val state = _uiState.value
+        val lesson = state.selectedLesson ?: return
+        val card = state.currentCard ?: return
+        val cleanAnswer = state.answer.trim()
+        if (cleanAnswer.isBlank()) {
+            _uiState.value = state.copy(message = "Enter answer", answerFeedbackVisible = false)
+            return
+        }
+        val now = timestamp()
+        val updatedCards = lesson.cards.map { lessonCard ->
+            if (lessonCard.id == card.id) {
+                lessonCard.copy(
+                    correctValue = cleanAnswer,
+                    log = lessonCard.log + "$now - updated correct side from test edit"
+                )
+            } else {
+                lessonCard
+            }
+        }
+        val updatedCard = updatedCards.firstOrNull { it.id == card.id } ?: card
+        val updatedLesson = lesson.copy(cards = updatedCards, editable = true)
+        repository.saveLesson(updatedLesson)
+        val lessons = repository.loadLessons(state.showHiddenLessons)
+        val savedLesson = lessons.firstOrNull { it.id == updatedLesson.id } ?: updatedLesson
+        _uiState.value = state.copy(
+            lessons = lessons,
+            selectedLesson = savedLesson,
+            currentPortion = state.currentPortion.map { portionCard ->
+                if (portionCard.id == updatedCard.id) updatedCard else portionCard
+            },
+            isBackVisible = defaultBackVisible(updatedCard),
+            answer = "",
+            answerFeedbackVisible = false,
+            message = "Saved"
+        )
+        saveCurrentStudySession()
+    }
     fun saveVisibleSideFromAnswer(isBackVisible: Boolean) {
         val state = _uiState.value
         val lesson = state.selectedLesson ?: return
@@ -1849,7 +1906,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             lessons = visibleLessons,
             selectedLesson = savedSelectedLesson,
             selectedLessonIds = emptySet(),
-            message = if (translatedText == "Empty") "Added: $originalText. Translation pending" else "Added: $originalText"
+            message = if (translatedText == "Empty") {
+                "Added to ${quickVocabularyLessonShortTitle(sourceLanguage, targetLanguage)}: $originalText. Translation pending"
+            } else {
+                "Added to ${quickVocabularyLessonShortTitle(sourceLanguage, targetLanguage)}: $originalText"
+            }
         )
     }
     private fun translateQuickVocabularyCard(
@@ -2014,6 +2075,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return cleaned.takeIf { it.isNotBlank() && !it.equals("Mixed", ignoreCase = true) }
     }
 
+    private fun quickVocabularyLessonShortTitle(sourceLanguage: String, targetLanguage: String): String {
+        return "${targetLanguage.shortLanguageCode()} - ${sourceLanguage.shortLanguageCode()} Vocabulary"
+    }
     private fun quickVocabularyLessonTitle(sourceLanguage: String, targetLanguage: String, createdAt: String): String {
         return "${targetLanguage.shortLanguageCode()} - ${sourceLanguage.shortLanguageCode()} Vocabulary $createdAt"
     }

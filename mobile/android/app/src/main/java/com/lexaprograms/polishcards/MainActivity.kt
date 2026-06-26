@@ -68,6 +68,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Translate
 import androidx.compose.material.icons.filled.Style
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Quiz
 import androidx.compose.material.icons.filled.CallSplit
 import androidx.compose.material.icons.filled.DoneAll
@@ -811,7 +812,7 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
             )
         },
         bottomBar = {
-            if (state.screen == AppScreen.STUDY && state.workMode == WorkMode.CARDS && !state.isPortionFinished && state.currentCard != null) {
+            if (state.screen == AppScreen.STUDY && (state.workMode == WorkMode.CARDS || quickEditActive) && !state.isPortionFinished && state.currentCard != null) {
                 AnswerBar(
                     answer = state.answer,
                     answerLabel = state.currentCard?.answerInputLabel().orEmpty().ifBlank { ui.makeItRight },
@@ -921,6 +922,7 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
                     onInputChange = viewModel::updateTranslationInput,
                     onClear = viewModel::clearTranslationInput,
                     onAddCard = viewModel::addTranslationCard,
+                    onSwapLanguages = viewModel::swapQuickVocabularyLanguages,
                     onVoiceInput = { startVoiceInput(VoiceInputTarget.TRANSLATE_INPUT) }
                 )
                 AppScreen.STUDY -> StudyScreen(
@@ -1941,6 +1943,7 @@ private fun TranslateScreen(
     onInputChange: (String) -> Unit,
     onClear: () -> Unit,
     onAddCard: () -> Unit,
+    onSwapLanguages: () -> Unit,
     onVoiceInput: () -> Unit
 ) {
     val splitMode = state.workMode == WorkMode.SPLIT
@@ -1991,13 +1994,19 @@ private fun TranslateScreen(
             modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 12.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 DictionaryLanguageDropdown(
                     label = "Source",
                     value = state.quickVocabularyTargetLanguage,
                     onValueChange = onSourceLanguageChange,
                     modifier = Modifier.weight(1f)
                 )
+                IconButton(onClick = onSwapLanguages) {
+                    Icon(Icons.Default.SwapHoriz, contentDescription = "Swap languages")
+                }
                 DictionaryLanguageDropdown(
                     label = "Target",
                     value = state.quickVocabularySourceLanguage,
@@ -2070,7 +2079,7 @@ private fun TestAnswerOptions(
     modifier: Modifier = Modifier
 ) {
     if (card == null) return
-    val choices = remember(card.id, cards.size) { testChoices(card, cards) }
+    val choices = testChoices(card, cards)
     Column(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -2103,14 +2112,13 @@ private fun testChoices(card: Flashcard, cards: List<Flashcard>): List<String> {
         .map { it.correctText().ifBlank { it.nativeText() } }
         .filter { it.isNotBlank() && normalizeAnswerText(it) != normalizeAnswerText(correct) }
         .distinctBy { normalizeAnswerText(it) }
-        .shuffled(Random(card.id + cards.size))
+        .shuffled(Random(card.id + cards.size + correct.hashCode()))
         .take(3)
     val fallback = listOf("I am not sure", "Review later", "Skip this one")
         .filter { normalizeAnswerText(it) != normalizeAnswerText(correct) && distractors.none { d -> normalizeAnswerText(d) == normalizeAnswerText(it) } }
     return (listOf(correct) + distractors + fallback)
         .distinctBy { normalizeAnswerText(it) }
         .take(4)
-        .shuffled(Random(card.id * 31 + 7))
 }
 @Composable
 private fun LessonCatalogScreen(
@@ -4558,6 +4566,7 @@ private fun sampleLessonJson(): String {
 
 private fun versionLogText(): String {
     return """
+        v0.87 - Clears Translate input on entry, adds language swapping, includes the target vocabulary lesson in Add messages, and makes quick Edit work from Tests with refreshed answers.
         v0.86 - Simplified Translate controls so Add is left, Speak stays centered, Clear is right, and the buttons use icons only.
         v0.85 - Moved Translate original input below the translation result and added a plus action that saves the current translation pair as a vocabulary card.
         v0.84 - Moved Translate/Split language selectors to the bottom, made Tests use a compact card with scrollable answer choices, and added Very small display/control size settings.
