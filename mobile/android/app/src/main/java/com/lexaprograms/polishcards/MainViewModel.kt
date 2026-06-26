@@ -39,12 +39,14 @@ enum class CardStartSide {
 }
 
 enum class DisplayTextSize {
+    VERY_SMALL,
     SMALL,
     MEDIUM,
     LARGE
 }
 
 enum class ControlSize {
+    VERY_SMALL,
     SMALL,
     MEDIUM
 }

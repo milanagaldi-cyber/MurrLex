@@ -40,6 +40,7 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -1546,12 +1547,15 @@ private fun SettingsScreen(
                     style = MaterialTheme.typography.bodyLarge,
                     fontWeight = FontWeight.Medium
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     DisplayTextSize.entries.forEach { size ->
                         FilterChip(
                             selected = displayTextSize == size,
                             onClick = { onDisplayTextSizeChange(size) },
-                            label = { Text(size.name.lowercase(Locale.ROOT).replaceFirstChar { it.titlecase(Locale.ROOT) }) }
+                            label = { Text(size.name.lowercase(Locale.ROOT).replace('_', ' ').replaceFirstChar { it.titlecase(Locale.ROOT) }) }
                         )
                     }
                 }
@@ -1560,12 +1564,15 @@ private fun SettingsScreen(
                     style = MaterialTheme.typography.bodyLarge,
                     fontWeight = FontWeight.Medium
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     ControlSize.entries.forEach { size ->
                         FilterChip(
                             selected = controlSize == size,
                             onClick = { onControlSizeChange(size) },
-                            label = { Text(size.name.lowercase(Locale.ROOT).replaceFirstChar { it.titlecase(Locale.ROOT) }) }
+                            label = { Text(size.name.lowercase(Locale.ROOT).replace('_', ' ').replaceFirstChar { it.titlecase(Locale.ROOT) }) }
                         )
                     }
                 }
@@ -1939,20 +1946,6 @@ private fun TranslateScreen(
         modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            DictionaryLanguageDropdown(
-                label = "Source",
-                value = state.quickVocabularyTargetLanguage,
-                onValueChange = onSourceLanguageChange,
-                modifier = Modifier.weight(1f)
-            )
-            DictionaryLanguageDropdown(
-                label = "Target",
-                value = state.quickVocabularySourceLanguage,
-                onValueChange = onTargetLanguageChange,
-                modifier = Modifier.weight(1f)
-            )
-        }
         if (splitMode) {
             SplitTranslationPanel(
                 title = "Translation",
@@ -1992,25 +1985,43 @@ private fun TranslateScreen(
                 }
             }
         }
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(bottom = 18.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically
+        Column(
+            modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(bottom = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            OutlinedButton(onClick = onClear, modifier = Modifier.weight(1f), shape = RoundedCornerShape(18.dp)) {
-                Icon(Icons.Default.Refresh, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("Clear")
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                DictionaryLanguageDropdown(
+                    label = "Source",
+                    value = state.quickVocabularyTargetLanguage,
+                    onValueChange = onSourceLanguageChange,
+                    modifier = Modifier.weight(1f)
+                )
+                DictionaryLanguageDropdown(
+                    label = "Target",
+                    value = state.quickVocabularySourceLanguage,
+                    onValueChange = onTargetLanguageChange,
+                    modifier = Modifier.weight(1f)
+                )
             }
-            Button(onClick = onVoiceInput, modifier = Modifier.weight(1f), shape = RoundedCornerShape(18.dp)) {
-                Icon(Icons.Default.Mic, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("Speak")
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedButton(onClick = onClear, modifier = Modifier.weight(1f), shape = RoundedCornerShape(18.dp)) {
+                    Icon(Icons.Default.Refresh, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Clear")
+                }
+                Button(onClick = onVoiceInput, modifier = Modifier.weight(1f), shape = RoundedCornerShape(18.dp)) {
+                    Icon(Icons.Default.Mic, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Speak")
+                }
             }
         }
     }
 }
-
 @Composable
 private fun SplitTranslationPanel(
     title: String,
@@ -2054,12 +2065,13 @@ private fun TestAnswerOptions(
     cards: List<Flashcard>,
     selectedAnswer: String,
     answerFeedbackVisible: Boolean,
-    onAnswer: (String) -> Unit
+    onAnswer: (String) -> Unit,
+    modifier: Modifier = Modifier
 ) {
     if (card == null) return
     val choices = remember(card.id, cards.size) { testChoices(card, cards) }
     Column(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         choices.forEach { choice ->
@@ -2609,9 +2621,18 @@ private fun StudyScreen(
         } else {
             Column(
                 modifier = Modifier.weight(1f).fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically),
+                verticalArrangement = if (state.workMode == WorkMode.TESTS) {
+                    Arrangement.spacedBy(8.dp, Alignment.Top)
+                } else {
+                    Arrangement.spacedBy(8.dp, Alignment.CenterVertically)
+                },
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                val effectiveDisplayTextSize = if (state.workMode == WorkMode.TESTS && state.displayTextSize != DisplayTextSize.VERY_SMALL) {
+                    DisplayTextSize.VERY_SMALL
+                } else {
+                    state.displayTextSize
+                }
                 AnimatedContent(
                     targetState = state.currentIndex,
                     transitionSpec = {
@@ -2635,7 +2656,7 @@ private fun StudyScreen(
                         onQuickEditCard = onQuickEditCard,
                         onEditCard = onEditCard,
                         quickEditMode = quickEditMode,
-                        displayTextSize = state.displayTextSize,
+                        displayTextSize = effectiveDisplayTextSize,
                         controlSize = state.controlSize,
                         isCompleted = animatedCard?.id in state.completedCardIds,
                         positionLabel = (animatedIndex + 1).toString(),
@@ -2667,7 +2688,11 @@ private fun StudyScreen(
                         cards = state.currentPortion,
                         selectedAnswer = state.answer,
                         answerFeedbackVisible = state.answerFeedbackVisible,
-                        onAnswer = onTestAnswer
+                        onAnswer = onTestAnswer,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f, fill = false)
+                            .verticalScroll(rememberScrollState())
                     )
                 }
             }
@@ -2848,23 +2873,49 @@ private fun CounterText(text: String, modifier: Modifier = Modifier) {
 }
 
 private fun DisplayTextSize.cardMainTextSize() = when (this) {
+    DisplayTextSize.VERY_SMALL -> 22.sp
     DisplayTextSize.SMALL -> 27.sp
     DisplayTextSize.MEDIUM -> 32.sp
     DisplayTextSize.LARGE -> 38.sp
 }
 
 private fun DisplayTextSize.studyCardHeight() = when (this) {
+    DisplayTextSize.VERY_SMALL -> 288.dp
     DisplayTextSize.SMALL -> 350.dp
     DisplayTextSize.MEDIUM -> 382.dp
     DisplayTextSize.LARGE -> 420.dp
 }
 
-private fun ControlSize.cardIconButtonSize() = if (this == ControlSize.SMALL) 38.dp else 44.dp
-private fun ControlSize.answerIconButtonSize() = if (this == ControlSize.SMALL) 44.dp else 48.dp
-private fun ControlSize.micButtonSize() = if (this == ControlSize.SMALL) 58.dp else 66.dp
-private fun ControlSize.micIconSize() = if (this == ControlSize.SMALL) 28.dp else 32.dp
-private fun ControlSize.answerRowHeight() = if (this == ControlSize.SMALL) 62.dp else 70.dp
-private fun ControlSize.okButtonSize() = if (this == ControlSize.SMALL) 58.dp else 66.dp
+private fun ControlSize.cardIconButtonSize() = when (this) {
+    ControlSize.VERY_SMALL -> 34.dp
+    ControlSize.SMALL -> 38.dp
+    ControlSize.MEDIUM -> 44.dp
+}
+private fun ControlSize.answerIconButtonSize() = when (this) {
+    ControlSize.VERY_SMALL -> 40.dp
+    ControlSize.SMALL -> 44.dp
+    ControlSize.MEDIUM -> 48.dp
+}
+private fun ControlSize.micButtonSize() = when (this) {
+    ControlSize.VERY_SMALL -> 52.dp
+    ControlSize.SMALL -> 58.dp
+    ControlSize.MEDIUM -> 66.dp
+}
+private fun ControlSize.micIconSize() = when (this) {
+    ControlSize.VERY_SMALL -> 24.dp
+    ControlSize.SMALL -> 28.dp
+    ControlSize.MEDIUM -> 32.dp
+}
+private fun ControlSize.answerRowHeight() = when (this) {
+    ControlSize.VERY_SMALL -> 56.dp
+    ControlSize.SMALL -> 62.dp
+    ControlSize.MEDIUM -> 70.dp
+}
+private fun ControlSize.okButtonSize() = when (this) {
+    ControlSize.VERY_SMALL -> 52.dp
+    ControlSize.SMALL -> 58.dp
+    ControlSize.MEDIUM -> 66.dp
+}
 @Composable
 private fun StudyCard(
     card: Flashcard?,
@@ -4506,6 +4557,7 @@ private fun sampleLessonJson(): String {
 
 private fun versionLogText(): String {
     return """
+        v0.84 - Moved Translate/Split language selectors to the bottom, made Tests use a compact card with scrollable answer choices, and added Very small display/control size settings.
         v0.83 - Replaced the Check action with Clear input, made OK handle answer checking, added Cards/Tests/Translate/Split work modes, introduced multiple-choice tests, and added placeholder Translate/Split voice screens.
         v0.82 - Updated notification selection to use 1/2/3-star weighted cards, downgraded unanswered 2-star notification cards, made the lesson editor fully scrollable with card controls underneath, and softened the red/mint brand colors.
         v0.81 - Made lesson opening atomic so the study screen receives a ready card portion immediately instead of briefly rendering an empty lesson state.
