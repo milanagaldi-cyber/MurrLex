@@ -1,4 +1,4 @@
-package com.lexaprograms.polishcards
+﻿package com.lexaprograms.polishcards
 
 import android.Manifest
 import android.content.ClipData
@@ -249,11 +249,11 @@ private fun uiTextFor(languageCode: String): UiText {
     }
     return when (language) {
         "de" -> UiText("Zuruck", "Ausgeblendete Lektionen ausblenden", "Ausgeblendete Lektionen zeigen", "Einstellungen", "In Eingabe kopiert", "Richtig", "Richtig machen", "Alphabetisch", "Zufallig", "Alle zeigen", "Im Satz", "Ubrig", "Fertig", "Weiter", "Wiederholen", "Nachste Lektion", "Stark! Diese Lektion ist abgeschlossen.", "Du hast jede sichtbare Karte geschafft.", "Alles erledigt. Alle sichtbaren Karten haben drei Sterne.", "Nichts zu zeigen.", "Aktiviere Alle zeigen oder fuge Karten hinzu.", "Kopieren", "OK", "Karte bearbeiten", "Bearbeite diese Karte, ohne die Ubung zu verlassen.", "Fehler / Ausgangswert", "Hinweis oder Regel", "Gemacht am", "Wo", "Speichern", "Loschen", "Abbrechen", "Karte loschen?", "Diese Karte wird aus der Lektion entfernt.", "Sprache der Benutzeroberflache")
-        "be" -> UiText("Назад", "Схаваць схаваныя ўрокі", "Паказаць схаваныя ўрокі", "Налады", "Скапіявана ва ўвод", "Правільна", "Выпраў", "Па алфавіце", "Выпадкова", "Паказаць усе", "У порцыі", "Засталося", "Гатова", "Далей", "Паўтарыць", "Наступны ўрок", "Выдатна! Гэты ўрок завершаны.", "Ты адказаў на ўсе бачныя карткі.", "Усё зроблена. Усе бачныя карткі маюць тры зоркі.", "Няма чаго паказаць.", "Уключы Паказаць усе або дадай карткі.", "Капіяваць", "OK", "Рэдагаваць картку", "Змяні картку, не пакідаючы трэніроўку.", "Памылка / зыходнае значэнне", "Падказка або правіла", "Калі зроблена", "Дзе", "Захаваць", "Выдаліць", "Адмена", "Выдаліць картку?", "Гэта картка будзе выдалена з урока.", "Мова інтэрфейсу")
-        "es" -> UiText("Atrás", "Ocultar lecciones ocultas", "Mostrar lecciones ocultas", "Ajustes", "Copiado al campo", "Correcto", "Corrígelo", "Alfabético", "Aleatorio", "Mostrar todo", "En bloque", "Quedan", "Hechas", "Siguiente", "Repetir", "Siguiente lección", "¡Excelente! Esta lección está completa.", "Respondiste todas las tarjetas visibles.", "Todo listo. Todas las tarjetas visibles tienen tres estrellas.", "Nada que mostrar.", "Activa Mostrar todo o añade tarjetas.", "Copiar", "OK", "Editar tarjeta", "Edita esta tarjeta sin salir de la práctica.", "Error / valor origen", "Pista o regla", "Fecha", "Dónde", "Guardar", "Eliminar", "Cancelar", "¿Eliminar tarjeta?", "Esta tarjeta se eliminará de la lección.", "Idioma de la interfaz")
-        "uk" -> UiText("Назад", "Сховати приховані уроки", "Показати приховані уроки", "Налаштування", "Скопійовано у поле", "Правильно", "Виправ", "За алфавітом", "Випадково", "Показати всі", "У порції", "Залишилось", "Готово", "Далі", "Повторити", "Наступний урок", "Чудово! Урок завершено.", "Ти відповів на всі видимі картки.", "Усе зроблено. Усі видимі картки мають три зірки.", "Нічого показати.", "Увімкни Показати всі або додай картки.", "Копіювати", "OK", "Редагувати картку", "Редагуй картку, не виходячи з практики.", "Помилка / вихідне значення", "Підказка або правило", "Коли зроблено", "Де", "Зберегти", "Видалити", "Скасувати", "Видалити картку?", "Цю картку буде видалено з уроку.", "Мова інтерфейсу")
-        "ru" -> UiText("Назад", "Скрыть скрытые уроки", "Показать скрытые уроки", "Настройки", "Скопировано в поле", "Верно", "Исправь", "По алфавиту", "Случайно", "Показать все", "В порции", "Осталось", "Готово", "Далее", "Повторить", "Следующий урок", "Отлично! Урок завершен.", "Ты ответил на все видимые карточки.", "Все готово. У всех видимых карточек три звезды.", "Нечего показать.", "Включи Показать все или добавь карточки.", "Копировать", "OK", "Редактировать карточку", "Редактируй карточку, не выходя из тренировки.", "Ошибка / исходное значение", "Подсказка или правило", "Когда сделано", "Где", "Сохранить", "Удалить", "Отмена", "Удалить карточку?", "Эта карточка будет удалена из урока.", "Язык интерфейса")
-        "pl" -> UiText("Wstecz", "Ukryj ukryte lekcje", "Pokaż ukryte lekcje", "Ustawienia", "Skopiowano do pola", "Dobrze", "Popraw", "Alfabetycznie", "Losowo", "Pokaż wszystko", "W porcji", "Zostało", "Zrobione", "Dalej", "Powtórz", "Następna lekcja", "Świetnie! Lekcja zakończona.", "Odpowiedziano na wszystkie widoczne karty.", "Gotowe. Wszystkie widoczne karty mają trzy gwiazdki.", "Nic do pokazania.", "Włącz Pokaż wszystko albo dodaj karty.", "Kopiuj", "OK", "Edytuj kartę", "Edytuj tę kartę bez wychodzenia z nauki.", "Błąd / wartość źródłowa", "Podpowiedź lub reguła", "Data", "Gdzie", "Zapisz", "Usuń", "Anuluj", "Usunąć kartę?", "Ta karta zostanie usunięta z lekcji.", "Język interfejsu")
+        "be" -> UiText("ÐÐ°Ð·Ð°Ð´", "Ð¡Ñ…Ð°Ð²Ð°Ñ†ÑŒ ÑÑ…Ð°Ð²Ð°Ð½Ñ‹Ñ ÑžÑ€Ð¾ÐºÑ–", "ÐŸÐ°ÐºÐ°Ð·Ð°Ñ†ÑŒ ÑÑ…Ð°Ð²Ð°Ð½Ñ‹Ñ ÑžÑ€Ð¾ÐºÑ–", "ÐÐ°Ð»Ð°Ð´Ñ‹", "Ð¡ÐºÐ°Ð¿Ñ–ÑÐ²Ð°Ð½Ð° Ð²Ð° ÑžÐ²Ð¾Ð´", "ÐŸÑ€Ð°Ð²Ñ–Ð»ÑŒÐ½Ð°", "Ð’Ñ‹Ð¿Ñ€Ð°Ñž", "ÐŸÐ° Ð°Ð»Ñ„Ð°Ð²Ñ–Ñ†Ðµ", "Ð’Ñ‹Ð¿Ð°Ð´ÐºÐ¾Ð²Ð°", "ÐŸÐ°ÐºÐ°Ð·Ð°Ñ†ÑŒ ÑƒÑÐµ", "Ð£ Ð¿Ð¾Ñ€Ñ†Ñ‹Ñ–", "Ð—Ð°ÑÑ‚Ð°Ð»Ð¾ÑÑ", "Ð“Ð°Ñ‚Ð¾Ð²Ð°", "Ð”Ð°Ð»ÐµÐ¹", "ÐŸÐ°ÑžÑ‚Ð°Ñ€Ñ‹Ñ†ÑŒ", "ÐÐ°ÑÑ‚ÑƒÐ¿Ð½Ñ‹ ÑžÑ€Ð¾Ðº", "Ð’Ñ‹Ð´Ð°Ñ‚Ð½Ð°! Ð“ÑÑ‚Ñ‹ ÑžÑ€Ð¾Ðº Ð·Ð°Ð²ÐµÑ€ÑˆÐ°Ð½Ñ‹.", "Ð¢Ñ‹ Ð°Ð´ÐºÐ°Ð·Ð°Ñž Ð½Ð° ÑžÑÐµ Ð±Ð°Ñ‡Ð½Ñ‹Ñ ÐºÐ°Ñ€Ñ‚ÐºÑ–.", "Ð£ÑÑ‘ Ð·Ñ€Ð¾Ð±Ð»ÐµÐ½Ð°. Ð£ÑÐµ Ð±Ð°Ñ‡Ð½Ñ‹Ñ ÐºÐ°Ñ€Ñ‚ÐºÑ– Ð¼Ð°ÑŽÑ†ÑŒ Ñ‚Ñ€Ñ‹ Ð·Ð¾Ñ€ÐºÑ–.", "ÐÑÐ¼Ð° Ñ‡Ð°Ð³Ð¾ Ð¿Ð°ÐºÐ°Ð·Ð°Ñ†ÑŒ.", "Ð£ÐºÐ»ÑŽÑ‡Ñ‹ ÐŸÐ°ÐºÐ°Ð·Ð°Ñ†ÑŒ ÑƒÑÐµ Ð°Ð±Ð¾ Ð´Ð°Ð´Ð°Ð¹ ÐºÐ°Ñ€Ñ‚ÐºÑ–.", "ÐšÐ°Ð¿Ñ–ÑÐ²Ð°Ñ†ÑŒ", "OK", "Ð ÑÐ´Ð°Ð³Ð°Ð²Ð°Ñ†ÑŒ ÐºÐ°Ñ€Ñ‚ÐºÑƒ", "Ð—Ð¼ÑÐ½Ñ– ÐºÐ°Ñ€Ñ‚ÐºÑƒ, Ð½Ðµ Ð¿Ð°ÐºÑ–Ð´Ð°ÑŽÑ‡Ñ‹ Ñ‚Ñ€ÑÐ½Ñ–Ñ€Ð¾ÑžÐºÑƒ.", "ÐŸÐ°Ð¼Ñ‹Ð»ÐºÐ° / Ð·Ñ‹Ñ…Ð¾Ð´Ð½Ð°Ðµ Ð·Ð½Ð°Ñ‡ÑÐ½Ð½Ðµ", "ÐŸÐ°Ð´ÐºÐ°Ð·ÐºÐ° Ð°Ð±Ð¾ Ð¿Ñ€Ð°Ð²Ñ–Ð»Ð°", "ÐšÐ°Ð»Ñ– Ð·Ñ€Ð¾Ð±Ð»ÐµÐ½Ð°", "Ð”Ð·Ðµ", "Ð—Ð°Ñ…Ð°Ð²Ð°Ñ†ÑŒ", "Ð’Ñ‹Ð´Ð°Ð»Ñ–Ñ†ÑŒ", "ÐÐ´Ð¼ÐµÐ½Ð°", "Ð’Ñ‹Ð´Ð°Ð»Ñ–Ñ†ÑŒ ÐºÐ°Ñ€Ñ‚ÐºÑƒ?", "Ð“ÑÑ‚Ð° ÐºÐ°Ñ€Ñ‚ÐºÐ° Ð±ÑƒÐ´Ð·Ðµ Ð²Ñ‹Ð´Ð°Ð»ÐµÐ½Ð° Ð· ÑƒÑ€Ð¾ÐºÐ°.", "ÐœÐ¾Ð²Ð° Ñ–Ð½Ñ‚ÑÑ€Ñ„ÐµÐ¹ÑÑƒ")
+        "es" -> UiText("AtrÃ¡s", "Ocultar lecciones ocultas", "Mostrar lecciones ocultas", "Ajustes", "Copiado al campo", "Correcto", "CorrÃ­gelo", "AlfabÃ©tico", "Aleatorio", "Mostrar todo", "En bloque", "Quedan", "Hechas", "Siguiente", "Repetir", "Siguiente lecciÃ³n", "Â¡Excelente! Esta lecciÃ³n estÃ¡ completa.", "Respondiste todas las tarjetas visibles.", "Todo listo. Todas las tarjetas visibles tienen tres estrellas.", "Nada que mostrar.", "Activa Mostrar todo o aÃ±ade tarjetas.", "Copiar", "OK", "Editar tarjeta", "Edita esta tarjeta sin salir de la prÃ¡ctica.", "Error / valor origen", "Pista o regla", "Fecha", "DÃ³nde", "Guardar", "Eliminar", "Cancelar", "Â¿Eliminar tarjeta?", "Esta tarjeta se eliminarÃ¡ de la lecciÃ³n.", "Idioma de la interfaz")
+        "uk" -> UiText("ÐÐ°Ð·Ð°Ð´", "Ð¡Ñ…Ð¾Ð²Ð°Ñ‚Ð¸ Ð¿Ñ€Ð¸Ñ…Ð¾Ð²Ð°Ð½Ñ– ÑƒÑ€Ð¾ÐºÐ¸", "ÐŸÐ¾ÐºÐ°Ð·Ð°Ñ‚Ð¸ Ð¿Ñ€Ð¸Ñ…Ð¾Ð²Ð°Ð½Ñ– ÑƒÑ€Ð¾ÐºÐ¸", "ÐÐ°Ð»Ð°ÑˆÑ‚ÑƒÐ²Ð°Ð½Ð½Ñ", "Ð¡ÐºÐ¾Ð¿Ñ–Ð¹Ð¾Ð²Ð°Ð½Ð¾ Ñƒ Ð¿Ð¾Ð»Ðµ", "ÐŸÑ€Ð°Ð²Ð¸Ð»ÑŒÐ½Ð¾", "Ð’Ð¸Ð¿Ñ€Ð°Ð²", "Ð—Ð° Ð°Ð»Ñ„Ð°Ð²Ñ–Ñ‚Ð¾Ð¼", "Ð’Ð¸Ð¿Ð°Ð´ÐºÐ¾Ð²Ð¾", "ÐŸÐ¾ÐºÐ°Ð·Ð°Ñ‚Ð¸ Ð²ÑÑ–", "Ð£ Ð¿Ð¾Ñ€Ñ†Ñ–Ñ—", "Ð—Ð°Ð»Ð¸ÑˆÐ¸Ð»Ð¾ÑÑŒ", "Ð“Ð¾Ñ‚Ð¾Ð²Ð¾", "Ð”Ð°Ð»Ñ–", "ÐŸÐ¾Ð²Ñ‚Ð¾Ñ€Ð¸Ñ‚Ð¸", "ÐÐ°ÑÑ‚ÑƒÐ¿Ð½Ð¸Ð¹ ÑƒÑ€Ð¾Ðº", "Ð§ÑƒÐ´Ð¾Ð²Ð¾! Ð£Ñ€Ð¾Ðº Ð·Ð°Ð²ÐµÑ€ÑˆÐµÐ½Ð¾.", "Ð¢Ð¸ Ð²Ñ–Ð´Ð¿Ð¾Ð²Ñ–Ð² Ð½Ð° Ð²ÑÑ– Ð²Ð¸Ð´Ð¸Ð¼Ñ– ÐºÐ°Ñ€Ñ‚ÐºÐ¸.", "Ð£ÑÐµ Ð·Ñ€Ð¾Ð±Ð»ÐµÐ½Ð¾. Ð£ÑÑ– Ð²Ð¸Ð´Ð¸Ð¼Ñ– ÐºÐ°Ñ€Ñ‚ÐºÐ¸ Ð¼Ð°ÑŽÑ‚ÑŒ Ñ‚Ñ€Ð¸ Ð·Ñ–Ñ€ÐºÐ¸.", "ÐÑ–Ñ‡Ð¾Ð³Ð¾ Ð¿Ð¾ÐºÐ°Ð·Ð°Ñ‚Ð¸.", "Ð£Ð²Ñ–Ð¼ÐºÐ½Ð¸ ÐŸÐ¾ÐºÐ°Ð·Ð°Ñ‚Ð¸ Ð²ÑÑ– Ð°Ð±Ð¾ Ð´Ð¾Ð´Ð°Ð¹ ÐºÐ°Ñ€Ñ‚ÐºÐ¸.", "ÐšÐ¾Ð¿Ñ–ÑŽÐ²Ð°Ñ‚Ð¸", "OK", "Ð ÐµÐ´Ð°Ð³ÑƒÐ²Ð°Ñ‚Ð¸ ÐºÐ°Ñ€Ñ‚ÐºÑƒ", "Ð ÐµÐ´Ð°Ð³ÑƒÐ¹ ÐºÐ°Ñ€Ñ‚ÐºÑƒ, Ð½Ðµ Ð²Ð¸Ñ…Ð¾Ð´ÑÑ‡Ð¸ Ð· Ð¿Ñ€Ð°ÐºÑ‚Ð¸ÐºÐ¸.", "ÐŸÐ¾Ð¼Ð¸Ð»ÐºÐ° / Ð²Ð¸Ñ…Ñ–Ð´Ð½Ðµ Ð·Ð½Ð°Ñ‡ÐµÐ½Ð½Ñ", "ÐŸÑ–Ð´ÐºÐ°Ð·ÐºÐ° Ð°Ð±Ð¾ Ð¿Ñ€Ð°Ð²Ð¸Ð»Ð¾", "ÐšÐ¾Ð»Ð¸ Ð·Ñ€Ð¾Ð±Ð»ÐµÐ½Ð¾", "Ð”Ðµ", "Ð—Ð±ÐµÑ€ÐµÐ³Ñ‚Ð¸", "Ð’Ð¸Ð´Ð°Ð»Ð¸Ñ‚Ð¸", "Ð¡ÐºÐ°ÑÑƒÐ²Ð°Ñ‚Ð¸", "Ð’Ð¸Ð´Ð°Ð»Ð¸Ñ‚Ð¸ ÐºÐ°Ñ€Ñ‚ÐºÑƒ?", "Ð¦ÑŽ ÐºÐ°Ñ€Ñ‚ÐºÑƒ Ð±ÑƒÐ´Ðµ Ð²Ð¸Ð´Ð°Ð»ÐµÐ½Ð¾ Ð· ÑƒÑ€Ð¾ÐºÑƒ.", "ÐœÐ¾Ð²Ð° Ñ–Ð½Ñ‚ÐµÑ€Ñ„ÐµÐ¹ÑÑƒ")
+        "ru" -> UiText("ÐÐ°Ð·Ð°Ð´", "Ð¡ÐºÑ€Ñ‹Ñ‚ÑŒ ÑÐºÑ€Ñ‹Ñ‚Ñ‹Ðµ ÑƒÑ€Ð¾ÐºÐ¸", "ÐŸÐ¾ÐºÐ°Ð·Ð°Ñ‚ÑŒ ÑÐºÑ€Ñ‹Ñ‚Ñ‹Ðµ ÑƒÑ€Ð¾ÐºÐ¸", "ÐÐ°ÑÑ‚Ñ€Ð¾Ð¹ÐºÐ¸", "Ð¡ÐºÐ¾Ð¿Ð¸Ñ€Ð¾Ð²Ð°Ð½Ð¾ Ð² Ð¿Ð¾Ð»Ðµ", "Ð’ÐµÑ€Ð½Ð¾", "Ð˜ÑÐ¿Ñ€Ð°Ð²ÑŒ", "ÐŸÐ¾ Ð°Ð»Ñ„Ð°Ð²Ð¸Ñ‚Ñƒ", "Ð¡Ð»ÑƒÑ‡Ð°Ð¹Ð½Ð¾", "ÐŸÐ¾ÐºÐ°Ð·Ð°Ñ‚ÑŒ Ð²ÑÐµ", "Ð’ Ð¿Ð¾Ñ€Ñ†Ð¸Ð¸", "ÐžÑÑ‚Ð°Ð»Ð¾ÑÑŒ", "Ð“Ð¾Ñ‚Ð¾Ð²Ð¾", "Ð”Ð°Ð»ÐµÐµ", "ÐŸÐ¾Ð²Ñ‚Ð¾Ñ€Ð¸Ñ‚ÑŒ", "Ð¡Ð»ÐµÐ´ÑƒÑŽÑ‰Ð¸Ð¹ ÑƒÑ€Ð¾Ðº", "ÐžÑ‚Ð»Ð¸Ñ‡Ð½Ð¾! Ð£Ñ€Ð¾Ðº Ð·Ð°Ð²ÐµÑ€ÑˆÐµÐ½.", "Ð¢Ñ‹ Ð¾Ñ‚Ð²ÐµÑ‚Ð¸Ð» Ð½Ð° Ð²ÑÐµ Ð²Ð¸Ð´Ð¸Ð¼Ñ‹Ðµ ÐºÐ°Ñ€Ñ‚Ð¾Ñ‡ÐºÐ¸.", "Ð’ÑÐµ Ð³Ð¾Ñ‚Ð¾Ð²Ð¾. Ð£ Ð²ÑÐµÑ… Ð²Ð¸Ð´Ð¸Ð¼Ñ‹Ñ… ÐºÐ°Ñ€Ñ‚Ð¾Ñ‡ÐµÐº Ñ‚Ñ€Ð¸ Ð·Ð²ÐµÐ·Ð´Ñ‹.", "ÐÐµÑ‡ÐµÐ³Ð¾ Ð¿Ð¾ÐºÐ°Ð·Ð°Ñ‚ÑŒ.", "Ð’ÐºÐ»ÑŽÑ‡Ð¸ ÐŸÐ¾ÐºÐ°Ð·Ð°Ñ‚ÑŒ Ð²ÑÐµ Ð¸Ð»Ð¸ Ð´Ð¾Ð±Ð°Ð²ÑŒ ÐºÐ°Ñ€Ñ‚Ð¾Ñ‡ÐºÐ¸.", "ÐšÐ¾Ð¿Ð¸Ñ€Ð¾Ð²Ð°Ñ‚ÑŒ", "OK", "Ð ÐµÐ´Ð°ÐºÑ‚Ð¸Ñ€Ð¾Ð²Ð°Ñ‚ÑŒ ÐºÐ°Ñ€Ñ‚Ð¾Ñ‡ÐºÑƒ", "Ð ÐµÐ´Ð°ÐºÑ‚Ð¸Ñ€ÑƒÐ¹ ÐºÐ°Ñ€Ñ‚Ð¾Ñ‡ÐºÑƒ, Ð½Ðµ Ð²Ñ‹Ñ…Ð¾Ð´Ñ Ð¸Ð· Ñ‚Ñ€ÐµÐ½Ð¸Ñ€Ð¾Ð²ÐºÐ¸.", "ÐžÑˆÐ¸Ð±ÐºÐ° / Ð¸ÑÑ…Ð¾Ð´Ð½Ð¾Ðµ Ð·Ð½Ð°Ñ‡ÐµÐ½Ð¸Ðµ", "ÐŸÐ¾Ð´ÑÐºÐ°Ð·ÐºÐ° Ð¸Ð»Ð¸ Ð¿Ñ€Ð°Ð²Ð¸Ð»Ð¾", "ÐšÐ¾Ð³Ð´Ð° ÑÐ´ÐµÐ»Ð°Ð½Ð¾", "Ð“Ð´Ðµ", "Ð¡Ð¾Ñ…Ñ€Ð°Ð½Ð¸Ñ‚ÑŒ", "Ð£Ð´Ð°Ð»Ð¸Ñ‚ÑŒ", "ÐžÑ‚Ð¼ÐµÐ½Ð°", "Ð£Ð´Ð°Ð»Ð¸Ñ‚ÑŒ ÐºÐ°Ñ€Ñ‚Ð¾Ñ‡ÐºÑƒ?", "Ð­Ñ‚Ð° ÐºÐ°Ñ€Ñ‚Ð¾Ñ‡ÐºÐ° Ð±ÑƒÐ´ÐµÑ‚ ÑƒÐ´Ð°Ð»ÐµÐ½Ð° Ð¸Ð· ÑƒÑ€Ð¾ÐºÐ°.", "Ð¯Ð·Ñ‹Ðº Ð¸Ð½Ñ‚ÐµÑ€Ñ„ÐµÐ¹ÑÐ°")
+        "pl" -> UiText("Wstecz", "Ukryj ukryte lekcje", "PokaÅ¼ ukryte lekcje", "Ustawienia", "Skopiowano do pola", "Dobrze", "Popraw", "Alfabetycznie", "Losowo", "PokaÅ¼ wszystko", "W porcji", "ZostaÅ‚o", "Zrobione", "Dalej", "PowtÃ³rz", "NastÄ™pna lekcja", "Åšwietnie! Lekcja zakoÅ„czona.", "Odpowiedziano na wszystkie widoczne karty.", "Gotowe. Wszystkie widoczne karty majÄ… trzy gwiazdki.", "Nic do pokazania.", "WÅ‚Ä…cz PokaÅ¼ wszystko albo dodaj karty.", "Kopiuj", "OK", "Edytuj kartÄ™", "Edytuj tÄ™ kartÄ™ bez wychodzenia z nauki.", "BÅ‚Ä…d / wartoÅ›Ä‡ ÅºrÃ³dÅ‚owa", "PodpowiedÅº lub reguÅ‚a", "Data", "Gdzie", "Zapisz", "UsuÅ„", "Anuluj", "UsunÄ…Ä‡ kartÄ™?", "Ta karta zostanie usuniÄ™ta z lekcji.", "JÄ™zyk interfejsu")
         else -> UiText("Back", "Hide hidden lessons", "Show hidden lessons", "Settings", "Copied to input", "Correct", "Make it right", "Alphabetical", "Random", "Show all", "In portion", "Left", "Done", "Next", "Repeat", "Next lesson", "Excellent work. This lesson is complete!", "You answered every visible card.", "All done. Every visible card already has three stars.", "Nothing to show yet.", "Turn on Show all or add cards to keep practicing.", "Copy", "OK", "Edit card", "Update this card without leaving practice.", "Mistake made / source value", "Hint or rule", "Made at", "Where", "Save", "Delete", "Cancel", "Delete card?", "This card will be removed from the lesson.", "Interface language")
     }
 }
@@ -334,6 +334,7 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
     val quickEditActive = quickEditCardId != null && state.currentCard?.id == quickEditCardId
     var showHeaderLessonInfo by remember { mutableStateOf(false) }
     var showResetProgressConfirm by remember { mutableStateOf(false) }
+    var showTranslationDownloadDialog by remember { mutableStateOf(false) }
     var textToSpeechReady by remember { mutableStateOf(false) }
     val textToSpeech = remember {
         var engine: TextToSpeech? = null
@@ -356,6 +357,54 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
                 !granted -> viewModel.showMessage("Microphone permission denied")
             }
         }
+    fun mlKitLanguageForEarlyRequest(language: String): String? {
+        val tag = when (language.trim().lowercase(Locale.ROOT)) {
+            "english", "en" -> "en"
+            "spanish", "es", "espanol" -> "es"
+            "polish", "pl", "polski" -> "pl"
+            "russian", "ru" -> "ru"
+            "belarusian", "belarus", "by", "be" -> "be"
+            "ukrainian", "uk", "ua" -> "uk"
+            "german", "de", "deutsch" -> "de"
+            else -> language.trim().takeIf { it.length in 2..3 }?.lowercase(Locale.ROOT).orEmpty()
+        }
+        return TranslateLanguage.fromLanguageTag(tag)
+    }
+
+    val requestGoogleOfflineTranslation: (
+        String,
+        String,
+        String,
+        (String) -> Unit,
+        () -> Unit
+    ) -> Unit = { text, sourceLanguageName, targetLanguageName, onSuccess, onFailure ->
+        val cleanText = text.trim()
+        if (cleanText.isNotBlank()) {
+            val source = mlKitLanguageForEarlyRequest(sourceLanguageName)
+            val target = mlKitLanguageForEarlyRequest(targetLanguageName)
+            if (source == null || target == null) {
+                onFailure()
+            } else {
+                val translator = Translation.getClient(
+                    TranslatorOptions.Builder()
+                        .setSourceLanguage(source)
+                        .setTargetLanguage(target)
+                        .build()
+                )
+                translator.downloadModelIfNeeded(DownloadConditions.Builder().build())
+                    .addOnSuccessListener {
+                        translator.translate(cleanText)
+                            .addOnSuccessListener(onSuccess)
+                            .addOnFailureListener { onFailure() }
+                            .addOnCompleteListener { translator.close() }
+                    }
+                    .addOnFailureListener {
+                        onFailure()
+                        translator.close()
+                    }
+            }
+        }
+    }
     DisposableEffect(speechRecognizer) {
         val listener = object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) {
@@ -412,7 +461,18 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
                             viewModel.updateAnswer(spokenText)
                             viewModel.showMessage("Voice input added")
                         }
-                        VoiceInputTarget.QUICK_VOCABULARY -> viewModel.addQuickVocabularyCard(spokenText)
+                        VoiceInputTarget.QUICK_VOCABULARY -> {
+                            viewModel.addQuickVocabularyCard(spokenText)
+                            if (state.useLocalTranslation) {
+                                requestGoogleOfflineTranslation(
+                                    spokenText,
+                                    state.quickVocabularyTargetLanguage,
+                                    state.quickVocabularySourceLanguage,
+                                    { translated: String -> viewModel.applyQuickVocabularyGoogleTranslation(spokenText, translated) },
+                                    {}
+                                )
+                            }
+                        }
                         VoiceInputTarget.TRANSLATE_INPUT -> viewModel.updateTranslationInput(spokenText)
                         VoiceInputTarget.CARD_NATIVE -> viewModel.updateCardDraft(state.cardDraft.copy(nativeValue = spokenText))
                         VoiceInputTarget.CARD_CORRECT -> viewModel.updateCardDraft(state.cardDraft.copy(correctValue = spokenText))
@@ -576,17 +636,20 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
         return TranslateLanguage.fromLanguageTag(tag)
     }
 
-    fun translateWithGoogleOffline(text: String = state.translationInput) {
+    fun translateGoogleOfflineText(
+        text: String,
+        sourceLanguageName: String,
+        targetLanguageName: String,
+        onSuccess: (String) -> Unit,
+        onFailure: () -> Unit = { viewModel.showMessage("Translation not available") }
+    ) {
         val cleanText = text.trim()
-        if (cleanText.isBlank()) {
-            viewModel.updateTranslationOutput("")
-            return
-        }
-        if (!state.useLocalTranslation) return
-        val source = mlKitLanguage(state.quickVocabularyTargetLanguage)
-        val target = mlKitLanguage(state.quickVocabularySourceLanguage)
+        if (cleanText.isBlank()) return
+        val source = mlKitLanguage(sourceLanguageName)
+        val target = mlKitLanguage(targetLanguageName)
         if (source == null || target == null) {
             viewModel.showMessage("Translation language is not supported")
+            onFailure()
             return
         }
         val translator = Translation.getClient(
@@ -595,15 +658,32 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
                 .setTargetLanguage(target)
                 .build()
         )
-        val conditions = DownloadConditions.Builder().build()
-        translator.downloadModelIfNeeded(conditions)
+        translator.downloadModelIfNeeded(DownloadConditions.Builder().build())
             .addOnSuccessListener {
                 translator.translate(cleanText)
-                    .addOnSuccessListener { translated -> viewModel.updateTranslationOutput(translated) }
-                    .addOnFailureListener { viewModel.showMessage("Translation not available") }
+                    .addOnSuccessListener(onSuccess)
+                    .addOnFailureListener { onFailure() }
                     .addOnCompleteListener { translator.close() }
             }
-            .addOnFailureListener { viewModel.showMessage("Download translation languages in Settings") }
+            .addOnFailureListener {
+                viewModel.showMessage("Download translation languages")
+                onFailure()
+                translator.close()
+            }
+    }
+    fun translateWithGoogleOffline(text: String = state.translationInput) {
+        val cleanText = text.trim()
+        if (cleanText.isBlank()) {
+            viewModel.updateTranslationOutput("")
+            return
+        }
+        if (!state.useLocalTranslation) return
+        translateGoogleOfflineText(
+            text = cleanText,
+            sourceLanguageName = state.quickVocabularyTargetLanguage,
+            targetLanguageName = state.quickVocabularySourceLanguage,
+            onSuccess = { translated -> viewModel.updateTranslationOutput(translated) }
+        )
     }
 
     fun downloadGoogleTranslationModels() {
@@ -797,6 +877,31 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
             }
         )
     }
+    if (showTranslationDownloadDialog) {
+        AlertDialog(
+            onDismissRequest = { showTranslationDownloadDialog = false },
+            title = { Text("Download Google Translate languages") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Download offline translation models for ${nativeLanguageLabel(state.quickVocabularyTargetLanguage)} -> ${nativeLanguageLabel(state.quickVocabularySourceLanguage)}.")
+                    Text(
+                        text = "Translations are powered by Google Translate. Google disclaims warranties related to translation accuracy and reliability.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showTranslationDownloadDialog = false
+                    downloadGoogleTranslationModels()
+                }) { Text("Download") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showTranslationDownloadDialog = false }) { Text("Cancel") }
+            }
+        )
+    }
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
@@ -884,6 +989,14 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
                             )
                         }
                     }
+                    if (state.screen == AppScreen.TRANSLATE) {
+                        IconButton(onClick = {
+                            titleActivated = true
+                            showTranslationDownloadDialog = true
+                        }) {
+                            Icon(Icons.Default.FileDownload, contentDescription = "Download translation languages")
+                        }
+                    }
                     IconButton(onClick = {
                         titleActivated = true
                         viewModel.openSettings()
@@ -919,9 +1032,42 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
                         }
                         viewModel.acceptCurrentCard()
                     },
-                    onSaveEmptySide = {
+                                        onSaveEmptySide = {
+                        val cardBeforeSave = state.currentCard
+                        val enteredText = state.answer.trim()
+                        val fillBackSide = cardBeforeSave?.correctText()?.isEmptyPlaceholder() == true
                         viewModel.saveVisibleSideFromAnswer(state.isBackVisible)
                         quickEditCardId = null
+                        if (state.useLocalTranslation && cardBeforeSave != null && enteredText.isNotBlank()) {
+                            val sourceLanguage = if (fillBackSide) cardBeforeSave.sourceLanguage.ifBlank { state.selectedLesson?.sourceLanguage.orEmpty() } else cardBeforeSave.targetLanguage.ifBlank { state.selectedLesson?.targetLanguage.orEmpty() }
+                            val targetLanguage = if (fillBackSide) cardBeforeSave.targetLanguage.ifBlank { state.selectedLesson?.targetLanguage.orEmpty() } else cardBeforeSave.sourceLanguage.ifBlank { state.selectedLesson?.sourceLanguage.orEmpty() }
+                            translateGoogleOfflineText(
+                                text = enteredText,
+                                sourceLanguageName = sourceLanguage,
+                                targetLanguageName = targetLanguage,
+                                onSuccess = { translated -> viewModel.applyGoogleTranslationToCard(cardBeforeSave.id, translated, fillBackSide) },
+                                onFailure = {}
+                            )
+                        }
+                    },
+                    onGoogleTranslateEmptySide = {
+                        val card = state.currentCard ?: return@AnswerBar
+                        val sourceText = if (state.isBackVisible) card.nativeText() else card.correctText()
+                        val sourceLanguage = if (state.isBackVisible) card.sourceLanguage.ifBlank { state.selectedLesson?.sourceLanguage.orEmpty() } else card.targetLanguage.ifBlank { state.selectedLesson?.targetLanguage.orEmpty() }
+                        val targetLanguage = if (state.isBackVisible) card.targetLanguage.ifBlank { state.selectedLesson?.targetLanguage.orEmpty() } else card.sourceLanguage.ifBlank { state.selectedLesson?.sourceLanguage.orEmpty() }
+                        if (!state.useLocalTranslation) {
+                            viewModel.showMessage("Enable local translation")
+                        } else {
+                            translateGoogleOfflineText(
+                                text = sourceText,
+                                sourceLanguageName = sourceLanguage,
+                                targetLanguageName = targetLanguage,
+                                onSuccess = { translated ->
+                                    viewModel.updateAnswer(translated)
+                                    viewModel.showMessage("Powered by Google Translate")
+                                }
+                            )
+                        }
                     },
                     onClearAnswer = {
                         viewModel.updateAnswer("")
@@ -1085,6 +1231,7 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
         onTranslationApiTokenChange = viewModel::setTranslationApiToken,
                     onSaveNotificationInterval = { viewModel.saveNotificationInterval(context) },
                     onSaveNotificationMax = viewModel::saveNotificationMax,
+                    onDownloadTranslationLanguages = { showTranslationDownloadDialog = true },
                     onDownloadSampleJson = {
                         val fileName = "make_mistake_json_template.json"
                         jsonPendingExport = fileName to sampleLessonJson()
@@ -1461,6 +1608,7 @@ private fun SettingsScreen(
     onTranslationApiTokenChange: (String) -> Unit,
     onSaveNotificationInterval: () -> Unit,
     onSaveNotificationMax: () -> Unit,
+    onDownloadTranslationLanguages: () -> Unit,
     onDownloadSampleJson: () -> Unit
 ) {
     val ui = rememberUiText()
@@ -1545,19 +1693,19 @@ private fun SettingsScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(
-                    text = st("Default card side", "Standard-Kartenseite", "Пачатковы бок карткі", "Lado inicial de la tarjeta", "Початковий бік картки", "Сторона карточки по умолчанию", "Domyślna strona karty"),
+                    text = st("Default card side", "Standard-Kartenseite", "ÐŸÐ°Ñ‡Ð°Ñ‚ÐºÐ¾Ð²Ñ‹ Ð±Ð¾Ðº ÐºÐ°Ñ€Ñ‚ÐºÑ–", "Lado inicial de la tarjeta", "ÐŸÐ¾Ñ‡Ð°Ñ‚ÐºÐ¾Ð²Ð¸Ð¹ Ð±Ñ–Ðº ÐºÐ°Ñ€Ñ‚ÐºÐ¸", "Ð¡Ñ‚Ð¾Ñ€Ð¾Ð½Ð° ÐºÐ°Ñ€Ñ‚Ð¾Ñ‡ÐºÐ¸ Ð¿Ð¾ ÑƒÐ¼Ð¾Ð»Ñ‡Ð°Ð½Ð¸ÑŽ", "DomyÅ›lna strona karty"),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
                     text = st(
                         "Choose which side is shown first when a card opens.",
-                        "Wähle, welche Seite beim Öffnen zuerst erscheint.",
-                        "Выберы, які бок паказваць першым пры адкрыцці карткі.",
-                        "Elige qué lado se muestra primero al abrir una tarjeta.",
-                        "Вибери, який бік показувати першим при відкритті картки.",
-                        "Выбери, какая сторона показывается первой при открытии карточки.",
-                        "Wybierz, która strona pokazuje się pierwsza po otwarciu karty."
+                        "WÃ¤hle, welche Seite beim Ã–ffnen zuerst erscheint.",
+                        "Ð’Ñ‹Ð±ÐµÑ€Ñ‹, ÑÐºÑ– Ð±Ð¾Ðº Ð¿Ð°ÐºÐ°Ð·Ð²Ð°Ñ†ÑŒ Ð¿ÐµÑ€ÑˆÑ‹Ð¼ Ð¿Ñ€Ñ‹ Ð°Ð´ÐºÑ€Ñ‹Ñ†Ñ†Ñ– ÐºÐ°Ñ€Ñ‚ÐºÑ–.",
+                        "Elige quÃ© lado se muestra primero al abrir una tarjeta.",
+                        "Ð’Ð¸Ð±ÐµÑ€Ð¸, ÑÐºÐ¸Ð¹ Ð±Ñ–Ðº Ð¿Ð¾ÐºÐ°Ð·ÑƒÐ²Ð°Ñ‚Ð¸ Ð¿ÐµÑ€ÑˆÐ¸Ð¼ Ð¿Ñ€Ð¸ Ð²Ñ–Ð´ÐºÑ€Ð¸Ñ‚Ñ‚Ñ– ÐºÐ°Ñ€Ñ‚ÐºÐ¸.",
+                        "Ð’Ñ‹Ð±ÐµÑ€Ð¸, ÐºÐ°ÐºÐ°Ñ ÑÑ‚Ð¾Ñ€Ð¾Ð½Ð° Ð¿Ð¾ÐºÐ°Ð·Ñ‹Ð²Ð°ÐµÑ‚ÑÑ Ð¿ÐµÑ€Ð²Ð¾Ð¹ Ð¿Ñ€Ð¸ Ð¾Ñ‚ÐºÑ€Ñ‹Ñ‚Ð¸Ð¸ ÐºÐ°Ñ€Ñ‚Ð¾Ñ‡ÐºÐ¸.",
+                        "Wybierz, ktÃ³ra strona pokazuje siÄ™ pierwsza po otwarciu karty."
                     ),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1591,18 +1739,18 @@ private fun SettingsScreen(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = st("Hide done cards", "Fertige Karten ausblenden", "Схаваць зробленыя карткі", "Ocultar tarjetas hechas", "Сховати виконані картки", "Скрывать выполненные карточки", "Ukryj zrobione karty"),
+                        text = st("Hide done cards", "Fertige Karten ausblenden", "Ð¡Ñ…Ð°Ð²Ð°Ñ†ÑŒ Ð·Ñ€Ð¾Ð±Ð»ÐµÐ½Ñ‹Ñ ÐºÐ°Ñ€Ñ‚ÐºÑ–", "Ocultar tarjetas hechas", "Ð¡Ñ…Ð¾Ð²Ð°Ñ‚Ð¸ Ð²Ð¸ÐºÐ¾Ð½Ð°Ð½Ñ– ÐºÐ°Ñ€Ñ‚ÐºÐ¸", "Ð¡ÐºÑ€Ñ‹Ð²Ð°Ñ‚ÑŒ Ð²Ñ‹Ð¿Ð¾Ð»Ð½ÐµÐ½Ð½Ñ‹Ðµ ÐºÐ°Ñ€Ñ‚Ð¾Ñ‡ÐºÐ¸", "Ukryj zrobione karty"),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
                         text = st(
                             "Do not show or count cards marked with 3 stars inside a lesson.",
-                            "Karten mit 3 Sternen in der Lektion nicht anzeigen oder zählen.",
-                            "Не паказваць і не ўлічваць у ўроку карткі з 3 зоркамі.",
-                            "No mostrar ni contar dentro de la lección las tarjetas con 3 estrellas.",
-                            "Не показувати й не рахувати в уроці картки з 3 зірками.",
-                            "Не показывать и не учитывать в уроке карточки с 3 звездами.",
+                            "Karten mit 3 Sternen in der Lektion nicht anzeigen oder zÃ¤hlen.",
+                            "ÐÐµ Ð¿Ð°ÐºÐ°Ð·Ð²Ð°Ñ†ÑŒ Ñ– Ð½Ðµ ÑžÐ»Ñ–Ñ‡Ð²Ð°Ñ†ÑŒ Ñƒ ÑžÑ€Ð¾ÐºÑƒ ÐºÐ°Ñ€Ñ‚ÐºÑ– Ð· 3 Ð·Ð¾Ñ€ÐºÐ°Ð¼Ñ–.",
+                            "No mostrar ni contar dentro de la lecciÃ³n las tarjetas con 3 estrellas.",
+                            "ÐÐµ Ð¿Ð¾ÐºÐ°Ð·ÑƒÐ²Ð°Ñ‚Ð¸ Ð¹ Ð½Ðµ Ñ€Ð°Ñ…ÑƒÐ²Ð°Ñ‚Ð¸ Ð² ÑƒÑ€Ð¾Ñ†Ñ– ÐºÐ°Ñ€Ñ‚ÐºÐ¸ Ð· 3 Ð·Ñ–Ñ€ÐºÐ°Ð¼Ð¸.",
+                            "ÐÐµ Ð¿Ð¾ÐºÐ°Ð·Ñ‹Ð²Ð°Ñ‚ÑŒ Ð¸ Ð½Ðµ ÑƒÑ‡Ð¸Ñ‚Ñ‹Ð²Ð°Ñ‚ÑŒ Ð² ÑƒÑ€Ð¾ÐºÐµ ÐºÐ°Ñ€Ñ‚Ð¾Ñ‡ÐºÐ¸ Ñ 3 Ð·Ð²ÐµÐ·Ð´Ð°Ð¼Ð¸.",
                             "Nie pokazuj i nie licz w lekcji kart z 3 gwiazdkami."
                         ),
                         style = MaterialTheme.typography.bodyMedium,
@@ -1626,7 +1774,7 @@ private fun SettingsScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(
-                    text = st("Card and feedback", "Karte und Feedback", "Картка і водгук", "Tarjeta y respuesta", "Картка і відгук", "Карточка и отклик", "Karta i reakcje"),
+                    text = st("Card and feedback", "Karte und Feedback", "ÐšÐ°Ñ€Ñ‚ÐºÐ° Ñ– Ð²Ð¾Ð´Ð³ÑƒÐº", "Tarjeta y respuesta", "ÐšÐ°Ñ€Ñ‚ÐºÐ° Ñ– Ð²Ñ–Ð´Ð³ÑƒÐº", "ÐšÐ°Ñ€Ñ‚Ð¾Ñ‡ÐºÐ° Ð¸ Ð¾Ñ‚ÐºÐ»Ð¸Ðº", "Karta i reakcje"),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
@@ -1666,43 +1814,43 @@ private fun SettingsScreen(
                 }
 
                 SettingsSwitchRow(
-                    title = st("Show card log", "Kartenlog anzeigen", "Паказваць лог карткі", "Mostrar registro de tarjeta", "Показувати лог картки", "Показывать лог карточки", "Pokaż log karty"),
+                    title = st("Show card log", "Kartenlog anzeigen", "ÐŸÐ°ÐºÐ°Ð·Ð²Ð°Ñ†ÑŒ Ð»Ð¾Ð³ ÐºÐ°Ñ€Ñ‚ÐºÑ–", "Mostrar registro de tarjeta", "ÐŸÐ¾ÐºÐ°Ð·ÑƒÐ²Ð°Ñ‚Ð¸ Ð»Ð¾Ð³ ÐºÐ°Ñ€Ñ‚ÐºÐ¸", "ÐŸÐ¾ÐºÐ°Ð·Ñ‹Ð²Ð°Ñ‚ÑŒ Ð»Ð¾Ð³ ÐºÐ°Ñ€Ñ‚Ð¾Ñ‡ÐºÐ¸", "PokaÅ¼ log karty"),
                     description = st(
                         "Show the M icon with mistakes and work log on study cards.",
                         "Zeigt das M-Symbol mit Fehlern und Arbeitslog auf Lernkarten.",
-                        "Паказвае значок M з памылкамі і логам працы на картках.",
+                        "ÐŸÐ°ÐºÐ°Ð·Ð²Ð°Ðµ Ð·Ð½Ð°Ñ‡Ð¾Ðº M Ð· Ð¿Ð°Ð¼Ñ‹Ð»ÐºÐ°Ð¼Ñ– Ñ– Ð»Ð¾Ð³Ð°Ð¼ Ð¿Ñ€Ð°Ñ†Ñ‹ Ð½Ð° ÐºÐ°Ñ€Ñ‚ÐºÐ°Ñ….",
                         "Muestra el icono M con errores y registro de trabajo en las tarjetas.",
-                        "Показує значок M з помилками й логом роботи на картках.",
-                        "Показывает значок M с ошибками и логом работы на карточках.",
-                        "Pokazuje ikonę M z błędami i logiem pracy na kartach."
+                        "ÐŸÐ¾ÐºÐ°Ð·ÑƒÑ” Ð·Ð½Ð°Ñ‡Ð¾Ðº M Ð· Ð¿Ð¾Ð¼Ð¸Ð»ÐºÐ°Ð¼Ð¸ Ð¹ Ð»Ð¾Ð³Ð¾Ð¼ Ñ€Ð¾Ð±Ð¾Ñ‚Ð¸ Ð½Ð° ÐºÐ°Ñ€Ñ‚ÐºÐ°Ñ….",
+                        "ÐŸÐ¾ÐºÐ°Ð·Ñ‹Ð²Ð°ÐµÑ‚ Ð·Ð½Ð°Ñ‡Ð¾Ðº M Ñ Ð¾ÑˆÐ¸Ð±ÐºÐ°Ð¼Ð¸ Ð¸ Ð»Ð¾Ð³Ð¾Ð¼ Ñ€Ð°Ð±Ð¾Ñ‚Ñ‹ Ð½Ð° ÐºÐ°Ñ€Ñ‚Ð¾Ñ‡ÐºÐ°Ñ….",
+                        "Pokazuje ikonÄ™ M z bÅ‚Ä™dami i logiem pracy na kartach."
                     ),
                     checked = showCardLog,
                     onCheckedChange = onShowCardLogChange
                 )
                 SettingsSwitchRow(
-                    title = st("Sound effects", "Soundeffekte", "Гукавыя эфекты", "Efectos de sonido", "Звукові ефекти", "Звуковые эффекты", "Efekty dźwiękowe"),
+                    title = st("Sound effects", "Soundeffekte", "Ð“ÑƒÐºÐ°Ð²Ñ‹Ñ ÑÑ„ÐµÐºÑ‚Ñ‹", "Efectos de sonido", "Ð—Ð²ÑƒÐºÐ¾Ð²Ñ– ÐµÑ„ÐµÐºÑ‚Ð¸", "Ð—Ð²ÑƒÐºÐ¾Ð²Ñ‹Ðµ ÑÑ„Ñ„ÐµÐºÑ‚Ñ‹", "Efekty dÅºwiÄ™kowe"),
                     description = st(
                         "Play short sounds for app actions and the splash screen.",
-                        "Spielt kurze Sounds für Aktionen und den Startbildschirm.",
-                        "Прайграе кароткія гукі для дзеянняў і застаўкі.",
+                        "Spielt kurze Sounds fÃ¼r Aktionen und den Startbildschirm.",
+                        "ÐŸÑ€Ð°Ð¹Ð³Ñ€Ð°Ðµ ÐºÐ°Ñ€Ð¾Ñ‚ÐºÑ–Ñ Ð³ÑƒÐºÑ– Ð´Ð»Ñ Ð´Ð·ÐµÑÐ½Ð½ÑÑž Ñ– Ð·Ð°ÑÑ‚Ð°ÑžÐºÑ–.",
                         "Reproduce sonidos cortos para acciones y la pantalla inicial.",
-                        "Відтворює короткі звуки для дій і заставки.",
-                        "Воспроизводит короткие звуки для действий и заставки.",
-                        "Odtwarza krótkie dźwięki dla akcji i ekranu startowego."
+                        "Ð’Ñ–Ð´Ñ‚Ð²Ð¾Ñ€ÑŽÑ” ÐºÐ¾Ñ€Ð¾Ñ‚ÐºÑ– Ð·Ð²ÑƒÐºÐ¸ Ð´Ð»Ñ Ð´Ñ–Ð¹ Ñ– Ð·Ð°ÑÑ‚Ð°Ð²ÐºÐ¸.",
+                        "Ð’Ð¾ÑÐ¿Ñ€Ð¾Ð¸Ð·Ð²Ð¾Ð´Ð¸Ñ‚ ÐºÐ¾Ñ€Ð¾Ñ‚ÐºÐ¸Ðµ Ð·Ð²ÑƒÐºÐ¸ Ð´Ð»Ñ Ð´ÐµÐ¹ÑÑ‚Ð²Ð¸Ð¹ Ð¸ Ð·Ð°ÑÑ‚Ð°Ð²ÐºÐ¸.",
+                        "Odtwarza krÃ³tkie dÅºwiÄ™ki dla akcji i ekranu startowego."
                     ),
                     checked = soundEffectsEnabled,
                     onCheckedChange = onSoundEffectsEnabledChange
                 )
                 SettingsSwitchRow(
-                    title = st("Vibration", "Vibration", "Вібрацыя", "Vibración", "Вібрація", "Вибрация", "Wibracja"),
+                    title = st("Vibration", "Vibration", "Ð’Ñ–Ð±Ñ€Ð°Ñ†Ñ‹Ñ", "VibraciÃ³n", "Ð’Ñ–Ð±Ñ€Ð°Ñ†Ñ–Ñ", "Ð’Ð¸Ð±Ñ€Ð°Ñ†Ð¸Ñ", "Wibracja"),
                     description = st(
                         "Use short haptic feedback for app actions.",
-                        "Nutzt kurze haptische Rückmeldung für Aktionen.",
-                        "Выкарыстоўвае кароткі вібраадгук для дзеянняў.",
-                        "Usa respuesta háptica corta para acciones.",
-                        "Використовує короткий вібровідгук для дій.",
-                        "Использует короткий виброотклик для действий.",
-                        "Używa krótkiej reakcji haptycznej dla akcji."
+                        "Nutzt kurze haptische RÃ¼ckmeldung fÃ¼r Aktionen.",
+                        "Ð’Ñ‹ÐºÐ°Ñ€Ñ‹ÑÑ‚Ð¾ÑžÐ²Ð°Ðµ ÐºÐ°Ñ€Ð¾Ñ‚ÐºÑ– Ð²Ñ–Ð±Ñ€Ð°Ð°Ð´Ð³ÑƒÐº Ð´Ð»Ñ Ð´Ð·ÐµÑÐ½Ð½ÑÑž.",
+                        "Usa respuesta hÃ¡ptica corta para acciones.",
+                        "Ð’Ð¸ÐºÐ¾Ñ€Ð¸ÑÑ‚Ð¾Ð²ÑƒÑ” ÐºÐ¾Ñ€Ð¾Ñ‚ÐºÐ¸Ð¹ Ð²Ñ–Ð±Ñ€Ð¾Ð²Ñ–Ð´Ð³ÑƒÐº Ð´Ð»Ñ Ð´Ñ–Ð¹.",
+                        "Ð˜ÑÐ¿Ð¾Ð»ÑŒÐ·ÑƒÐµÑ‚ ÐºÐ¾Ñ€Ð¾Ñ‚ÐºÐ¸Ð¹ Ð²Ð¸Ð±Ñ€Ð¾Ð¾Ñ‚ÐºÐ»Ð¸Ðº Ð´Ð»Ñ Ð´ÐµÐ¹ÑÑ‚Ð²Ð¸Ð¹.",
+                        "UÅ¼ywa krÃ³tkiej reakcji haptycznej dla akcji."
                     ),
                     checked = vibrationEnabled,
                     onCheckedChange = onVibrationEnabledChange
@@ -1725,7 +1873,7 @@ private fun SettingsScreen(
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
-                    text = "Choose the language pair for phrases captured with the microphone on the Lessons screen. The Translate screen can use offline Google Translate after the language models are downloaded. Card creation still keeps translation separate.",
+                    text = "Choose the language pair for phrases captured with the microphone and used by Translate. Offline translation uses Google Translate models downloaded on this device.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1741,10 +1889,19 @@ private fun SettingsScreen(
                 )
                 SettingsSwitchRow(
                     title = "Local translation",
-                    description = "Experimental only. On-device translation is disabled in this build because Android local models were not reliable; use the server API for automatic translation.",
+                    description = "Use on-device Google Translate after downloading the selected language pair. Translations are powered by Google Translate and may be inaccurate.",
                     checked = useLocalTranslation,
                     onCheckedChange = onUseLocalTranslationChange
                 )
+                OutlinedButton(
+                    onClick = onDownloadTranslationLanguages,
+                    shape = RoundedCornerShape(18.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.FileDownload, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Download Google Translate languages")
+                }
                 OutlinedTextField(
                     value = translationApiUrl,
                     onValueChange = onTranslationApiUrlChange,
@@ -1772,7 +1929,7 @@ private fun SettingsScreen(
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Text(
-                    text = st("JSON template", "JSON-Vorlage", "Шаблон JSON", "Plantilla JSON", "Шаблон JSON", "Шаблон JSON", "Szablon JSON"),
+                    text = st("JSON template", "JSON-Vorlage", "Ð¨Ð°Ð±Ð»Ð¾Ð½ JSON", "Plantilla JSON", "Ð¨Ð°Ð±Ð»Ð¾Ð½ JSON", "Ð¨Ð°Ð±Ð»Ð¾Ð½ JSON", "Szablon JSON"),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
@@ -1780,11 +1937,11 @@ private fun SettingsScreen(
                     text = st(
                         "Download an instruction-ready JSON template for generating lessons from your mistakes.",
                         "Lade eine JSON-Vorlage mit Anweisungen herunter, um Lektionen aus deinen Fehlern zu erzeugen.",
-                        "Спампуй JSON-шаблон з інструкцыяй для стварэння ўрокаў з тваіх памылак.",
-                        "Descarga una plantilla JSON lista como instrucción para generar lecciones desde tus errores.",
-                        "Завантаж JSON-шаблон з інструкцією для створення уроків із твоїх помилок.",
-                        "Скачай JSON-шаблон с инструкцией для создания уроков из твоих ошибок.",
-                        "Pobierz szablon JSON z instrukcją do tworzenia lekcji z Twoich błędów."
+                        "Ð¡Ð¿Ð°Ð¼Ð¿ÑƒÐ¹ JSON-ÑˆÐ°Ð±Ð»Ð¾Ð½ Ð· Ñ–Ð½ÑÑ‚Ñ€ÑƒÐºÑ†Ñ‹ÑÐ¹ Ð´Ð»Ñ ÑÑ‚Ð²Ð°Ñ€ÑÐ½Ð½Ñ ÑžÑ€Ð¾ÐºÐ°Ñž Ð· Ñ‚Ð²Ð°Ñ–Ñ… Ð¿Ð°Ð¼Ñ‹Ð»Ð°Ðº.",
+                        "Descarga una plantilla JSON lista como instrucciÃ³n para generar lecciones desde tus errores.",
+                        "Ð—Ð°Ð²Ð°Ð½Ñ‚Ð°Ð¶ JSON-ÑˆÐ°Ð±Ð»Ð¾Ð½ Ð· Ñ–Ð½ÑÑ‚Ñ€ÑƒÐºÑ†Ñ–Ñ”ÑŽ Ð´Ð»Ñ ÑÑ‚Ð²Ð¾Ñ€ÐµÐ½Ð½Ñ ÑƒÑ€Ð¾ÐºÑ–Ð² Ñ–Ð· Ñ‚Ð²Ð¾Ñ—Ñ… Ð¿Ð¾Ð¼Ð¸Ð»Ð¾Ðº.",
+                        "Ð¡ÐºÐ°Ñ‡Ð°Ð¹ JSON-ÑˆÐ°Ð±Ð»Ð¾Ð½ Ñ Ð¸Ð½ÑÑ‚Ñ€ÑƒÐºÑ†Ð¸ÐµÐ¹ Ð´Ð»Ñ ÑÐ¾Ð·Ð´Ð°Ð½Ð¸Ñ ÑƒÑ€Ð¾ÐºÐ¾Ð² Ð¸Ð· Ñ‚Ð²Ð¾Ð¸Ñ… Ð¾ÑˆÐ¸Ð±Ð¾Ðº.",
+                        "Pobierz szablon JSON z instrukcjÄ… do tworzenia lekcji z Twoich bÅ‚Ä™dÃ³w."
                     ),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1807,19 +1964,19 @@ private fun SettingsScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(
-                    text = st("Notifications", "Benachrichtigungen", "Апавяшчэнні", "Notificaciones", "Сповіщення", "Уведомления", "Powiadomienia"),
+                    text = st("Notifications", "Benachrichtigungen", "ÐÐ¿Ð°Ð²ÑÑˆÑ‡ÑÐ½Ð½Ñ–", "Notificaciones", "Ð¡Ð¿Ð¾Ð²Ñ–Ñ‰ÐµÐ½Ð½Ñ", "Ð£Ð²ÐµÐ´Ð¾Ð¼Ð»ÐµÐ½Ð¸Ñ", "Powiadomienia"),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
                     text = st(
                         "Shows weighted reminders for cards with 0-2 stars. Cards with 0 stars appear most often; 3-star cards are excluded.",
-                        "Zeigt gewichtete Erinnerungen für Karten mit 0-2 Sternen. 0 Sterne erscheinen am häufigsten; 3 Sterne sind ausgeschlossen.",
-                        "Паказвае ўзважаныя напаміны для картак з 0-2 зоркамі. 0 зорак трапляюць часцей; 3 зоркі выключаюцца.",
-                        "Muestra recordatorios ponderados para tarjetas con 0-2 estrellas. Las de 0 salen más; las de 3 no salen.",
-                        "Показує зважені нагадування для карток із 0-2 зірками. 0 зірок з'являються найчастіше; 3 зірки виключені.",
-                        "Показывает взвешенные напоминания для карточек с 0-2 звездами. Карточки с 0 звездами появляются чаще всего; 3 звезды исключены.",
-                        "Pokazuje ważone przypomnienia dla kart z 0-2 gwiazdkami. 0 gwiazdek pojawia się najczęściej; 3 gwiazdki są wykluczone."
+                        "Zeigt gewichtete Erinnerungen fÃ¼r Karten mit 0-2 Sternen. 0 Sterne erscheinen am hÃ¤ufigsten; 3 Sterne sind ausgeschlossen.",
+                        "ÐŸÐ°ÐºÐ°Ð·Ð²Ð°Ðµ ÑžÐ·Ð²Ð°Ð¶Ð°Ð½Ñ‹Ñ Ð½Ð°Ð¿Ð°Ð¼Ñ–Ð½Ñ‹ Ð´Ð»Ñ ÐºÐ°Ñ€Ñ‚Ð°Ðº Ð· 0-2 Ð·Ð¾Ñ€ÐºÐ°Ð¼Ñ–. 0 Ð·Ð¾Ñ€Ð°Ðº Ñ‚Ñ€Ð°Ð¿Ð»ÑÑŽÑ†ÑŒ Ñ‡Ð°ÑÑ†ÐµÐ¹; 3 Ð·Ð¾Ñ€ÐºÑ– Ð²Ñ‹ÐºÐ»ÑŽÑ‡Ð°ÑŽÑ†Ñ†Ð°.",
+                        "Muestra recordatorios ponderados para tarjetas con 0-2 estrellas. Las de 0 salen mÃ¡s; las de 3 no salen.",
+                        "ÐŸÐ¾ÐºÐ°Ð·ÑƒÑ” Ð·Ð²Ð°Ð¶ÐµÐ½Ñ– Ð½Ð°Ð³Ð°Ð´ÑƒÐ²Ð°Ð½Ð½Ñ Ð´Ð»Ñ ÐºÐ°Ñ€Ñ‚Ð¾Ðº Ñ–Ð· 0-2 Ð·Ñ–Ñ€ÐºÐ°Ð¼Ð¸. 0 Ð·Ñ–Ñ€Ð¾Ðº Ð·'ÑÐ²Ð»ÑÑŽÑ‚ÑŒÑÑ Ð½Ð°Ð¹Ñ‡Ð°ÑÑ‚Ñ–ÑˆÐµ; 3 Ð·Ñ–Ñ€ÐºÐ¸ Ð²Ð¸ÐºÐ»ÑŽÑ‡ÐµÐ½Ñ–.",
+                        "ÐŸÐ¾ÐºÐ°Ð·Ñ‹Ð²Ð°ÐµÑ‚ Ð²Ð·Ð²ÐµÑˆÐµÐ½Ð½Ñ‹Ðµ Ð½Ð°Ð¿Ð¾Ð¼Ð¸Ð½Ð°Ð½Ð¸Ñ Ð´Ð»Ñ ÐºÐ°Ñ€Ñ‚Ð¾Ñ‡ÐµÐº Ñ 0-2 Ð·Ð²ÐµÐ·Ð´Ð°Ð¼Ð¸. ÐšÐ°Ñ€Ñ‚Ð¾Ñ‡ÐºÐ¸ Ñ 0 Ð·Ð²ÐµÐ·Ð´Ð°Ð¼Ð¸ Ð¿Ð¾ÑÐ²Ð»ÑÑŽÑ‚ÑÑ Ñ‡Ð°Ñ‰Ðµ Ð²ÑÐµÐ³Ð¾; 3 Ð·Ð²ÐµÐ·Ð´Ñ‹ Ð¸ÑÐºÐ»ÑŽÑ‡ÐµÐ½Ñ‹.",
+                        "Pokazuje waÅ¼one przypomnienia dla kart z 0-2 gwiazdkami. 0 gwiazdek pojawia siÄ™ najczÄ™Å›ciej; 3 gwiazdki sÄ… wykluczone."
                     ),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1827,7 +1984,7 @@ private fun SettingsScreen(
                 OutlinedTextField(
                     value = notificationIntervalDraft,
                     onValueChange = onNotificationIntervalChange,
-                    label = { Text(st("Interval minutes", "Intervall in Minuten", "Інтэрвал у хвілінах", "Intervalo en minutos", "Інтервал у хвилинах", "Интервал в минутах", "Interwał w minutach")) },
+                    label = { Text(st("Interval minutes", "Intervall in Minuten", "Ð†Ð½Ñ‚ÑÑ€Ð²Ð°Ð» Ñƒ Ñ…Ð²Ñ–Ð»Ñ–Ð½Ð°Ñ…", "Intervalo en minutos", "Ð†Ð½Ñ‚ÐµÑ€Ð²Ð°Ð» Ñƒ Ñ…Ð²Ð¸Ð»Ð¸Ð½Ð°Ñ…", "Ð˜Ð½Ñ‚ÐµÑ€Ð²Ð°Ð» Ð² Ð¼Ð¸Ð½ÑƒÑ‚Ð°Ñ…", "InterwaÅ‚ w minutach")) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                     modifier = Modifier.fillMaxWidth()
@@ -1838,7 +1995,7 @@ private fun SettingsScreen(
                 OutlinedTextField(
                     value = notificationMaxDraft,
                     onValueChange = onNotificationMaxChange,
-                    label = { Text(st("Maximum active notifications", "Maximale aktive Benachrichtigungen", "Максімум актыўных апавяшчэнняў", "Máximo de notificaciones activas", "Максимум активних сповіщень", "Максимум активных уведомлений", "Maksimum aktywnych powiadomień")) },
+                    label = { Text(st("Maximum active notifications", "Maximale aktive Benachrichtigungen", "ÐœÐ°ÐºÑÑ–Ð¼ÑƒÐ¼ Ð°ÐºÑ‚Ñ‹ÑžÐ½Ñ‹Ñ… Ð°Ð¿Ð°Ð²ÑÑˆÑ‡ÑÐ½Ð½ÑÑž", "MÃ¡ximo de notificaciones activas", "ÐœÐ°ÐºÑÐ¸Ð¼ÑƒÐ¼ Ð°ÐºÑ‚Ð¸Ð²Ð½Ð¸Ñ… ÑÐ¿Ð¾Ð²Ñ–Ñ‰ÐµÐ½ÑŒ", "ÐœÐ°ÐºÑÐ¸Ð¼ÑƒÐ¼ Ð°ÐºÑ‚Ð¸Ð²Ð½Ñ‹Ñ… ÑƒÐ²ÐµÐ´Ð¾Ð¼Ð»ÐµÐ½Ð¸Ð¹", "Maksimum aktywnych powiadomieÅ„")) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                     modifier = Modifier.fillMaxWidth()
@@ -1849,12 +2006,12 @@ private fun SettingsScreen(
                 Text(
                     text = st(
                         "Android may run background work with system scheduling delays, especially when the phone is idle.",
-                        "Android kann Hintergrundaufgaben verzögert ausführen, besonders wenn das Telefon inaktiv ist.",
-                        "Android можа запускаць фонавыя задачы з затрымкай, асабліва калі тэлефон неактыўны.",
-                        "Android puede retrasar tareas en segundo plano, sobre todo cuando el teléfono está inactivo.",
-                        "Android може запускати фонові задачі із затримкою, особливо коли телефон неактивний.",
-                        "Android может запускать фоновые задачи с задержкой, особенно когда телефон неактивен.",
-                        "Android może opóźniać pracę w tle, szczególnie gdy telefon jest bezczynny."
+                        "Android kann Hintergrundaufgaben verzÃ¶gert ausfÃ¼hren, besonders wenn das Telefon inaktiv ist.",
+                        "Android Ð¼Ð¾Ð¶Ð° Ð·Ð°Ð¿ÑƒÑÐºÐ°Ñ†ÑŒ Ñ„Ð¾Ð½Ð°Ð²Ñ‹Ñ Ð·Ð°Ð´Ð°Ñ‡Ñ‹ Ð· Ð·Ð°Ñ‚Ñ€Ñ‹Ð¼ÐºÐ°Ð¹, Ð°ÑÐ°Ð±Ð»Ñ–Ð²Ð° ÐºÐ°Ð»Ñ– Ñ‚ÑÐ»ÐµÑ„Ð¾Ð½ Ð½ÐµÐ°ÐºÑ‚Ñ‹ÑžÐ½Ñ‹.",
+                        "Android puede retrasar tareas en segundo plano, sobre todo cuando el telÃ©fono estÃ¡ inactivo.",
+                        "Android Ð¼Ð¾Ð¶Ðµ Ð·Ð°Ð¿ÑƒÑÐºÐ°Ñ‚Ð¸ Ñ„Ð¾Ð½Ð¾Ð²Ñ– Ð·Ð°Ð´Ð°Ñ‡Ñ– Ñ–Ð· Ð·Ð°Ñ‚Ñ€Ð¸Ð¼ÐºÐ¾ÑŽ, Ð¾ÑÐ¾Ð±Ð»Ð¸Ð²Ð¾ ÐºÐ¾Ð»Ð¸ Ñ‚ÐµÐ»ÐµÑ„Ð¾Ð½ Ð½ÐµÐ°ÐºÑ‚Ð¸Ð²Ð½Ð¸Ð¹.",
+                        "Android Ð¼Ð¾Ð¶ÐµÑ‚ Ð·Ð°Ð¿ÑƒÑÐºÐ°Ñ‚ÑŒ Ñ„Ð¾Ð½Ð¾Ð²Ñ‹Ðµ Ð·Ð°Ð´Ð°Ñ‡Ð¸ Ñ Ð·Ð°Ð´ÐµÑ€Ð¶ÐºÐ¾Ð¹, Ð¾ÑÐ¾Ð±ÐµÐ½Ð½Ð¾ ÐºÐ¾Ð³Ð´Ð° Ñ‚ÐµÐ»ÐµÑ„Ð¾Ð½ Ð½ÐµÐ°ÐºÑ‚Ð¸Ð²ÐµÐ½.",
+                        "Android moÅ¼e opÃ³ÅºniaÄ‡ pracÄ™ w tle, szczegÃ³lnie gdy telefon jest bezczynny."
                     ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1872,7 +2029,7 @@ private fun SettingsScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Text(
-                    text = st("Version log", "Versionslog", "Лог версій", "Registro de versiones", "Лог версій", "Лог версий", "Historia wersji"),
+                    text = st("Version log", "Versionslog", "Ð›Ð¾Ð³ Ð²ÐµÑ€ÑÑ–Ð¹", "Registro de versiones", "Ð›Ð¾Ð³ Ð²ÐµÑ€ÑÑ–Ð¹", "Ð›Ð¾Ð³ Ð²ÐµÑ€ÑÐ¸Ð¹", "Historia wersji"),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
@@ -1892,9 +2049,9 @@ private val DictionaryLanguageOptions = listOf(
     "English" to "EN - English",
     "Spanish" to "ES - Espanol",
     "Polish" to "PL - polski",
-    "Russian" to "RU - русский",
-    "Belarusian" to "BY - беларуская",
-    "Ukrainian" to "UA - українська",
+    "Russian" to "RU - Ñ€ÑƒÑÑÐºÐ¸Ð¹",
+    "Belarusian" to "BY - Ð±ÐµÐ»Ð°Ñ€ÑƒÑÐºÐ°Ñ",
+    "Ukrainian" to "UA - ÑƒÐºÑ€Ð°Ñ—Ð½ÑÑŒÐºÐ°",
     "German" to "DE - Deutsch"
 )
 
@@ -2131,14 +2288,18 @@ private fun TranslateScreen(
                 }
                 Button(
                     onClick = onVoiceInput,
-                    modifier = Modifier.weight(1.2f).height(60.dp),
+                    modifier = Modifier.weight(1.12f).height(58.dp),
                     shape = RoundedCornerShape(22.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFFE4F6E8),
+                        contentColor = Color(0xFF234231)
+                    ),
                     contentPadding = PaddingValues(horizontal = 0.dp)
                 ) {
                     Icon(
                         Icons.Default.Mic,
                         contentDescription = "Speak",
-                        modifier = Modifier.size(32.dp),
+                        modifier = Modifier.size(30.dp),
                         tint = Color(0xFF234231)
                     )
                 }
@@ -3344,61 +3505,61 @@ private fun Lesson.cardKindSummary(ui: UiText): String {
 
 private fun UiText.languageKey(): String = when (settings) {
     "Einstellungen" -> "de"
-    "Налады" -> "be"
+    "ÐÐ°Ð»Ð°Ð´Ñ‹" -> "be"
     "Ajustes" -> "es"
-    "Налаштування" -> "uk"
-    "Настройки" -> "ru"
+    "ÐÐ°Ð»Ð°ÑˆÑ‚ÑƒÐ²Ð°Ð½Ð½Ñ" -> "uk"
+    "ÐÐ°ÑÑ‚Ñ€Ð¾Ð¹ÐºÐ¸" -> "ru"
     "Ustawienia" -> "pl"
     else -> "en"
 }
 
 private fun UiText.kindText(kindCode: String): String = when (languageKey()) {
     "de" -> if (kindCode == "LN") "Lektion" else "Fehler"
-    "be" -> if (kindCode == "LN") "Урок" else "Памылкі"
-    "es" -> if (kindCode == "LN") "Lección" else "Errores"
-    "uk" -> if (kindCode == "LN") "Урок" else "Помилки"
-    "ru" -> if (kindCode == "LN") "Урок" else "Ошибки"
-    "pl" -> if (kindCode == "LN") "Lekcja" else "Błędy"
+    "be" -> if (kindCode == "LN") "Ð£Ñ€Ð¾Ðº" else "ÐŸÐ°Ð¼Ñ‹Ð»ÐºÑ–"
+    "es" -> if (kindCode == "LN") "LecciÃ³n" else "Errores"
+    "uk" -> if (kindCode == "LN") "Ð£Ñ€Ð¾Ðº" else "ÐŸÐ¾Ð¼Ð¸Ð»ÐºÐ¸"
+    "ru" -> if (kindCode == "LN") "Ð£Ñ€Ð¾Ðº" else "ÐžÑˆÐ¸Ð±ÐºÐ¸"
+    "pl" -> if (kindCode == "LN") "Lekcja" else "BÅ‚Ä™dy"
     else -> if (kindCode == "LN") "Lesson" else "Mistakes"
 }
 
 private fun UiText.mixedKindText(): String = when (languageKey()) {
     "de" -> "Gemischt"
-    "be" -> "Змешана"
+    "be" -> "Ð—Ð¼ÐµÑˆÐ°Ð½Ð°"
     "es" -> "Mixto"
-    "uk" -> "Змішано"
-    "ru" -> "Смешанный"
+    "uk" -> "Ð—Ð¼Ñ–ÑˆÐ°Ð½Ð¾"
+    "ru" -> "Ð¡Ð¼ÐµÑˆÐ°Ð½Ð½Ñ‹Ð¹"
     "pl" -> "Mieszane"
     else -> "Mixed"
 }
 
 private fun UiText.questionsText(count: Int): String = when (languageKey()) {
     "de" -> "$count Fragen"
-    "be" -> "$count пытанняў"
+    "be" -> "$count Ð¿Ñ‹Ñ‚Ð°Ð½Ð½ÑÑž"
     "es" -> "$count preguntas"
-    "uk" -> "$count питань"
-    "ru" -> "$count вопросов"
-    "pl" -> "$count pytań"
+    "uk" -> "$count Ð¿Ð¸Ñ‚Ð°Ð½ÑŒ"
+    "ru" -> "$count Ð²Ð¾Ð¿Ñ€Ð¾ÑÐ¾Ð²"
+    "pl" -> "$count pytaÅ„"
     else -> "$count questions"
 }
 
 private fun UiText.doneText(done: Int, total: Int): String = when (languageKey()) {
     "de" -> "$done von $total erledigt"
-    "be" -> "$done з $total зроблена"
+    "be" -> "$done Ð· $total Ð·Ñ€Ð¾Ð±Ð»ÐµÐ½Ð°"
     "es" -> "$done de $total hechas"
-    "uk" -> "$done із $total виконано"
-    "ru" -> "$done из $total выполнены"
+    "uk" -> "$done Ñ–Ð· $total Ð²Ð¸ÐºÐ¾Ð½Ð°Ð½Ð¾"
+    "ru" -> "$done Ð¸Ð· $total Ð²Ñ‹Ð¿Ð¾Ð»Ð½ÐµÐ½Ñ‹"
     "pl" -> "$done z $total zrobione"
     else -> "$done of $total done"
 }
 
 private fun UiText.completedText(count: Int): String = when (languageKey()) {
     "de" -> "$count-mal abgeschlossen"
-    "be" -> "Пройдзена $count разоў"
+    "be" -> "ÐŸÑ€Ð¾Ð¹Ð´Ð·ÐµÐ½Ð° $count Ñ€Ð°Ð·Ð¾Ñž"
     "es" -> "Completado $count veces"
-    "uk" -> "Пройдено $count разів"
-    "ru" -> "Пройдено $count раз"
-    "pl" -> "Ukończono $count razy"
+    "uk" -> "ÐŸÑ€Ð¾Ð¹Ð´ÐµÐ½Ð¾ $count Ñ€Ð°Ð·Ñ–Ð²"
+    "ru" -> "ÐŸÑ€Ð¾Ð¹Ð´ÐµÐ½Ð¾ $count Ñ€Ð°Ð·"
+    "pl" -> "UkoÅ„czono $count razy"
     else -> "Completed $count times"
 }
 
@@ -3531,13 +3692,13 @@ private fun String.speechLanguageDisplayName(): String {
 private fun String.speechLanguageTagFromName(): String? {
     val normalized = trim().lowercase(Locale.ROOT)
     return when {
-        normalized in listOf("en", "eng", "english", "английский", "англійская", "angielski") -> "en-US"
-        normalized in listOf("de", "deu", "ger", "german", "deutsch", "немецкий", "нямецкая", "niemiecki") -> "de-DE"
-        normalized in listOf("be", "by", "belarusian", "belaruska", "беларуская", "белорусский", "беларусский") -> "be-BY"
-        normalized in listOf("es", "spa", "spanish", "espanol", "español", "испанский", "іспанская") -> "es-ES"
-        normalized in listOf("uk", "ua", "ukrainian", "украинский", "українська", "украінская") -> "uk-UA"
-        normalized in listOf("ru", "rus", "russian", "русский", "руская", "rosyjski") -> "ru-RU"
-        normalized in listOf("pl", "pol", "polish", "polski", "польский", "польская") -> "pl-PL"
+        normalized in listOf("en", "eng", "english", "Ð°Ð½Ð³Ð»Ð¸Ð¹ÑÐºÐ¸Ð¹", "Ð°Ð½Ð³Ð»Ñ–Ð¹ÑÐºÐ°Ñ", "angielski") -> "en-US"
+        normalized in listOf("de", "deu", "ger", "german", "deutsch", "Ð½ÐµÐ¼ÐµÑ†ÐºÐ¸Ð¹", "Ð½ÑÐ¼ÐµÑ†ÐºÐ°Ñ", "niemiecki") -> "de-DE"
+        normalized in listOf("be", "by", "belarusian", "belaruska", "Ð±ÐµÐ»Ð°Ñ€ÑƒÑÐºÐ°Ñ", "Ð±ÐµÐ»Ð¾Ñ€ÑƒÑÑÐºÐ¸Ð¹", "Ð±ÐµÐ»Ð°Ñ€ÑƒÑÑÐºÐ¸Ð¹") -> "be-BY"
+        normalized in listOf("es", "spa", "spanish", "espanol", "espaÃ±ol", "Ð¸ÑÐ¿Ð°Ð½ÑÐºÐ¸Ð¹", "Ñ–ÑÐ¿Ð°Ð½ÑÐºÐ°Ñ") -> "es-ES"
+        normalized in listOf("uk", "ua", "ukrainian", "ÑƒÐºÑ€Ð°Ð¸Ð½ÑÐºÐ¸Ð¹", "ÑƒÐºÑ€Ð°Ñ—Ð½ÑÑŒÐºÐ°", "ÑƒÐºÑ€Ð°Ñ–Ð½ÑÐºÐ°Ñ") -> "uk-UA"
+        normalized in listOf("ru", "rus", "russian", "Ñ€ÑƒÑÑÐºÐ¸Ð¹", "Ñ€ÑƒÑÐºÐ°Ñ", "rosyjski") -> "ru-RU"
+        normalized in listOf("pl", "pol", "polish", "polski", "Ð¿Ð¾Ð»ÑŒÑÐºÐ¸Ð¹", "Ð¿Ð¾Ð»ÑŒÑÐºÐ°Ñ") -> "pl-PL"
         else -> null
     }
 }
@@ -3545,12 +3706,12 @@ private fun String.speechLanguageTagFromName(): String? {
 private fun String.speechLanguageTagFromText(): String? {
     val text = lowercase(Locale.ROOT)
     return when {
-        text.any { it in "ўі" } -> "be-BY"
-        text.any { it in "іїєґ" } -> "uk-UA"
-        text.any { it in "ąćęłńóśźż" } -> "pl-PL"
-        text.any { it in "äöüß" } -> "de-DE"
-        text.any { it in "áéíñóúü¿¡" } -> "es-ES"
-        text.any { it in 'а'..'я' || it == 'ё' } -> "ru-RU"
+        text.any { it in "ÑžÑ–" } -> "be-BY"
+        text.any { it in "Ñ–Ñ—Ñ”Ò‘" } -> "uk-UA"
+        text.any { it in "Ä…Ä‡Ä™Å‚Å„Ã³Å›ÅºÅ¼" } -> "pl-PL"
+        text.any { it in "Ã¤Ã¶Ã¼ÃŸ" } -> "de-DE"
+        text.any { it in "Ã¡Ã©Ã­Ã±Ã³ÃºÃ¼Â¿Â¡" } -> "es-ES"
+        text.any { it in '\u0430'..'\u044f' || it == '\u0451' } -> "ru-RU"
         text.any { it in 'a'..'z' } -> "en-US"
         else -> null
     }
@@ -3704,6 +3865,7 @@ private fun AnswerBar(
     onCheck: () -> Unit,
     onOk: () -> Unit,
     onSaveEmptySide: () -> Unit,
+    onGoogleTranslateEmptySide: () -> Unit,
     onClearAnswer: () -> Unit,
     onCopy: (String) -> Unit,
     onVoiceToggle: () -> Unit,
@@ -3770,6 +3932,17 @@ private fun AnswerBar(
                             contentPadding = PaddingValues(horizontal = 10.dp)
                         ) {
                             Text("Cancel")
+                        }
+                    }
+                    Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                        OutlinedButton(
+                            onClick = onGoogleTranslateEmptySide,
+                            enabled = currentCard != null,
+                            shape = RoundedCornerShape(18.dp),
+                            contentPadding = PaddingValues(horizontal = 0.dp),
+                            modifier = Modifier.size(controlSize.answerIconButtonSize())
+                        ) {
+                            Text("G", fontWeight = FontWeight.Bold)
                         }
                     }
                     Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
@@ -4706,6 +4879,7 @@ private fun sampleLessonJson(): String {
 private fun versionLogText(): String {
     return """
         Google Translate attribution - Translate mode can use on-device Google Translate via ML Kit. Google disclaims warranties related to translation accuracy and reliability. See https://cloud.google.com/translate and https://translate.google.com.
+        v0.91 - Added Google Translate language download popup access from Translate mode and Settings, improved the Translate microphone button contrast, added a G action for empty card sides, and auto-fills available Google translations for newly saved or captured cards.
         v0.90 - Restored offline Google Translate for Translate/Split mode with downloadable language models, Google attribution, quieter language labels, no empty translation placeholder, and a clearer Translate microphone.
 
         v0.89 - Uses native language labels in Translate panels, tuned the Translate microphone color and size, lets answered or empty-side Test cards flip freely, and adds a star after a correct Test answer.
@@ -4775,3 +4949,9 @@ private fun versionLogText(): String {
         v0.22 - Made Share visible on configured lesson cards, improved download icons, made Copy fill the input with the currently visible card side, added outside-tap exit for lesson configuration, and improved lesson list spacing/highlight.
     """.trimIndent()
 }
+
+
+
+
+
+

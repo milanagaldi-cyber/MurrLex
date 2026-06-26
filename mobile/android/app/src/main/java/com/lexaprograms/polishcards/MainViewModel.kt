@@ -1,4 +1,4 @@
-package com.lexaprograms.polishcards
+﻿package com.lexaprograms.polishcards
 
 import android.app.Application
 import android.net.Uri
@@ -1875,6 +1875,98 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
+    fun applyQuickVocabularyGoogleTranslation(phrase: String, translated: String) {
+        val cleanPhrase = phrase.trim()
+        val cleanTranslation = translated.trim()
+        if (cleanPhrase.isBlank() || cleanTranslation.isBlank()) return
+        val state = _uiState.value
+        val lessonsAll = repository.loadLessons(includeHidden = true)
+        val lesson = lessonsAll
+            .filter { lesson ->
+                lesson.id.startsWith(QUICK_VOCABULARY_LESSON_ID) &&
+                    lesson.cards.any { card -> card.correctText().trim().equals(cleanPhrase, ignoreCase = true) }
+            }
+            .maxByOrNull { lesson -> lesson.cards.firstOrNull()?.madeAt ?: "" }
+            ?: return
+        var updated = false
+        val now = timestamp()
+        val updatedCards = lesson.cards.map { card ->
+            if (!updated && card.correctText().trim().equals(cleanPhrase, ignoreCase = true) && card.nativeText().isMissingCardSide()) {
+                updated = true
+                card.copy(
+                    nativeValue = cleanTranslation,
+                    hint = card.hint.withGoogleTranslateAttribution(),
+                    log = (card.log + "$now - translated automatically with Google Translate").takeLast(100)
+                )
+            } else {
+                card
+            }
+        }
+        if (!updated) return
+        val updatedLesson = lesson.copy(cards = updatedCards, editable = true, hidden = false)
+        repository.saveLesson(updatedLesson)
+        val visibleLessons = repository.loadLessons(state.showHiddenLessons)
+        val selectedLesson = state.selectedLesson?.let { selected ->
+            if (selected.id == updatedLesson.id) updatedLesson else visibleLessons.firstOrNull { it.id == selected.id } ?: selected
+        }
+        _uiState.value = state.copy(
+            lessons = visibleLessons,
+            selectedLesson = selectedLesson,
+            currentPortion = if (state.selectedLesson?.id == updatedLesson.id) {
+                state.currentPortion.map { portionCard -> updatedCards.firstOrNull { it.id == portionCard.id } ?: portionCard }
+            } else {
+                state.currentPortion
+            },
+            message = "Powered by Google Translate: $cleanPhrase"
+        )
+        saveCurrentStudySession()
+    }
+
+    fun applyGoogleTranslationToCard(cardId: Int, translated: String, targetBackSide: Boolean) {
+        val cleanTranslation = translated.trim()
+        if (cleanTranslation.isBlank()) return
+        val state = _uiState.value
+        val selected = state.selectedLesson ?: return
+        val lesson = repository.loadLessons(includeHidden = true).firstOrNull { it.id == selected.id } ?: selected
+        val now = timestamp()
+        var updatedCard: Flashcard? = null
+        val updatedCards = lesson.cards.map { card ->
+            if (card.id == cardId) {
+                val updated = if (targetBackSide) {
+                    card.copy(
+                        correctValue = cleanTranslation,
+                        hint = card.hint.withGoogleTranslateAttribution(),
+                        log = (card.log + "$now - correct side translated with Google Translate").takeLast(100)
+                    )
+                } else {
+                    card.copy(
+                        nativeValue = cleanTranslation,
+                        hint = card.hint.withGoogleTranslateAttribution(),
+                        log = (card.log + "$now - native side translated with Google Translate").takeLast(100)
+                    )
+                }
+                updatedCard = updated
+                updated
+            } else {
+                card
+            }
+        }
+        val updatedLesson = lesson.copy(cards = updatedCards, editable = true)
+        repository.saveLesson(updatedLesson)
+        val lessons = repository.loadLessons(state.showHiddenLessons)
+        val savedLesson = lessons.firstOrNull { it.id == updatedLesson.id } ?: updatedLesson
+        _uiState.value = state.copy(
+            lessons = lessons,
+            selectedLesson = savedLesson,
+            currentPortion = state.currentPortion.map { portionCard ->
+                if (portionCard.id == cardId) updatedCard ?: portionCard else portionCard
+            },
+            answer = "",
+            answerFeedbackVisible = false,
+            message = "Powered by Google Translate"
+        )
+        saveCurrentStudySession()
+    }
 
     fun addTranslationCard() {
         val state = _uiState.value
@@ -2077,6 +2169,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return correctValue.ifBlank { pl.ifBlank { value } }
     }
 
+
+    private fun String.withGoogleTranslateAttribution(): String {
+        val attribution = "Powered by Google Translate"
+        val clean = trim()
+        return when {
+            clean.isBlank() -> attribution
+            clean.contains(attribution, ignoreCase = true) -> clean
+            else -> "$clean\n$attribution"
+        }
+    }
     private fun timestamp(): String {
         return SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date())
     }
@@ -2164,3 +2266,4 @@ private fun WorkMode.displayLabel(): String {
         WorkMode.SPLIT -> "Split"
     }
 }
+
