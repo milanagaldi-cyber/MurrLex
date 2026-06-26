@@ -1805,13 +1805,18 @@ private fun SettingsScreen(
 }
 private val DictionaryLanguageOptions = listOf(
     "English" to "EN - English",
-    "Spanish" to "ES - Spanish",
-    "Polish" to "PL - Polish",
-    "Russian" to "RU - Russian",
-    "Belarusian" to "BY - Belarusian",
-    "Ukrainian" to "UA - Ukrainian",
-    "German" to "DE - German"
+    "Spanish" to "ES - Espanol",
+    "Polish" to "PL - polski",
+    "Russian" to "RU - русский",
+    "Belarusian" to "BY - беларуская",
+    "Ukrainian" to "UA - українська",
+    "German" to "DE - Deutsch"
 )
+
+private fun nativeLanguageLabel(language: String): String {
+    return DictionaryLanguageOptions.firstOrNull { it.first.equals(language, ignoreCase = true) }?.second
+        ?: language.ifBlank { "Language" }
+}
 
 @Composable
 private fun DictionaryLanguageDropdown(
@@ -1821,10 +1826,9 @@ private fun DictionaryLanguageDropdown(
     modifier: Modifier = Modifier
 ) {
     var expanded by remember { mutableStateOf(false) }
-    val selectedLabel = DictionaryLanguageOptions.firstOrNull { it.first.equals(value, ignoreCase = true) }?.second
-        ?: value.ifBlank { "Select language" }
-        val selectedCode = selectedLabel.substringBefore(" - ").ifBlank { selectedLabel }
-Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    val selectedLabel = nativeLanguageLabel(value)
+    val selectedCode = selectedLabel.substringBefore(" - ").ifBlank { selectedLabel }
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(
             text = label,
             style = MaterialTheme.typography.bodyMedium,
@@ -1853,7 +1857,7 @@ Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
             ) {
                 DictionaryLanguageOptions.forEach { (language, optionLabel) ->
                     DropdownMenuItem(
-                        text = { Text(optionLabel) },
+                        text = { Text(optionLabel.substringBefore(" - ")) },
                         onClick = {
                             expanded = false
                             onValueChange(language)
@@ -1958,13 +1962,13 @@ private fun TranslateScreen(
     ) {
         if (splitMode) {
             SplitTranslationPanel(
-                title = "Translation",
+                title = nativeLanguageLabel(state.quickVocabularySourceLanguage),
                 text = state.translationOutput.ifBlank { "Translation will appear here" },
                 flipped = true,
                 modifier = Modifier.weight(1f)
             )
             SplitTranslationPanel(
-                title = "Original",
+                title = nativeLanguageLabel(state.quickVocabularyTargetLanguage),
                 text = state.translationInput,
                 flipped = false,
                 editable = true,
@@ -1979,7 +1983,7 @@ private fun TranslateScreen(
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
             ) {
                 Column(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Translation", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(nativeLanguageLabel(state.quickVocabularySourceLanguage), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(
                         text = state.translationOutput.ifBlank { "Translation will appear here" },
                         style = MaterialTheme.typography.titleLarge,
@@ -1991,7 +1995,7 @@ private fun TranslateScreen(
                 value = state.translationInput,
                 onValueChange = onInputChange,
                 modifier = Modifier.fillMaxWidth().weight(1f),
-                label = { Text("Original") },
+                label = { Text(nativeLanguageLabel(state.quickVocabularyTargetLanguage)) },
                 minLines = 8
             )
         }
@@ -2034,11 +2038,16 @@ private fun TranslateScreen(
                 }
                 Button(
                     onClick = onVoiceInput,
-                    modifier = Modifier.weight(1.28f).height(66.dp),
+                    modifier = Modifier.weight(1.2f).height(60.dp),
                     shape = RoundedCornerShape(22.dp),
                     contentPadding = PaddingValues(horizontal = 0.dp)
                 ) {
-                    Icon(Icons.Default.Mic, contentDescription = "Speak", modifier = Modifier.size(38.dp))
+                    Icon(
+                        Icons.Default.Mic,
+                        contentDescription = "Speak",
+                        modifier = Modifier.size(32.dp),
+                        tint = Color(0xFF234231)
+                    )
                 }
                 OutlinedButton(
                     onClick = onClear,
@@ -2680,10 +2689,13 @@ private fun StudyScreen(
                     label = "studyCardSlide"
                 ) { animatedIndex ->
                     val animatedCard = state.currentPortion.getOrNull(animatedIndex)
-                    StudyCard(
+                                        val canFlipTestCard = state.workMode != WorkMode.TESTS ||
+                        animatedCard?.id in state.completedCardIds ||
+                        animatedCard?.hasEmptySide() == true
+StudyCard(
                         card = animatedCard,
                         isBackVisible = state.isBackVisible,
-                        onClick = if (state.workMode == WorkMode.TESTS) ({}) else onToggleCard,
+                        onClick = if (canFlipTestCard) onToggleCard else ({}),
                         onToggleStar = onToggleStar,
                         onQuickEditCard = onQuickEditCard,
                         onEditCard = onEditCard,
@@ -4589,6 +4601,7 @@ private fun sampleLessonJson(): String {
 
 private fun versionLogText(): String {
     return """
+        v0.89 - Uses native language labels in Translate panels, tuned the Translate microphone color and size, lets answered or empty-side Test cards flip freely, and adds a star after a correct Test answer.
         v0.88 - Compact language pickers to codes, emphasized the Translate microphone, made Tests reveal the answer only after a correct choice without auto-navigation, randomized choices with A-D markers, and made Test quick edit save the displayed side.
         v0.87 - Clears Translate input on entry, adds language swapping, includes the target vocabulary lesson in Add messages, and makes quick Edit work from Tests with refreshed answers.
         v0.86 - Simplified Translate controls so Add is left, Speak stays centered, Clear is right, and the buttons use icons only.

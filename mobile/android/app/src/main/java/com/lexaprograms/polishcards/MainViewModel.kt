@@ -923,6 +923,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val card = state.currentCard ?: return
         if (normalize(choice) == normalize(card.correctText())) {
             recordCardWork(card.id, "test correct")
+            addStarForCorrectTypedAnswer(card.id)
             val latest = _uiState.value
             val nextCompletedCardIds = latest.completedCardIds + card.id
             val selectedLesson = latest.selectedLesson
