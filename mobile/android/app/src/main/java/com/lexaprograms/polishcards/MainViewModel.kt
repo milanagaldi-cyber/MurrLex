@@ -234,6 +234,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.value = _uiState.value.copy(translationInput = value, message = null)
     }
 
+    fun updateTranslationOutput(value: String) {
+        _uiState.value = _uiState.value.copy(translationOutput = value, message = null)
+    }
+
     fun clearTranslationInput() {
         _uiState.value = _uiState.value.copy(translationInput = "", translationOutput = "", message = "Cleared")
     }
@@ -417,7 +421,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         repository.saveUseLocalTranslation(enabled)
         _uiState.value = _uiState.value.copy(
             useLocalTranslation = enabled,
-            message = if (enabled) "Local translation unavailable in this build" else "Server translation preferred"
+            message = if (enabled) "Offline Google Translate enabled" else "Offline Google Translate disabled"
         )
     }
     fun setTranslationApiUrl(url: String) {
