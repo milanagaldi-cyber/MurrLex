@@ -1,4 +1,4 @@
-﻿package com.lexaprograms.polishcards
+package com.lexaprograms.polishcards
 
 import android.Manifest
 import android.content.ClipData
@@ -92,6 +92,7 @@ import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.VolumeUp
+import androidx.compose.material.icons.filled.VolumeOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -156,7 +157,9 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import com.google.mlkit.common.model.DownloadConditions
+import com.google.mlkit.common.model.RemoteModelManager
 import com.google.mlkit.nl.translate.TranslateLanguage
+import com.google.mlkit.nl.translate.TranslateRemoteModel
 import com.google.mlkit.nl.translate.Translation
 import com.google.mlkit.nl.translate.TranslatorOptions
 import kotlinx.coroutines.delay
@@ -335,6 +338,10 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
     var showHeaderLessonInfo by remember { mutableStateOf(false) }
     var showResetProgressConfirm by remember { mutableStateOf(false) }
     var showTranslationDownloadDialog by remember { mutableStateOf(false) }
+    var downloadedTranslationLanguages by remember { mutableStateOf(setOf<String>()) }
+    var translationDownloadLanguage by remember { mutableStateOf(state.quickVocabularyTargetLanguage) }
+    var translationDownloadingLabel by remember { mutableStateOf<String?>(null) }
+    var translateAutoSpeakEnabled by remember { mutableStateOf(true) }
     var textToSpeechReady by remember { mutableStateOf(false) }
     val textToSpeech = remember {
         var engine: TextToSpeech? = null
@@ -636,6 +643,41 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
         return TranslateLanguage.fromLanguageTag(tag)
     }
 
+    fun refreshDownloadedTranslationLanguages() {
+        RemoteModelManager.getInstance()
+            .getDownloadedModels(TranslateRemoteModel::class.java)
+            .addOnSuccessListener { models ->
+                downloadedTranslationLanguages = models
+                    .mapNotNull { model -> dictionaryLanguageCodeForMlKitTag(model.language) }
+                    .toSet()
+            }
+    }
+
+    fun downloadGoogleLanguageModel(languageName: String, onComplete: (Boolean) -> Unit = {}) {
+        val languageCode = mlKitLanguage(languageName)
+        val displayCode = dictionaryLanguageCode(languageName)
+        if (languageCode == null) {
+            viewModel.showMessage("Translation language is not supported")
+            onComplete(false)
+            return
+        }
+        translationDownloadingLabel = "Downloading $displayCode"
+        viewModel.showMessage("Downloading $displayCode")
+        val model = TranslateRemoteModel.Builder(languageCode).build()
+        RemoteModelManager.getInstance()
+            .download(model, DownloadConditions.Builder().build())
+            .addOnSuccessListener {
+                translationDownloadingLabel = null
+                refreshDownloadedTranslationLanguages()
+                viewModel.showMessage("$displayCode ready")
+                onComplete(true)
+            }
+            .addOnFailureListener {
+                translationDownloadingLabel = null
+                viewModel.showMessage("$displayCode download failed")
+                onComplete(false)
+            }
+    }
     fun translateGoogleOfflineText(
         text: String,
         sourceLanguageName: String,
@@ -687,24 +729,21 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
     }
 
     fun downloadGoogleTranslationModels() {
-        val source = mlKitLanguage(state.quickVocabularyTargetLanguage)
-        val target = mlKitLanguage(state.quickVocabularySourceLanguage)
-        if (source == null || target == null) {
-            viewModel.showMessage("Translation language is not supported")
-            return
+        val sourceName = state.quickVocabularyTargetLanguage
+        val targetName = state.quickVocabularySourceLanguage
+        val sourceCode = dictionaryLanguageCode(sourceName)
+        val targetCode = dictionaryLanguageCode(targetName)
+        translationDownloadingLabel = "Downloading $sourceCode and $targetCode"
+        downloadGoogleLanguageModel(sourceName) {
+            downloadGoogleLanguageModel(targetName) {
+                translationDownloadingLabel = null
+                refreshDownloadedTranslationLanguages()
+            }
         }
-        viewModel.showMessage("Downloading Google Translate languages...")
-        val translator = Translation.getClient(
-            TranslatorOptions.Builder()
-                .setSourceLanguage(source)
-                .setTargetLanguage(target)
-                .build()
-        )
-        val conditions = DownloadConditions.Builder().build()
-        translator.downloadModelIfNeeded(conditions)
-            .addOnSuccessListener { viewModel.showMessage("Google Translate languages ready") }
-            .addOnFailureListener { viewModel.showMessage("Google Translate language download failed") }
-            .addOnCompleteListener { translator.close() }
+    }
+
+    LaunchedEffect("downloadedTranslationLanguages") {
+        refreshDownloadedTranslationLanguages()
     }
 
     LaunchedEffect(
@@ -722,6 +761,15 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
         if (!state.useLocalTranslation) return@LaunchedEffect
         delay(650)
         translateWithGoogleOffline(state.translationInput)
+    }
+
+    LaunchedEffect("translateAutoSpeak", state.screen, state.translationOutput, translateAutoSpeakEnabled) {
+        if (state.screen == AppScreen.TRANSLATE && translateAutoSpeakEnabled && state.translationOutput.isNotBlank()) {
+            speakText(
+                state.translationOutput,
+                languageForVoice(state.quickVocabularySourceLanguage, state.translationOutput, state.interfaceLanguage).first
+            )
+        }
     }
     LaunchedEffect(pendingVoiceStart) {
         if (!pendingVoiceStart || speechRecognizer == null) return@LaunchedEffect
@@ -884,6 +932,8 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Download offline translation models for ${nativeLanguageLabel(state.quickVocabularyTargetLanguage)} -> ${nativeLanguageLabel(state.quickVocabularySourceLanguage)}.")
+                    Text("Downloaded: ${downloadedTranslationLanguages.sorted().joinToString().ifBlank { "none" }}")
+                    translationDownloadingLabel?.let { Text(it, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold) }
                     Text(
                         text = "Translations are powered by Google Translate. Google disclaims warranties related to translation accuracy and reliability.",
                         style = MaterialTheme.typography.bodySmall,
@@ -1154,6 +1204,11 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
                     onClear = viewModel::clearTranslationInput,
                     onAddCard = viewModel::addTranslationCard,
                     onSwapLanguages = viewModel::swapQuickVocabularyLanguages,
+                    translateAutoSpeakEnabled = translateAutoSpeakEnabled,
+                    onTranslateAutoSpeakChange = { translateAutoSpeakEnabled = it },
+                    onSpeakTranslation = {
+                        speakText(state.translationOutput, languageForVoice(state.quickVocabularySourceLanguage, state.translationOutput, state.interfaceLanguage).first)
+                    },
                     onVoiceInput = { startVoiceInput(VoiceInputTarget.TRANSLATE_INPUT) }
                 )
                 AppScreen.STUDY -> StudyScreen(
@@ -1214,6 +1269,11 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
               useLocalTranslation = state.useLocalTranslation,
               translationApiUrl = state.translationApiUrl,
               translationApiToken = state.translationApiToken,
+                    downloadedTranslationLanguages = downloadedTranslationLanguages,
+                    translationDownloadLanguage = translationDownloadLanguage,
+                    translationDownloadingLabel = translationDownloadingLabel,
+                    onTranslationDownloadLanguageChange = { translationDownloadLanguage = it },
+                    onDownloadSelectedTranslationLanguage = { downloadGoogleLanguageModel(translationDownloadLanguage) },
                     onCardStartSideChange = viewModel::setCardStartSide,
                     onExcludeMasteredCardsChange = viewModel::setExcludeMasteredCards,
                     onShowCardLogChange = viewModel::setShowCardLog,
@@ -1591,6 +1651,11 @@ private fun SettingsScreen(
     useLocalTranslation: Boolean,
     translationApiUrl: String,
     translationApiToken: String,
+    downloadedTranslationLanguages: Set<String>,
+    translationDownloadLanguage: String,
+    translationDownloadingLabel: String?,
+    onTranslationDownloadLanguageChange: (String) -> Unit,
+    onDownloadSelectedTranslationLanguage: () -> Unit,
     onCardStartSideChange: (CardStartSide) -> Unit,
     onExcludeMasteredCardsChange: (Boolean) -> Unit,
     onShowCardLogChange: (Boolean) -> Unit,
@@ -1900,7 +1965,39 @@ private fun SettingsScreen(
                 ) {
                     Icon(Icons.Default.FileDownload, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
-                    Text("Download Google Translate languages")
+                    Text("Download current pair")
+                }
+                Text(
+                    text = "Downloaded languages: ${downloadedTranslationLanguages.sorted().joinToString().ifBlank { "none" }}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                translationDownloadingLabel?.let {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.Bottom
+                ) {
+                    DictionaryLanguageDropdown(
+                        label = "Download language",
+                        value = translationDownloadLanguage,
+                        onValueChange = onTranslationDownloadLanguageChange,
+                        modifier = Modifier.weight(1f)
+                    )
+                    OutlinedButton(
+                        onClick = onDownloadSelectedTranslationLanguage,
+                        shape = RoundedCornerShape(18.dp),
+                        modifier = Modifier.height(56.dp)
+                    ) {
+                        Icon(Icons.Default.FileDownload, contentDescription = "Download language")
+                    }
                 }
                 OutlinedTextField(
                     value = translationApiUrl,
@@ -2047,14 +2144,37 @@ private fun SettingsScreen(
 }
 private val DictionaryLanguageOptions = listOf(
     "English" to "EN - English",
-    "Spanish" to "ES - Espanol",
+    "Spanish" to "ES - espa\u00f1ol",
     "Polish" to "PL - polski",
-    "Russian" to "RU - Ñ€ÑƒÑÑÐºÐ¸Ð¹",
-    "Belarusian" to "BY - Ð±ÐµÐ»Ð°Ñ€ÑƒÑÐºÐ°Ñ",
-    "Ukrainian" to "UA - ÑƒÐºÑ€Ð°Ñ—Ð½ÑÑŒÐºÐ°",
+    "Russian" to "RU - \u0440\u0443\u0441\u0441\u043a\u0438\u0439",
+    "Belarusian" to "BY - \u0431\u0435\u043b\u0430\u0440\u0443\u0441\u043a\u0430\u044f",
+    "Ukrainian" to "UA - \u0443\u043a\u0440\u0430\u0457\u043d\u0441\u044c\u043a\u0430",
     "German" to "DE - Deutsch"
 )
 
+private fun dictionaryLanguageCode(language: String): String {
+    val label = DictionaryLanguageOptions.firstOrNull { it.first.equals(language, ignoreCase = true) }?.second.orEmpty()
+    return label.substringBefore(" - ").ifBlank { language.take(2).uppercase(Locale.ROOT) }
+}
+
+private fun mlKitLanguageTagForName(language: String): String {
+    return when (language.trim().lowercase(Locale.ROOT)) {
+        "english", "en" -> "en"
+        "spanish", "es", "espanol", "espa\u00f1ol" -> "es"
+        "polish", "pl", "polski" -> "pl"
+        "russian", "ru" -> "ru"
+        "belarusian", "belarus", "by", "be" -> "be"
+        "ukrainian", "uk", "ua" -> "uk"
+        "german", "de", "deutsch" -> "de"
+        else -> language.trim().takeIf { it.length in 2..3 }?.lowercase(Locale.ROOT).orEmpty()
+    }
+}
+
+private fun dictionaryLanguageCodeForMlKitTag(tag: String): String? {
+    return DictionaryLanguageOptions.firstOrNull { (language, _) ->
+        mlKitLanguageTagForName(language).equals(tag, ignoreCase = true)
+    }?.let { (language, _) -> dictionaryLanguageCode(language) }
+}
 private fun nativeLanguageLabel(language: String): String {
     return DictionaryLanguageOptions.firstOrNull { it.first.equals(language, ignoreCase = true) }?.second
         ?: language.ifBlank { "Language" }
@@ -2195,6 +2315,9 @@ private fun TranslateScreen(
     onClear: () -> Unit,
     onAddCard: () -> Unit,
     onSwapLanguages: () -> Unit,
+    translateAutoSpeakEnabled: Boolean,
+    onTranslateAutoSpeakChange: (Boolean) -> Unit,
+    onSpeakTranslation: () -> Unit,
     onVoiceInput: () -> Unit
 ) {
     val splitMode = state.workMode == WorkMode.SPLIT
@@ -2225,18 +2348,44 @@ private fun TranslateScreen(
                 color = MaterialTheme.colorScheme.surface,
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
             ) {
-                Column(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(nativeLanguageLabel(state.quickVocabularySourceLanguage), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.62f))
-                    if (state.translationOutput.isNotBlank()) {
-                        Text(
-                            text = state.translationOutput,
-                            style = MaterialTheme.typography.titleLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            text = "Powered by Google Translate",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
+                Box(Modifier.fillMaxSize().padding(18.dp)) {
+                    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(nativeLanguageLabel(state.quickVocabularySourceLanguage), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.50f))
+                        if (state.translationOutput.isNotBlank()) {
+                            Text(
+                                text = state.translationOutput,
+                                style = MaterialTheme.typography.titleLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = "Powered by Google Translate",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
+                            )
+                        }
+                    }
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .size(44.dp)
+                            .pointerInput(translateAutoSpeakEnabled, state.translationOutput) {
+                                detectTapGestures(
+                                    onTap = {
+                                        if (translateAutoSpeakEnabled) {
+                                            if (state.translationOutput.isNotBlank()) onSpeakTranslation()
+                                        } else {
+                                            onTranslateAutoSpeakChange(true)
+                                        }
+                                    },
+                                    onLongPress = { onTranslateAutoSpeakChange(false) }
+                                )
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (translateAutoSpeakEnabled) Icons.Default.VolumeUp else Icons.Default.VolumeOff,
+                            contentDescription = if (translateAutoSpeakEnabled) "Auto speak translation on" else "Auto speak translation off",
+                            tint = if (translateAutoSpeakEnabled) Color(0xFF234231) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
                         )
                     }
                 }
@@ -4879,6 +5028,7 @@ private fun sampleLessonJson(): String {
 private fun versionLogText(): String {
     return """
         Google Translate attribution - Translate mode can use on-device Google Translate via ML Kit. Google disclaims warranties related to translation accuracy and reliability. See https://cloud.google.com/translate and https://translate.google.com.
+        v0.92 - Added downloaded Google Translate language tracking, single-language downloads, visible download progress, Translate auto-read toggle, safer native language labels, and quick microphone vocabulary capture without opening Translate.
         v0.91 - Added Google Translate language download popup access from Translate mode and Settings, improved the Translate microphone button contrast, added a G action for empty card sides, and auto-fills available Google translations for newly saved or captured cards.
         v0.90 - Restored offline Google Translate for Translate/Split mode with downloadable language models, Google attribution, quieter language labels, no empty translation placeholder, and a clearer Translate microphone.
 
@@ -4949,9 +5099,3 @@ private fun versionLogText(): String {
         v0.22 - Made Share visible on configured lesson cards, improved download icons, made Copy fill the input with the currently visible card side, added outside-tap exit for lesson configuration, and improved lesson list spacing/highlight.
     """.trimIndent()
 }
-
-
-
-
-
-
