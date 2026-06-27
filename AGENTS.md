@@ -1,59 +1,37 @@
 # MurrLex Agent Handoff
 
-This repository is the MurrLex monorepo. Treat this file as the first stop for a new Codex thread.
+This repository is the MurrLex monorepo. Use this file as the first stop for any clean Codex thread.
 
-## Current Checkpoint
+## Current Stable Checkpoint
 
-- Product checkpoint: `MurrLex v0.01`.
-- Next development branch requested by the user: `murrlex-0.02`.
-- Current Git branch at handoff time: `0.75`.
-- Do not assume the Android internal `versionName` matches the product checkpoint. At handoff time the Android debug build was at `versionName = "1.04"` after an emergency encoding hotfix.
+- Local path: `C:\CodexProjects\murrlex`
+- GitHub: `https://github.com/milanagaldi-cyber/MurrLex`
+- Working branch for the next phase: `murrlex-0.02`
+- Android visible app version: `MurrLex 0.03`
+- Latest verified Android build command: `gradlew.bat assembleDebug`
+- Latest verified lint command: `gradlew.bat lintDebug`
 
-## Repository Shape
+## Rules For The Next Thread
 
-- `mobile/android/`: Android app built with Kotlin and Jetpack Compose.
-- `backend/`: Django backend prototype with SQLite by default and settings designed for later PostgreSQL.
-- `connector/`: Python connector for sending lesson JSON into the backend.
-- `docs/`: project documentation, ChatGPT Action/OpenAPI notes, and this handoff documentation.
-
-## Operating Rules For The Next Thread
-
-- Start by reading `docs/PROJECT_STATE.md`, `docs/KNOWN_ISSUES.md`, and `docs/NEXT_TASKS.md`.
-- Run `git status --short --branch` before editing.
-- Keep changes small and verified. The project has accumulated many UX experiments in one large Compose file.
-- Do not silently overwrite user data or local `.env` files.
-- Prefer documented JSON contracts over guessing from UI behavior.
-- Be careful with encoding. Recent corruption produced `Ãƒ...` mojibake in UI strings and sample JSON text.
+- Work only in `C:\CodexProjects\murrlex` unless the user explicitly says otherwise.
+- Start with `git status --short --branch` and confirm the branch.
+- Keep backend and connector preserved; do not pull server work into Android unless requested.
+- Do not implement new features from this handoff step.
+- Keep changes small and verified.
+- Be careful with text encoding. Past UI/data corruption showed mojibake such as `Ã...` in some legacy strings.
 - Commit only after explicit user approval.
 
 ## Useful Commands
 
-Android build:
-
 ```powershell
-cd C:\CodexProjects\MakeMistake\mobile\android
+cd C:\CodexProjects\murrlex\mobile\android
+$env:JAVA_HOME='C:\Program Files\Android\Android Studio\jbr'
+.\gradlew.bat lintDebug
 .\gradlew.bat assembleDebug
 ```
 
-Android lint:
+Debug APK:
 
-```powershell
-cd C:\CodexProjects\MakeMistake\mobile\android
-.\gradlew.bat lintDebug
+```text
+C:\CodexProjects\murrlex\mobile\android\app\build\outputs\apk\debug\app-debug.apk
 ```
-
-Backend checks and tests:
-
-```powershell
-cd C:\CodexProjects\MakeMistake\backend
-.\.venv\Scripts\python.exe manage.py check
-.\.venv\Scripts\python.exe manage.py test
-```
-
-Connector tests:
-
-```powershell
-cd C:\CodexProjects\MakeMistake
-python -m unittest connector.test_client
-```
-

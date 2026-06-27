@@ -1,0 +1,35 @@
+MurrLex stable checkpoint functionality
+=====================================
+
+Confirmed / stable enough for handoff:
+
+- Android app launches as MurrLex.
+- Local lessons and cards are supported.
+- Built-in lesson JSON files are bundled under Android assets.
+- Lesson catalog exists.
+- Study screen exists.
+- Card ordering supports Original, Alphabetical, and Random.
+- User can practice cards and mark progress.
+- Card editing and lesson editing code exists.
+- Voice input code exists through Android speech APIs.
+- Text-to-speech code exists.
+- Translate and Split translator screens exist.
+- Test mode exists with multiple-choice style UI.
+- Notifications are implemented through WorkManager.
+- Quick voice widget provider exists.
+- Settings screen exists and shows version/history.
+
+Partially implemented or risky:
+
+- Translation and offline speech flows depend on device capabilities and downloaded models.
+- Localization is not cleanly centralized.
+- Some legacy localized strings are corrupted in source and should be cleaned in v0.02.
+- Existing installed app data may contain old corrupted strings.
+- Backend sync is preserved but not integrated as the mobile source of truth.
+
+Build commands:
+
+cd C:\CodexProjects\murrlex\mobile\android
+$env:JAVA_HOME='C:\Program Files\Android\Android Studio\jbr'
+.\gradlew.bat lintDebug
+.\gradlew.bat assembleDebug

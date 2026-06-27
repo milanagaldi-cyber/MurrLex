@@ -1,72 +1,41 @@
 # Decisions
 
-## Monorepo
+## Monorepo Kept
 
-### Confirmed From Code
+MurrLex remains a monorepo for now:
 
-The project is kept as one repository with Android, backend, connector, and docs together.
+- `mobile/android` for Android.
+- `backend` for the Django prototype.
+- `connector` for Python sync/import experiments.
+- `docs` for handoff and planning.
 
-### Rationale
+Reason: the product is still early and shared JSON/API decisions are evolving.
 
-Early-stage work changes JSON contracts, mobile behavior, backend import logic, and connector behavior together. A monorepo keeps those changes visible in one place.
+## SQLite / Backend Parked
 
-## Local-First Android
+The backend stays preserved but is not part of the current Android stabilization checkpoint.
 
-### Confirmed From Code
+Reason: the immediate goal is a stable mobile app and clean v0.02 thread.
 
-The Android app loads built-in assets and stores imported/edited lessons locally.
+## Android Version At Checkpoint
 
-### Rationale
+The visible Android version is `MurrLex 0.03`.
 
-This keeps the mobile app usable without a backend while the server side is still a prototype.
+Reason: user requested the new MurrLex project to show MurrLex 0.03 after the repository restart.
 
-## SQLite First, PostgreSQL Later
+## Safe Build Commands
 
-### Confirmed From Code
+The accepted validation commands are:
 
-Django uses SQLite by default. Environment configuration allows a future `DATABASE_URL` for PostgreSQL.
+```powershell
+.\gradlew.bat lintDebug
+.\gradlew.bat assembleDebug
+```
 
-### Rationale
+Reason: they are enough to prove the Android project compiles and lint blockers are absent.
 
-SQLite is simple for local learning and test data. PostgreSQL should be introduced when multi-user/server deployment becomes real.
+## v0.02 Direction
 
-## Minimum Android SDK
+The next phase should start with cleanup and stabilization, not new features.
 
-### Confirmed From Code
-
-Android `minSdk = 34`, `targetSdk = 35`, `compileSdk = 35`.
-
-### Rationale
-
-Recent offline SpeechRecognizer APIs require modern Android versions.
-
-## English Fallback After Encoding Incident
-
-### Confirmed From Code
-
-Core UI labels now route through clean English fallback text after corrupted localized literals broke the UI.
-
-### Rationale
-
-Immediate stability is more important than partial broken localization. v0.02 should rebuild localization safely.
-
-## Product Naming
-
-### Confirmed From Code
-
-Android display strings were renamed to MurrLex. Package paths still contain `polishcards`.
-
-### Uncertain / Needs User Confirmation
-
-Whether package id and internal class/package names should be renamed later.
-
-## Backend Auth
-
-### Confirmed From Code
-
-The lab UI uses Django login. Internal import API uses bearer token.
-
-### Rationale
-
-This is enough for a temporary private demo, but not a final auth model.
-
+Reason: the app has many experiments accumulated in large files; stable refactoring needs small commits and frequent builds.

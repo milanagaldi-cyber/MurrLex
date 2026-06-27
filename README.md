@@ -1,187 +1,69 @@
-# Make Mistake
+# MurrLex
 
-Make Mistake is a language-learning product built around mistake cards.
+MurrLex is a local-first Android language-learning app built around cards, lessons, voice input, translation experiments, and quick vocabulary capture.
 
-The current technical goal is a small sync prototype:
-
-```text
-AI / ChatGPT
--> Python connector
--> Django backend
--> SQLite database
--> Lab UI for checking imported lessons
-```
-
-This repository is intentionally structured as a monorepo so the Android app, backend, connector, shared JSON formats, and documentation can evolve together.
-
-## Structure
+This repository is currently a monorepo:
 
 ```text
-MakeMistake/
-  backend/    Django backend for lesson import and Lab UI
-  connector/  Python connector scripts/modules for syncing lessons
-  mobile/
-    android/  Android app, Kotlin + Jetpack Compose
-  docs/       Product and technical documentation
+murrlex/
+  mobile/android/   Android app, Kotlin + Jetpack Compose
+  backend/          Preserved Django prototype for future server work
+  connector/        Preserved Python connector prototype
+  docs/             Project handoff and planning notes
 ```
 
-## Environment Variables
+## Current Stable Android State
 
-Copy `.env.example` to `.env` for local backend/connector development:
+- App name: `MurrLex`
+- Android package/namespace still uses the legacy id: `com.lexaprograms.polishcards`
+- Version visible in the app settings: `MurrLex 0.03`
+- Main working branch: `murrlex-0.02`
+- Stable debug APK output: `mobile/android/app/build/outputs/apk/debug/app-debug.apk`
+
+## Build Android
+
+Open a PowerShell terminal:
 
 ```powershell
-cd C:\CodexProjects\MakeMistake
-Copy-Item .env.example .env
+cd C:\CodexProjects\murrlex\mobile\android
+$env:JAVA_HOME='C:\Program Files\Android\Android Studio\jbr'
+.\gradlew.bat lintDebug
+.\gradlew.bat assembleDebug
 ```
 
-Important variables:
+A successful debug build produces:
 
 ```text
-SECRET_KEY              Django local/dev secret key
-DEBUG                   true for local development
-ALLOWED_HOSTS           allowed local hosts
-DATABASE_URL            empty means SQLite; PostgreSQL can be added later
-INTERNAL_IMPORT_TOKEN   Bearer token for internal import API
-DJANGO_IMPORT_URL       connector target URL
+C:\CodexProjects\murrlex\mobile\android\app\build\outputs\apk\debug\app-debug.apk
 ```
 
-Never commit `.env`.
+## What Works At The Checkpoint
 
-## Backend Setup
+Confirmed from code and recent validation:
 
-```powershell
-cd C:\CodexProjects\MakeMistake\backend
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe manage.py migrate
-.\.venv\Scripts\python.exe manage.py runserver
-```
+- Android Gradle project builds successfully.
+- `lintDebug` succeeds.
+- `assembleDebug` succeeds.
+- Lessons and cards are stored locally.
+- Built-in lesson JSON assets are present.
+- Study modes include Original, Alphabetical, and Random.
+- Card, Test, Translate, and Split UI paths exist.
+- Voice input and text-to-speech paths exist.
+- Notification worker exists.
+- Quick voice widget provider exists.
+- Settings include version log and language-related options.
 
-Default local database:
+## Backend And Connector
 
-```text
-backend/db.sqlite3
-```
+The backend and connector are preserved in this repository for future phases. They are not part of the current Android stabilization checkpoint and should not be pulled into the next Android cleanup unless requested.
 
-If `DATABASE_URL` is empty, Django uses SQLite. Later PostgreSQL can be enabled with a URL like:
+## Known Risks
 
-```text
-DATABASE_URL=postgresql://make_mistake_user:password@localhost:5432/make_mistake
-```
+- `MainActivity.kt` is still very large and should be split later in small verified steps.
+- Some old localized Settings literals still contain mojibake, although the currently used UI path mostly routes to safe English labels.
+- User data already stored on a device may contain old corrupted text. A clean reinstall or app data reset may be needed when testing bundled JSON fixes.
+- Android package id is still legacy and may need a future migration decision.
 
-## Lab UI
+## Next Recommended Task
 
-After `runserver`, open:
-
-```text
-http://127.0.0.1:8000/lab/import-json/
-http://127.0.0.1:8000/lab/lessons/
-http://127.0.0.1:8000/lab/imports/
-```
-
-The Lab UI is a small testing interface, not the final product UI.
-
-The Lab UI requires Django login. For a temporary colleague account:
-
-```powershell
-cd C:\CodexProjects\MakeMistake\backend
-$env:DJANGO_SUPERUSER_PASSWORD = "choose-a-temporary-password"
-.\.venv\Scripts\python.exe manage.py createsuperuser --username methodist --email methodist@example.com --noinput
-```
-
-For external tunnel access, add the tunnel host to `ALLOWED_HOSTS` and `CSRF_TRUSTED_ORIGINS` in `.env`.
-
-## Internal API
-
-Endpoint:
-
-```text
-POST http://127.0.0.1:8000/api/internal/import-lesson
-Authorization: Bearer <INTERNAL_IMPORT_TOKEN>
-Content-Type: application/json
-```
-
-Expected success response:
-
-```json
-{
-  "status": "ok",
-  "lessonId": "lesson-id",
-  "cardsImported": 30
-}
-```
-
-## ChatGPT Action Bridge
-
-For local ChatGPT Action testing, Django must be exposed through a temporary public HTTPS tunnel.
-
-Docs:
-
-```text
-docs/chatgpt-action-setup.md
-docs/chatgpt-action-openapi.yaml
-```
-
-## Connector
-
-CLI usage:
-
-```powershell
-cd C:\CodexProjects\MakeMistake
-python connector\send_lesson.py connector\sample_lesson.json
-```
-
-Reusable connector function for future MCP-style wrapping:
-
-```python
-from connector.client import save_lesson_to_make_mistakes
-
-result = save_lesson_to_make_mistakes(lesson_dict)
-```
-
-## Tests
-
-Backend tests:
-
-```powershell
-cd C:\CodexProjects\MakeMistake\backend
-.\.venv\Scripts\python.exe manage.py test
-```
-
-Connector tests:
-
-```powershell
-cd C:\CodexProjects\MakeMistake
-python -m unittest connector.test_client
-```
-
-## Android App
-
-Open this folder in Android Studio:
-
-```text
-C:\CodexProjects\MakeMistake\mobile\android
-```
-
-The current Android version is `0.47`.
-
-Debug APK path after build:
-
-```text
-mobile/android/app/build/outputs/apk/debug/app-debug.apk
-```
-
-## Git Workflow
-
-Recommended flow:
-
-```powershell
-git status
-git switch -c codex/small-feature-name
-# make a small verified change
-git add .
-git commit -m "Short clear message"
-git push -u origin codex/small-feature-name
-```
-
-Keep `main` stable. Use small branches and commits for learning-friendly iterations.
+For MurrLex v0.02, start with stabilization only: verify a clean install, confirm text encoding on bundled lessons, then extract localization/settings code in small commits.
