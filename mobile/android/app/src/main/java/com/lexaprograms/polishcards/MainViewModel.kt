@@ -2252,7 +2252,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }.getOrNull().orEmpty().trim()
             if (translated.isBlank()) {
-            _uiState.value = _uiState.value.copy(message = "Added: $phrase. Target translation pending")
+                _uiState.value = _uiState.value.copy(message = "Added: $phrase. Target translation pending")
                 return@launch
             }
             val lesson = repository.loadLessons(includeHidden = true).firstOrNull { it.id == lessonId }
@@ -2263,7 +2263,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     if (card.id == cardId) {
                         card.copy(
                             nativeValue = translated,
-                        hint = "Captured by voice and translated automatically into the target side.",
+                            hint = "Captured by voice and translated automatically into the target side.",
                             log = (card.log + "$now - translated automatically from $sourceLanguage to $targetLanguage").takeLast(100)
                         )
                     } else {
