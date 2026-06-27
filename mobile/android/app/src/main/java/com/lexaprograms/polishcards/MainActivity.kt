@@ -5892,6 +5892,7 @@ private fun sampleLessonJson(): String {
 private fun versionLogText(): String {
     return """
         Google Translate attribution - Translate mode can use on-device Google Translate via ML Kit. Google disclaims warranties related to translation accuracy and reliability. See https://cloud.google.com/translate and https://translate.google.com.
+        MurrLex v0.03 - Started the clean MurrLex repository checkpoint, kept backend and connector preserved, and aligned the visible Android version with the new product line.
         v1.04 - Hotfixed corrupted localization strings by routing damaged UI labels and lesson summary text through clean safe English labels.
         v1.03 - Renamed the app to MurrLex, replaced the splash M with an animated professor cat, refreshed the launcher icon, and added first-launch onboarding for interface, known, learning, and explanation languages.
         v1.02 - Equalized normal Translate card heights, added tap-to-expand for the translation result, removed Source/Target picker labels, aligned swap controls, fixed mirrored Split result padding, and added a soft border pulse when a translation updates.
