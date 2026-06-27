@@ -4705,13 +4705,13 @@ private fun String.speechLanguageDisplayName(): String {
 private fun String.speechLanguageTagFromName(): String? {
     val normalized = trim().lowercase(Locale.ROOT)
     return when {
-        normalized in listOf("en", "eng", "english", "ÃƒÂÃ‚Â°ÃƒÂÃ‚Â½ÃƒÂÃ‚Â³ÃƒÂÃ‚Â»ÃƒÂÃ‚Â¸ÃƒÂÃ‚Â¹Ãƒâ€˜Ã‚ÂÃƒÂÃ‚ÂºÃƒÂÃ‚Â¸ÃƒÂÃ‚Â¹", "ÃƒÂÃ‚Â°ÃƒÂÃ‚Â½ÃƒÂÃ‚Â³ÃƒÂÃ‚Â»Ãƒâ€˜Ã¢â‚¬â€œÃƒÂÃ‚Â¹Ãƒâ€˜Ã‚ÂÃƒÂÃ‚ÂºÃƒÂÃ‚Â°Ãƒâ€˜Ã‚Â", "angielski") -> "en-US"
-        normalized in listOf("de", "deu", "ger", "german", "deutsch", "ÃƒÂÃ‚Â½ÃƒÂÃ‚ÂµÃƒÂÃ‚Â¼ÃƒÂÃ‚ÂµÃƒâ€˜Ã¢â‚¬Â ÃƒÂÃ‚ÂºÃƒÂÃ‚Â¸ÃƒÂÃ‚Â¹", "ÃƒÂÃ‚Â½Ãƒâ€˜Ã‚ÂÃƒÂÃ‚Â¼ÃƒÂÃ‚ÂµÃƒâ€˜Ã¢â‚¬Â ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°Ãƒâ€˜Ã‚Â", "niemiecki") -> "de-DE"
-        normalized in listOf("be", "by", "belarusian", "belaruska", "ÃƒÂÃ‚Â±ÃƒÂÃ‚ÂµÃƒÂÃ‚Â»ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã†â€™Ãƒâ€˜Ã‚ÂÃƒÂÃ‚ÂºÃƒÂÃ‚Â°Ãƒâ€˜Ã‚Â", "ÃƒÂÃ‚Â±ÃƒÂÃ‚ÂµÃƒÂÃ‚Â»ÃƒÂÃ‚Â¾Ãƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã†â€™Ãƒâ€˜Ã‚ÂÃƒâ€˜Ã‚ÂÃƒÂÃ‚ÂºÃƒÂÃ‚Â¸ÃƒÂÃ‚Â¹", "ÃƒÂÃ‚Â±ÃƒÂÃ‚ÂµÃƒÂÃ‚Â»ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã†â€™Ãƒâ€˜Ã‚ÂÃƒâ€˜Ã‚ÂÃƒÂÃ‚ÂºÃƒÂÃ‚Â¸ÃƒÂÃ‚Â¹") -> "be-BY"
-        normalized in listOf("es", "spa", "spanish", "espanol", "espaÃƒÆ’Ã‚Â±ol", "ÃƒÂÃ‚Â¸Ãƒâ€˜Ã‚ÂÃƒÂÃ‚Â¿ÃƒÂÃ‚Â°ÃƒÂÃ‚Â½Ãƒâ€˜Ã‚ÂÃƒÂÃ‚ÂºÃƒÂÃ‚Â¸ÃƒÂÃ‚Â¹", "Ãƒâ€˜Ã¢â‚¬â€œÃƒâ€˜Ã‚ÂÃƒÂÃ‚Â¿ÃƒÂÃ‚Â°ÃƒÂÃ‚Â½Ãƒâ€˜Ã‚ÂÃƒÂÃ‚ÂºÃƒÂÃ‚Â°Ãƒâ€˜Ã‚Â") -> "es-ES"
-        normalized in listOf("uk", "ua", "ukrainian", "Ãƒâ€˜Ã†â€™ÃƒÂÃ‚ÂºÃƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â°ÃƒÂÃ‚Â¸ÃƒÂÃ‚Â½Ãƒâ€˜Ã‚ÂÃƒÂÃ‚ÂºÃƒÂÃ‚Â¸ÃƒÂÃ‚Â¹", "Ãƒâ€˜Ã†â€™ÃƒÂÃ‚ÂºÃƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬â€ÃƒÂÃ‚Â½Ãƒâ€˜Ã‚ÂÃƒâ€˜Ã…â€™ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°", "Ãƒâ€˜Ã†â€™ÃƒÂÃ‚ÂºÃƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬â€œÃƒÂÃ‚Â½Ãƒâ€˜Ã‚ÂÃƒÂÃ‚ÂºÃƒÂÃ‚Â°Ãƒâ€˜Ã‚Â") -> "uk-UA"
-        normalized in listOf("ru", "rus", "russian", "Ãƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã†â€™Ãƒâ€˜Ã‚ÂÃƒâ€˜Ã‚ÂÃƒÂÃ‚ÂºÃƒÂÃ‚Â¸ÃƒÂÃ‚Â¹", "Ãƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã†â€™Ãƒâ€˜Ã‚ÂÃƒÂÃ‚ÂºÃƒÂÃ‚Â°Ãƒâ€˜Ã‚Â", "rosyjski") -> "ru-RU"
-        normalized in listOf("pl", "pol", "polish", "polski", "ÃƒÂÃ‚Â¿ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â»Ãƒâ€˜Ã…â€™Ãƒâ€˜Ã‚ÂÃƒÂÃ‚ÂºÃƒÂÃ‚Â¸ÃƒÂÃ‚Â¹", "ÃƒÂÃ‚Â¿ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â»Ãƒâ€˜Ã…â€™Ãƒâ€˜Ã‚ÂÃƒÂÃ‚ÂºÃƒÂÃ‚Â°Ãƒâ€˜Ã‚Â") -> "pl-PL"
+        normalized in listOf("en", "eng", "english", "angielski", "\u0430\u043d\u0433\u043b\u0438\u0439\u0441\u043a\u0438\u0439", "\u0430\u043d\u0433\u043b\u0456\u0439\u0441\u043a\u0430\u044f") -> "en-US"
+        normalized in listOf("de", "deu", "ger", "german", "deutsch", "niemiecki", "\u043d\u0435\u043c\u0435\u0446\u043a\u0438\u0439", "\u043d\u044f\u043c\u0435\u0446\u043a\u0430\u044f") -> "de-DE"
+        normalized in listOf("be", "by", "belarusian", "belaruska", "\u0431\u0435\u043b\u0430\u0440\u0443\u0441\u043a\u0430\u044f", "\u0431\u0435\u043b\u0430\u0440\u0443\u0441\u043a\u0456", "\u0431\u0435\u043b\u043e\u0440\u0443\u0441\u0441\u043a\u0438\u0439") -> "be-BY"
+        normalized in listOf("es", "spa", "spanish", "espanol", "espa\u00f1ol", "\u0438\u0441\u043f\u0430\u043d\u0441\u043a\u0438\u0439", "\u0456\u0441\u043f\u0430\u043d\u0441\u043a\u0430\u044f") -> "es-ES"
+        normalized in listOf("uk", "ua", "ukrainian", "\u0443\u043a\u0440\u0430\u0438\u043d\u0441\u043a\u0438\u0439", "\u0443\u043a\u0440\u0430\u0457\u043d\u0441\u044c\u043a\u0430", "\u0443\u043a\u0440\u0430\u0456\u043d\u0441\u043a\u0430\u044f") -> "uk-UA"
+        normalized in listOf("ru", "rus", "russian", "rosyjski", "\u0440\u0443\u0441\u0441\u043a\u0438\u0439", "\u0440\u0443\u0441\u0441\u043a\u0430\u044f") -> "ru-RU"
+        normalized in listOf("pl", "pol", "polish", "polski", "\u043f\u043e\u043b\u044c\u0441\u043a\u0438\u0439", "\u043f\u043e\u043b\u044c\u0441\u043a\u0430\u044f") -> "pl-PL"
         else -> null
     }
 }
@@ -4719,17 +4719,16 @@ private fun String.speechLanguageTagFromName(): String? {
 private fun String.speechLanguageTagFromText(): String? {
     val text = lowercase(Locale.ROOT)
     return when {
-        text.any { it in "Ãƒâ€˜Ã…Â¾Ãƒâ€˜Ã¢â‚¬â€œ" } -> "be-BY"
-        text.any { it in "Ãƒâ€˜Ã¢â‚¬â€œÃƒâ€˜Ã¢â‚¬â€Ãƒâ€˜Ã¢â‚¬ÂÃƒâ€™Ã¢â‚¬Ëœ" } -> "uk-UA"
-        text.any { it in "Ãƒâ€žÃ¢â‚¬Â¦Ãƒâ€žÃ¢â‚¬Â¡Ãƒâ€žÃ¢â€žÂ¢Ãƒâ€¦Ã¢â‚¬Å¡Ãƒâ€¦Ã¢â‚¬Å¾ÃƒÆ’Ã‚Â³Ãƒâ€¦Ã¢â‚¬ÂºÃƒâ€¦Ã‚ÂºÃƒâ€¦Ã‚Â¼" } -> "pl-PL"
-        text.any { it in "ÃƒÆ’Ã‚Â¤ÃƒÆ’Ã‚Â¶ÃƒÆ’Ã‚Â¼ÃƒÆ’Ã…Â¸" } -> "de-DE"
-        text.any { it in "ÃƒÆ’Ã‚Â¡ÃƒÆ’Ã‚Â©ÃƒÆ’Ã‚Â­ÃƒÆ’Ã‚Â±ÃƒÆ’Ã‚Â³ÃƒÆ’Ã‚ÂºÃƒÆ’Ã‚Â¼Ãƒâ€šÃ‚Â¿Ãƒâ€šÃ‚Â¡" } -> "es-ES"
+        text.any { it in "\u045e\u0456" } -> "be-BY"
+        text.any { it in "\u0456\u0457\u0454\u0491" } -> "uk-UA"
+        text.any { it in "\u0105\u0107\u0119\u0142\u0144\u00f3\u015b\u017a\u017c" } -> "pl-PL"
+        text.any { it in "\u00e4\u00f6\u00fc\u00df" } -> "de-DE"
+        text.any { it in "\u00e1\u00e9\u00ed\u00f1\u00f3\u00fa\u00fc\u00bf\u00a1" } -> "es-ES"
         text.any { it in '\u0430'..'\u044f' || it == '\u0451' } -> "ru-RU"
         text.any { it in 'a'..'z' } -> "en-US"
         else -> null
     }
 }
-
 private fun normalizeAnswerText(value: String): String {
     return value
         .replace('\u00A0', ' ')
