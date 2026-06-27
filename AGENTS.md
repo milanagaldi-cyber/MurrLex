@@ -7,7 +7,7 @@ This repository is the MurrLex monorepo. Use this file as the first stop for any
 - Local path: `C:\CodexProjects\murrlex`
 - GitHub: `https://github.com/milanagaldi-cyber/MurrLex`
 - Working branch for the next phase: `murrlex-0.02`
-- Android visible app version: `MurrLex 0.03`
+- Android visible app version: `MurrLex v0.05`
 - Latest verified Android build command: `gradlew.bat assembleDebug`
 - Latest verified lint command: `gradlew.bat lintDebug`
 

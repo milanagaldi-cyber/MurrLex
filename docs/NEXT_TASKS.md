@@ -9,7 +9,7 @@ Verify a clean Android install from the current debug APK:
 1. Uninstall existing app or clear app data.
 2. Install `mobile/android/app/build/outputs/apk/debug/app-debug.apk`.
 3. Confirm the app name is MurrLex.
-4. Confirm Settings shows version `0.03`.
+4. Confirm Settings shows version `0.05`.
 5. Confirm bundled lessons show readable text.
 6. Confirm opening a lesson displays cards.
 

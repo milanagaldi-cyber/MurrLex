@@ -19,9 +19,9 @@ Reason: the immediate goal is a stable mobile app and clean v0.02 thread.
 
 ## Android Version At Checkpoint
 
-The visible Android version is `MurrLex 0.03`.
+The visible Android version is `MurrLex v0.05`.
 
-Reason: user requested the new MurrLex project to show MurrLex 0.03 after the repository restart.
+Reason: user requested the MurrLex v0.02 working thread build to show MurrLex v0.05.
 
 ## Safe Build Commands
 

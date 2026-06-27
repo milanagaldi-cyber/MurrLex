@@ -16,7 +16,7 @@ murrlex/
 
 - App name: `MurrLex`
 - Android package/namespace still uses the legacy id: `com.lexaprograms.polishcards`
-- Version visible in the app settings: `MurrLex 0.03`
+- Version visible in the app settings: `MurrLex v0.05`
 - Main working branch: `murrlex-0.02`
 - Stable debug APK output: `mobile/android/app/build/outputs/apk/debug/app-debug.apk`
 

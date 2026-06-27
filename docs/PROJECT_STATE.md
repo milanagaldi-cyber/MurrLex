@@ -10,7 +10,7 @@ Confirmed:
 - GitHub repository: `https://github.com/milanagaldi-cyber/MurrLex`
 - Working branch: `murrlex-0.02`
 - Android app name: `MurrLex`
-- Android visible version: `0.03`
+- Android visible version: `0.05`
 - Android namespace/package remains legacy: `com.lexaprograms.polishcards`
 - Backend and connector are preserved in the monorepo but are not the focus of this checkpoint.
 
