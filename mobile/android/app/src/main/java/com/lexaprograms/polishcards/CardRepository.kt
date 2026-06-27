@@ -107,6 +107,14 @@ class CardRepository(private val context: Context) {
         preferences.edit().putString(KEY_INTERFACE_LANGUAGE, language.normalizedInterfaceLanguage()).apply()
     }
 
+    fun loadOnboardingCompleted(): Boolean {
+        return preferences.getBoolean(KEY_ONBOARDING_COMPLETED, false)
+    }
+
+    fun saveOnboardingCompleted(completed: Boolean) {
+        preferences.edit().putBoolean(KEY_ONBOARDING_COMPLETED, completed).apply()
+    }
+
     fun loadQuickVocabularySourceLanguage(): String {
         return preferences.getString(KEY_QUICK_VOCABULARY_SOURCE_LANGUAGE, "Polish") ?: "Polish"
     }
@@ -132,6 +140,15 @@ class CardRepository(private val context: Context) {
     fun saveUseLocalTranslation(enabled: Boolean) {
         preferences.edit().putBoolean(KEY_USE_LOCAL_TRANSLATION, enabled).apply()
     }
+
+    fun loadAutoSaveTranslatorCards(): Boolean {
+        return preferences.getBoolean(KEY_AUTO_SAVE_TRANSLATOR_CARDS, false)
+    }
+
+    fun saveAutoSaveTranslatorCards(enabled: Boolean) {
+        preferences.edit().putBoolean(KEY_AUTO_SAVE_TRANSLATOR_CARDS, enabled).apply()
+    }
+
     fun loadTranslationApiUrl(): String {
         return preferences.getString(KEY_TRANSLATION_API_URL, "") ?: ""
     }
@@ -147,6 +164,24 @@ class CardRepository(private val context: Context) {
     fun saveTranslationApiToken(token: String) {
         preferences.edit().putString(KEY_TRANSLATION_API_TOKEN, token.trim()).apply()
     }
+
+    fun loadOfflineSpeechLanguageTag(): String {
+        return preferences.getString(KEY_OFFLINE_SPEECH_LANGUAGE, "en-US") ?: "en-US"
+    }
+
+    fun saveOfflineSpeechLanguageTag(languageTag: String) {
+        preferences.edit().putString(KEY_OFFLINE_SPEECH_LANGUAGE, languageTag.trim().ifBlank { "en-US" }).apply()
+    }
+
+    fun loadOfflineSpeechStatus(languageTag: String): String {
+        return preferences.getString(offlineSpeechStatusKey(languageTag), OFFLINE_SPEECH_STATUS_NOT_DOWNLOADED)
+            ?: OFFLINE_SPEECH_STATUS_NOT_DOWNLOADED
+    }
+
+    fun saveOfflineSpeechStatus(languageTag: String, status: String) {
+        preferences.edit().putString(offlineSpeechStatusKey(languageTag), status).apply()
+    }
+
     fun loadStudySession(lessonId: String): StudySession? {
         val raw = preferences.getString(studySessionKey(lessonId), null) ?: return null
         return runCatching { json.decodeFromString<StudySession>(raw) }
@@ -425,8 +460,15 @@ class CardRepository(private val context: Context) {
     private fun newLessonId(): String = "lesson_${UUID.randomUUID()}"
 
     private fun studySessionKey(lessonId: String): String = "$KEY_STUDY_SESSION_PREFIX$lessonId"
+    private fun offlineSpeechStatusKey(languageTag: String): String = "$KEY_OFFLINE_SPEECH_STATUS_PREFIX$languageTag"
 
     companion object {
+        const val OFFLINE_SPEECH_STATUS_NOT_DOWNLOADED = "Not downloaded"
+        const val OFFLINE_SPEECH_STATUS_DOWNLOADING = "Downloading"
+        const val OFFLINE_SPEECH_STATUS_READY = "Ready"
+        const val OFFLINE_SPEECH_STATUS_ERROR = "Error"
+        const val OFFLINE_SPEECH_STATUS_NOT_SUPPORTED = "Not supported"
+
         private const val KEY_LESSONS = "lessons"
         private const val KEY_STATS = "stats"
         private const val KEY_HIDDEN_LESSONS = "hidden_lessons"
@@ -441,11 +483,15 @@ class CardRepository(private val context: Context) {
         private const val KEY_SOUND_EFFECTS_ENABLED = "sound_effects_enabled"
         private const val KEY_VIBRATION_ENABLED = "vibration_enabled"
         private const val KEY_INTERFACE_LANGUAGE = "interface_language"
+        private const val KEY_ONBOARDING_COMPLETED = "onboarding_completed"
         private const val KEY_QUICK_VOCABULARY_SOURCE_LANGUAGE = "quick_vocabulary_source_language"
         private const val KEY_QUICK_VOCABULARY_TARGET_LANGUAGE = "quick_vocabulary_target_language"
         private const val KEY_USE_LOCAL_TRANSLATION = "use_local_translation"
+        private const val KEY_AUTO_SAVE_TRANSLATOR_CARDS = "auto_save_translator_cards"
         private const val KEY_TRANSLATION_API_URL = "translation_api_url"
         private const val KEY_TRANSLATION_API_TOKEN = "translation_api_token"
+        private const val KEY_OFFLINE_SPEECH_LANGUAGE = "offline_speech_language"
+        private const val KEY_OFFLINE_SPEECH_STATUS_PREFIX = "offline_speech_status_"
         private const val KEY_STUDY_SESSION_PREFIX = "study_session_"
     }
 }

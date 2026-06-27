@@ -51,6 +51,19 @@ enum class ControlSize {
     MEDIUM
 }
 
+data class OfflineSpeechLanguage(
+    val name: String,
+    val tag: String
+)
+
+val OfflineSpeechLanguages = listOf(
+    OfflineSpeechLanguage("English", "en-US"),
+    OfflineSpeechLanguage("Polish", "pl-PL"),
+    OfflineSpeechLanguage("Russian", "ru-RU"),
+    OfflineSpeechLanguage("German", "de-DE"),
+    OfflineSpeechLanguage("Spanish", "es-ES")
+)
+
 data class LessonDraft(
     val id: String = "",
     val title: String = "",
@@ -95,11 +108,18 @@ data class StudyUiState(
     val displayTextSize: DisplayTextSize = DisplayTextSize.MEDIUM,
     val controlSize: ControlSize = ControlSize.MEDIUM,
     val interfaceLanguage: String = "en",
+    val onboardingCompleted: Boolean = false,
     val quickVocabularySourceLanguage: String = "Polish",
     val quickVocabularyTargetLanguage: String = "Russian",
     val useLocalTranslation: Boolean = false,
+    val autoSaveTranslatorCards: Boolean = false,
     val translationApiUrl: String = "",
     val translationApiToken: String = "",
+    val offlineSpeechLanguageTag: String = "en-US",
+    val offlineSpeechStatuses: Map<String, String> = OfflineSpeechLanguages.associate { language ->
+        language.tag to CardRepository.OFFLINE_SPEECH_STATUS_NOT_DOWNLOADED
+    },
+    val offlineSpeechDownloadingTag: String? = null,
     val soundEffectsEnabled: Boolean = true,
     val vibrationEnabled: Boolean = true,
     val notificationIntervalMinutes: Int = 30,
@@ -140,18 +160,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         _uiState.value = _uiState.value.copy(
-            cardStartSide = repository.loadCardStartSide(),
+            cardStartSide = CardStartSide.POLISH,
             excludeMasteredCards = false,
             hideCompletedCards = false,
             showCardLog = repository.loadShowCardLog(),
             displayTextSize = repository.loadDisplayTextSize(),
             controlSize = repository.loadControlSize(),
             interfaceLanguage = repository.loadInterfaceLanguage(detectSystemInterfaceLanguage()),
+            onboardingCompleted = repository.loadOnboardingCompleted(),
             quickVocabularySourceLanguage = repository.loadQuickVocabularySourceLanguage(),
             quickVocabularyTargetLanguage = repository.loadQuickVocabularyTargetLanguage(),
             useLocalTranslation = repository.loadUseLocalTranslation(),
+            autoSaveTranslatorCards = repository.loadAutoSaveTranslatorCards(),
             translationApiUrl = repository.loadTranslationApiUrl(),
             translationApiToken = repository.loadTranslationApiToken(),
+            offlineSpeechLanguageTag = repository.loadOfflineSpeechLanguageTag()
+                .takeIf { tag -> OfflineSpeechLanguages.any { it.tag == tag } }
+                ?: "en-US",
+            offlineSpeechStatuses = OfflineSpeechLanguages.associate { language ->
+                language.tag to repository.loadOfflineSpeechStatus(language.tag)
+            },
+            offlineSpeechDownloadingTag = OfflineSpeechLanguages
+                .firstOrNull { language ->
+                    repository.loadOfflineSpeechStatus(language.tag) == CardRepository.OFFLINE_SPEECH_STATUS_DOWNLOADING
+                }
+                ?.tag,
             soundEffectsEnabled = repository.loadSoundEffectsEnabled(),
             vibrationEnabled = repository.loadVibrationEnabled(),
             notificationIntervalMinutes = repository.loadNotificationIntervalMinutes(),
@@ -240,7 +273,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val cleanInput = state.translationInput.trim()
         if (state.translationOutput == value) return
         _uiState.value = state.copy(translationOutput = value, message = null)
-        if (cleanInput.isNotBlank() && cleanOutput.isNotBlank()) {
+        if (state.autoSaveTranslatorCards && cleanInput.isNotBlank() && cleanOutput.isNotBlank()) {
             saveTranslatedCardFromTranslator(cleanInput, cleanOutput)
         }
     }
@@ -422,6 +455,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
+    fun completeOnboarding(
+        interfaceLanguage: String,
+        knownLanguage: String,
+        learningLanguage: String,
+        explanationLanguage: String
+    ) {
+        val normalizedInterface = normalizeInterfaceLanguage(interfaceLanguage)
+        val cleanKnown = knownLanguage.trim().ifBlank { "English" }
+        val cleanLearning = learningLanguage.trim().ifBlank { "Polish" }
+        val cleanExplanation = explanationLanguage.trim().ifBlank { cleanKnown }
+        repository.saveInterfaceLanguage(normalizedInterface)
+        repository.saveQuickVocabularyTargetLanguage(cleanLearning)
+        repository.saveQuickVocabularySourceLanguage(cleanExplanation)
+        repository.saveOnboardingCompleted(true)
+        _uiState.value = _uiState.value.copy(
+            interfaceLanguage = normalizedInterface,
+            quickVocabularyTargetLanguage = cleanLearning,
+            quickVocabularySourceLanguage = cleanExplanation,
+            onboardingCompleted = true,
+            message = null
+        )
+    }
+
 
 
     fun setUseLocalTranslation(enabled: Boolean) {
@@ -431,6 +487,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             message = if (enabled) "Offline Google Translate enabled" else "Offline Google Translate disabled"
         )
     }
+
+    fun setAutoSaveTranslatorCards(enabled: Boolean) {
+        repository.saveAutoSaveTranslatorCards(enabled)
+        _uiState.value = _uiState.value.copy(
+            autoSaveTranslatorCards = enabled,
+            message = if (enabled) "Translator auto-save enabled" else "Translator auto-save disabled"
+        )
+    }
+
     fun setTranslationApiUrl(url: String) {
         repository.saveTranslationApiUrl(url)
         _uiState.value = _uiState.value.copy(translationApiUrl = url.trim())
@@ -440,6 +505,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         repository.saveTranslationApiToken(token)
         _uiState.value = _uiState.value.copy(translationApiToken = token.trim())
     }
+
+    fun setOfflineSpeechLanguage(languageTag: String) {
+        val normalized = OfflineSpeechLanguages.firstOrNull { it.tag == languageTag }?.tag ?: "en-US"
+        repository.saveOfflineSpeechLanguageTag(normalized)
+        _uiState.value = _uiState.value.copy(
+            offlineSpeechLanguageTag = normalized,
+            message = "Speech recognition language: $normalized"
+        )
+    }
+
+    fun setOfflineSpeechStatus(languageTag: String, status: String, message: String? = null) {
+        if (OfflineSpeechLanguages.none { it.tag == languageTag }) return
+        repository.saveOfflineSpeechStatus(languageTag, status)
+        val nextStatuses = _uiState.value.offlineSpeechStatuses + (languageTag to status)
+        _uiState.value = _uiState.value.copy(
+            offlineSpeechStatuses = nextStatuses,
+            offlineSpeechDownloadingTag = if (status == CardRepository.OFFLINE_SPEECH_STATUS_DOWNLOADING) {
+                languageTag
+            } else {
+                _uiState.value.offlineSpeechDownloadingTag.takeUnless { it == languageTag }
+            },
+            message = message
+        )
+    }
+
     fun setSoundEffectsEnabled(enabled: Boolean) {
         repository.saveSoundEffectsEnabled(enabled)
         _uiState.value = _uiState.value.copy(
@@ -901,14 +991,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun previewAnswer() {
         val state = _uiState.value
         val card = state.currentCard ?: return
+        val expected = card.expectedAnswerText(state.isBackVisible)
         if (state.answer.isBlank()) {
             _uiState.value = state.copy(answerFeedbackVisible = false, message = "Enter answer")
-        } else if (normalize(state.answer) == normalize(card.correctText())) {
+        } else if (normalize(state.answer) == normalize(expected)) {
             _uiState.value = state.copy(answerFeedbackVisible = false, message = "Correct")
         } else {
             _uiState.value = state.copy(
                 answerFeedbackVisible = true,
-                message = if (wrongLetterRatio(state.answer, card.correctText()) > 0.5) "Wrong" else null
+                message = if (wrongLetterRatio(state.answer, expected) > 0.5) "Wrong" else null
             )
         }
         saveCurrentStudySession()
@@ -917,8 +1008,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun checkAnswer() {
         val state = _uiState.value
         val card = state.currentCard ?: return
+        val expected = card.expectedAnswerText(state.isBackVisible)
 
-        if (normalize(state.answer) == normalize(card.correctText())) {
+        if (normalize(state.answer) == normalize(expected)) {
             recordCardWork(card.id, "correct")
             addStarForCorrectTypedAnswer(card.id)
             completeCurrentCard(message = "CorrectStar")
@@ -932,7 +1024,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun submitTestAnswer(choice: String) {
         val state = _uiState.value
         val card = state.currentCard ?: return
-        if (normalize(choice) == normalize(card.correctText())) {
+        val expected = card.expectedAnswerText(state.isBackVisible)
+        if (normalize(choice) == normalize(expected)) {
             recordCardWork(card.id, "test correct")
             addStarForCorrectTypedAnswer(card.id)
             val latest = _uiState.value
@@ -952,7 +1045,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     answerFeedbackVisible = false,
                     completedCardIds = nextCompletedCardIds,
                     portionCompletionSaved = true,
-                    isBackVisible = true,
+                    isBackVisible = !state.isBackVisible,
                     message = "CorrectStar"
                 )
             } else {
@@ -961,7 +1054,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     answerFeedbackVisible = false,
                     completedCardIds = nextCompletedCardIds,
                     portionCompletionSaved = latest.portionCompletionSaved || portionComplete,
-                    isBackVisible = true,
+                    isBackVisible = !state.isBackVisible,
                     message = "CorrectStar"
                 )
             }
@@ -970,7 +1063,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             recordWrongAnswer(card.id, choice)
             _uiState.value = _uiState.value.copy(
                 answer = choice,
-                isBackVisible = false,
+                isBackVisible = state.isBackVisible,
                 answerFeedbackVisible = true,
                 message = "Try again"
             )
@@ -1166,7 +1259,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun createLesson() {
         val state = _uiState.value
-        val sourceLanguage = state.quickVocabularySourceLanguage.trim().ifBlank { "Native" }
+    val sourceLanguage = state.quickVocabularySourceLanguage.trim().ifBlank { "Target" }
         val targetLanguage = state.quickVocabularyTargetLanguage.trim().ifBlank { "Target" }
         val now = timestamp()
         val lesson = Lesson(
@@ -1205,7 +1298,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val sampleCard = lesson.cards.firstOrNull()
         val sourceLanguage = lesson.sourceLanguage.lessonLanguageOrNull()
             ?: sampleCard?.sourceLanguage.lessonLanguageOrNull()
-            ?: state.quickVocabularySourceLanguage.trim().ifBlank { "Native" }
+        ?: state.quickVocabularySourceLanguage.trim().ifBlank { "Target" }
         val targetLanguage = lesson.targetLanguage.lessonLanguageOrNull()
             ?: sampleCard?.targetLanguage.lessonLanguageOrNull()
             ?: state.quickVocabularyTargetLanguage.trim().ifBlank { "Target" }
@@ -1805,7 +1898,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             correctValue = "Empty",
             hint = "Fill this empty card with voice input or typed text.",
             madeAt = now,
-            where = "Make Mistake",
+            where = "MurrLex",
             log = listOf("$now - $logText"),
             type = "card",
             cardKind = "LN",
@@ -1821,7 +1914,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         val state = _uiState.value
-        val sourceLanguage = state.quickVocabularySourceLanguage.trim().ifBlank { "Native" }
+    val sourceLanguage = state.quickVocabularySourceLanguage.trim().ifBlank { "Target" }
         val targetLanguage = state.quickVocabularyTargetLanguage.trim().ifBlank { "Target" }
         val lessonTitle = quickVocabularyLessonTitle(sourceLanguage, targetLanguage, createdAt = displayTimestamp())
         val visibleLessonsForQuickVocabulary = repository.loadLessons(includeHidden = false)
@@ -1838,7 +1931,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             id = 1,
             nativeValue = "Empty",
             correctValue = cleanPhrase,
-            hint = "Captured by voice in the target language. Fill the Empty native side later.",
+        hint = "Captured by voice in the source language. Fill the Empty target side later.",
             madeAt = now,
             where = "Quick vocabulary microphone",
             log = listOf("$now - captured by quick vocabulary microphone as $targetLanguage"),
@@ -1903,7 +1996,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 card.copy(
                     nativeValue = cleanTranslation,
                     hint = card.hint.withGoogleTranslateAttribution(),
-                    log = (card.log + "$now - translated automatically with Google Translate").takeLast(100)
+                                log = (card.log + "$now - translated automatically with Google Translator").takeLast(100)
                 )
             } else {
                 card
@@ -1924,7 +2017,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } else {
                 state.currentPortion
             },
-            message = "Powered by Google Translate: $cleanPhrase"
+            message = "Powered by Google Translator: $cleanPhrase"
         )
         saveCurrentStudySession()
     }
@@ -1943,13 +2036,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     card.copy(
                         correctValue = cleanTranslation,
                         hint = card.hint.withGoogleTranslateAttribution(),
-                        log = (card.log + "$now - correct side translated with Google Translate").takeLast(100)
+                    log = (card.log + "$now - correct side translated with Google Translator").takeLast(100)
                     )
                 } else {
                     card.copy(
                         nativeValue = cleanTranslation,
                         hint = card.hint.withGoogleTranslateAttribution(),
-                        log = (card.log + "$now - native side translated with Google Translate").takeLast(100)
+                    log = (card.log + "$now - native side translated with Google Translator").takeLast(100)
                     )
                 }
                 updatedCard = updated
@@ -1970,7 +2063,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             },
             answer = "",
             answerFeedbackVisible = false,
-            message = "Powered by Google Translate"
+            message = "Powered by Google Translator"
         )
         saveCurrentStudySession()
     }
@@ -1978,7 +2071,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun saveTranslatedCardFromTranslator(originalText: String, translatedText: String) {
         val state = _uiState.value
-        val sourceLanguage = state.quickVocabularySourceLanguage.trim().ifBlank { "Native" }
+        val sourceLanguage = state.quickVocabularySourceLanguage.trim().ifBlank { "Target" }
         val targetLanguage = state.quickVocabularyTargetLanguage.trim().ifBlank { "Target" }
         val lessonTitle = quickVocabularyLessonTitle(sourceLanguage, targetLanguage, createdAt = displayTimestamp())
         val visibleLessonsForQuickVocabulary = repository.loadLessons(includeHidden = false)
@@ -1996,10 +2089,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             id = 1,
             nativeValue = translatedText,
             correctValue = originalText,
-            hint = "Created automatically from Translate mode.\nPowered by Google Translate",
+            hint = "Created automatically from Translate mode.\nPowered by Google Translator",
             madeAt = now,
             where = "Translate mode",
-            log = listOf("$now - created automatically from Translate mode with Google Translate"),
+            log = listOf("$now - created automatically from Translate mode with Google Translator"),
             type = "card",
             cardKind = "LN",
             sourceLanguage = sourceLanguage,
@@ -2027,7 +2120,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         card.copy(
                             nativeValue = translatedText,
                             hint = card.hint.withGoogleTranslateAttribution(),
-                            log = (card.log + "$now - translation updated automatically with Google Translate").takeLast(100)
+                            log = (card.log + "$now - translation updated automatically with Google Translator").takeLast(100)
                         )
                     }
                 } else {
@@ -2073,7 +2166,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         val translatedText = state.translationOutput.trim().ifBlank { "Empty" }
-        val sourceLanguage = state.quickVocabularySourceLanguage.trim().ifBlank { "Native" }
+        val sourceLanguage = state.quickVocabularySourceLanguage.trim().ifBlank { "Target" }
         val targetLanguage = state.quickVocabularyTargetLanguage.trim().ifBlank { "Target" }
         val lessonTitle = quickVocabularyLessonTitle(sourceLanguage, targetLanguage, createdAt = displayTimestamp())
         val visibleLessonsForQuickVocabulary = repository.loadLessons(includeHidden = false)
@@ -2093,7 +2186,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             hint = if (translatedText == "Empty") {
                 "Created from Translate mode. Translation is pending."
             } else {
-                "Created from Translate mode. Original: $targetLanguage. Translation: $sourceLanguage."
+                "Created from Translate mode. Original: $targetLanguage. Translation: $sourceLanguage.\nPowered by Google Translator"
             },
             madeAt = now,
             where = "Translate mode",
@@ -2159,7 +2252,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }.getOrNull().orEmpty().trim()
             if (translated.isBlank()) {
-                _uiState.value = _uiState.value.copy(message = "Added: $phrase. Native translation pending")
+            _uiState.value = _uiState.value.copy(message = "Added: $phrase. Target translation pending")
                 return@launch
             }
             val lesson = repository.loadLessons(includeHidden = true).firstOrNull { it.id == lessonId }
@@ -2170,7 +2263,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     if (card.id == cardId) {
                         card.copy(
                             nativeValue = translated,
-                            hint = "Captured by voice and translated automatically into the native side.",
+                        hint = "Captured by voice and translated automatically into the target side.",
                             log = (card.log + "$now - translated automatically from $sourceLanguage to $targetLanguage").takeLast(100)
                         )
                     } else {
@@ -2185,7 +2278,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val currentState = _uiState.value
             _uiState.value = currentState.copy(
                 lessons = repository.loadLessons(currentState.showHiddenLessons),
-                message = "Native translation added: $phrase"
+            message = "Target translation added: $phrase"
             )
         }
     }
@@ -2224,6 +2317,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return mapIndexed { index, card -> card.copy(id = index + 1) }
     }
 
+    private fun Flashcard.expectedAnswerText(isBackVisible: Boolean): String {
+        return if (isBackVisible) nativeText() else correctText()
+    }
 
 
     private fun recordWrongAnswer(cardId: Int, answer: String) {
@@ -2268,7 +2364,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
 
     private fun String.withGoogleTranslateAttribution(): String {
-        val attribution = "Powered by Google Translate"
+    val attribution = "Powered by Google Translator"
         val clean = trim()
         return when {
             clean.isBlank() -> attribution
@@ -2340,7 +2436,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun quickVocabularyLessonInfo(sourceLanguage: String, targetLanguage: String): String {
-        return "Quick voice captures. Target language: $targetLanguage. Native language: $sourceLanguage. The captured phrase is saved as the target value; native translation can be added later or generated by the configured server API."
+    return "Quick voice captures. Source language: $targetLanguage. Target language: $sourceLanguage. The captured phrase is saved from the source side; translation can be added later or generated by the configured translator."
     }
 
     private fun String.safeIdPart(): String {

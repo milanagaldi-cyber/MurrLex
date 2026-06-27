@@ -41,7 +41,7 @@ class CardNotificationWorker(
         val practiceText = card.mistakeText().ifBlank { card.nativeText().ifBlank { card.correctText() } }
         val notification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
-            .setContentTitle("Make Mistake - $starText")
+            .setContentTitle("MurrLex - $starText")
             .setContentText(practiceText)
             .setStyle(NotificationCompat.BigTextStyle().bigText("$practiceText\n\nLesson: ${lesson.title}\nStars: $starText"))
             .setContentIntent(pendingIntent)
@@ -68,7 +68,7 @@ class CardNotificationWorker(
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val channel = NotificationChannel(
             CHANNEL_ID,
-            "Make Mistake practice",
+            "MurrLex practice",
             NotificationManager.IMPORTANCE_DEFAULT
         ).apply {
             description = "Weighted flashcard reminders from your lessons"
@@ -91,7 +91,7 @@ class CardNotificationWorker(
         const val EXTRA_CARD_ID = "extra_card_id"
         private const val CHANNEL_ID = "polish_cards_practice"
         private const val WORK_NAME = "polish_cards_notifications"
-        private const val NOTIFICATION_TAG = "make_mistake_practice"
+        private const val NOTIFICATION_TAG = "murrlex_practice"
         private const val NOTIFICATION_ID_BASE = 9009
 
         fun schedule(context: Context, intervalMinutes: Int) {
