@@ -7,7 +7,7 @@
 MurrLex is currently a monorepo:
 
 ```text
-MakeMistake/
+murrlex/
   mobile/android/  Android app
   backend/         Django backend prototype
   connector/       Python connector
@@ -51,12 +51,12 @@ Important Android files:
 
 ### Inferred From Behavior
 
-The Android architecture grew through rapid UX iteration. `MainActivity.kt` and `MainViewModel.kt` should be split in v0.02 before adding many new product features.
+The Android architecture grew through rapid UX iteration. `MainActivity.kt` and `MainViewModel.kt` should be split in small verified steps before adding many new product features.
 
 ### Uncertain / Needs User Confirmation
 
 - Whether to keep local JSON as primary storage, move to Room/SQLite on Android, or prioritize backend sync.
-- Whether current local SharedPreferences/file persistence is acceptable for v0.02.
+- Whether current local SharedPreferences/file persistence is acceptable for the next Android phase.
 
 ## Backend Architecture
 
@@ -117,4 +117,3 @@ Backward compatibility exists for old `pl`/`ru` and `mistake`/`value` fields.
 
 - Final JSON schema for MurrLex v0.02.
 - Whether stars are per-card or should become per-side/per-direction.
-

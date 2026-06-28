@@ -358,6 +358,7 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
     var voiceLanguageTag by remember { mutableStateOf(Locale.getDefault().toLanguageTag()) }
     var voiceExpectedLanguage by remember { mutableStateOf("System language") }
     var voiceTarget by remember { mutableStateOf(VoiceInputTarget.ANSWER) }
+    var voiceUseOfflineRecognition by remember { mutableStateOf(false) }
     var voiceNoMatchRetried by remember { mutableStateOf(false) }
     var voiceHoldActive by remember { mutableStateOf(false) }
     var voiceHoldReleasedAt by remember { mutableStateOf(0L) }
@@ -448,7 +449,19 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, languageTag)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, languageTag)
-            putExtra(RecognizerIntent.EXTRA_ONLY_RETURN_LANGUAGE_PREFERENCE, true)
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 60000L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 60000L)
+        }
+    }
+
+    fun onlineSpeechIntent(languageTag: String): Intent {
+        return Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, languageTag)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, languageTag)
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, false)
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 60000L)
             putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 60000L)
         }
@@ -514,7 +527,7 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
                         }
                         VoiceInputTarget.QUICK_VOCABULARY -> {
                             viewModel.addQuickVocabularyCard(spokenText)
-                            if (state.useLocalTranslation) {
+                            if (state.useLocalTranslation || !isDeviceOnline) {
                                 requestGoogleOfflineTranslation(
                                     spokenText,
                                     state.quickVocabularyTargetLanguage,
@@ -524,7 +537,18 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
                                 )
                             }
                         }
-                        VoiceInputTarget.TRANSLATE_INPUT -> viewModel.updateTranslationInput(spokenText)
+                        VoiceInputTarget.TRANSLATE_INPUT -> {
+                            viewModel.updateTranslationInput(spokenText)
+                            if (state.useLocalTranslation || !isDeviceOnline) {
+                                requestGoogleOfflineTranslation(
+                                    spokenText,
+                                    state.quickVocabularyTargetLanguage,
+                                    state.quickVocabularySourceLanguage,
+                                    { translated: String -> viewModel.updateTranslationOutput(translated) },
+                                    { viewModel.showMessage("Offline translation models are not ready for this pair") }
+                                )
+                            }
+                        }
                         VoiceInputTarget.CARD_NATIVE -> viewModel.updateCardDraft(state.cardDraft.copy(nativeValue = spokenText))
                         VoiceInputTarget.CARD_CORRECT -> viewModel.updateCardDraft(state.cardDraft.copy(correctValue = spokenText))
                         VoiceInputTarget.CARD_HINT -> viewModel.updateCardDraft(state.cardDraft.copy(hint = spokenText))
@@ -630,8 +654,13 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
             activeSpeechRecognizer?.stopListening()
             return
         }
-        if (!SpeechRecognizer.isOnDeviceRecognitionAvailable(context)) {
-            viewModel.showMessage("On-device speech recognition is not available on this phone.")
+        val useOfflineRecognition = state.useLocalTranslation || !isDeviceOnline
+        if (useOfflineRecognition && !SpeechRecognizer.isOnDeviceRecognitionAvailable(context)) {
+            viewModel.showMessage("Offline speech recognition is not available on this phone.")
+            return
+        }
+        if (!useOfflineRecognition && !SpeechRecognizer.isRecognitionAvailable(context)) {
+            viewModel.showMessage("Speech recognition is not available on this phone.")
             return
         }
         val draftCard = state.cardDraft.editingCardId?.let { id ->
@@ -679,14 +708,15 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
             ?: OfflineSpeechLanguages.first()
         val selectedSpeechStatus = state.offlineSpeechStatuses[selectedSpeechLanguage.tag]
             ?: CardRepository.OFFLINE_SPEECH_STATUS_NOT_DOWNLOADED
-        if (selectedSpeechStatus != CardRepository.OFFLINE_SPEECH_STATUS_READY) {
+        if (useOfflineRecognition && selectedSpeechStatus != CardRepository.OFFLINE_SPEECH_STATUS_READY) {
             viewModel.showMessage("Download this language first for offline recognition.")
             return
         }
         voiceTarget = target
+        voiceUseOfflineRecognition = useOfflineRecognition
         voiceLanguageTag = selectedSpeechLanguage.tag
-        voiceExpectedLanguage = selectedSpeechLanguage.tag
-        viewModel.showMessage("Speak ${selectedSpeechLanguage.name}")
+        voiceExpectedLanguage = selectedSpeechLanguage.name
+        viewModel.showMessage("Speak ${selectedSpeechLanguage.name}${if (useOfflineRecognition) " offline" else " online"}")
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             voicePermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
             return
@@ -802,27 +832,33 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
             .addOnSuccessListener {
                 translator.translate(cleanText)
                     .addOnSuccessListener(onSuccess)
-                    .addOnFailureListener { onFailure() }
+                    .addOnFailureListener {
+                        onFailure()
+                    }
                     .addOnCompleteListener { translator.close() }
             }
             .addOnFailureListener {
-                viewModel.showMessage("Download translation languages")
                 onFailure()
                 translator.close()
             }
     }
-    fun translateWithGoogleOffline(text: String = state.translationInput) {
+    fun translateWithGoogleOffline(
+        text: String = state.translationInput,
+        notifyOnFailure: Boolean = true
+    ) {
         val cleanText = text.trim()
         if (cleanText.isBlank()) {
             viewModel.updateTranslationOutput("")
             return
         }
-        if (!state.useLocalTranslation) return
         translateGoogleOfflineText(
             text = cleanText,
             sourceLanguageName = state.quickVocabularyTargetLanguage,
             targetLanguageName = state.quickVocabularySourceLanguage,
-            onSuccess = { translated -> viewModel.updateTranslationOutput(translated) }
+            onSuccess = { translated -> viewModel.updateTranslationOutput(translated) },
+            onFailure = {
+                if (notifyOnFailure) viewModel.showMessage("Offline translation models are not ready for this pair")
+            }
         )
     }
 
@@ -921,16 +957,25 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
         state.translationInput,
         state.quickVocabularySourceLanguage,
         state.quickVocabularyTargetLanguage,
-        state.useLocalTranslation
+        state.useLocalTranslation,
+        isDeviceOnline
     ) {
         if (state.screen != AppScreen.TRANSLATE) return@LaunchedEffect
         if (state.translationInput.isBlank()) {
             viewModel.updateTranslationOutput("")
             return@LaunchedEffect
         }
-        if (!state.useLocalTranslation) return@LaunchedEffect
         delay(650)
-        translateWithGoogleOffline(state.translationInput)
+        val useOfflineTranslation = state.useLocalTranslation || !isDeviceOnline
+        if (useOfflineTranslation) {
+            translateWithGoogleOffline(state.translationInput, notifyOnFailure = false)
+        } else {
+            viewModel.translateOnlineText(
+                text = state.translationInput,
+                sourceLanguage = state.quickVocabularyTargetLanguage,
+                targetLanguage = state.quickVocabularySourceLanguage
+            )
+        }
     }
 
     LaunchedEffect("translateAutoSpeak", state.screen, state.translationOutput, translateAutoSpeakEnabled) {
@@ -948,13 +993,17 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
     LaunchedEffect(pendingVoiceStart) {
         if (!pendingVoiceStart) return@LaunchedEffect
         pendingVoiceStart = false
-        if (!SpeechRecognizer.isOnDeviceRecognitionAvailable(context)) {
-            viewModel.showMessage("On-device speech recognition is not available on this phone.")
+        if (voiceUseOfflineRecognition && !SpeechRecognizer.isOnDeviceRecognitionAvailable(context)) {
+            viewModel.showMessage("Offline speech recognition is not available on this phone.")
+            return@LaunchedEffect
+        }
+        if (!voiceUseOfflineRecognition && !SpeechRecognizer.isRecognitionAvailable(context)) {
+            viewModel.showMessage("Speech recognition is not available on this phone.")
             return@LaunchedEffect
         }
         val selectedSpeechStatus = state.offlineSpeechStatuses[voiceLanguageTag]
             ?: CardRepository.OFFLINE_SPEECH_STATUS_NOT_DOWNLOADED
-        if (selectedSpeechStatus != CardRepository.OFFLINE_SPEECH_STATUS_READY) {
+        if (voiceUseOfflineRecognition && selectedSpeechStatus != CardRepository.OFFLINE_SPEECH_STATUS_READY) {
             viewModel.showMessage("Download this language first for offline recognition.")
             return@LaunchedEffect
         }
@@ -967,9 +1016,21 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
         lastVoiceActivityAt = System.currentTimeMillis()
         try {
             releaseSpeechRecognizer()
-            activeSpeechRecognizer = SpeechRecognizer.createOnDeviceSpeechRecognizer(context).also { recognizer ->
+            activeSpeechRecognizer = (
+                if (voiceUseOfflineRecognition) {
+                    SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
+                } else {
+                    SpeechRecognizer.createSpeechRecognizer(context)
+                }
+            ).also { recognizer ->
                 recognizer.setRecognitionListener(buildRecognitionListener())
-                recognizer.startListening(offlineSpeechIntent(voiceLanguageTag))
+                recognizer.startListening(
+                    if (voiceUseOfflineRecognition) {
+                        offlineSpeechIntent(voiceLanguageTag)
+                    } else {
+                        onlineSpeechIntent(voiceLanguageTag)
+                    }
+                )
             }
         } catch (_: Exception) {
             voiceRecording = false
@@ -1078,7 +1139,7 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
     if (voiceDialogVisible) {
         VoiceInputDialog(
             status = voiceStatus,
-            languageLabel = if (voiceTarget == VoiceInputTarget.TRANSLATE_INPUT) "Translate offline - $voiceExpectedLanguage" else voiceExpectedLanguage,
+            languageLabel = "${if (voiceUseOfflineRecognition) "Offline" else "Online"} - $voiceExpectedLanguage",
             elapsedMs = voiceElapsedMs,
             isRecording = voiceRecording,
             onHoldStart = {
@@ -1307,7 +1368,7 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
                         val sourceLanguage = if (state.isBackVisible) card.sourceLanguage.ifBlank { state.selectedLesson?.sourceLanguage.orEmpty() } else card.targetLanguage.ifBlank { state.selectedLesson?.targetLanguage.orEmpty() }
                         val targetLanguage = if (state.isBackVisible) card.targetLanguage.ifBlank { state.selectedLesson?.targetLanguage.orEmpty() } else card.sourceLanguage.ifBlank { state.selectedLesson?.sourceLanguage.orEmpty() }
                         if (!state.useLocalTranslation) {
-                            viewModel.showMessage("Enable local translation")
+                            viewModel.showMessage("Enable critical offline mode")
                         } else {
                             translateGoogleOfflineText(
                                 text = sourceText,
@@ -1942,8 +2003,8 @@ private fun SettingsScreen(
                     "en" to "EN - English",
                     "es" to "ES - Espanol",
                     "pl" to "PL - Polski",
-                    "ru" to "RU - Russian",
-                    "be" to "BY - Belarusian",
+                    "ru" to "\uD83C\uDFF3\uFE0F RU - Russian",
+                    "be" to "\uD83C\uDFF3\uFE0F BY - Belarusian",
                     "uk" to "UA - Ukrainian",
                     "de" to "DE - Deutsch"
                 )
@@ -2258,7 +2319,7 @@ private fun SettingsScreen(
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
-                    text = "Choose the language pair for phrases captured with the microphone and used by Translate. Offline translation uses Google Translate models downloaded on this device.",
+                    text = "Choose the language pair for microphone input and Translate. Online translation uses the free Google Translate service by default; local translation is only for critical offline use.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -2273,8 +2334,8 @@ private fun SettingsScreen(
                onValueChange = onQuickVocabularyTargetChange
            )
                 SettingsSwitchRow(
-                    title = "Local translation",
-                    description = "Use on-device Google Translate after downloading the selected language pair. Translations are powered by Google Translate and may be inaccurate.",
+                    title = "Critical offline mode",
+                    description = "Use downloaded on-device speech and Google Translate models when online recognition or free online translation is unavailable.",
                     checked = useLocalTranslation,
                     onCheckedChange = onUseLocalTranslationChange
                 )
@@ -2329,14 +2390,14 @@ private fun SettingsScreen(
                 OutlinedTextField(
                     value = translationApiUrl,
                     onValueChange = onTranslationApiUrlChange,
-                    label = { Text("Translation API URL") },
+                    label = { Text("Future Translation API URL") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
                     value = translationApiToken,
                     onValueChange = onTranslationApiTokenChange,
-                    label = { Text("Translation API token") },
+                    label = { Text("Future Translation API token") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -2728,11 +2789,11 @@ private data class OnboardingCopy(
 )
 
 private val OnboardingLanguages = listOf(
-    OnboardingLanguageOption("be", "Belarusian", "\uD83C\uDDE7\uD83C\uDDFE BY - беларуская"),
+    OnboardingLanguageOption("be", "Belarusian", "\uD83C\uDFF3\uFE0F BY - Belarusian"),
     OnboardingLanguageOption("en", "English", "\uD83C\uDDEC\uD83C\uDDE7 EN - English"),
     OnboardingLanguageOption("de", "German", "\uD83C\uDDE9\uD83C\uDDEA DE - Deutsch"),
     OnboardingLanguageOption("pl", "Polish", "\uD83C\uDDF5\uD83C\uDDF1 PL - polski"),
-    OnboardingLanguageOption("ru", "Russian", "\uD83C\uDDF7\uD83C\uDDFA RU - русский"),
+    OnboardingLanguageOption("ru", "Russian", "\uD83C\uDFF3\uFE0F RU - Russian"),
     OnboardingLanguageOption("es", "Spanish", "\uD83C\uDDEA\uD83C\uDDF8 ES - español"),
     OnboardingLanguageOption("uk", "Ukrainian", "\uD83C\uDDFA\uD83C\uDDE6 UA - українська")
 )
@@ -3020,6 +3081,7 @@ private fun TranslateScreen(
                 modifier = Modifier.weight(1f),
                 attribution = state.translationOutput.isNotBlank(),
                 onSpeak = onSpeakTranslation,
+                onVoiceInput = onVoiceInput,
                 borderColor = translationBorderColor,
                 borderHighlighted = translationPulse,
                 onClick = { splitResultExpanded = !splitResultExpanded }
@@ -3248,6 +3310,7 @@ private fun SplitTranslationPanel(
     onValueChange: (String) -> Unit = {},
     attribution: Boolean = false,
     onSpeak: (() -> Unit)? = null,
+    onVoiceInput: (() -> Unit)? = null,
     borderColor: Color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
     borderHighlighted: Boolean = false,
     onClick: (() -> Unit)? = null
@@ -3269,10 +3332,35 @@ private fun SplitTranslationPanel(
                     .align(if (flipped) Alignment.BottomEnd else Alignment.TopStart)
                     .graphicsLayer { rotationZ = if (flipped) 180f else 0f }
             )
+            if (onVoiceInput != null) {
+                Surface(
+                    modifier = Modifier
+                        .align(if (flipped) Alignment.BottomStart else Alignment.TopEnd)
+                        .graphicsLayer { rotationZ = if (flipped) 180f else 0f }
+                        .size(54.dp),
+                    shape = RoundedCornerShape(20.dp),
+                    color = Color(0xFFE4F6E8)
+                ) {
+                    IconButton(onClick = onVoiceInput) {
+                        Icon(
+                            Icons.Default.Mic,
+                            contentDescription = "Speak target language",
+                            modifier = Modifier.size(28.dp),
+                            tint = Color(0xFF234231)
+                        )
+                    }
+                }
+            }
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(if (flipped) PaddingValues(bottom = 42.dp) else PaddingValues(top = 42.dp))
+                    .padding(
+                        if (flipped) {
+                            PaddingValues(bottom = if (onVoiceInput != null) 64.dp else 42.dp)
+                        } else {
+                            PaddingValues(top = 42.dp)
+                        }
+                    )
                     .graphicsLayer { rotationZ = if (flipped) 180f else 0f },
                 verticalArrangement = Arrangement.Top,
                 horizontalAlignment = Alignment.Start

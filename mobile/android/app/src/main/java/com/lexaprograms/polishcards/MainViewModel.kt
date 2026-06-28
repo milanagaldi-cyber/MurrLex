@@ -10,9 +10,11 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -278,6 +280,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun translateOnlineText(
+        text: String,
+        sourceLanguage: String,
+        targetLanguage: String
+    ) {
+        val cleanText = text.trim()
+        if (cleanText.isBlank()) {
+            updateTranslationOutput("")
+            return
+        }
+        viewModelScope.launch {
+            val translated = runCatching {
+                requestFreeOnlineTranslation(cleanText, sourceLanguage, targetLanguage)
+            }.getOrNull().orEmpty().trim()
+            val currentState = _uiState.value
+            if (currentState.translationInput.trim() != cleanText) return@launch
+            if (translated.isBlank()) {
+                _uiState.value = currentState.copy(message = "Online translation failed")
+            } else {
+                updateTranslationOutput(translated)
+            }
+        }
+    }
+
     fun clearTranslationInput() {
         _uiState.value = _uiState.value.copy(translationInput = "", translationOutput = "", message = "Cleared")
     }
@@ -481,10 +507,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
 
     fun setUseLocalTranslation(enabled: Boolean) {
+        val wasEnabled = _uiState.value.useLocalTranslation
         repository.saveUseLocalTranslation(enabled)
         _uiState.value = _uiState.value.copy(
             useLocalTranslation = enabled,
-            message = if (enabled) "Offline Google Translate enabled" else "Offline Google Translate disabled"
+            message = when {
+                enabled && !wasEnabled -> "Offline mode enabled. Using downloaded language models."
+                !enabled && wasEnabled -> "Online translation mode enabled"
+                else -> _uiState.value.message
+            }
         )
     }
 
@@ -1973,6 +2004,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             selectedLessonIds = emptySet(),
             message = "Added: $cleanPhrase"
         )
+        if (!state.useLocalTranslation) {
+            translateQuickVocabularyCard(
+                lessonId = updatedLesson.id,
+                cardId = 1,
+                phrase = cleanPhrase,
+                sourceLanguage = targetLanguage,
+                targetLanguage = sourceLanguage
+            )
+        }
     }
 
     fun applyQuickVocabularyGoogleTranslation(phrase: String, translated: String) {
@@ -2239,17 +2279,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         cardId: Int,
         phrase: String,
         sourceLanguage: String,
-        targetLanguage: String,
-        apiUrl: String,
-        apiToken: String
+        targetLanguage: String
     ) {
         viewModelScope.launch {
             val translated = runCatching {
-                if (apiUrl.isNotBlank() && apiToken.isNotBlank()) {
-                    requestTranslation(apiUrl, apiToken, phrase, sourceLanguage, targetLanguage)
-                } else {
-                    ""
-                }
+                requestFreeOnlineTranslation(phrase, sourceLanguage, targetLanguage)
             }.getOrNull().orEmpty().trim()
             if (translated.isBlank()) {
                 _uiState.value = _uiState.value.copy(message = "Added: $phrase. Target translation pending")
@@ -2283,6 +2317,52 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private suspend fun requestFreeOnlineTranslation(
+        phrase: String,
+        sourceLanguage: String,
+        targetLanguage: String
+    ): String = withContext(Dispatchers.IO) {
+        val sourceCode = freeOnlineLanguageCode(sourceLanguage)
+        val targetCode = freeOnlineLanguageCode(targetLanguage)
+        val encodedText = URLEncoder.encode(phrase, Charsets.UTF_8.name())
+        val url = URL(
+            "https://translate.googleapis.com/translate_a/single" +
+                "?client=gtx&sl=$sourceCode&tl=$targetCode&dt=t&q=$encodedText"
+        )
+        val connection = (url.openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 12_000
+            readTimeout = 20_000
+            setRequestProperty("Accept", "application/json")
+            setRequestProperty("User-Agent", "MurrLex/${BuildConfig.VERSION_NAME}")
+        }
+        val status = connection.responseCode
+        val responseText = (if (status in 200..299) connection.inputStream else connection.errorStream)
+            ?.bufferedReader(Charsets.UTF_8)
+            ?.use { it.readText() }
+            .orEmpty()
+        connection.disconnect()
+        if (status !in 200..299) return@withContext ""
+        val chunks = JSONArray(responseText).optJSONArray(0) ?: return@withContext ""
+        buildString {
+            for (index in 0 until chunks.length()) {
+                append(chunks.optJSONArray(index)?.optString(0).orEmpty())
+            }
+        }.trim()
+    }
+
+    private fun freeOnlineLanguageCode(language: String): String {
+        return when (language.trim().lowercase(Locale.ROOT)) {
+            "english", "en" -> "en"
+            "spanish", "es", "espanol" -> "es"
+            "polish", "pl", "polski" -> "pl"
+            "russian", "ru" -> "ru"
+            "belarusian", "belarus", "by", "be" -> "be"
+            "ukrainian", "uk", "ua" -> "uk"
+            "german", "de", "deutsch" -> "de"
+            else -> language.trim().takeIf { it.length in 2..3 }?.lowercase(Locale.ROOT) ?: "auto"
+        }
+    }
     private suspend fun requestTranslation(
         apiUrl: String,
         apiToken: String,

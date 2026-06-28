@@ -34,6 +34,24 @@ This may be fine for debug builds, but a release decision is needed later.
 
 Speech recognition, offline model download, TTS, and translation behavior depends on Android device support, installed services, permissions, and downloaded language models.
 
+## Translator Mode Coupling
+
+Translate/Split now has two paths:
+
+- Online by default through the free Google Translate endpoint.
+- Offline fallback through Android on-device speech recognition and ML Kit Google Translate downloaded models.
+
+Risk:
+
+- Future refactors can accidentally update only the red/green status UI while leaving translation or recognition on the wrong path.
+- ML Kit offline translation must still pass through `downloadModelIfNeeded()` before `translate()`, even when the model is already downloaded.
+
+Suggested approach:
+
+- Keep the effective offline condition aligned as `state.useLocalTranslation || !isDeviceOnline`.
+- Re-test both manual input and microphone input whenever translator code changes.
+- Re-test Split mirrored target-side microphone after any Translate layout or language-picker changes.
+
 ## Backend Status
 
 Backend and connector exist but are not the active mobile data source. Treat them as preserved prototypes until the user requests server integration again.

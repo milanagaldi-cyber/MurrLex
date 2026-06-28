@@ -16,8 +16,8 @@ murrlex/
 
 - App name: `MurrLex`
 - Android package/namespace still uses the legacy id: `com.lexaprograms.polishcards`
-- Version visible in the app settings: `MurrLex v0.05`
-- Main working branch: `murrlex-0.02`
+- Version visible in the app settings: `MurrLex v0.11`
+- Main working branch: `Android_Main`
 - Stable debug APK output: `mobile/android/app/build/outputs/apk/debug/app-debug.apk`
 
 ## Build Android
@@ -42,13 +42,16 @@ C:\CodexProjects\murrlex\mobile\android\app\build\outputs\apk\debug\app-debug.ap
 Confirmed from code and recent validation:
 
 - Android Gradle project builds successfully.
-- `lintDebug` succeeds.
-- `assembleDebug` succeeds.
+- Latest `assembleDebug` succeeds.
+- `lintDebug` succeeded at the earlier checkpoint but was not rerun for v0.11.
 - Lessons and cards are stored locally.
 - Built-in lesson JSON assets are present.
 - Study modes include Original, Alphabetical, and Random.
 - Card, Test, Translate, and Split UI paths exist.
 - Voice input and text-to-speech paths exist.
+- Translate/Split uses free online Google Translate by default and falls back to ML Kit offline translation when the device is offline or critical offline mode is enabled.
+- Offline speech recognition works through Android on-device SpeechRecognizer after the selected language model is downloaded.
+- Split mode has microphones on both sides; the translated-side microphone listens in the target language.
 - Notification worker exists.
 - Quick voice widget provider exists.
 - Settings include version log and language-related options.
@@ -66,4 +69,4 @@ The backend and connector are preserved in this repository for future phases. Th
 
 ## Next Recommended Task
 
-For MurrLex v0.02, start with stabilization only: verify a clean install, confirm text encoding on bundled lessons, then extract localization/settings code in small commits.
+For the next Android_Main thread, start by preserving the working translator behavior: verify online translation, offline speech recognition, offline ML Kit translation, and Split mirrored microphone before refactoring.

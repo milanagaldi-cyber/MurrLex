@@ -15,9 +15,9 @@ ChatGPT cannot call `http://127.0.0.1:8000` on your computer directly. It needs 
 ## 1. Start Django
 
 ```powershell
-cd C:\CodexProjects\MakeMistake
+cd C:\CodexProjects\murrlex
 Copy-Item .env.example .env
-cd C:\CodexProjects\MakeMistake\backend
+cd C:\CodexProjects\murrlex\backend
 .\.venv\Scripts\python.exe manage.py runserver
 ```
 
@@ -63,7 +63,7 @@ CSRF_TRUSTED_ORIGINS=https://*.trycloudflare.com
 The Lab UI requires Django login. Create a temporary user:
 
 ```powershell
-cd C:\CodexProjects\MakeMistake\backend
+cd C:\CodexProjects\murrlex\backend
 $env:DJANGO_SUPERUSER_PASSWORD = "choose-a-temporary-password"
 .\.venv\Scripts\python.exe manage.py createsuperuser --username methodist --email methodist@example.com --noinput
 ```
@@ -83,7 +83,7 @@ Use a temporary password and change/delete this user after testing.
 Open:
 
 ```text
-C:\CodexProjects\MakeMistake\docs\chatgpt-action-openapi.yaml
+C:\CodexProjects\murrlex\docs\chatgpt-action-openapi.yaml
 ```
 
 Replace:

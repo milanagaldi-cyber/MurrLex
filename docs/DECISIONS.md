@@ -19,9 +19,17 @@ Reason: the immediate goal is a stable mobile app and clean v0.02 thread.
 
 ## Android Version At Checkpoint
 
-The visible Android version is `MurrLex v0.05`.
+The visible Android version is `MurrLex v0.11`.
 
-Reason: user requested the MurrLex v0.02 working thread build to show MurrLex v0.05.
+Reason: user requested every new Android build to increase the app version by `0.01`; v0.11 is the committed checkpoint for the working Translate/Split online/offline translator flow.
+
+## Translator Online/Offline Direction
+
+Translate/Split should use online translation by default through the current free Google Translate endpoint. Backend/OpenAI translation is intentionally parked for later.
+
+Critical offline mode and loss of connectivity should use Android on-device speech recognition and ML Kit Google Translate with downloaded language models.
+
+Reason: offline is a critical fallback, while normal quality should come from online translation until the future backend/OpenAI model is available.
 
 ## Safe Build Commands
 

@@ -6,10 +6,19 @@ This repository is the MurrLex monorepo. Use this file as the first stop for any
 
 - Local path: `C:\CodexProjects\murrlex`
 - GitHub: `https://github.com/milanagaldi-cyber/MurrLex`
-- Working branch for the next phase: `murrlex-0.02`
-- Android visible app version: `MurrLex v0.05`
+- Working branch for the next phase: `Android_Main`
+- Android visible app version: `MurrLex v0.11`
 - Latest verified Android build command: `gradlew.bat assembleDebug`
-- Latest verified lint command: `gradlew.bat lintDebug`
+- Latest verified lint command: not rerun for v0.11; previous checkpoint used `gradlew.bat lintDebug`
+- Debug APK: `C:\CodexProjects\murrlex\mobile\android\app\build\outputs\apk\debug\app-debug.apk`
+
+## Current Android Translator Notes
+
+- Translate/Split defaults to online translation through the free Google Translate endpoint while backend/OpenAI translation is parked for later.
+- Critical offline fallback uses Android on-device speech recognition and ML Kit Google Translate downloaded language models.
+- The red offline title dot must drive behavior, not only UI: offline translation/recognition should run when `!isDeviceOnline` even if the manual critical offline toggle is off.
+- Split mode includes a mirrored microphone on the translated side; the conversation partner speaks in the target language.
+- RU and BY language options intentionally use a white flag glyph.
 
 ## Rules For The Next Thread
 
