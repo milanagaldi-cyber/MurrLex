@@ -10,7 +10,15 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.jsonPrimitive
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.File
+import java.security.MessageDigest
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.UUID
+import kotlin.random.Random
 
 class CardRepository(private val context: Context) {
     private val preferences = context.getSharedPreferences("polish_cards_store", Context.MODE_PRIVATE)
@@ -116,19 +124,19 @@ class CardRepository(private val context: Context) {
     }
 
     fun loadQuickVocabularySourceLanguage(): String {
-        return preferences.getString(KEY_QUICK_VOCABULARY_SOURCE_LANGUAGE, "Polish") ?: "Polish"
+        return preferences.getString(KEY_QUICK_VOCABULARY_SOURCE_LANGUAGE, "Russian") ?: "Russian"
     }
 
     fun saveQuickVocabularySourceLanguage(language: String) {
-        preferences.edit().putString(KEY_QUICK_VOCABULARY_SOURCE_LANGUAGE, language.trim().ifBlank { "Polish" }).apply()
+        preferences.edit().putString(KEY_QUICK_VOCABULARY_SOURCE_LANGUAGE, language.trim().ifBlank { "Russian" }).apply()
     }
 
     fun loadQuickVocabularyTargetLanguage(): String {
-        return preferences.getString(KEY_QUICK_VOCABULARY_TARGET_LANGUAGE, "Russian") ?: "Russian"
+        return preferences.getString(KEY_QUICK_VOCABULARY_TARGET_LANGUAGE, "Polish") ?: "Polish"
     }
 
     fun saveQuickVocabularyTargetLanguage(language: String) {
-        preferences.edit().putString(KEY_QUICK_VOCABULARY_TARGET_LANGUAGE, language.trim().ifBlank { "Russian" }).apply()
+        preferences.edit().putString(KEY_QUICK_VOCABULARY_TARGET_LANGUAGE, language.trim().ifBlank { "Polish" }).apply()
     }
 
 
@@ -150,19 +158,280 @@ class CardRepository(private val context: Context) {
     }
 
     fun loadTranslationApiUrl(): String {
-        return preferences.getString(KEY_TRANSLATION_API_URL, "") ?: ""
+        return loadOpenAiBaseUrl()
     }
 
     fun saveTranslationApiUrl(url: String) {
-        preferences.edit().putString(KEY_TRANSLATION_API_URL, url.trim()).apply()
+        saveOpenAiBaseUrl(url)
     }
 
     fun loadTranslationApiToken(): String {
-        return preferences.getString(KEY_TRANSLATION_API_TOKEN, "") ?: ""
+        return loadOpenAiApiKey()
     }
 
     fun saveTranslationApiToken(token: String) {
-        preferences.edit().putString(KEY_TRANSLATION_API_TOKEN, token.trim()).apply()
+        saveOpenAiApiKey(token)
+    }
+
+    fun loadUseOpenAiModels(): Boolean {
+        return preferences.getBoolean(KEY_USE_OPENAI_MODELS, false)
+    }
+
+    fun saveUseOpenAiModels(enabled: Boolean) {
+        preferences.edit().putBoolean(KEY_USE_OPENAI_MODELS, enabled).apply()
+    }
+
+    fun loadOpenAiBaseUrl(): String {
+        return preferences.getString(KEY_OPENAI_BASE_URL, DEFAULT_OPENAI_BASE_URL)?.trim()
+            ?.ifBlank { DEFAULT_OPENAI_BASE_URL }
+            ?: DEFAULT_OPENAI_BASE_URL
+    }
+
+    fun saveOpenAiBaseUrl(url: String) {
+        preferences.edit().putString(KEY_OPENAI_BASE_URL, url.trim().ifBlank { DEFAULT_OPENAI_BASE_URL }).apply()
+    }
+
+    fun loadOpenAiApiKey(): String {
+        return preferences.getString(KEY_OPENAI_API_KEY, "") ?: ""
+    }
+
+    fun saveOpenAiApiKey(apiKey: String) {
+        preferences.edit().putString(KEY_OPENAI_API_KEY, apiKey.trim()).apply()
+    }
+
+    fun loadOpenAiSpeechModel(): String {
+        return preferences.getString(KEY_OPENAI_SPEECH_MODEL, DEFAULT_OPENAI_SPEECH_MODEL)
+            ?: DEFAULT_OPENAI_SPEECH_MODEL
+    }
+
+    fun saveOpenAiSpeechModel(model: String) {
+        preferences.edit().putString(KEY_OPENAI_SPEECH_MODEL, model.trim().ifBlank { DEFAULT_OPENAI_SPEECH_MODEL }).apply()
+    }
+
+    fun loadOpenAiTextModel(): String {
+        return preferences.getString(KEY_OPENAI_TEXT_MODEL, DEFAULT_OPENAI_TEXT_MODEL)
+            ?: DEFAULT_OPENAI_TEXT_MODEL
+    }
+
+    fun saveOpenAiTextModel(model: String) {
+        preferences.edit().putString(KEY_OPENAI_TEXT_MODEL, model.trim().ifBlank { DEFAULT_OPENAI_TEXT_MODEL }).apply()
+    }
+
+    fun loadOpenAiTtsModel(): String {
+        return preferences.getString(KEY_OPENAI_TTS_MODEL, DEFAULT_OPENAI_TTS_MODEL)
+            ?: DEFAULT_OPENAI_TTS_MODEL
+    }
+
+    fun saveOpenAiTtsModel(model: String) {
+        preferences.edit().putString(KEY_OPENAI_TTS_MODEL, model.trim().ifBlank { DEFAULT_OPENAI_TTS_MODEL }).apply()
+    }
+
+    fun loadOpenAiTtsVoice(): String {
+        return preferences.getString(KEY_OPENAI_TTS_VOICE, DEFAULT_OPENAI_TTS_VOICE)
+            ?: DEFAULT_OPENAI_TTS_VOICE
+    }
+
+    fun saveOpenAiTtsVoice(voice: String) {
+        preferences.edit().putString(KEY_OPENAI_TTS_VOICE, voice.trim().ifBlank { DEFAULT_OPENAI_TTS_VOICE }).apply()
+    }
+
+    fun loadBelarusianTtsProvider(): String {
+        return preferences.getString(KEY_BELARUSIAN_TTS_PROVIDER, DEFAULT_BELARUSIAN_TTS_PROVIDER)
+            ?: DEFAULT_BELARUSIAN_TTS_PROVIDER
+    }
+
+    fun saveBelarusianTtsProvider(provider: String) {
+        preferences.edit()
+            .putString(KEY_BELARUSIAN_TTS_PROVIDER, provider.trim().ifBlank { DEFAULT_BELARUSIAN_TTS_PROVIDER })
+            .apply()
+    }
+
+    fun loadElevenLabsApiKey(): String {
+        return preferences.getString(KEY_ELEVENLABS_API_KEY, "") ?: ""
+    }
+
+    fun saveElevenLabsApiKey(apiKey: String) {
+        preferences.edit().putString(KEY_ELEVENLABS_API_KEY, apiKey.trim()).apply()
+    }
+
+    fun loadElevenLabsModel(): String {
+        return preferences.getString(KEY_ELEVENLABS_MODEL, DEFAULT_ELEVENLABS_MODEL)
+            ?: DEFAULT_ELEVENLABS_MODEL
+    }
+
+    fun saveElevenLabsModel(model: String) {
+        preferences.edit().putString(KEY_ELEVENLABS_MODEL, model.trim().ifBlank { DEFAULT_ELEVENLABS_MODEL }).apply()
+    }
+
+    fun loadElevenLabsVoiceId(): String {
+        return preferences.getString(KEY_ELEVENLABS_VOICE_ID, DEFAULT_ELEVENLABS_BELARUSIAN_VOICE_ID)
+            ?: DEFAULT_ELEVENLABS_BELARUSIAN_VOICE_ID
+    }
+
+    fun saveElevenLabsVoiceId(voiceId: String) {
+        preferences.edit()
+            .putString(KEY_ELEVENLABS_VOICE_ID, voiceId.trim().ifBlank { DEFAULT_ELEVENLABS_BELARUSIAN_VOICE_ID })
+            .apply()
+    }
+
+    fun loadElevenLabsTtsLanguageCodes(): Set<String> {
+        val raw = preferences.getString(KEY_ELEVENLABS_TTS_LANGUAGE_CODES, null)
+        if (raw.isNullOrBlank()) return DEFAULT_ELEVENLABS_TTS_LANGUAGE_CODES
+        return runCatching {
+            val array = JSONArray(raw)
+            buildSet {
+                for (index in 0 until array.length()) {
+                    val code = array.optString(index).trim().lowercase(Locale.ROOT)
+                    if (code.isNotBlank()) add(code)
+                }
+            }.ifEmpty { DEFAULT_ELEVENLABS_TTS_LANGUAGE_CODES }
+        }.getOrDefault(DEFAULT_ELEVENLABS_TTS_LANGUAGE_CODES)
+    }
+
+    fun saveElevenLabsTtsLanguageCodes(languageCodes: Set<String>) {
+        val array = JSONArray()
+        languageCodes
+            .map { it.trim().lowercase(Locale.ROOT) }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .sorted()
+            .forEach(array::put)
+        preferences.edit()
+            .putString(KEY_ELEVENLABS_TTS_LANGUAGE_CODES, array.toString())
+            .apply()
+    }
+
+    fun loadOpenAiCacheDurationMinutes(): Long {
+        return preferences.getLong(KEY_OPENAI_CACHE_DURATION_MINUTES, DEFAULT_OPENAI_CACHE_DURATION_MINUTES)
+    }
+
+    fun loadOpenAiVoiceSilenceTimeoutMs(): Long {
+        return preferences.getLong(KEY_OPENAI_VOICE_SILENCE_TIMEOUT_MS, DEFAULT_OPENAI_VOICE_SILENCE_TIMEOUT_MS)
+            .coerceIn(MIN_OPENAI_VOICE_SILENCE_TIMEOUT_MS, MAX_OPENAI_VOICE_SILENCE_TIMEOUT_MS)
+    }
+
+    fun loadCardStatusBlinkIntervalMs(): Long {
+        val saved = preferences.getLong(KEY_CARD_STATUS_BLINK_INTERVAL_MS, DEFAULT_CARD_STATUS_BLINK_INTERVAL_MS)
+        return if (saved in CARD_STATUS_BLINK_INTERVAL_OPTIONS_MS) saved else DEFAULT_CARD_STATUS_BLINK_INTERVAL_MS
+    }
+
+    fun saveCardStatusBlinkIntervalMs(intervalMs: Long) {
+        val normalized = if (intervalMs in CARD_STATUS_BLINK_INTERVAL_OPTIONS_MS) {
+            intervalMs
+        } else {
+            DEFAULT_CARD_STATUS_BLINK_INTERVAL_MS
+        }
+        preferences.edit().putLong(KEY_CARD_STATUS_BLINK_INTERVAL_MS, normalized).apply()
+    }
+
+    fun saveOpenAiVoiceSilenceTimeoutMs(timeoutMs: Long) {
+        preferences.edit()
+            .putLong(
+                KEY_OPENAI_VOICE_SILENCE_TIMEOUT_MS,
+                timeoutMs.coerceIn(MIN_OPENAI_VOICE_SILENCE_TIMEOUT_MS, MAX_OPENAI_VOICE_SILENCE_TIMEOUT_MS)
+            )
+            .apply()
+    }
+
+    fun saveOpenAiCacheDurationMinutes(minutes: Long) {
+        val normalized = when {
+            minutes < 0L -> -1L
+            minutes <= 5L -> DEFAULT_OPENAI_CACHE_DURATION_MINUTES
+            minutes > MAX_OPENAI_CACHE_DURATION_MINUTES -> MAX_OPENAI_CACHE_DURATION_MINUTES
+            else -> minutes
+        }
+        preferences.edit().putLong(KEY_OPENAI_CACHE_DURATION_MINUTES, normalized).apply()
+    }
+
+    fun getCachedOpenAiText(
+        task: String,
+        model: String,
+        input: String,
+        sourceLanguage: String,
+        targetLanguage: String
+    ): String? {
+        val key = openAiCacheKey(task, model, input, sourceLanguage, targetLanguage)
+        val file = File(openAiCacheDir(), "$key.json")
+        if (!file.exists()) return null
+        val entry = runCatching { JSONObject(file.readText(Charsets.UTF_8)) }.getOrNull() ?: return null
+        val createdAt = entry.optLong("createdAt", 0L)
+        if (!isOpenAiCacheEntryFresh(createdAt)) {
+            file.delete()
+            return null
+        }
+        return entry.optString("output").trim().ifBlank { null }
+    }
+
+    fun saveOpenAiTextCache(
+        task: String,
+        model: String,
+        input: String,
+        sourceLanguage: String,
+        targetLanguage: String,
+        output: String
+    ) {
+        if (output.isBlank()) return
+        val key = openAiCacheKey(task, model, input, sourceLanguage, targetLanguage)
+        val file = File(openAiCacheDir(), "$key.json")
+        openAiCacheDir().mkdirs()
+        val entry = JSONObject()
+            .put("type", "text")
+            .put("task", task)
+            .put("model", model)
+            .put("sourceLanguage", sourceLanguage)
+            .put("targetLanguage", targetLanguage)
+            .put("createdAt", System.currentTimeMillis())
+            .put("output", output)
+        file.writeText(entry.toString(), Charsets.UTF_8)
+    }
+
+    fun clearOpenAiCache(): Int {
+        return listOf(openAiCacheDir(), cardCacheDir()).sumOf { dir ->
+            if (!dir.exists()) {
+                0
+            } else {
+                dir.walkBottomUp()
+                    .filter { it != dir }
+                    .count { it.delete() }
+            }
+        }
+    }
+
+    fun addOpenAiActivityLog(action: String, details: String = "") {
+        val cleanAction = action.trim()
+        if (cleanAction.isBlank()) return
+        val now = System.currentTimeMillis()
+        val next = prunedOpenAiActivityLogArray(now)
+        next.put(
+            JSONObject()
+                .put("createdAt", now)
+                .put("action", cleanAction)
+                .put("details", details.trim().take(1200))
+        )
+        preferences.edit().putString(KEY_OPENAI_ACTIVITY_LOG, next.toString()).apply()
+    }
+
+    fun loadOpenAiActivityLog(): List<String> {
+        val now = System.currentTimeMillis()
+        val pruned = prunedOpenAiActivityLogArray(now)
+        preferences.edit().putString(KEY_OPENAI_ACTIVITY_LOG, pruned.toString()).apply()
+        val formatter = SimpleDateFormat("MM-dd HH:mm", Locale.ROOT)
+        return (0 until pruned.length()).mapNotNull { index ->
+            val entry = pruned.optJSONObject(index) ?: return@mapNotNull null
+            val createdAt = entry.optLong("createdAt", 0L)
+            val action = entry.optString("action").trim()
+            val details = entry.optString("details").trim()
+            if (createdAt <= 0L || action.isBlank()) return@mapNotNull null
+            buildString {
+                append(formatter.format(Date(createdAt)))
+                append(" - ")
+                append(action)
+                if (details.isNotBlank()) {
+                    append(" - ")
+                    append(details)
+                }
+            }
+        }.asReversed()
     }
 
     fun loadOfflineSpeechLanguageTag(): String {
@@ -203,16 +472,27 @@ class CardRepository(private val context: Context) {
     fun findRandomNotificationCard(): Pair<Lesson, Flashcard>? {
         val weightedCards = loadLessons(includeHidden = false)
             .flatMap { lesson -> lesson.cards.map { card -> lesson to card } }
-            .flatMap { pair ->
-                val weight = when (pair.second.starCount()) {
-                    1 -> 79
-                    2 -> 20
-                    3 -> 1
-                    else -> 0
-                }
-                List(weight) { pair }
+            .mapNotNull { pair ->
+                val weight = notificationWeight(pair.second)
+                if (weight > 0) pair to weight else null
             }
-        return weightedCards.randomOrNull()
+        val totalWeight = weightedCards.sumOf { it.second }
+        if (totalWeight <= 0) return null
+        var pick = Random.nextInt(totalWeight)
+        for ((pair, weight) in weightedCards) {
+            if (pick < weight) return pair
+            pick -= weight
+        }
+        return weightedCards.lastOrNull()?.first
+    }
+
+    private fun notificationWeight(card: Flashcard): Int {
+        return when (card.starCount()) {
+            1 -> 79
+            2 -> 20
+            3 -> 1
+            else -> 0
+        }
     }
 
     fun findLessonCard(lessonId: String, cardId: Int): Pair<Lesson, Flashcard>? {
@@ -294,6 +574,7 @@ class CardRepository(private val context: Context) {
             .putString(KEY_HIDDEN_LESSONS, json.encodeToString(hiddenLessonIds))
             .putString(KEY_LESSON_ORDER, json.encodeToString(lessonOrder))
             .commit()
+        syncLessonCardCache(lesson.id, lesson.withHeaderLanguages())
     }
 
     fun saveLessonOrder(lessonIds: List<String>) {
@@ -331,6 +612,7 @@ class CardRepository(private val context: Context) {
             .putString(KEY_LESSON_ORDER, json.encodeToString(lessonOrder))
             .also { editor -> lessonIds.forEach { editor.remove(studySessionKey(it)) } }
             .apply()
+        lessonIds.forEach(::deleteLessonCardCache)
     }
 
     fun incrementCompletedCount(lessonId: String) {
@@ -461,6 +743,83 @@ class CardRepository(private val context: Context) {
 
     private fun studySessionKey(lessonId: String): String = "$KEY_STUDY_SESSION_PREFIX$lessonId"
     private fun offlineSpeechStatusKey(languageTag: String): String = "$KEY_OFFLINE_SPEECH_STATUS_PREFIX$languageTag"
+    private fun openAiCacheDir(): File = File(context.cacheDir, "openai_cache")
+    private fun cardCacheDir(): File = File(context.filesDir, "card_cache")
+    private fun openAiCacheKey(vararg parts: String): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val raw = parts.joinToString(separator = "\u001F") { it.normalizedCacheLookupText() }
+        return digest.digest(raw.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+    }
+
+    private fun syncLessonCardCache(lessonId: String, lesson: Lesson) {
+        if (lessonId.isBlank()) return
+        val dir = cardCacheDir()
+        dir.mkdirs()
+        val lessonPrefix = "${lessonId.safeCacheFilePart()}_"
+        val currentNames = lesson.cards.map { card -> cardCacheFileName(lessonId, card.id) }.toSet()
+        dir.listFiles()
+            ?.filter { file -> file.name.startsWith(lessonPrefix) && file.name !in currentNames }
+            ?.forEach { it.delete() }
+        lesson.cards.forEach { card ->
+            val entry = JSONObject()
+                .put("type", "card")
+                .put("lessonId", lessonId)
+                .put("cardId", card.id)
+                .put("sourceLanguage", card.sourceLanguage.ifBlank { lesson.sourceLanguage })
+                .put("targetLanguage", card.targetLanguage.ifBlank { lesson.targetLanguage })
+                .put("nativeValue", card.nativeText())
+                .put("correctValue", card.correctText())
+                .put("hint", card.hintText())
+                .put("where", card.whereText())
+                .put("madeAt", card.madeAtText())
+                .put("updatedAt", System.currentTimeMillis())
+            File(dir, cardCacheFileName(lessonId, card.id)).writeText(entry.toString(), Charsets.UTF_8)
+        }
+    }
+
+    private fun deleteLessonCardCache(lessonId: String) {
+        val lessonPrefix = "${lessonId.safeCacheFilePart()}_"
+        cardCacheDir().listFiles()
+            ?.filter { it.name.startsWith(lessonPrefix) }
+            ?.forEach { it.delete() }
+    }
+
+    private fun cardCacheFileName(lessonId: String, cardId: Int): String {
+        return "${lessonId.safeCacheFilePart()}_$cardId.json"
+    }
+
+    private fun String.safeCacheFilePart(): String {
+        return replace(Regex("[^A-Za-z0-9_.-]+"), "_").ifBlank { "item" }
+    }
+
+    private fun String.normalizedCacheLookupText(): String {
+        return lowercase(Locale.ROOT)
+            .replace(Regex("\\p{Punct}+"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+    }
+
+    private fun isOpenAiCacheEntryFresh(createdAt: Long): Boolean {
+        if (createdAt <= 0L) return false
+        val minutes = loadOpenAiCacheDurationMinutes()
+        if (minutes < 0L) return true
+        val maxAgeMs = minutes * 60_000L
+        return System.currentTimeMillis() - createdAt <= maxAgeMs
+    }
+
+    private fun prunedOpenAiActivityLogArray(now: Long): JSONArray {
+        val cutoff = now - OPENAI_ACTIVITY_LOG_RETENTION_MS
+        val raw = preferences.getString(KEY_OPENAI_ACTIVITY_LOG, "[]") ?: "[]"
+        val source = runCatching { JSONArray(raw) }.getOrDefault(JSONArray())
+        val next = JSONArray()
+        for (index in 0 until source.length()) {
+            val entry = source.optJSONObject(index) ?: continue
+            if (entry.optLong("createdAt", 0L) >= cutoff) {
+                next.put(entry)
+            }
+        }
+        return next
+    }
 
     companion object {
         const val OFFLINE_SPEECH_STATUS_NOT_DOWNLOADED = "Not downloaded"
@@ -468,6 +827,26 @@ class CardRepository(private val context: Context) {
         const val OFFLINE_SPEECH_STATUS_READY = "Ready"
         const val OFFLINE_SPEECH_STATUS_ERROR = "Error"
         const val OFFLINE_SPEECH_STATUS_NOT_SUPPORTED = "Not supported"
+        const val DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
+        const val DEFAULT_OPENAI_SPEECH_MODEL = "gpt-4o-mini-transcribe"
+        const val DEFAULT_OPENAI_TEXT_MODEL = "gpt-5.4-mini"
+        const val DEFAULT_OPENAI_TTS_MODEL = "gpt-4o-mini-tts"
+        const val DEFAULT_OPENAI_TTS_VOICE = "coral"
+        const val DEFAULT_BELARUSIAN_TTS_PROVIDER = "ElevenLabs"
+        const val DEFAULT_ELEVENLABS_BASE_URL = "https://api.elevenlabs.io/v1"
+        const val DEFAULT_ELEVENLABS_MODEL = "eleven_v3"
+        const val DEFAULT_ELEVENLABS_BELARUSIAN_VOICE_ID = "q19tj6dG7gitafffmfLO"
+        val DEFAULT_ELEVENLABS_TTS_LANGUAGE_CODES = setOf("be")
+        const val DEFAULT_ELEVENLABS_OUTPUT_FORMAT = "mp3_44100_128"
+        const val DEFAULT_OPENAI_CACHE_DURATION_MINUTES = 5L
+        const val MAX_OPENAI_CACHE_DURATION_MINUTES = 43_200L
+        const val DEFAULT_OPENAI_VOICE_SILENCE_TIMEOUT_MS = 5_000L
+        const val MIN_OPENAI_VOICE_SILENCE_TIMEOUT_MS = 1_000L
+        const val MAX_OPENAI_VOICE_SILENCE_TIMEOUT_MS = 30_000L
+        const val CARD_STATUS_BLINK_OFF_MS = 0L
+        const val DEFAULT_CARD_STATUS_BLINK_INTERVAL_MS = 2_000L
+        val CARD_STATUS_BLINK_INTERVAL_OPTIONS_MS = setOf(0L, 500L, 1_000L, 2_000L, 3_000L, 4_000L, 5_000L)
+        const val OPENAI_ACTIVITY_LOG_RETENTION_MS = 172_800_000L
 
         private const val KEY_LESSONS = "lessons"
         private const val KEY_STATS = "stats"
@@ -490,6 +869,22 @@ class CardRepository(private val context: Context) {
         private const val KEY_AUTO_SAVE_TRANSLATOR_CARDS = "auto_save_translator_cards"
         private const val KEY_TRANSLATION_API_URL = "translation_api_url"
         private const val KEY_TRANSLATION_API_TOKEN = "translation_api_token"
+        private const val KEY_USE_OPENAI_MODELS = "use_openai_models"
+        private const val KEY_OPENAI_BASE_URL = "openai_base_url"
+        private const val KEY_OPENAI_API_KEY = "openai_api_key"
+        private const val KEY_OPENAI_SPEECH_MODEL = "openai_speech_model"
+        private const val KEY_OPENAI_TEXT_MODEL = "openai_text_model"
+        private const val KEY_OPENAI_TTS_MODEL = "openai_tts_model"
+        private const val KEY_OPENAI_TTS_VOICE = "openai_tts_voice"
+        private const val KEY_BELARUSIAN_TTS_PROVIDER = "belarusian_tts_provider"
+        private const val KEY_ELEVENLABS_API_KEY = "elevenlabs_api_key"
+        private const val KEY_ELEVENLABS_MODEL = "elevenlabs_model"
+        private const val KEY_ELEVENLABS_VOICE_ID = "elevenlabs_voice_id"
+        private const val KEY_ELEVENLABS_TTS_LANGUAGE_CODES = "elevenlabs_tts_language_codes"
+        private const val KEY_OPENAI_CACHE_DURATION_MINUTES = "openai_cache_duration_minutes"
+        private const val KEY_OPENAI_VOICE_SILENCE_TIMEOUT_MS = "openai_voice_silence_timeout_ms"
+        private const val KEY_CARD_STATUS_BLINK_INTERVAL_MS = "card_status_blink_interval_ms"
+        private const val KEY_OPENAI_ACTIVITY_LOG = "openai_activity_log"
         private const val KEY_OFFLINE_SPEECH_LANGUAGE = "offline_speech_language"
         private const val KEY_OFFLINE_SPEECH_STATUS_PREFIX = "offline_speech_status_"
         private const val KEY_STUDY_SESSION_PREFIX = "study_session_"

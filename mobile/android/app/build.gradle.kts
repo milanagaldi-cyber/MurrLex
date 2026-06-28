@@ -13,8 +13,8 @@ android {
         applicationId = "com.lexaprograms.polishcards"
         minSdk = 34
         targetSdk = 35
-        versionCode = 112
-        versionName = "0.11"
+        versionCode = 136
+        versionName = "0.35"
     }
 
     buildTypes {

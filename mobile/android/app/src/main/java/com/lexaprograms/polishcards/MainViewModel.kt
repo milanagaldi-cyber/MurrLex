@@ -62,8 +62,142 @@ val OfflineSpeechLanguages = listOf(
     OfflineSpeechLanguage("English", "en-US"),
     OfflineSpeechLanguage("Polish", "pl-PL"),
     OfflineSpeechLanguage("Russian", "ru-RU"),
+    OfflineSpeechLanguage("Belarusian", "be-BY"),
     OfflineSpeechLanguage("German", "de-DE"),
-    OfflineSpeechLanguage("Spanish", "es-ES")
+    OfflineSpeechLanguage("Spanish", "es-ES"),
+    OfflineSpeechLanguage("Latvian", "lv-LV"),
+    OfflineSpeechLanguage("Lithuanian", "lt-LT"),
+    OfflineSpeechLanguage("Portuguese", "pt-PT")
+)
+
+val OpenAiSpeechModels = listOf(
+    "gpt-4o-mini-transcribe",
+    "gpt-4o-transcribe",
+    "whisper-1",
+    "gpt-4o-transcribe-diarize"
+)
+
+val OpenAiTextModels = listOf(
+    "gpt-5.4-nano",
+    "gpt-5.4-mini",
+    "gpt-5.4",
+    "gpt-5.5"
+)
+
+val OpenAiTtsModels = listOf(
+    "gpt-4o-mini-tts",
+    "tts-1",
+    "tts-1-hd"
+)
+
+val OpenAiTtsVoices = listOf(
+    "alloy",
+    "ash",
+    "ballad",
+    "coral",
+    "echo",
+    "fable",
+    "nova",
+    "onyx",
+    "sage",
+    "shimmer",
+    "verse",
+    "marin",
+    "cedar"
+)
+
+val BelarusianTtsProviders = listOf(
+    "ElevenLabs",
+    "OpenAI",
+    "Device"
+)
+
+val ElevenLabsModels = listOf(
+    "eleven_v3"
+)
+
+val ElevenLabsSpecialTtsLanguages = listOf(
+    "en" to "EN - English",
+    "es" to "ES - Spanish",
+    "pl" to "PL - Polish",
+    "ru" to "RU - Russian",
+    "be" to "BY - Belarusian",
+    "uk" to "UA - Ukrainian",
+    "de" to "DE - German",
+    "lv" to "LV - Latvian",
+    "lt" to "LT - Lithuanian",
+    "pt" to "PT - Portuguese"
+)
+
+val OpenAiCacheDurationOptions = listOf(
+    "5 minutes" to CardRepository.DEFAULT_OPENAI_CACHE_DURATION_MINUTES,
+    "1 day" to 1_440L,
+    "7 days" to 10_080L,
+    "30 days" to CardRepository.MAX_OPENAI_CACHE_DURATION_MINUTES,
+    "Forever" to -1L
+)
+
+val OpenAiVoiceSilenceTimeoutOptions = listOf(
+    "1 second" to CardRepository.MIN_OPENAI_VOICE_SILENCE_TIMEOUT_MS,
+    "2 seconds" to 2_000L,
+    "3 seconds" to 3_000L,
+    "4 seconds" to 4_000L,
+    "5 seconds" to CardRepository.DEFAULT_OPENAI_VOICE_SILENCE_TIMEOUT_MS,
+    "6 seconds" to 6_000L,
+    "7 seconds" to 7_000L,
+    "8 seconds" to 8_000L,
+    "9 seconds" to 9_000L,
+    "10 seconds" to 10_000L,
+    "15 seconds" to 15_000L
+)
+
+val CardStatusBlinkIntervalOptions = listOf(
+    "Off" to CardRepository.CARD_STATUS_BLINK_OFF_MS,
+    "0.5 seconds" to 500L,
+    "1 second" to 1_000L,
+    "2 seconds" to CardRepository.DEFAULT_CARD_STATUS_BLINK_INTERVAL_MS,
+    "3 seconds" to 3_000L,
+    "4 seconds" to 4_000L,
+    "5 seconds" to 5_000L
+)
+
+private data class OpenAiTextResult(
+    val text: String,
+    val source: String
+)
+
+private data class CardTranslationInsight(
+    val translation: String,
+    val explanation: String,
+    val rule: String,
+    val examples: List<String>,
+    val source: String
+)
+
+private data class CardTranslationInsightResult(
+    val text: String,
+    val source: String
+)
+
+private data class MistakeCorrectionInsight(
+    val corrected: String,
+    val explanation: String,
+    val rules: List<String>,
+    val examples: List<String>
+)
+
+private data class TrainCardDraft(
+    val front: String,
+    val back: String,
+    val hint: String,
+    val option: String
+)
+
+private data class SharedPostCardDraft(
+    val front: String,
+    val back: String,
+    val hint: String,
+    val mode: String
 )
 
 data class LessonDraft(
@@ -111,12 +245,31 @@ data class StudyUiState(
     val controlSize: ControlSize = ControlSize.MEDIUM,
     val interfaceLanguage: String = "en",
     val onboardingCompleted: Boolean = false,
-    val quickVocabularySourceLanguage: String = "Polish",
-    val quickVocabularyTargetLanguage: String = "Russian",
+    val quickVocabularySourceLanguage: String = "Russian",
+    val quickVocabularyTargetLanguage: String = "Polish",
+    val activeVocabularySourceLanguage: String = quickVocabularySourceLanguage,
+    val activeVocabularyTargetLanguage: String = quickVocabularyTargetLanguage,
     val useLocalTranslation: Boolean = false,
     val autoSaveTranslatorCards: Boolean = false,
     val translationApiUrl: String = "",
     val translationApiToken: String = "",
+    val useOpenAiModels: Boolean = false,
+    val openAiBaseUrl: String = CardRepository.DEFAULT_OPENAI_BASE_URL,
+    val openAiApiKey: String = "",
+    val openAiSpeechModel: String = CardRepository.DEFAULT_OPENAI_SPEECH_MODEL,
+    val openAiTextModel: String = CardRepository.DEFAULT_OPENAI_TEXT_MODEL,
+    val openAiTtsModel: String = CardRepository.DEFAULT_OPENAI_TTS_MODEL,
+    val openAiTtsVoice: String = CardRepository.DEFAULT_OPENAI_TTS_VOICE,
+    val belarusianTtsProvider: String = CardRepository.DEFAULT_BELARUSIAN_TTS_PROVIDER,
+    val elevenLabsApiKey: String = "",
+    val elevenLabsModel: String = CardRepository.DEFAULT_ELEVENLABS_MODEL,
+    val elevenLabsVoiceId: String = CardRepository.DEFAULT_ELEVENLABS_BELARUSIAN_VOICE_ID,
+    val elevenLabsTtsLanguageCodes: Set<String> = CardRepository.DEFAULT_ELEVENLABS_TTS_LANGUAGE_CODES,
+    val openAiCacheDurationMinutes: Long = CardRepository.DEFAULT_OPENAI_CACHE_DURATION_MINUTES,
+    val openAiVoiceSilenceTimeoutMs: Long = CardRepository.DEFAULT_OPENAI_VOICE_SILENCE_TIMEOUT_MS,
+    val cardStatusBlinkIntervalMs: Long = CardRepository.DEFAULT_CARD_STATUS_BLINK_INTERVAL_MS,
+    val openAiActivityLog: List<String> = emptyList(),
+    val translationAttribution: String = "",
     val offlineSpeechLanguageTag: String = "en-US",
     val offlineSpeechStatuses: Map<String, String> = OfflineSpeechLanguages.associate { language ->
         language.tag to CardRepository.OFFLINE_SPEECH_STATUS_NOT_DOWNLOADED
@@ -176,6 +329,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             autoSaveTranslatorCards = repository.loadAutoSaveTranslatorCards(),
             translationApiUrl = repository.loadTranslationApiUrl(),
             translationApiToken = repository.loadTranslationApiToken(),
+            useOpenAiModels = repository.loadUseOpenAiModels(),
+            openAiBaseUrl = repository.loadOpenAiBaseUrl(),
+            openAiApiKey = repository.loadOpenAiApiKey(),
+            openAiSpeechModel = repository.loadOpenAiSpeechModel().takeIf { it in OpenAiSpeechModels }
+                ?: CardRepository.DEFAULT_OPENAI_SPEECH_MODEL,
+            openAiTextModel = repository.loadOpenAiTextModel().takeIf { it in OpenAiTextModels }
+                ?: CardRepository.DEFAULT_OPENAI_TEXT_MODEL,
+            openAiTtsModel = repository.loadOpenAiTtsModel().takeIf { it in OpenAiTtsModels }
+                ?: CardRepository.DEFAULT_OPENAI_TTS_MODEL,
+            openAiTtsVoice = repository.loadOpenAiTtsVoice().takeIf { it in OpenAiTtsVoices }
+                ?: CardRepository.DEFAULT_OPENAI_TTS_VOICE,
+            belarusianTtsProvider = repository.loadBelarusianTtsProvider().takeIf { it in BelarusianTtsProviders }
+                ?: CardRepository.DEFAULT_BELARUSIAN_TTS_PROVIDER,
+            elevenLabsApiKey = repository.loadElevenLabsApiKey(),
+            elevenLabsModel = repository.loadElevenLabsModel().takeIf { it in ElevenLabsModels }
+                ?: CardRepository.DEFAULT_ELEVENLABS_MODEL,
+            elevenLabsVoiceId = repository.loadElevenLabsVoiceId().trim()
+                .ifBlank { CardRepository.DEFAULT_ELEVENLABS_BELARUSIAN_VOICE_ID },
+            elevenLabsTtsLanguageCodes = repository.loadElevenLabsTtsLanguageCodes(),
+            openAiCacheDurationMinutes = repository.loadOpenAiCacheDurationMinutes(),
+            openAiVoiceSilenceTimeoutMs = repository.loadOpenAiVoiceSilenceTimeoutMs(),
+            cardStatusBlinkIntervalMs = repository.loadCardStatusBlinkIntervalMs(),
+            openAiActivityLog = repository.loadOpenAiActivityLog(),
             offlineSpeechLanguageTag = repository.loadOfflineSpeechLanguageTag()
                 .takeIf { tag -> OfflineSpeechLanguages.any { it.tag == tag } }
                 ?: "en-US",
@@ -192,6 +368,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             notificationIntervalMinutes = repository.loadNotificationIntervalMinutes(),
             notificationIntervalDraft = repository.loadNotificationIntervalMinutes().toString(),
             notificationMaxDraft = repository.loadMaxActiveNotifications().toString()
+        )
+        _uiState.value = _uiState.value.copy(
+            activeVocabularySourceLanguage = _uiState.value.quickVocabularySourceLanguage,
+            activeVocabularyTargetLanguage = _uiState.value.quickVocabularyTargetLanguage
         )
         refreshLessons()
     }
@@ -269,12 +449,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.value = _uiState.value.copy(translationInput = value, message = null)
     }
 
-    fun updateTranslationOutput(value: String) {
+    fun updateTranslationOutput(value: String, attribution: String = _uiState.value.translationAttribution) {
         val state = _uiState.value
         val cleanOutput = value.trim()
         val cleanInput = state.translationInput.trim()
-        if (state.translationOutput == value) return
-        _uiState.value = state.copy(translationOutput = value, message = null)
+        if (state.translationOutput == value && state.translationAttribution == attribution) return
+        _uiState.value = state.copy(translationOutput = value, translationAttribution = attribution, message = null)
         if (state.autoSaveTranslatorCards && cleanInput.isNotBlank() && cleanOutput.isNotBlank()) {
             saveTranslatedCardFromTranslator(cleanInput, cleanOutput)
         }
@@ -287,25 +467,42 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         val cleanText = text.trim()
         if (cleanText.isBlank()) {
-            updateTranslationOutput("")
+            updateTranslationOutput("", "")
             return
         }
         viewModelScope.launch {
-            val translated = runCatching {
-                requestFreeOnlineTranslation(cleanText, sourceLanguage, targetLanguage)
-            }.getOrNull().orEmpty().trim()
+            val requestState = _uiState.value
+            val result = runCatching {
+                requestConfiguredOnlineTranslation(cleanText, sourceLanguage, targetLanguage, requestState)
+            }.getOrNull() ?: OpenAiTextResult("", "")
+            val translated = result.text.trim()
             val currentState = _uiState.value
             if (currentState.translationInput.trim() != cleanText) return@launch
             if (translated.isBlank()) {
                 _uiState.value = currentState.copy(message = "Online translation failed")
             } else {
-                updateTranslationOutput(translated)
+                updateTranslationOutput(
+                    translated,
+                    attribution = result.googleAttribution()
+                )
+                if (result.isOpenAiSource()) {
+                    logOpenAiActivity(
+                        action = "translation ${result.source}",
+                        details = "${requestState.openAiTextModel}: $sourceLanguage -> $targetLanguage; $cleanText => $translated"
+                    )
+                    _uiState.value = _uiState.value.copy(message = "OpenAI translation: ${result.source}")
+                }
             }
         }
     }
 
     fun clearTranslationInput() {
-        _uiState.value = _uiState.value.copy(translationInput = "", translationOutput = "", message = "Cleared")
+        _uiState.value = _uiState.value.copy(
+            translationInput = "",
+            translationOutput = "",
+            translationAttribution = "",
+            message = "Cleared"
+        )
     }
 
     fun openCardFromNotification(lessonId: String?, cardId: Int) {
@@ -450,11 +647,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setQuickVocabularySourceLanguage(language: String) {
-        val cleaned = language.trim().ifBlank { "Polish" }
+        val cleaned = language.trim().ifBlank { "Russian" }
         repository.saveQuickVocabularySourceLanguage(cleaned)
         _uiState.value = _uiState.value.copy(
             quickVocabularySourceLanguage = cleaned,
-            message = "Quick vocabulary source: $cleaned"
+            activeVocabularySourceLanguage = cleaned,
+            message = "Basic language: $cleaned"
         )
     }
 
@@ -467,17 +665,48 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.value = state.copy(
             quickVocabularySourceLanguage = target,
             quickVocabularyTargetLanguage = source,
+            activeVocabularySourceLanguage = target,
+            activeVocabularyTargetLanguage = source,
             translationInput = state.translationOutput,
             translationOutput = state.translationInput,
             message = "Languages swapped"
         )
     }
+
+    fun setActiveVocabularySourceLanguage(language: String) {
+        val cleaned = language.trim().ifBlank { _uiState.value.quickVocabularySourceLanguage }
+        _uiState.value = _uiState.value.copy(
+            activeVocabularySourceLanguage = cleaned,
+            message = "Current Basic language: $cleaned"
+        )
+    }
+
+    fun setActiveVocabularyTargetLanguage(language: String) {
+        val cleaned = language.trim().ifBlank { _uiState.value.quickVocabularyTargetLanguage }
+        _uiState.value = _uiState.value.copy(
+            activeVocabularyTargetLanguage = cleaned,
+            message = "Current Target language: $cleaned"
+        )
+    }
+
+    fun swapActiveVocabularyLanguages() {
+        val state = _uiState.value
+        _uiState.value = state.copy(
+            activeVocabularySourceLanguage = state.activeVocabularyTargetLanguage,
+            activeVocabularyTargetLanguage = state.activeVocabularySourceLanguage,
+            translationInput = state.translationOutput,
+            translationOutput = state.translationInput,
+            message = "Current language pair swapped"
+        )
+    }
+
     fun setQuickVocabularyTargetLanguage(language: String) {
-        val cleaned = language.trim().ifBlank { "Russian" }
+        val cleaned = language.trim().ifBlank { "Polish" }
         repository.saveQuickVocabularyTargetLanguage(cleaned)
         _uiState.value = _uiState.value.copy(
             quickVocabularyTargetLanguage = cleaned,
-            message = "Quick vocabulary target: $cleaned"
+            activeVocabularyTargetLanguage = cleaned,
+            message = "Target language: $cleaned"
         )
     }
 
@@ -487,20 +716,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         learningLanguage: String,
         explanationLanguage: String
     ) {
-        val normalizedInterface = normalizeInterfaceLanguage(interfaceLanguage)
-        val cleanKnown = knownLanguage.trim().ifBlank { "English" }
+        val cleanKnown = knownLanguage.trim().ifBlank { "Russian" }
         val cleanLearning = learningLanguage.trim().ifBlank { "Polish" }
         val cleanExplanation = explanationLanguage.trim().ifBlank { cleanKnown }
+        val normalizedInterface = normalizeInterfaceLanguage(interfaceLanguage)
+            .takeIf { interfaceLanguage.isNotBlank() }
+            ?: interfaceCodeForLanguageName(cleanKnown)
         repository.saveInterfaceLanguage(normalizedInterface)
+        repository.saveQuickVocabularySourceLanguage(cleanKnown)
         repository.saveQuickVocabularyTargetLanguage(cleanLearning)
-        repository.saveQuickVocabularySourceLanguage(cleanExplanation)
         repository.saveOnboardingCompleted(true)
         _uiState.value = _uiState.value.copy(
             interfaceLanguage = normalizedInterface,
+            quickVocabularySourceLanguage = cleanKnown,
             quickVocabularyTargetLanguage = cleanLearning,
-            quickVocabularySourceLanguage = cleanExplanation,
+            activeVocabularySourceLanguage = cleanKnown,
+            activeVocabularyTargetLanguage = cleanLearning,
             onboardingCompleted = true,
-            message = null
+            message = if (cleanExplanation != cleanKnown) {
+                "Basic language saved. AI explanation language will be used when the AI model is connected."
+            } else {
+                null
+            }
         )
     }
 
@@ -528,13 +765,150 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setTranslationApiUrl(url: String) {
-        repository.saveTranslationApiUrl(url)
-        _uiState.value = _uiState.value.copy(translationApiUrl = url.trim())
+        setOpenAiBaseUrl(url)
     }
 
     fun setTranslationApiToken(token: String) {
-        repository.saveTranslationApiToken(token)
-        _uiState.value = _uiState.value.copy(translationApiToken = token.trim())
+        setOpenAiApiKey(token)
+    }
+
+    fun setUseOpenAiModels(enabled: Boolean) {
+        repository.saveUseOpenAiModels(enabled)
+        _uiState.value = _uiState.value.copy(
+            useOpenAiModels = enabled,
+            message = if (enabled) "OpenAI models enabled" else "OpenAI models disabled"
+        )
+    }
+
+    fun setOpenAiBaseUrl(url: String) {
+        val cleaned = url.trim().ifBlank { CardRepository.DEFAULT_OPENAI_BASE_URL }
+        repository.saveOpenAiBaseUrl(cleaned)
+        _uiState.value = _uiState.value.copy(openAiBaseUrl = cleaned, translationApiUrl = cleaned)
+    }
+
+    fun setOpenAiApiKey(apiKey: String) {
+        val cleaned = apiKey.trim()
+        repository.saveOpenAiApiKey(cleaned)
+        _uiState.value = _uiState.value.copy(openAiApiKey = cleaned, translationApiToken = cleaned)
+    }
+
+    fun setOpenAiSpeechModel(model: String) {
+        val cleaned = model.takeIf { it in OpenAiSpeechModels } ?: CardRepository.DEFAULT_OPENAI_SPEECH_MODEL
+        repository.saveOpenAiSpeechModel(cleaned)
+        _uiState.value = _uiState.value.copy(openAiSpeechModel = cleaned)
+    }
+
+    fun setOpenAiTextModel(model: String) {
+        val cleaned = model.takeIf { it in OpenAiTextModels } ?: CardRepository.DEFAULT_OPENAI_TEXT_MODEL
+        repository.saveOpenAiTextModel(cleaned)
+        _uiState.value = _uiState.value.copy(openAiTextModel = cleaned)
+    }
+
+    fun setOpenAiTtsModel(model: String) {
+        val cleaned = model.takeIf { it in OpenAiTtsModels } ?: CardRepository.DEFAULT_OPENAI_TTS_MODEL
+        repository.saveOpenAiTtsModel(cleaned)
+        _uiState.value = _uiState.value.copy(openAiTtsModel = cleaned)
+    }
+
+    fun setOpenAiTtsVoice(voice: String) {
+        val cleaned = voice.takeIf { it in OpenAiTtsVoices } ?: CardRepository.DEFAULT_OPENAI_TTS_VOICE
+        repository.saveOpenAiTtsVoice(cleaned)
+        _uiState.value = _uiState.value.copy(openAiTtsVoice = cleaned)
+    }
+
+    fun setBelarusianTtsProvider(provider: String) {
+        val cleaned = provider.takeIf { it in BelarusianTtsProviders } ?: CardRepository.DEFAULT_BELARUSIAN_TTS_PROVIDER
+        repository.saveBelarusianTtsProvider(cleaned)
+        _uiState.value = _uiState.value.copy(belarusianTtsProvider = cleaned)
+    }
+
+    fun setElevenLabsApiKey(apiKey: String) {
+        val cleaned = apiKey.trim()
+        repository.saveElevenLabsApiKey(cleaned)
+        _uiState.value = _uiState.value.copy(elevenLabsApiKey = cleaned)
+    }
+
+    fun setElevenLabsModel(model: String) {
+        val cleaned = model.takeIf { it in ElevenLabsModels } ?: CardRepository.DEFAULT_ELEVENLABS_MODEL
+        repository.saveElevenLabsModel(cleaned)
+        _uiState.value = _uiState.value.copy(elevenLabsModel = cleaned)
+    }
+
+    fun setElevenLabsVoiceId(voiceId: String) {
+        val cleaned = voiceId.trim().ifBlank { CardRepository.DEFAULT_ELEVENLABS_BELARUSIAN_VOICE_ID }
+        repository.saveElevenLabsVoiceId(cleaned)
+        _uiState.value = _uiState.value.copy(elevenLabsVoiceId = cleaned)
+    }
+
+    fun setElevenLabsTtsLanguageEnabled(languageCode: String, enabled: Boolean) {
+        val cleanedCode = languageCode.trim().lowercase(Locale.ROOT)
+        if (cleanedCode.isBlank()) return
+        val nextCodes = _uiState.value.elevenLabsTtsLanguageCodes.toMutableSet().apply {
+            if (enabled) add(cleanedCode) else remove(cleanedCode)
+        }
+        repository.saveElevenLabsTtsLanguageCodes(nextCodes)
+        _uiState.value = _uiState.value.copy(elevenLabsTtsLanguageCodes = repository.loadElevenLabsTtsLanguageCodes())
+    }
+
+    fun setOpenAiCacheDurationMinutes(minutes: Long) {
+        repository.saveOpenAiCacheDurationMinutes(minutes)
+        _uiState.value = _uiState.value.copy(openAiCacheDurationMinutes = repository.loadOpenAiCacheDurationMinutes())
+    }
+
+    fun setOpenAiVoiceSilenceTimeoutMs(timeoutMs: Long) {
+        repository.saveOpenAiVoiceSilenceTimeoutMs(timeoutMs)
+        _uiState.value = _uiState.value.copy(openAiVoiceSilenceTimeoutMs = repository.loadOpenAiVoiceSilenceTimeoutMs())
+    }
+
+    fun setCardStatusBlinkIntervalMs(intervalMs: Long) {
+        repository.saveCardStatusBlinkIntervalMs(intervalMs)
+        _uiState.value = _uiState.value.copy(cardStatusBlinkIntervalMs = repository.loadCardStatusBlinkIntervalMs())
+    }
+
+    fun clearOpenAiCache() {
+        val deleted = repository.clearOpenAiCache()
+        logOpenAiActivity("cache cleared", "$deleted files")
+        _uiState.value = _uiState.value.copy(message = "App cache cleared: $deleted files")
+    }
+
+    fun logOpenAiActivity(action: String, details: String = "") {
+        repository.addOpenAiActivityLog(action, details)
+        _uiState.value = _uiState.value.copy(openAiActivityLog = repository.loadOpenAiActivityLog())
+    }
+
+    fun appendCurrentCardLog(entry: String) {
+        val cardId = _uiState.value.currentCard?.id ?: return
+        appendCardLog(cardId, entry)
+    }
+
+    fun appendCardLog(cardId: Int, entry: String) {
+        val cleanEntry = entry.trim()
+        if (cleanEntry.isBlank()) return
+        val state = _uiState.value
+        val selected = state.selectedLesson ?: return
+        val lesson = repository.loadLessons(includeHidden = true).firstOrNull { it.id == selected.id } ?: selected
+        val logEntry = "${timestamp()} - $cleanEntry"
+        var changed = false
+        val updatedCards = lesson.cards.map { card ->
+            if (card.id == cardId) {
+                changed = true
+                card.copy(log = (card.log + logEntry).takeLast(100))
+            } else {
+                card
+            }
+        }
+        if (!changed) return
+        val updatedLesson = lesson.copy(cards = updatedCards, editable = true)
+        repository.saveLesson(updatedLesson)
+        val visibleLessons = repository.loadLessons(state.showHiddenLessons)
+        _uiState.value = state.copy(
+            lessons = visibleLessons,
+            selectedLesson = if (state.selectedLesson?.id == updatedLesson.id) updatedLesson else state.selectedLesson,
+            currentPortion = state.currentPortion.map { card ->
+                updatedCards.firstOrNull { it.id == card.id } ?: card
+            }
+        )
+        saveCurrentStudySession()
     }
 
     fun setOfflineSpeechLanguage(languageTag: String) {
@@ -751,9 +1125,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             "de" -> "de"
             "by", "be" -> "be"
             "es" -> "es"
+            "lv" -> "lv"
+            "lt" -> "lt"
+            "pt" -> "pt"
             "ua", "uk" -> "uk"
             "ru" -> "ru"
             "pl" -> "pl"
+            else -> "en"
+        }
+    }
+
+    private fun interfaceCodeForLanguageName(language: String): String {
+        return when (language.trim().lowercase(Locale.ROOT)) {
+            "german", "deutsch", "de" -> "de"
+            "belarusian", "belarus", "by", "be" -> "be"
+            "spanish", "espanol", "es" -> "es"
+            "latvian", "latviesu", "lv" -> "lv"
+            "lithuanian", "lietuviu", "lt" -> "lt"
+            "portuguese", "portugues", "pt" -> "pt"
+            "ukrainian", "ua", "uk" -> "uk"
+            "russian", "ru" -> "ru"
+            "polish", "polski", "pl" -> "pl"
             else -> "en"
         }
     }
@@ -1290,8 +1682,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun createLesson() {
         val state = _uiState.value
-    val sourceLanguage = state.quickVocabularySourceLanguage.trim().ifBlank { "Target" }
-        val targetLanguage = state.quickVocabularyTargetLanguage.trim().ifBlank { "Target" }
+        val sourceLanguage = state.activeVocabularySourceLanguage.trim().ifBlank { state.quickVocabularySourceLanguage }
+        val targetLanguage = state.activeVocabularyTargetLanguage.trim().ifBlank { state.quickVocabularyTargetLanguage }
         val now = timestamp()
         val lesson = Lesson(
             id = newLessonId(),
@@ -1329,10 +1721,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val sampleCard = lesson.cards.firstOrNull()
         val sourceLanguage = lesson.sourceLanguage.lessonLanguageOrNull()
             ?: sampleCard?.sourceLanguage.lessonLanguageOrNull()
-        ?: state.quickVocabularySourceLanguage.trim().ifBlank { "Target" }
+            ?: state.activeVocabularySourceLanguage.trim().ifBlank { state.quickVocabularySourceLanguage }
         val targetLanguage = lesson.targetLanguage.lessonLanguageOrNull()
             ?: sampleCard?.targetLanguage.lessonLanguageOrNull()
-            ?: state.quickVocabularyTargetLanguage.trim().ifBlank { "Target" }
+            ?: state.activeVocabularyTargetLanguage.trim().ifBlank { state.quickVocabularyTargetLanguage }
         val now = timestamp()
         val nextCardId = (lesson.cards.maxOfOrNull { it.id } ?: 0) + 1
         val newCard = emptyLessonCard(nextCardId, sourceLanguage, targetLanguage, now, "Created from study plus button")
@@ -1938,36 +2330,46 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
-    fun addQuickVocabularyCard(phrase: String) {
+    fun addQuickVocabularyCard(phrase: String, recognitionLog: String = "") {
         val cleanPhrase = phrase.trim()
         if (cleanPhrase.isBlank()) {
             _uiState.value = _uiState.value.copy(message = "No speech recognized")
             return
         }
         val state = _uiState.value
-    val sourceLanguage = state.quickVocabularySourceLanguage.trim().ifBlank { "Target" }
-        val targetLanguage = state.quickVocabularyTargetLanguage.trim().ifBlank { "Target" }
+        val sourceLanguage = state.activeVocabularySourceLanguage.trim().ifBlank { state.quickVocabularySourceLanguage }
+        val targetLanguage = state.activeVocabularyTargetLanguage.trim().ifBlank { state.quickVocabularyTargetLanguage }
+        val isMistakeCard = freeOnlineLanguageCode(sourceLanguage).equals(freeOnlineLanguageCode(targetLanguage), ignoreCase = true)
         val lessonTitle = quickVocabularyLessonTitle(sourceLanguage, targetLanguage, createdAt = displayTimestamp())
         val visibleLessonsForQuickVocabulary = repository.loadLessons(includeHidden = false)
         val existingLesson = visibleLessonsForQuickVocabulary
             .filter { lesson ->
-                lesson.id.startsWith(QUICK_VOCABULARY_LESSON_ID) &&
-                    (lesson.targetLanguage.equals(targetLanguage, ignoreCase = true) ||
-                        lesson.cards.any { card -> card.targetLanguage.equals(targetLanguage, ignoreCase = true) })
+                lesson.matchesQuickVocabularyPair(sourceLanguage, targetLanguage)
             }
             .maxByOrNull { lesson -> lesson.cards.firstOrNull()?.madeAt ?: "" }
-        val lessonId = existingLesson?.id ?: "${QUICK_VOCABULARY_LESSON_ID}_${targetLanguage.safeIdPart()}_${UUID.randomUUID()}"
+        val lessonId = existingLesson?.id
+            ?: "${QUICK_VOCABULARY_LESSON_ID}_${sourceLanguage.safeIdPart()}_${targetLanguage.safeIdPart()}_${UUID.randomUUID()}"
         val now = timestamp()
         val newCard = Flashcard(
             id = 1,
-            nativeValue = "Empty",
-            correctValue = cleanPhrase,
-        hint = "Captured by voice in the source language. Fill the Empty target side later.",
+            nativeValue = if (isMistakeCard) "" else cleanPhrase,
+            correctValue = "Empty",
+            hint = if (isMistakeCard) {
+                "Captured as a same-language mistake. Correction pending."
+            } else {
+                "Captured by voice in the Basic language. Fill the Target language side later."
+            },
             madeAt = now,
             where = "Quick vocabulary microphone",
-            log = listOf("$now - captured by quick vocabulary microphone as $targetLanguage"),
+            log = buildList {
+                add("$now - captured by quick vocabulary microphone as $sourceLanguage")
+                if (isMistakeCard) add("$now - Basic and Target languages matched; created as Mistake card")
+                recognitionLog.trim().takeIf { it.isNotBlank() }?.let { add("$now - $it") }
+            },
+            mistake = if (isMistakeCard) cleanPhrase else "",
+            wrongAnswers = if (isMistakeCard) listOf(MistakeRecord(cleanPhrase, now)) else emptyList(),
             type = "card",
-            cardKind = "LN",
+            cardKind = if (isMistakeCard) "MK" else "LN",
             sourceLanguage = sourceLanguage,
             targetLanguage = targetLanguage
         )
@@ -2004,18 +2406,121 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             selectedLessonIds = emptySet(),
             message = "Added: $cleanPhrase"
         )
-        if (!state.useLocalTranslation) {
+        if (isMistakeCard && state.shouldUseOpenAiOnline()) {
+            correctMistakeCardWithOpenAi(
+                lessonId = updatedLesson.id,
+                cardId = 1,
+                phrase = cleanPhrase,
+                language = sourceLanguage,
+                requestState = state
+            )
+            return
+        }
+        if (!state.useLocalTranslation || state.shouldUseOpenAiOnline()) {
             translateQuickVocabularyCard(
                 lessonId = updatedLesson.id,
                 cardId = 1,
                 phrase = cleanPhrase,
-                sourceLanguage = targetLanguage,
-                targetLanguage = sourceLanguage
+                sourceLanguage = sourceLanguage,
+                targetLanguage = targetLanguage
             )
         }
     }
 
-    fun applyQuickVocabularyGoogleTranslation(phrase: String, translated: String) {
+    fun generateTrainCardsFromMistake(cardId: Int, options: List<String>) {
+        val selectedOptions = options.map { it.trim() }.filter { it.isNotBlank() }.distinct().take(10)
+        if (selectedOptions.isEmpty()) {
+            _uiState.value = _uiState.value.copy(message = "Select at least one option")
+            return
+        }
+        val state = _uiState.value
+        val selectedLesson = state.selectedLesson ?: return
+        val sourceCard = selectedLesson.cards.firstOrNull { it.id == cardId } ?: return
+        if (sourceCard.kindCode() != "MK") {
+            _uiState.value = state.copy(message = "Train cards can be generated only from Mistake cards")
+            return
+        }
+        if (!state.shouldUseOpenAiOnline()) {
+            _uiState.value = state.copy(message = "OpenAI online model is required for Train cards")
+            return
+        }
+        viewModelScope.launch {
+            val requestState = _uiState.value
+            val drafts = runCatching {
+                requestOpenAiTrainCards(
+                    sourceCard = sourceCard,
+                    options = selectedOptions,
+                    interfaceLanguage = requestState.interfaceLanguage,
+                    baseUrl = requestState.openAiBaseUrl,
+                    apiKey = requestState.openAiApiKey,
+                    model = requestState.openAiTextModel
+                )
+            }.getOrNull().orEmpty()
+            if (drafts.isEmpty()) {
+                _uiState.value = _uiState.value.copy(message = "Train card generation failed")
+                return@launch
+            }
+            val lesson = repository.loadLessons(includeHidden = true).firstOrNull { it.id == selectedLesson.id } ?: selectedLesson
+            val now = timestamp()
+            val sameLanguage = sourceCard.sourceLanguage.ifBlank { sourceCard.targetLanguage }
+            val newCards = drafts.take(10).mapIndexed { index, draft ->
+                Flashcard(
+                    id = lesson.cards.size + index + 1,
+                    nativeValue = draft.front,
+                    correctValue = draft.back,
+                    hint = draft.hint.take(1_200),
+                    madeAt = now,
+                    where = "Generated from Mistake card ${sourceCard.id}",
+                    log = listOf("$now - Train card generated from Mistake card ${sourceCard.id} with OpenAI ${requestState.openAiTextModel}; option: ${draft.option}"),
+                    type = "card",
+                    cardKind = "TR",
+                    sourceLanguage = sameLanguage,
+                    targetLanguage = sameLanguage
+                )
+            }
+            val updatedCards = lesson.cards.map { card ->
+                if (card.id == sourceCard.id) {
+                    card.copy(
+                        log = (card.log + "$now - generated ${newCards.size} Train cards with OpenAI ${requestState.openAiTextModel}").takeLast(100)
+                    )
+                } else {
+                    card
+                }
+            } + newCards
+            val updatedLesson = lesson.copy(cards = updatedCards, editable = true, hidden = false)
+            repository.saveLesson(updatedLesson)
+            val lessons = repository.loadLessons(requestState.showHiddenLessons)
+            val savedLesson = lessons.firstOrNull { it.id == updatedLesson.id } ?: updatedLesson
+            _uiState.value = requestState.copy(
+                lessons = lessons,
+                selectedLesson = savedLesson,
+                currentPortion = if (requestState.selectedLesson?.id == updatedLesson.id &&
+                    requestState.currentPortion.any { it.id == sourceCard.id }
+                ) {
+                    requestState.currentPortion.map { portionCard ->
+                        updatedCards.firstOrNull { it.id == portionCard.id } ?: portionCard
+                    } + newCards
+                } else {
+                    requestState.currentPortion
+                },
+                message = "Train cards added: ${newCards.size}"
+            )
+            saveCurrentStudySession()
+            logOpenAiActivity(
+                action = "train cards API",
+                details = "${requestState.openAiTextModel}; from Mistake card ${sourceCard.id}; ${newCards.size} cards"
+            )
+        }
+    }
+
+    fun applyQuickVocabularyTranslation(
+        phrase: String,
+        translated: String,
+        sourceLanguage: String,
+        targetLanguage: String,
+        attribution: String = GOOGLE_TRANSLATE_ATTRIBUTION,
+        providerLabel: String = "Google Translator"
+    ) {
         val cleanPhrase = phrase.trim()
         val cleanTranslation = translated.trim()
         if (cleanPhrase.isBlank() || cleanTranslation.isBlank()) return
@@ -2023,20 +2528,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val lessonsAll = repository.loadLessons(includeHidden = true)
         val lesson = lessonsAll
             .filter { lesson ->
-                lesson.id.startsWith(QUICK_VOCABULARY_LESSON_ID) &&
-                    lesson.cards.any { card -> card.correctText().trim().equals(cleanPhrase, ignoreCase = true) }
+                lesson.matchesQuickVocabularyPair(sourceLanguage, targetLanguage) &&
+                    lesson.cards.any { card ->
+                        card.nativeText().trim().equals(cleanPhrase, ignoreCase = true) &&
+                            card.sourceLanguage.equals(sourceLanguage, ignoreCase = true) &&
+                            card.targetLanguage.equals(targetLanguage, ignoreCase = true)
+                    }
             }
             .maxByOrNull { lesson -> lesson.cards.firstOrNull()?.madeAt ?: "" }
             ?: return
         var updated = false
         val now = timestamp()
         val updatedCards = lesson.cards.map { card ->
-            if (!updated && card.correctText().trim().equals(cleanPhrase, ignoreCase = true) && card.nativeText().isMissingCardSide()) {
+            if (!updated &&
+                card.nativeText().trim().equals(cleanPhrase, ignoreCase = true) &&
+                card.sourceLanguage.equals(sourceLanguage, ignoreCase = true) &&
+                card.targetLanguage.equals(targetLanguage, ignoreCase = true) &&
+                card.correctText().isMissingCardSide()
+            ) {
                 updated = true
                 card.copy(
-                    nativeValue = cleanTranslation,
-                    hint = card.hint.withGoogleTranslateAttribution(),
-                                log = (card.log + "$now - translated automatically with Google Translator").takeLast(100)
+                    correctValue = cleanTranslation,
+                    hint = card.hint.withTranslationAttribution(attribution),
+                    log = (card.log + "$now - translated automatically with $providerLabel").takeLast(100)
                 )
             } else {
                 card
@@ -2057,12 +2571,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } else {
                 state.currentPortion
             },
-            message = "Powered by Google Translator: $cleanPhrase"
+            message = "${providerLabel}: $cleanPhrase"
         )
         saveCurrentStudySession()
     }
 
-    fun applyGoogleTranslationToCard(cardId: Int, translated: String, targetBackSide: Boolean) {
+    fun applyTranslationToCard(
+        cardId: Int,
+        translated: String,
+        targetBackSide: Boolean,
+        attribution: String = GOOGLE_TRANSLATE_ATTRIBUTION,
+        providerLabel: String = "Google Translator",
+        insightText: String = ""
+    ) {
         val cleanTranslation = translated.trim()
         if (cleanTranslation.isBlank()) return
         val state = _uiState.value
@@ -2075,14 +2596,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val updated = if (targetBackSide) {
                     card.copy(
                         correctValue = cleanTranslation,
-                        hint = card.hint.withGoogleTranslateAttribution(),
-                    log = (card.log + "$now - correct side translated with Google Translator").takeLast(100)
+                        hint = card.hint.withTranslationInsight(insightText, attribution),
+                    log = (card.log + "$now - correct side translated with $providerLabel").takeLast(100)
                     )
                 } else {
                     card.copy(
                         nativeValue = cleanTranslation,
-                        hint = card.hint.withGoogleTranslateAttribution(),
-                    log = (card.log + "$now - native side translated with Google Translator").takeLast(100)
+                        hint = card.hint.withTranslationInsight(insightText, attribution),
+                    log = (card.log + "$now - native side translated with $providerLabel").takeLast(100)
                     )
                 }
                 updatedCard = updated
@@ -2103,36 +2624,124 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             },
             answer = "",
             answerFeedbackVisible = false,
-            message = "Powered by Google Translator"
+            message = providerLabel
         )
         saveCurrentStudySession()
+    }
+
+    fun translateCardTextIntoAnswer(text: String, sourceLanguage: String, targetLanguage: String) {
+        val cleanText = text.trim()
+        if (cleanText.isBlank()) {
+            _uiState.value = _uiState.value.copy(message = "Nothing to translate")
+            return
+        }
+        viewModelScope.launch {
+            val requestState = _uiState.value
+            val result = runCatching {
+                requestConfiguredOnlineTranslation(cleanText, sourceLanguage, targetLanguage, requestState)
+            }.getOrNull() ?: OpenAiTextResult("", "")
+            val translated = result.text.trim()
+            if (translated.isBlank()) {
+                _uiState.value = _uiState.value.copy(message = "Translation failed")
+                return@launch
+            }
+            if (result.isOpenAiSource()) {
+                logOpenAiActivity(
+                    action = "card translation ${result.source}",
+                    details = "${requestState.openAiTextModel}: $sourceLanguage -> $targetLanguage; $cleanText => $translated"
+                )
+            }
+            _uiState.value = _uiState.value.copy(
+                answer = translated,
+                message = result.providerLabel()
+            )
+        }
+    }
+
+    fun translateAndApplyCardText(
+        cardId: Int,
+        text: String,
+        sourceLanguage: String,
+        targetLanguage: String,
+        targetBackSide: Boolean
+    ) {
+        val cleanText = text.trim()
+        if (cleanText.isBlank()) return
+        viewModelScope.launch {
+            val requestState = _uiState.value
+            val openAiPreferred = requestState.shouldUseOpenAiOnline()
+            val insight = if (openAiPreferred) {
+                runCatching {
+                    requestOpenAiCardTranslationInsight(
+                        phrase = cleanText,
+                        sourceLanguage = sourceLanguage,
+                        targetLanguage = targetLanguage,
+                        interfaceLanguage = requestState.interfaceLanguage,
+                        baseUrl = requestState.openAiBaseUrl,
+                        apiKey = requestState.openAiApiKey,
+                        model = requestState.openAiTextModel
+                    )
+                }.getOrNull()
+            } else {
+                null
+            }
+            val result = insight?.let { CardTranslationInsightResult(it.translation, it.source) }
+                ?: runCatching {
+                    val plain = requestConfiguredOnlineTranslation(cleanText, sourceLanguage, targetLanguage, requestState)
+                    CardTranslationInsightResult(plain.text, plain.source)
+                }.getOrNull()
+                ?: CardTranslationInsightResult("", "")
+            val translated = result.text.trim()
+            if (translated.isBlank()) {
+                _uiState.value = _uiState.value.copy(message = "Translation pending")
+                return@launch
+            }
+            if (result.isOpenAiSource()) {
+                logOpenAiActivity(
+                    action = "card auto-translation ${result.source}",
+                    details = "${requestState.openAiTextModel}: $sourceLanguage -> $targetLanguage; $cleanText => $translated"
+                )
+            }
+            applyTranslationToCard(
+                cardId = cardId,
+                translated = translated,
+                targetBackSide = targetBackSide,
+                attribution = result.googleAttribution(),
+                providerLabel = result.providerLabel(requestState.openAiTextModel),
+                insightText = insight?.toCardHint().orEmpty()
+            )
+        }
     }
 
 
     private fun saveTranslatedCardFromTranslator(originalText: String, translatedText: String) {
         val state = _uiState.value
-        val sourceLanguage = state.quickVocabularySourceLanguage.trim().ifBlank { "Target" }
-        val targetLanguage = state.quickVocabularyTargetLanguage.trim().ifBlank { "Target" }
+        val sourceLanguage = state.activeVocabularySourceLanguage.trim().ifBlank { state.quickVocabularySourceLanguage }
+        val targetLanguage = state.activeVocabularyTargetLanguage.trim().ifBlank { state.quickVocabularyTargetLanguage }
         val lessonTitle = quickVocabularyLessonTitle(sourceLanguage, targetLanguage, createdAt = displayTimestamp())
         val visibleLessonsForQuickVocabulary = repository.loadLessons(includeHidden = false)
         val existingLesson = visibleLessonsForQuickVocabulary
             .filter { lesson ->
-                lesson.id.startsWith(QUICK_VOCABULARY_LESSON_ID) &&
-                    (lesson.targetLanguage.equals(targetLanguage, ignoreCase = true) ||
-                        lesson.cards.any { card -> card.targetLanguage.equals(targetLanguage, ignoreCase = true) })
+                lesson.matchesQuickVocabularyPair(sourceLanguage, targetLanguage)
             }
             .maxByOrNull { lesson -> lesson.cards.firstOrNull()?.madeAt ?: "" }
-        val lessonId = existingLesson?.id ?: "${QUICK_VOCABULARY_LESSON_ID}_${targetLanguage.safeIdPart()}_${UUID.randomUUID()}"
+        val lessonId = existingLesson?.id
+            ?: "${QUICK_VOCABULARY_LESSON_ID}_${sourceLanguage.safeIdPart()}_${targetLanguage.safeIdPart()}_${UUID.randomUUID()}"
         val now = timestamp()
+        val providerLabel = if (state.translationAttribution.contains("Google", ignoreCase = true)) {
+            "Google Translator"
+        } else {
+            "Translator"
+        }
         var cardCreated = false
         val newCard = Flashcard(
             id = 1,
-            nativeValue = translatedText,
-            correctValue = originalText,
-            hint = "Created automatically from Translate mode.\nPowered by Google Translator",
+            nativeValue = originalText,
+            correctValue = translatedText,
+            hint = buildTranslatorHint("Created automatically from Translate mode.", state.translationAttribution),
             madeAt = now,
             where = "Translate mode",
-            log = listOf("$now - created automatically from Translate mode with Google Translator"),
+            log = listOf("$now - created automatically from Translate mode with $providerLabel"),
             type = "card",
             cardKind = "LN",
             sourceLanguage = sourceLanguage,
@@ -2152,15 +2761,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             var updatedExisting = false
             val updatedCards = existingLesson.cards.map { card ->
-                if (!updatedExisting && card.correctText().trim().equals(originalText, ignoreCase = true)) {
+                if (!updatedExisting && card.nativeText().trim().equals(originalText, ignoreCase = true)) {
                     updatedExisting = true
-                    if (card.nativeText().trim() == translatedText) {
+                    if (card.correctText().trim() == translatedText) {
                         card
                     } else {
                         card.copy(
-                            nativeValue = translatedText,
-                            hint = card.hint.withGoogleTranslateAttribution(),
-                            log = (card.log + "$now - translation updated automatically with Google Translator").takeLast(100)
+                            correctValue = translatedText,
+                            hint = card.hint.withTranslationAttribution(state.translationAttribution),
+                            log = (card.log + "$now - translation updated automatically with $providerLabel").takeLast(100)
                         )
                     }
                 } else {
@@ -2206,31 +2815,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         val translatedText = state.translationOutput.trim().ifBlank { "Empty" }
-        val sourceLanguage = state.quickVocabularySourceLanguage.trim().ifBlank { "Target" }
-        val targetLanguage = state.quickVocabularyTargetLanguage.trim().ifBlank { "Target" }
+        val sourceLanguage = state.activeVocabularySourceLanguage.trim().ifBlank { state.quickVocabularySourceLanguage }
+        val targetLanguage = state.activeVocabularyTargetLanguage.trim().ifBlank { state.quickVocabularyTargetLanguage }
         val lessonTitle = quickVocabularyLessonTitle(sourceLanguage, targetLanguage, createdAt = displayTimestamp())
         val visibleLessonsForQuickVocabulary = repository.loadLessons(includeHidden = false)
         val existingLesson = visibleLessonsForQuickVocabulary
             .filter { lesson ->
-                lesson.id.startsWith(QUICK_VOCABULARY_LESSON_ID) &&
-                    (lesson.targetLanguage.equals(targetLanguage, ignoreCase = true) ||
-                        lesson.cards.any { card -> card.targetLanguage.equals(targetLanguage, ignoreCase = true) })
+                lesson.matchesQuickVocabularyPair(sourceLanguage, targetLanguage)
             }
             .maxByOrNull { lesson -> lesson.cards.firstOrNull()?.madeAt ?: "" }
-        val lessonId = existingLesson?.id ?: "${QUICK_VOCABULARY_LESSON_ID}_${targetLanguage.safeIdPart()}_${UUID.randomUUID()}"
+        val lessonId = existingLesson?.id
+            ?: "${QUICK_VOCABULARY_LESSON_ID}_${sourceLanguage.safeIdPart()}_${targetLanguage.safeIdPart()}_${UUID.randomUUID()}"
         val now = timestamp()
         val newCard = Flashcard(
             id = 1,
-            nativeValue = translatedText,
-            correctValue = originalText,
+            nativeValue = originalText,
+            correctValue = translatedText,
             hint = if (translatedText == "Empty") {
                 "Created from Translate mode. Translation is pending."
             } else {
-                "Created from Translate mode. Original: $targetLanguage. Translation: $sourceLanguage.\nPowered by Google Translator"
+                buildTranslatorHint(
+                    "Created from Translate mode. Basic: $sourceLanguage. Target: $targetLanguage.",
+                    state.translationAttribution
+                )
             },
             madeAt = now,
             where = "Translate mode",
-            log = listOf("$now - created from Translate mode as $targetLanguage to $sourceLanguage"),
+            log = listOf("$now - created from Translate mode as $sourceLanguage to $targetLanguage"),
             type = "card",
             cardKind = "LN",
             sourceLanguage = sourceLanguage,
@@ -2274,6 +2885,96 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         )
     }
+
+    fun importSharedPostCards(sharedText: String) {
+        val cleanText = sharedText.trim().limitWords(100)
+        if (cleanText.isBlank()) {
+            _uiState.value = _uiState.value.copy(message = "Shared post is empty")
+            return
+        }
+        val state = _uiState.value
+        val sourceLanguage = state.activeVocabularySourceLanguage.trim().ifBlank { state.quickVocabularySourceLanguage }
+        val targetLanguage = state.activeVocabularyTargetLanguage.trim().ifBlank { state.quickVocabularyTargetLanguage }
+        viewModelScope.launch {
+            val requestState = _uiState.value
+            val drafts = if (requestState.shouldUseOpenAiOnline()) {
+                runCatching {
+                    requestOpenAiSharedPostCards(
+                        postText = cleanText,
+                        sourceLanguage = sourceLanguage,
+                        targetLanguage = targetLanguage,
+                        interfaceLanguage = requestState.interfaceLanguage,
+                        baseUrl = requestState.openAiBaseUrl,
+                        apiKey = requestState.openAiApiKey,
+                        model = requestState.openAiTextModel
+                    )
+                }.getOrNull().orEmpty()
+            } else {
+                buildSharedPostCardsWithTranslator(cleanText, sourceLanguage, targetLanguage, requestState)
+            }
+            if (drafts.isEmpty()) {
+                _uiState.value = _uiState.value.copy(message = "Shared post import failed")
+                return@launch
+            }
+            val now = timestamp()
+            val displayNow = displayTimestamp()
+            val lesson = Lesson(
+                id = "${SHARED_POST_LESSON_ID}_${sourceLanguage.safeIdPart()}_${targetLanguage.safeIdPart()}_${UUID.randomUUID()}",
+                title = "${sourceLanguage.shortLanguageCode()} - ${targetLanguage.shortLanguageCode()} Shared post $displayNow",
+                lessonInfo = "Imported from a shared post. Basic/Native language: $sourceLanguage. Target/Learning language: $targetLanguage. Source text was limited to 100 words.",
+                sourceLanguage = sourceLanguage,
+                targetLanguage = targetLanguage,
+                cards = drafts.mapIndexed { index, draft ->
+                    Flashcard(
+                        id = index + 1,
+                        nativeValue = draft.front,
+                        correctValue = draft.back,
+                        hint = draft.hint.ifBlank {
+                            if (draft.mode.equals("target_vocabulary", ignoreCase = true)) {
+                                "Shared post was treated as Target-language vocabulary."
+                            } else {
+                                "Shared post sentence translated into the Target language."
+                            }
+                        },
+                        madeAt = now,
+                        where = "Shared post import",
+                        log = listOf("$now - imported from shared post as ${draft.mode.ifBlank { "sentence_translation" }}"),
+                        type = "card",
+                        cardKind = "LN",
+                        sourceLanguage = sourceLanguage,
+                        targetLanguage = targetLanguage
+                    )
+                },
+                editable = true
+            )
+            repository.saveLesson(lesson)
+            repository.clearStudySession(lesson.id)
+            val lessons = repository.loadLessons(requestState.showHiddenLessons)
+            val savedLesson = lessons.firstOrNull { it.id == lesson.id } ?: lesson
+            _uiState.value = requestState.copy(
+                lessons = lessons,
+                selectedLesson = savedLesson,
+                selectedLessonIds = emptySet(),
+                screen = AppScreen.STUDY,
+                workMode = WorkMode.CARDS,
+                currentPortion = savedLesson.cards.take(PORTION_SIZE),
+                currentIndex = 0,
+                completedCardIds = emptySet(),
+                portionCompletionSaved = false,
+                isBackVisible = false,
+                answer = "",
+                message = "Shared post cards: ${savedLesson.cards.size}"
+            )
+            saveCurrentStudySession()
+            if (requestState.shouldUseOpenAiOnline()) {
+                logOpenAiActivity(
+                    action = "shared post cards API",
+                    details = "${requestState.openAiTextModel}; $sourceLanguage -> $targetLanguage; ${savedLesson.cards.size} cards"
+                )
+            }
+        }
+    }
+
     private fun translateQuickVocabularyCard(
         lessonId: String,
         cardId: Int,
@@ -2282,12 +2983,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         targetLanguage: String
     ) {
         viewModelScope.launch {
-            val translated = runCatching {
-                requestFreeOnlineTranslation(phrase, sourceLanguage, targetLanguage)
-            }.getOrNull().orEmpty().trim()
+            val requestState = _uiState.value
+            val result = runCatching {
+                requestConfiguredOnlineTranslation(phrase, sourceLanguage, targetLanguage, requestState)
+            }.getOrNull() ?: OpenAiTextResult("", "")
+            val translated = result.text.trim()
             if (translated.isBlank()) {
                 _uiState.value = _uiState.value.copy(message = "Added: $phrase. Target translation pending")
                 return@launch
+            }
+            if (result.isOpenAiSource()) {
+                logOpenAiActivity(
+                    action = "quick vocabulary translation ${result.source}",
+                    details = "${requestState.openAiTextModel}: $sourceLanguage -> $targetLanguage; $phrase => $translated"
+                )
             }
             val lesson = repository.loadLessons(includeHidden = true).firstOrNull { it.id == lessonId }
                 ?: return@launch
@@ -2296,9 +3005,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 cards = lesson.cards.map { card ->
                     if (card.id == cardId) {
                         card.copy(
-                            nativeValue = translated,
-                            hint = "Captured by voice and translated automatically into the target side.",
-                            log = (card.log + "$now - translated automatically from $sourceLanguage to $targetLanguage").takeLast(100)
+                            correctValue = translated,
+                            hint = buildTranslatorHint(
+                                "Captured by voice in the Basic language and translated automatically into the Target side.",
+                                result.googleAttribution()
+                            ),
+                            log = (card.log + "$now - translated automatically from $sourceLanguage to $targetLanguage with ${result.providerLabel()}").takeLast(100)
                         )
                     } else {
                         card
@@ -2312,7 +3024,88 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val currentState = _uiState.value
             _uiState.value = currentState.copy(
                 lessons = repository.loadLessons(currentState.showHiddenLessons),
-            message = "Target translation added: $phrase"
+                message = "${result.providerLabel()}: $phrase"
+            )
+        }
+    }
+
+    private fun correctMistakeCardWithOpenAi(
+        lessonId: String,
+        cardId: Int,
+        phrase: String,
+        language: String,
+        requestState: StudyUiState
+    ) {
+        viewModelScope.launch {
+            val insight = runCatching {
+                requestOpenAiMistakeCorrection(
+                    phrase = phrase,
+                    language = language,
+                    interfaceLanguage = requestState.interfaceLanguage,
+                    baseUrl = requestState.openAiBaseUrl,
+                    apiKey = requestState.openAiApiKey,
+                    model = requestState.openAiTextModel
+                )
+            }.getOrNull()
+            val corrected = insight?.corrected.orEmpty().trim()
+            if (corrected.isBlank()) {
+                _uiState.value = _uiState.value.copy(message = "Mistake card added. Correction pending")
+                return@launch
+            }
+            val correction = insight ?: return@launch
+            val lesson = repository.loadLessons(includeHidden = true).firstOrNull { it.id == lessonId } ?: return@launch
+            val now = timestamp()
+            val updatedCards = lesson.cards.map { card ->
+                if (card.id == cardId) {
+                    card.copy(
+                        correctValue = corrected,
+                        hint = correction.toMistakeHint(requestState.openAiTextModel),
+                        log = (card.log + "$now - same-language mistake corrected with OpenAI ${requestState.openAiTextModel}").takeLast(100)
+                    )
+                } else {
+                    card
+                }
+            }
+            val updatedLesson = lesson.copy(cards = updatedCards, editable = true, hidden = false)
+            repository.saveLesson(updatedLesson)
+            val currentState = _uiState.value
+            val lessons = repository.loadLessons(currentState.showHiddenLessons)
+            val savedLesson = lessons.firstOrNull { it.id == updatedLesson.id } ?: updatedLesson
+            _uiState.value = currentState.copy(
+                lessons = lessons,
+                selectedLesson = if (currentState.selectedLesson?.id == updatedLesson.id) savedLesson else currentState.selectedLesson,
+                currentPortion = currentState.currentPortion.map { portionCard ->
+                    updatedCards.firstOrNull { it.id == portionCard.id } ?: portionCard
+                },
+                message = "Mistake corrected with OpenAI"
+            )
+            saveCurrentStudySession()
+            logOpenAiActivity(
+                action = "mistake correction API",
+                details = "${requestState.openAiTextModel}: $language; ${phrase.take(180)} => ${corrected.take(180)}"
+            )
+        }
+    }
+
+    private suspend fun requestConfiguredOnlineTranslation(
+        phrase: String,
+        sourceLanguage: String,
+        targetLanguage: String,
+        state: StudyUiState
+    ): OpenAiTextResult {
+        return if (state.shouldUseOpenAiOnline()) {
+            requestOpenAiTranslation(
+                phrase = phrase,
+                sourceLanguage = sourceLanguage,
+                targetLanguage = targetLanguage,
+                baseUrl = state.openAiBaseUrl,
+                apiKey = state.openAiApiKey,
+                model = state.openAiTextModel
+            )
+        } else {
+            OpenAiTextResult(
+                text = requestFreeOnlineTranslation(phrase, sourceLanguage, targetLanguage),
+                source = "Google API"
             )
         }
     }
@@ -2351,6 +3144,505 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }.trim()
     }
 
+    private suspend fun requestOpenAiTranslation(
+        phrase: String,
+        sourceLanguage: String,
+        targetLanguage: String,
+        baseUrl: String,
+        apiKey: String,
+        model: String
+    ): OpenAiTextResult = withContext(Dispatchers.IO) {
+        if (apiKey.isBlank()) return@withContext OpenAiTextResult("", "")
+        repository.getCachedOpenAiText(
+            task = "translation",
+            model = model,
+            input = phrase,
+            sourceLanguage = sourceLanguage,
+            targetLanguage = targetLanguage
+        )?.let { return@withContext OpenAiTextResult(it, "cache") }
+        val endpoint = baseUrl.trimEnd('/') + "/responses"
+        val prompt = "Translate the text from $sourceLanguage to $targetLanguage. Return only the translation, no quotes, no commentary.\n\nText:\n$phrase"
+        val payload = JSONObject()
+            .put("model", model)
+            .put("input", prompt)
+            .toString()
+        val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            connectTimeout = 20_000
+            readTimeout = 45_000
+            doOutput = true
+            setRequestProperty("Authorization", "Bearer $apiKey")
+            setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            setRequestProperty("Accept", "application/json")
+            setRequestProperty("User-Agent", "MurrLex/${BuildConfig.VERSION_NAME}")
+        }
+        connection.outputStream.use { stream ->
+            stream.write(payload.toByteArray(Charsets.UTF_8))
+        }
+        val status = connection.responseCode
+        val responseText = (if (status in 200..299) connection.inputStream else connection.errorStream)
+            ?.bufferedReader(Charsets.UTF_8)
+            ?.use { it.readText() }
+            .orEmpty()
+        connection.disconnect()
+        if (status !in 200..299) return@withContext OpenAiTextResult("", "")
+        val parsed = parseOpenAiTextResponse(responseText)
+        if (parsed.isNotBlank()) {
+            repository.saveOpenAiTextCache(
+                task = "translation",
+                model = model,
+                input = phrase,
+                sourceLanguage = sourceLanguage,
+                targetLanguage = targetLanguage,
+                output = parsed
+            )
+        }
+        OpenAiTextResult(parsed, "API")
+    }
+
+    private suspend fun requestOpenAiCardTranslationInsight(
+        phrase: String,
+        sourceLanguage: String,
+        targetLanguage: String,
+        interfaceLanguage: String,
+        baseUrl: String,
+        apiKey: String,
+        model: String
+    ): CardTranslationInsight = withContext(Dispatchers.IO) {
+        if (apiKey.isBlank()) return@withContext CardTranslationInsight("", "", "", emptyList(), "")
+        val cacheInput = "card-insight:$interfaceLanguage:$phrase"
+        repository.getCachedOpenAiText(
+            task = "card_translation_insight",
+            model = model,
+            input = cacheInput,
+            sourceLanguage = sourceLanguage,
+            targetLanguage = targetLanguage
+        )?.let { cached ->
+            return@withContext parseCardTranslationInsight(cached).copy(source = "cache")
+        }
+        val endpoint = baseUrl.trimEnd('/') + "/responses"
+        val prompt = """
+            Translate the text from $sourceLanguage to $targetLanguage for a language-learning flashcard.
+            Return strict JSON only with keys: translation, explanation, rule, examples.
+            explanation, rule, and examples must be in the user's interface language: $interfaceLanguage.
+            Keep all explanation/rule/examples together short enough to read in under one minute.
+            examples must be an array of 2 short examples.
+
+            Text:
+            $phrase
+        """.trimIndent()
+        val payload = JSONObject()
+            .put("model", model)
+            .put("input", prompt)
+            .toString()
+        val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            connectTimeout = 20_000
+            readTimeout = 45_000
+            doOutput = true
+            setRequestProperty("Authorization", "Bearer $apiKey")
+            setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            setRequestProperty("Accept", "application/json")
+            setRequestProperty("User-Agent", "MurrLex/${BuildConfig.VERSION_NAME}")
+        }
+        connection.outputStream.use { stream -> stream.write(payload.toByteArray(Charsets.UTF_8)) }
+        val status = connection.responseCode
+        val responseText = (if (status in 200..299) connection.inputStream else connection.errorStream)
+            ?.bufferedReader(Charsets.UTF_8)
+            ?.use { it.readText() }
+            .orEmpty()
+        connection.disconnect()
+        if (status !in 200..299) return@withContext CardTranslationInsight("", "", "", emptyList(), "")
+        val parsedText = parseOpenAiTextResponse(responseText)
+        if (parsedText.isNotBlank()) {
+            repository.saveOpenAiTextCache(
+                task = "card_translation_insight",
+                model = model,
+                input = cacheInput,
+                sourceLanguage = sourceLanguage,
+                targetLanguage = targetLanguage,
+                output = parsedText
+            )
+        }
+        parseCardTranslationInsight(parsedText).copy(source = "API")
+    }
+
+    private suspend fun requestOpenAiMistakeCorrection(
+        phrase: String,
+        language: String,
+        interfaceLanguage: String,
+        baseUrl: String,
+        apiKey: String,
+        model: String
+    ): MistakeCorrectionInsight = withContext(Dispatchers.IO) {
+        if (apiKey.isBlank()) return@withContext MistakeCorrectionInsight("", "", emptyList(), emptyList())
+        val cacheInput = "mistake-correction:$interfaceLanguage:$phrase"
+        repository.getCachedOpenAiText(
+            task = "mistake_correction",
+            model = model,
+            input = cacheInput,
+            sourceLanguage = language,
+            targetLanguage = language
+        )?.let { cached -> return@withContext parseMistakeCorrectionInsight(cached) }
+        val endpoint = baseUrl.trimEnd('/') + "/responses"
+        val prompt = """
+            The learner said or wrote this in $language:
+            $phrase
+
+            Correct it in the same language. If it is already correct, keep the corrected value identical and explain why.
+            Return strict JSON only with keys: corrected, explanation, rules, examples.
+            explanation, rules, and examples must be in the user's interface language: $interfaceLanguage.
+            rules must be an array containing all applicable grammar, spelling, pronunciation, or usage rules.
+            examples must be an array of 2-4 short examples.
+        """.trimIndent()
+        val payload = JSONObject()
+            .put("model", model)
+            .put("input", prompt)
+            .toString()
+        val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            connectTimeout = 20_000
+            readTimeout = 60_000
+            doOutput = true
+            setRequestProperty("Authorization", "Bearer $apiKey")
+            setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            setRequestProperty("Accept", "application/json")
+            setRequestProperty("User-Agent", "MurrLex/${BuildConfig.VERSION_NAME}")
+        }
+        connection.outputStream.use { stream -> stream.write(payload.toByteArray(Charsets.UTF_8)) }
+        val status = connection.responseCode
+        val responseText = (if (status in 200..299) connection.inputStream else connection.errorStream)
+            ?.bufferedReader(Charsets.UTF_8)
+            ?.use { it.readText() }
+            .orEmpty()
+        connection.disconnect()
+        if (status !in 200..299) return@withContext MistakeCorrectionInsight("", "", emptyList(), emptyList())
+        val parsedText = parseOpenAiTextResponse(responseText)
+        if (parsedText.isNotBlank()) {
+            repository.saveOpenAiTextCache(
+                task = "mistake_correction",
+                model = model,
+                input = cacheInput,
+                sourceLanguage = language,
+                targetLanguage = language,
+                output = parsedText
+            )
+        }
+        parseMistakeCorrectionInsight(parsedText)
+    }
+
+    private suspend fun requestOpenAiTrainCards(
+        sourceCard: Flashcard,
+        options: List<String>,
+        interfaceLanguage: String,
+        baseUrl: String,
+        apiKey: String,
+        model: String
+    ): List<TrainCardDraft> = withContext(Dispatchers.IO) {
+        if (apiKey.isBlank()) return@withContext emptyList()
+        val mistake = sourceCard.mistakeText().ifBlank { sourceCard.nativeText() }
+        val corrected = sourceCard.correctText()
+        val language = sourceCard.sourceLanguage.ifBlank { sourceCard.targetLanguage }
+        val cacheInput = "train-cards:$interfaceLanguage:${options.joinToString("|")}:$mistake:$corrected:${sourceCard.hintText()}"
+        repository.getCachedOpenAiText(
+            task = "train_cards",
+            model = model,
+            input = cacheInput,
+            sourceLanguage = language,
+            targetLanguage = language
+        )?.let { cached -> return@withContext parseTrainCardDrafts(cached) }
+        val endpoint = baseUrl.trimEnd('/') + "/responses"
+        val prompt = """
+            Create language-learning Train flashcards from this Mistake card.
+            Language: $language
+            Learner mistake: $mistake
+            Correct version: $corrected
+            Existing explanation:
+            ${sourceCard.hintText()}
+
+            Create one card for each selected option:
+            ${options.joinToString("\n") { "- $it" }}
+
+            Return strict JSON only with key cards. cards must be an array of objects with keys: front, back, hint, option.
+            front and back are the two card sides in $language.
+            hint must explain the rule or drill goal in the user's interface language: $interfaceLanguage.
+            These generated cards must reinforce the material and must not ask for more generated cards.
+        """.trimIndent()
+        val payload = JSONObject()
+            .put("model", model)
+            .put("input", prompt)
+            .toString()
+        val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            connectTimeout = 20_000
+            readTimeout = 60_000
+            doOutput = true
+            setRequestProperty("Authorization", "Bearer $apiKey")
+            setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            setRequestProperty("Accept", "application/json")
+            setRequestProperty("User-Agent", "MurrLex/${BuildConfig.VERSION_NAME}")
+        }
+        connection.outputStream.use { stream -> stream.write(payload.toByteArray(Charsets.UTF_8)) }
+        val status = connection.responseCode
+        val responseText = (if (status in 200..299) connection.inputStream else connection.errorStream)
+            ?.bufferedReader(Charsets.UTF_8)
+            ?.use { it.readText() }
+            .orEmpty()
+        connection.disconnect()
+        if (status !in 200..299) return@withContext emptyList()
+        val parsedText = parseOpenAiTextResponse(responseText)
+        if (parsedText.isNotBlank()) {
+            repository.saveOpenAiTextCache(
+                task = "train_cards",
+                model = model,
+                input = cacheInput,
+                sourceLanguage = language,
+                targetLanguage = language,
+                output = parsedText
+            )
+        }
+        parseTrainCardDrafts(parsedText)
+    }
+
+    private suspend fun requestOpenAiSharedPostCards(
+        postText: String,
+        sourceLanguage: String,
+        targetLanguage: String,
+        interfaceLanguage: String,
+        baseUrl: String,
+        apiKey: String,
+        model: String
+    ): List<SharedPostCardDraft> = withContext(Dispatchers.IO) {
+        if (apiKey.isBlank()) return@withContext emptyList()
+        val limitedText = postText.limitWords(100)
+        val cacheInput = "shared-post:$interfaceLanguage:$sourceLanguage:$targetLanguage:$limitedText"
+        repository.getCachedOpenAiText(
+            task = "shared_post_cards",
+            model = model,
+            input = cacheInput,
+            sourceLanguage = sourceLanguage,
+            targetLanguage = targetLanguage
+        )?.let { cached -> return@withContext parseSharedPostCardDrafts(cached) }
+        val endpoint = baseUrl.trimEnd('/') + "/responses"
+        val prompt = """
+            Convert this shared social post into MurrLex language-learning flashcards.
+            Use only the first 100 words.
+            Basic/Native language: $sourceLanguage
+            Target/Learning language: $targetLanguage
+            User interface language for hints: $interfaceLanguage
+
+            Rules:
+            1. If the post is not already in the Target/Learning language, split it into sentence cards.
+               front = original sentence, back = translation into $targetLanguage.
+            2. If the post is already in the Target/Learning language, create vocabulary cards for useful words or short phrases.
+               front = translation/explanation in $sourceLanguage, back = the original $targetLanguage word or phrase.
+            3. Return no more than 20 cards.
+            4. Keep front/back concise.
+            5. Return strict JSON only with key cards. cards is an array of objects with keys: front, back, hint, mode.
+               mode must be sentence_translation or target_vocabulary.
+
+            Post:
+            $limitedText
+        """.trimIndent()
+        val payload = JSONObject()
+            .put("model", model)
+            .put("input", prompt)
+            .toString()
+        val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            connectTimeout = 20_000
+            readTimeout = 60_000
+            doOutput = true
+            setRequestProperty("Authorization", "Bearer $apiKey")
+            setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            setRequestProperty("Accept", "application/json")
+            setRequestProperty("User-Agent", "MurrLex/${BuildConfig.VERSION_NAME}")
+        }
+        connection.outputStream.use { stream -> stream.write(payload.toByteArray(Charsets.UTF_8)) }
+        val status = connection.responseCode
+        val responseText = (if (status in 200..299) connection.inputStream else connection.errorStream)
+            ?.bufferedReader(Charsets.UTF_8)
+            ?.use { it.readText() }
+            .orEmpty()
+        connection.disconnect()
+        if (status !in 200..299) return@withContext emptyList()
+        val parsedText = parseOpenAiTextResponse(responseText)
+        if (parsedText.isNotBlank()) {
+            repository.saveOpenAiTextCache(
+                task = "shared_post_cards",
+                model = model,
+                input = cacheInput,
+                sourceLanguage = sourceLanguage,
+                targetLanguage = targetLanguage,
+                output = parsedText
+            )
+        }
+        parseSharedPostCardDrafts(parsedText)
+    }
+
+    private suspend fun buildSharedPostCardsWithTranslator(
+        postText: String,
+        sourceLanguage: String,
+        targetLanguage: String,
+        state: StudyUiState
+    ): List<SharedPostCardDraft> {
+        val limitedText = postText.limitWords(100)
+        val looksTarget = guessedLanguageCode(limitedText)
+            ?.equals(freeOnlineLanguageCode(targetLanguage), ignoreCase = true) == true
+        return if (looksTarget) {
+            limitedText.contentWords()
+                .distinctBy { it.lowercase(Locale.ROOT) }
+                .take(20)
+                .mapNotNull { word ->
+                    val translated = runCatching {
+                        requestConfiguredOnlineTranslation(word, targetLanguage, sourceLanguage, state).text.trim()
+                    }.getOrDefault("")
+                    if (translated.isBlank()) null else {
+                        SharedPostCardDraft(
+                            front = translated,
+                            back = word,
+                            hint = "Shared post was already in $targetLanguage; this card memorizes a useful Target-language word.",
+                            mode = "target_vocabulary"
+                        )
+                    }
+                }
+        } else {
+            limitedText.splitSharedPostSentences()
+                .take(20)
+                .mapNotNull { sentence ->
+                    val translated = runCatching {
+                        requestConfiguredOnlineTranslation(sentence, sourceLanguage, targetLanguage, state).text.trim()
+                    }.getOrDefault("")
+                    if (translated.isBlank()) null else {
+                        SharedPostCardDraft(
+                            front = sentence,
+                            back = translated,
+                            hint = "Shared post sentence translated into $targetLanguage.",
+                            mode = "sentence_translation"
+                        )
+                    }
+                }
+        }
+    }
+
+    private fun parseCardTranslationInsight(text: String): CardTranslationInsight {
+        val clean = text.trim()
+            .removePrefix("```json")
+            .removePrefix("```")
+            .removeSuffix("```")
+            .trim()
+        val json = runCatching { JSONObject(clean) }.getOrNull()
+        if (json == null) return CardTranslationInsight(clean, "", "", emptyList(), "")
+        val examplesJson = json.optJSONArray("examples")
+        val examples = buildList {
+            if (examplesJson != null) {
+                for (index in 0 until examplesJson.length()) {
+                    examplesJson.optString(index).trim().takeIf { it.isNotBlank() }?.let(::add)
+                }
+            }
+        }.take(2)
+        return CardTranslationInsight(
+            translation = json.optString("translation").trim(),
+            explanation = json.optString("explanation").trim(),
+            rule = json.optString("rule").trim(),
+            examples = examples,
+            source = ""
+        )
+    }
+
+    private fun parseMistakeCorrectionInsight(text: String): MistakeCorrectionInsight {
+        val clean = cleanJsonText(text)
+        val json = runCatching { JSONObject(clean) }.getOrNull()
+            ?: return MistakeCorrectionInsight(clean, "", emptyList(), emptyList())
+        return MistakeCorrectionInsight(
+            corrected = json.optString("corrected").trim(),
+            explanation = json.optString("explanation").trim(),
+            rules = json.optJSONArray("rules").toStringList().ifEmpty {
+                json.optString("rules").split('\n').map { it.trim().trim('-', ' ') }.filter { it.isNotBlank() }
+            },
+            examples = json.optJSONArray("examples").toStringList().take(4)
+        )
+    }
+
+    private fun parseTrainCardDrafts(text: String): List<TrainCardDraft> {
+        val clean = cleanJsonText(text)
+        val rootObject = runCatching { JSONObject(clean) }.getOrNull()
+        val cardsJson = rootObject?.optJSONArray("cards") ?: runCatching { JSONArray(clean) }.getOrNull() ?: return emptyList()
+        return buildList {
+            for (index in 0 until cardsJson.length()) {
+                val cardJson = cardsJson.optJSONObject(index) ?: continue
+                val front = cardJson.optString("front").trim()
+                val back = cardJson.optString("back").trim()
+                if (front.isBlank() || back.isBlank()) continue
+                add(
+                    TrainCardDraft(
+                        front = front,
+                        back = back,
+                        hint = cardJson.optString("hint").trim(),
+                        option = cardJson.optString("option").trim().ifBlank { "Train" }
+                    )
+                )
+            }
+        }
+    }
+
+    private fun parseSharedPostCardDrafts(text: String): List<SharedPostCardDraft> {
+        val clean = cleanJsonText(text)
+        val rootObject = runCatching { JSONObject(clean) }.getOrNull()
+        val cardsJson = rootObject?.optJSONArray("cards") ?: runCatching { JSONArray(clean) }.getOrNull() ?: return emptyList()
+        return buildList {
+            for (index in 0 until cardsJson.length()) {
+                val cardJson = cardsJson.optJSONObject(index) ?: continue
+                val front = cardJson.optString("front").trim()
+                val back = cardJson.optString("back").trim()
+                if (front.isBlank() || back.isBlank()) continue
+                add(
+                    SharedPostCardDraft(
+                        front = front,
+                        back = back,
+                        hint = cardJson.optString("hint").trim(),
+                        mode = cardJson.optString("mode").trim().ifBlank { "sentence_translation" }
+                    )
+                )
+            }
+        }.take(20)
+    }
+
+    private fun cleanJsonText(text: String): String {
+        return text.trim()
+            .removePrefix("```json")
+            .removePrefix("```")
+            .removeSuffix("```")
+            .trim()
+    }
+
+    private fun JSONArray?.toStringList(): List<String> {
+        if (this == null) return emptyList()
+        return buildList {
+            for (index in 0 until length()) {
+                optString(index).trim().takeIf { it.isNotBlank() }?.let(::add)
+            }
+        }
+    }
+
+    private fun parseOpenAiTextResponse(responseText: String): String {
+        val root = runCatching { JSONObject(responseText) }.getOrNull() ?: return ""
+        root.optString("output_text").trim().takeIf { it.isNotBlank() }?.let { return it }
+        val output = root.optJSONArray("output") ?: return ""
+        val builder = StringBuilder()
+        for (outputIndex in 0 until output.length()) {
+            val item = output.optJSONObject(outputIndex) ?: continue
+            val content = item.optJSONArray("content") ?: continue
+            for (contentIndex in 0 until content.length()) {
+                val contentItem = content.optJSONObject(contentIndex) ?: continue
+                val text = contentItem.optString("text")
+                    .ifBlank { contentItem.optString("output_text") }
+                if (text.isNotBlank()) builder.append(text)
+            }
+        }
+        return builder.toString().trim()
+    }
+
     private fun freeOnlineLanguageCode(language: String): String {
         return when (language.trim().lowercase(Locale.ROOT)) {
             "english", "en" -> "en"
@@ -2360,6 +3652,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             "belarusian", "belarus", "by", "be" -> "be"
             "ukrainian", "uk", "ua" -> "uk"
             "german", "de", "deutsch" -> "de"
+            "latvian", "lv" -> "lv"
+            "lithuanian", "lt" -> "lt"
+            "portuguese", "pt" -> "pt"
             else -> language.trim().takeIf { it.length in 2..3 }?.lowercase(Locale.ROOT) ?: "auto"
         }
     }
@@ -2443,14 +3738,78 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
 
-    private fun String.withGoogleTranslateAttribution(): String {
-    val attribution = "Powered by Google Translator"
+    private fun String.withTranslationAttribution(attribution: String): String {
+        if (attribution.isBlank()) return trim()
         val clean = trim()
         return when {
             clean.isBlank() -> attribution
             clean.contains(attribution, ignoreCase = true) -> clean
             else -> "$clean\n$attribution"
         }
+    }
+
+    private fun String.withTranslationInsight(insight: String, attribution: String): String {
+        val clean = trim()
+        val insightClean = insight.trim()
+        val withInsight = when {
+            insightClean.isBlank() -> clean
+            clean.isBlank() -> insightClean
+            clean.contains(insightClean, ignoreCase = true) -> clean
+            else -> "$clean\n\n$insightClean"
+        }
+        return withInsight.withTranslationAttribution(attribution)
+    }
+
+    private fun CardTranslationInsight.toCardHint(): String {
+        val parts = buildList {
+            explanation.takeIf { it.isNotBlank() }?.let { add("Explanation: $it") }
+            rule.takeIf { it.isNotBlank() }?.let { add("Rule: $it") }
+            if (examples.isNotEmpty()) add("Examples:\n${examples.joinToString("\n") { "- $it" }}")
+        }
+        return parts.joinToString("\n\n").take(1_200)
+    }
+
+    private fun MistakeCorrectionInsight.toMistakeHint(model: String): String {
+        val parts = buildList {
+            corrected.takeIf { it.isNotBlank() }?.let { add("Correction: $it") }
+            explanation.takeIf { it.isNotBlank() }?.let { add("Explanation: $it") }
+            if (rules.isNotEmpty()) add("Rules:\n${rules.joinToString("\n") { "- $it" }}")
+            if (examples.isNotEmpty()) add("Examples:\n${examples.joinToString("\n") { "- $it" }}")
+            add("Models: correction OpenAI $model")
+        }
+        return parts.joinToString("\n\n").take(1_500)
+    }
+
+    private fun OpenAiTextResult.isOpenAiSource(): Boolean {
+        return source.equals("API", ignoreCase = true) || source.equals("cache", ignoreCase = true)
+    }
+
+    private fun OpenAiTextResult.googleAttribution(): String {
+        return if (source == "Google API") GOOGLE_TRANSLATE_ATTRIBUTION else ""
+    }
+
+    private fun OpenAiTextResult.providerLabel(): String {
+        return if (source == "Google API") {
+            GOOGLE_TRANSLATE_ATTRIBUTION
+        } else {
+            "OpenAI translation ${_uiState.value.openAiTextModel}: $source"
+        }
+    }
+
+    private fun CardTranslationInsightResult.isOpenAiSource(): Boolean {
+        return source.equals("API", ignoreCase = true) || source.equals("cache", ignoreCase = true)
+    }
+
+    private fun CardTranslationInsightResult.googleAttribution(): String {
+        return if (source == "Google API") GOOGLE_TRANSLATE_ATTRIBUTION else ""
+    }
+
+    private fun CardTranslationInsightResult.providerLabel(model: String): String {
+        return if (source == "Google API") GOOGLE_TRANSLATE_ATTRIBUTION else "OpenAI translation $model: $source"
+    }
+
+    private fun buildTranslatorHint(base: String, attribution: String): String {
+        return attribution.trim().takeIf { it.isNotBlank() }?.let { "$base\n$it" } ?: base
     }
     private fun timestamp(): String {
         return SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date())
@@ -2490,10 +3849,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun quickVocabularyLessonShortTitle(sourceLanguage: String, targetLanguage: String): String {
-        return "${targetLanguage.shortLanguageCode()} - ${sourceLanguage.shortLanguageCode()} Vocabulary"
+        return "${sourceLanguage.shortLanguageCode()} - ${targetLanguage.shortLanguageCode()} Vocabulary"
+    }
+
+    private fun StudyUiState.shouldUseOpenAiOnline(): Boolean {
+        return useOpenAiModels && openAiApiKey.isNotBlank()
     }
     private fun quickVocabularyLessonTitle(sourceLanguage: String, targetLanguage: String, createdAt: String): String {
-        return "${targetLanguage.shortLanguageCode()} - ${sourceLanguage.shortLanguageCode()} Vocabulary $createdAt"
+        return "${sourceLanguage.shortLanguageCode()} - ${targetLanguage.shortLanguageCode()} Vocabulary $createdAt"
     }
 
     private fun displayTimestamp(): String {
@@ -2510,13 +3873,69 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             normalized in listOf("es", "spa", "spanish", "espanol") -> "ES"
             normalized in listOf("be", "bel", "by", "belarusian") -> "BY"
             normalized in listOf("uk", "ua", "ukr", "ukrainian") -> "UA"
+            normalized in listOf("lv", "lav", "latvian") -> "LV"
+            normalized in listOf("lt", "lit", "lithuanian") -> "LT"
+            normalized in listOf("pt", "por", "portuguese") -> "PT"
             normalized.length >= 2 -> normalized.take(2).uppercase(Locale.ROOT)
             else -> "XX"
         }
     }
 
     private fun quickVocabularyLessonInfo(sourceLanguage: String, targetLanguage: String): String {
-    return "Quick voice captures. Source language: $targetLanguage. Target language: $sourceLanguage. The captured phrase is saved from the source side; translation can be added later or generated by the configured translator."
+        return "Quick voice captures. Basic/Native language: $sourceLanguage. Target/Learning language: $targetLanguage. The captured phrase is saved on the Basic side; translation is added to the Target side."
+    }
+
+    private fun String.limitWords(limit: Int): String {
+        return trim()
+            .split(Regex("\\s+"))
+            .filter { it.isNotBlank() }
+            .take(limit)
+            .joinToString(" ")
+    }
+
+    private fun String.splitSharedPostSentences(): List<String> {
+        return replace('\n', ' ')
+            .split(Regex("(?<=[.!?。！？])\\s+|(?<=[.!?])"))
+            .map { it.trim().trim('-', '–', '—') }
+            .filter { it.length >= 2 }
+            .ifEmpty { listOf(trim()) }
+    }
+
+    private fun String.contentWords(): List<String> {
+        return split(Regex("[^\\p{L}\\p{M}'’-]+"))
+            .map { it.trim('\'', '’', '-') }
+            .filter { it.length >= 2 }
+    }
+
+    private fun guessedLanguageCode(text: String): String? {
+        val lower = text.lowercase(Locale.ROOT)
+        val cyrillicCount = lower.count { it in '\u0400'..'\u04FF' }
+        val latinCount = lower.count { it in 'a'..'z' || it in '\u00C0'..'\u024F' }
+        if (cyrillicCount > latinCount) {
+            return when {
+                Regex("[іїєґ]").containsMatchIn(lower) -> "uk"
+                Regex("[ўі]").containsMatchIn(lower) -> "be"
+                else -> "ru"
+            }
+        }
+        return when {
+            Regex("[ąćęłńóśźż]").containsMatchIn(lower) -> "pl"
+            Regex("[āčēģīķļņšūž]").containsMatchIn(lower) -> "lv"
+            Regex("[ąčęėįšųūž]").containsMatchIn(lower) -> "lt"
+            Regex("[ãõç]").containsMatchIn(lower) -> "pt"
+            Regex("[áéíñóúü]").containsMatchIn(lower) -> "es"
+            Regex("[äöüß]").containsMatchIn(lower) -> "de"
+            lower.isNotBlank() -> "en"
+            else -> null
+        }
+    }
+
+    private fun Lesson.matchesQuickVocabularyPair(sourceLanguage: String, targetLanguage: String): Boolean {
+        if (!id.startsWith(QUICK_VOCABULARY_LESSON_ID)) return false
+        val lessonSource = this.sourceLanguage.lessonLanguageOrNull()
+        val lessonTarget = this.targetLanguage.lessonLanguageOrNull()
+        return lessonSource?.equals(sourceLanguage, ignoreCase = true) == true &&
+            lessonTarget?.equals(targetLanguage, ignoreCase = true) == true
     }
 
     private fun String.safeIdPart(): String {
@@ -2528,6 +3947,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     companion object {
         private const val PORTION_SIZE = 20
         private const val QUICK_VOCABULARY_LESSON_ID = "quick_vocabulary"
+        private const val SHARED_POST_LESSON_ID = "shared_post"
+        private const val GOOGLE_TRANSLATE_ATTRIBUTION = "Powered by Google Translator"
             }
 }
 

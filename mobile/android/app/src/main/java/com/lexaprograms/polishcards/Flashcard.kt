@@ -36,9 +36,14 @@ data class Flashcard(
     fun madeAtText(): String = madeAt.ifBlank { wrongAnswers.lastOrNull()?.date ?: "Not specified" }
     fun whereText(): String = where.ifBlank { "Not specified" }
     fun kindCode(): String = cardKind.ifBlank { "MK" }.uppercase()
-    fun kindLabel(): String = if (kindCode() == "LN") "Lesson" else "Mistakes"
-    fun frontLabel(): String = if (kindCode() == "LN") sourceLanguage.ifBlank { "Source" } else "Mistake made"
-    fun backLabel(): String = if (kindCode() == "LN") targetLanguage.ifBlank { "Target" } else "Make it right"
+    fun isLearningKind(): Boolean = kindCode() == "LN" || kindCode() == "TR"
+    fun kindLabel(): String = when (kindCode()) {
+        "LN" -> "Lesson"
+        "TR" -> "Train"
+        else -> "Mistakes"
+    }
+    fun frontLabel(): String = if (isLearningKind()) sourceLanguage.ifBlank { "Source" } else "Mistake made"
+    fun backLabel(): String = if (isLearningKind()) targetLanguage.ifBlank { "Target" } else "Make it right"
     fun mistakeRecords(): List<MistakeRecord> {
         return if (wrongAnswers.isNotEmpty()) {
             wrongAnswers

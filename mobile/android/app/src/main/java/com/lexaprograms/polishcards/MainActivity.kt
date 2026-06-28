@@ -1,4 +1,4 @@
-package com.lexaprograms.polishcards
+﻿package com.lexaprograms.polishcards
 
 import android.Manifest
 import android.content.BroadcastReceiver
@@ -14,6 +14,8 @@ import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
+import android.media.MediaPlayer
+import android.media.MediaRecorder
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.SizeTransform
@@ -37,6 +39,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -84,6 +87,7 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
@@ -131,6 +135,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.platform.LocalContext
@@ -170,17 +175,20 @@ import com.google.mlkit.nl.translate.Translation
 import com.google.mlkit.nl.translate.TranslatorOptions
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.io.File
+import java.net.HttpURLConnection
+import java.net.URLEncoder
+import java.net.URL
+import java.security.MessageDigest
+import org.json.JSONObject
 import kotlin.math.abs
+import kotlin.math.sin
 import kotlin.random.Random
-import android.media.AudioAttributes
-import android.media.AudioFormat
-import android.media.AudioManager
-import android.media.AudioTrack
-import android.media.ToneGenerator
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -189,22 +197,420 @@ import android.os.Looper
 import android.os.VibrationEffect
 import android.os.Vibrator
 import androidx.core.content.FileProvider
-import java.io.File
 
 private val BrandSaladColor = Color(0xFF8FDCC4)
 private val BrandRedColor = Color(0xFFC45F59)
 private val OnlineStatusColor = Color(0xFF72D66A)
 private val CompletedFrameColor = Color(0xFFE8F5E9)
 
+private enum class CardAudioStatus {
+    ONLINE,
+    OFFLINE
+}
+
 private enum class VoiceInputTarget {
     ANSWER,
     QUICK_VOCABULARY,
     TRANSLATE_INPUT,
+    TRANSLATE_OUTPUT,
     CARD_NATIVE,
     CARD_CORRECT,
     CARD_HINT,
     CARD_MADE_AT,
     CARD_WHERE
+}
+
+private data class SharedPostSignal(
+    val id: Long,
+    val text: String
+)
+
+private val TrainCardGenerationOptions = listOf(
+    "Correct form recall",
+    "Find the mistake",
+    "Fill the blank",
+    "Choose the rule",
+    "Word order drill",
+    "Pronunciation contrast",
+    "Minimal pair",
+    "Rewrite correctly",
+    "Usage example",
+    "One-minute rule check"
+)
+
+private data class OpenAiAudioResult(
+    val file: File,
+    val source: String
+)
+
+private data class ElevenLabsAudioResult(
+    val file: File? = null,
+    val source: String = "",
+    val error: String = ""
+)
+
+private object AppAudioPlayer {
+    private var player: MediaPlayer? = null
+
+    fun hasActivePlayback(): Boolean = player != null
+
+    fun stop(): Boolean {
+        val hadPlayer = player != null
+        player?.let { current ->
+            runCatching { current.stop() }
+            current.release()
+        }
+        player = null
+        return hadPlayer
+    }
+
+    fun playFile(file: File, deleteOnFailure: Boolean = false): Boolean {
+        stop()
+        val nextPlayer = runCatching {
+            MediaPlayer().apply {
+                setDataSource(file.absolutePath)
+                setOnCompletionListener {
+                    if (player === it) player = null
+                    it.release()
+                }
+                setOnErrorListener { mediaPlayer, _, _ ->
+                    if (player === mediaPlayer) player = null
+                    mediaPlayer.release()
+                    if (deleteOnFailure) file.delete()
+                    true
+                }
+                prepare()
+            }
+        }.getOrElse {
+            if (deleteOnFailure) file.delete()
+            return false
+        }
+        player = nextPlayer
+        return runCatching {
+            nextPlayer.start()
+        }.onFailure {
+            if (player === nextPlayer) player = null
+            nextPlayer.release()
+            if (deleteOnFailure) file.delete()
+        }.isSuccess
+    }
+
+    fun playResource(context: Context, resId: Int): Boolean {
+        stop()
+        val nextPlayer = runCatching { MediaPlayer.create(context, resId) }.getOrNull() ?: return false
+        player = nextPlayer
+        nextPlayer.setVolume(1f, 1f)
+        nextPlayer.setOnCompletionListener {
+            if (player === it) player = null
+            it.release()
+        }
+        nextPlayer.setOnErrorListener { mediaPlayer, _, _ ->
+            if (player === mediaPlayer) player = null
+            mediaPlayer.release()
+            true
+        }
+        return runCatching {
+            nextPlayer.start()
+        }.onFailure {
+            if (player === nextPlayer) player = null
+            nextPlayer.release()
+        }.isSuccess
+    }
+}
+
+private suspend fun requestOpenAiTranscriptionFile(
+    audioFile: File,
+    baseUrl: String,
+    apiKey: String,
+    model: String,
+    languageTag: String
+): String? = withContext(Dispatchers.IO) {
+    if (apiKey.isBlank() || !audioFile.exists()) return@withContext null
+    val boundary = "MurrLexBoundary${System.currentTimeMillis()}"
+    val lineBreak = "\r\n"
+    val connection = (URL(baseUrl.trimEnd('/') + "/audio/transcriptions").openConnection() as HttpURLConnection).apply {
+        requestMethod = "POST"
+        connectTimeout = 20_000
+        readTimeout = 60_000
+        doOutput = true
+        setRequestProperty("Authorization", "Bearer $apiKey")
+        setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
+        setRequestProperty("Accept", "application/json")
+        setRequestProperty("User-Agent", "MurrLex/${BuildConfig.VERSION_NAME}")
+    }
+    connection.outputStream.use { output ->
+        fun field(name: String, value: String) {
+            output.write("--$boundary$lineBreak".toByteArray(Charsets.UTF_8))
+            output.write("Content-Disposition: form-data; name=\"$name\"$lineBreak$lineBreak".toByteArray(Charsets.UTF_8))
+            output.write(value.toByteArray(Charsets.UTF_8))
+            output.write(lineBreak.toByteArray(Charsets.UTF_8))
+        }
+        field("model", model)
+        languageTag.substringBefore('-').takeIf { it.length == 2 }?.let { field("language", it) }
+        output.write("--$boundary$lineBreak".toByteArray(Charsets.UTF_8))
+        output.write("Content-Disposition: form-data; name=\"file\"; filename=\"speech.m4a\"$lineBreak".toByteArray(Charsets.UTF_8))
+        output.write("Content-Type: audio/mp4$lineBreak$lineBreak".toByteArray(Charsets.UTF_8))
+        audioFile.inputStream().use { input -> input.copyTo(output) }
+        output.write(lineBreak.toByteArray(Charsets.UTF_8))
+        output.write("--$boundary--$lineBreak".toByteArray(Charsets.UTF_8))
+    }
+    val status = connection.responseCode
+    val responseText = (if (status in 200..299) connection.inputStream else connection.errorStream)
+        ?.bufferedReader(Charsets.UTF_8)
+        ?.use { it.readText() }
+        .orEmpty()
+    connection.disconnect()
+    if (status !in 200..299) return@withContext null
+    runCatching { JSONObject(responseText).optString("text").trim() }.getOrNull()
+}
+
+private suspend fun requestOpenAiSpeechAudioFile(
+    context: Context,
+    text: String,
+    baseUrl: String,
+    apiKey: String,
+    model: String,
+    voice: String,
+    cacheDurationMinutes: Long
+): OpenAiAudioResult? = withContext(Dispatchers.IO) {
+    if (apiKey.isBlank()) return@withContext null
+    val cacheKey = openAiCacheKey("tts", model, voice, text)
+    val cacheDir = openAiCacheDir(context)
+    val audioCacheFile = File(cacheDir, "$cacheKey.mp3")
+    val metaCacheFile = File(cacheDir, "$cacheKey.json")
+    if (audioCacheFile.exists() && metaCacheFile.exists()) {
+        val createdAt = runCatching { JSONObject(metaCacheFile.readText(Charsets.UTF_8)).optLong("createdAt", 0L) }
+            .getOrDefault(0L)
+        if (isOpenAiCacheFresh(createdAt, cacheDurationMinutes)) {
+            return@withContext OpenAiAudioResult(audioCacheFile, "cache")
+        }
+        audioCacheFile.delete()
+        metaCacheFile.delete()
+    }
+    val payload = JSONObject()
+        .put("model", model)
+        .put("voice", voice)
+        .put("input", text)
+        .put("format", "mp3")
+        .toString()
+    val connection = (URL(baseUrl.trimEnd('/') + "/audio/speech").openConnection() as HttpURLConnection).apply {
+        requestMethod = "POST"
+        connectTimeout = 20_000
+        readTimeout = 45_000
+        doOutput = true
+        setRequestProperty("Authorization", "Bearer $apiKey")
+        setRequestProperty("Content-Type", "application/json; charset=utf-8")
+        setRequestProperty("Accept", "audio/mpeg")
+        setRequestProperty("User-Agent", "MurrLex/${BuildConfig.VERSION_NAME}")
+    }
+    connection.outputStream.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
+    val status = connection.responseCode
+    if (status !in 200..299) {
+        connection.errorStream?.close()
+        connection.disconnect()
+        return@withContext null
+    }
+    cacheDir.mkdirs()
+    connection.inputStream.use { input ->
+        audioCacheFile.outputStream().use { outputStream -> input.copyTo(outputStream) }
+    }
+    connection.disconnect()
+    val meta = JSONObject()
+        .put("type", "audio")
+        .put("task", "tts")
+        .put("model", model)
+        .put("voice", voice)
+        .put("createdAt", System.currentTimeMillis())
+        .put("file", audioCacheFile.name)
+    metaCacheFile.writeText(meta.toString(), Charsets.UTF_8)
+    OpenAiAudioResult(audioCacheFile, "API")
+}
+
+private suspend fun requestElevenLabsSpeechAudioFile(
+    context: Context,
+    text: String,
+    languageCode: String,
+    apiKey: String,
+    model: String,
+    voiceId: String,
+    cacheDurationMinutes: Long
+): ElevenLabsAudioResult = withContext(Dispatchers.IO) {
+    if (apiKey.isBlank()) return@withContext ElevenLabsAudioResult(error = "ElevenLabs API key is missing")
+    val cleanLanguageCode = languageCode.trim().lowercase(Locale.ROOT).ifBlank { "be" }
+    val outputFormat = CardRepository.DEFAULT_ELEVENLABS_OUTPUT_FORMAT
+    val cacheKey = openAiCacheKey("elevenlabs-tts", model, voiceId, outputFormat, cleanLanguageCode, text)
+    val cacheDir = openAiCacheDir(context)
+    val audioCacheFile = File(cacheDir, "$cacheKey.mp3")
+    val metaCacheFile = File(cacheDir, "$cacheKey.json")
+    if (audioCacheFile.exists() && metaCacheFile.exists()) {
+        val createdAt = runCatching { JSONObject(metaCacheFile.readText(Charsets.UTF_8)).optLong("createdAt", 0L) }
+            .getOrDefault(0L)
+        if (isOpenAiCacheFresh(createdAt, cacheDurationMinutes)) {
+            return@withContext ElevenLabsAudioResult(audioCacheFile, "cache")
+        }
+        audioCacheFile.delete()
+        metaCacheFile.delete()
+    }
+    val encodedVoiceId = URLEncoder.encode(voiceId, Charsets.UTF_8.name())
+    val encodedFormat = URLEncoder.encode(outputFormat, Charsets.UTF_8.name())
+    val endpoint = "${CardRepository.DEFAULT_ELEVENLABS_BASE_URL}/text-to-speech/$encodedVoiceId?output_format=$encodedFormat"
+    val payload = JSONObject()
+        .put("text", text)
+        .put("model_id", model)
+        .put("language_code", cleanLanguageCode)
+        .toString()
+    val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+        requestMethod = "POST"
+        connectTimeout = 20_000
+        readTimeout = 45_000
+        doOutput = true
+        setRequestProperty("xi-api-key", apiKey)
+        setRequestProperty("Content-Type", "application/json; charset=utf-8")
+        setRequestProperty("Accept", "audio/mpeg")
+        setRequestProperty("User-Agent", "MurrLex/${BuildConfig.VERSION_NAME}")
+    }
+    connection.outputStream.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
+    val status = connection.responseCode
+    if (status !in 200..299) {
+        val errorText = connection.errorStream
+            ?.bufferedReader(Charsets.UTF_8)
+            ?.use { it.readText() }
+            .orEmpty()
+            .trim()
+            .take(220)
+        connection.disconnect()
+        val details = if (errorText.isBlank()) "" else ": $errorText"
+        return@withContext ElevenLabsAudioResult(error = "ElevenLabs HTTP $status$details")
+    }
+    cacheDir.mkdirs()
+    connection.inputStream.use { input ->
+        audioCacheFile.outputStream().use { outputStream -> input.copyTo(outputStream) }
+    }
+    connection.disconnect()
+    val meta = JSONObject()
+        .put("type", "audio")
+        .put("task", "$cleanLanguageCode-tts")
+        .put("provider", "ElevenLabs")
+        .put("model", model)
+        .put("voice", voiceId)
+        .put("language_code", cleanLanguageCode)
+        .put("output_format", outputFormat)
+        .put("createdAt", System.currentTimeMillis())
+        .put("file", audioCacheFile.name)
+    metaCacheFile.writeText(meta.toString(), Charsets.UTF_8)
+    ElevenLabsAudioResult(audioCacheFile, "API")
+}
+
+private fun playOpenAiAudioFile(file: File): Boolean {
+    return AppAudioPlayer.playFile(file, deleteOnFailure = file.parentFile?.name != "openai_cache")
+}
+
+private fun cachedAudioMetadataLabel(audioFile: File): String {
+    val metaFile = File(audioFile.parentFile, audioFile.nameWithoutExtension + ".json")
+    if (!metaFile.exists()) return "unknown cached model"
+    return runCatching {
+        val meta = JSONObject(metaFile.readText(Charsets.UTF_8))
+        val provider = meta.optString("provider").ifBlank { "cached TTS" }
+        val model = meta.optString("model").ifBlank { "unknown model" }
+        val voice = meta.optString("voice").ifBlank { "unknown voice" }
+        val language = meta.optString("language_code").ifBlank { meta.optString("targetLanguage") }
+        buildString {
+            append(provider)
+            append(" model ")
+            append(model)
+            append(", voice ")
+            append(voice)
+            if (language.isNotBlank()) append(", language ").append(language)
+        }
+    }.getOrDefault("unknown cached model")
+}
+
+private fun openAiCacheDir(context: Context): File = File(context.cacheDir, "openai_cache")
+
+private fun openAiCacheKey(vararg parts: String): String {
+    val digest = MessageDigest.getInstance("SHA-256")
+    return digest.digest(parts.joinToString("\u001F") { it.normalizedCacheLookupText() }.toByteArray(Charsets.UTF_8))
+        .joinToString("") { "%02x".format(it) }
+}
+
+private fun String.normalizedCacheLookupText(): String {
+    return lowercase(Locale.ROOT)
+        .replace(Regex("\\p{Punct}+"), " ")
+        .replace(Regex("\\s+"), " ")
+        .trim()
+}
+
+private fun isOpenAiCacheFresh(createdAt: Long, cacheDurationMinutes: Long): Boolean {
+    if (createdAt <= 0L) return false
+    if (cacheDurationMinutes < 0L) return true
+    return System.currentTimeMillis() - createdAt <= cacheDurationMinutes * 60_000L
+}
+
+private fun findCachedCardSideAudioFile(
+    context: Context,
+    text: String,
+    languageTag: String,
+    state: StudyUiState
+): File? {
+    val cleanText = text.trim()
+    if (cleanText.isBlank()) return null
+    val cacheDir = openAiCacheDir(context)
+    val candidates = buildList {
+        val elevenLabsLanguageCode = elevenLabsSpecialLanguageCode(languageTag, cleanText, state)
+        if (elevenLabsLanguageCode != null) {
+            add(
+                openAiCacheKey(
+                    "elevenlabs-tts",
+                    state.elevenLabsModel,
+                    state.elevenLabsVoiceId,
+                    CardRepository.DEFAULT_ELEVENLABS_OUTPUT_FORMAT,
+                    elevenLabsLanguageCode,
+                    cleanText
+                )
+            )
+        }
+        add(openAiCacheKey("tts", state.openAiTtsModel, state.openAiTtsVoice, cleanText))
+    }
+    return candidates.asSequence()
+        .distinct()
+        .map { key -> File(cacheDir, "$key.mp3") to File(cacheDir, "$key.json") }
+        .firstOrNull { (audioFile, metaFile) -> audioFile.exists() && metaFile.exists() }
+        ?.first
+}
+
+private fun elevenLabsSpecialLanguageCode(languageTag: String, text: String, state: StudyUiState): String? {
+    val candidates = listOf(
+        languageTag.elevenLabsLanguageCodeFromTagOrName(),
+        text.speechLanguageTagFromText()?.elevenLabsLanguageCodeFromTagOrName()
+    )
+    return candidates.firstOrNull { code -> code != null && code in state.elevenLabsTtsLanguageCodes }
+}
+
+private fun String.elevenLabsLanguageCodeFromTagOrName(): String? {
+    val normalized = trim().lowercase(Locale.ROOT)
+    return when {
+        normalized == "en" || normalized.startsWith("en-") ||
+            normalized in listOf("english", "angielski") -> "en"
+        normalized == "es" || normalized.startsWith("es-") ||
+            normalized in listOf("spanish", "espanol", "espa\u00f1ol") -> "es"
+        normalized == "pl" || normalized.startsWith("pl-") ||
+            normalized in listOf("polish", "polski") -> "pl"
+        normalized == "ru" || normalized.startsWith("ru-") ||
+            normalized in listOf("russian", "rosyjski") -> "ru"
+        normalized == "by" || normalized == "be" || normalized.startsWith("be-") ||
+            normalized in listOf("belarusian", "belarus") -> "be"
+        normalized == "uk" || normalized == "ua" || normalized.startsWith("uk-") ||
+            normalized in listOf("ukrainian") -> "uk"
+        normalized == "de" || normalized.startsWith("de-") ||
+            normalized in listOf("german", "deutsch") -> "de"
+        normalized == "lv" || normalized.startsWith("lv-") ||
+            normalized in listOf("latvian", "latviesu") -> "lv"
+        normalized == "lt" || normalized.startsWith("lt-") ||
+            normalized in listOf("lithuanian", "lietuviu") -> "lt"
+        normalized == "pt" || normalized.startsWith("pt-") ||
+            normalized in listOf("portuguese", "portugues") -> "pt"
+        else -> null
+    }
 }
 
 private data class UiText(
@@ -292,16 +698,19 @@ private fun uiTextFor(languageCode: String): UiText {
 
 class MainActivity : ComponentActivity() {
     private var quickVoiceLaunchSignal by mutableStateOf(0)
+    private var sharedPostSignal by mutableStateOf<SharedPostSignal?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (intent?.action == ACTION_START_QUICK_VOICE) {
-            quickVoiceLaunchSignal++
-        }
+        handleIncomingIntent(intent)
         enableEdgeToEdge()
         setContent {
             MakeMistakeTheme {
-                MakeMistakeApp(quickVoiceLaunchSignal = quickVoiceLaunchSignal)
+                MakeMistakeApp(
+                    quickVoiceLaunchSignal = quickVoiceLaunchSignal,
+                    sharedPostSignal = sharedPostSignal,
+                    onSharedPostConsumed = { sharedPostSignal = null }
+                )
             }
         }
     }
@@ -309,18 +718,40 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        if (intent.action == ACTION_START_QUICK_VOICE) {
-            quickVoiceLaunchSignal++
+        handleIncomingIntent(intent)
+    }
+
+    private fun handleIncomingIntent(intent: Intent?) {
+        when (intent?.action) {
+            ACTION_START_QUICK_VOICE -> {
+                quickVoiceLaunchSignal++
+            }
+            Intent.ACTION_SEND -> {
+                if (intent.type?.startsWith("text/") == true) {
+                    val sharedText = intent.getStringExtra(Intent.EXTRA_TEXT)
+                        ?: intent.getStringExtra(Intent.EXTRA_SUBJECT)
+                        ?: return
+                    sharedText.trim().takeIf { it.isNotBlank() }?.let { text ->
+                        sharedPostSignal = SharedPostSignal(System.currentTimeMillis(), text)
+                    }
+                }
+            }
         }
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSignal: Int = 0) {
+private fun MakeMistakeApp(
+    viewModel: MainViewModel = viewModel(),
+    quickVoiceLaunchSignal: Int = 0,
+    sharedPostSignal: SharedPostSignal? = null,
+    onSharedPostConsumed: () -> Unit = {}
+) {
     val state by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     val ui = remember(state.interfaceLanguage) { uiTextFor(state.interfaceLanguage) }
     var showSplash by remember { mutableStateOf(quickVoiceLaunchSignal == 0) }
     var splashReady by remember { mutableStateOf(false) }
@@ -359,21 +790,40 @@ fun MakeMistakeApp(viewModel: MainViewModel = viewModel(), quickVoiceLaunchSigna
     var voiceExpectedLanguage by remember { mutableStateOf("System language") }
     var voiceTarget by remember { mutableStateOf(VoiceInputTarget.ANSWER) }
     var voiceUseOfflineRecognition by remember { mutableStateOf(false) }
+    var voiceUseOpenAiRecognition by remember { mutableStateOf(false) }
     var voiceNoMatchRetried by remember { mutableStateOf(false) }
     var voiceHoldActive by remember { mutableStateOf(false) }
     var voiceHoldReleasedAt by remember { mutableStateOf(0L) }
     var lastVoiceActivityAt by remember { mutableStateOf(0L) }
+    var voiceSignalLevel by remember { mutableStateOf(0f) }
+    var voiceLastSignalAt by remember { mutableStateOf(0L) }
+    var openAiRecorder by remember { mutableStateOf<MediaRecorder?>(null) }
+    var openAiRecordingFile by remember { mutableStateOf<File?>(null) }
     var quickEditCardId by remember { mutableStateOf<Int?>(null) }
     val quickEditActive = quickEditCardId != null && state.currentCard?.id == quickEditCardId
     var showHeaderLessonInfo by remember { mutableStateOf(false) }
     var showResetProgressConfirm by remember { mutableStateOf(false) }
     var showTranslationDownloadDialog by remember { mutableStateOf(false) }
+    var showLocalLanguageDialog by remember { mutableStateOf(false) }
+    var showOnboardingLocalLanguageOffer by remember { mutableStateOf(false) }
     var downloadedTranslationLanguages by remember { mutableStateOf(setOf<String>()) }
-var translationDownloadLanguage by remember { mutableStateOf(state.quickVocabularyTargetLanguage) }
+var translationDownloadLanguage by remember { mutableStateOf(state.activeVocabularyTargetLanguage) }
 var translationDownloadingLabel by remember { mutableStateOf<String?>(null) }
 var translateAutoSpeakEnabled by remember { mutableStateOf(true) }
 var suppressTranslateAutoSpeak by remember { mutableStateOf(false) }
 var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
+val openAiTranslationPreferred = state.useOpenAiModels && isDeviceOnline && state.openAiApiKey.isNotBlank()
+var suppressAudioStartUntilMs by remember { mutableStateOf(0L) }
+var cardStatusBlinkOn by remember { mutableStateOf(false) }
+var trainSourceCard by remember { mutableStateOf<Flashcard?>(null) }
+var pendingSharedPostText by remember { mutableStateOf<String?>(null) }
+    fun forceRefreshOnlineState(showMessage: Boolean = true) {
+        val currentOnline = context.isNetworkAvailable()
+        isDeviceOnline = currentOnline
+        if (showMessage) {
+            viewModel.showMessage(if (currentOnline) "Online" else "Offline")
+        }
+    }
     var textToSpeechReady by remember { mutableStateOf(false) }
     val textToSpeech = remember {
         var engine: TextToSpeech? = null
@@ -399,6 +849,9 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
             "belarusian", "belarus", "by", "be" -> "be"
             "ukrainian", "uk", "ua" -> "uk"
             "german", "de", "deutsch" -> "de"
+            "latvian", "lv" -> "lv"
+            "lithuanian", "lt" -> "lt"
+            "portuguese", "pt" -> "pt"
             else -> language.trim().takeIf { it.length in 2..3 }?.lowercase(Locale.ROOT).orEmpty()
         }
         return TranslateLanguage.fromLanguageTag(tag)
@@ -467,6 +920,65 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
         }
     }
 
+    fun handleRecognizedVoiceText(spokenText: String) {
+        val cleanText = spokenText.trim()
+        if (cleanText.isBlank()) {
+            viewModel.showMessage("No speech recognized")
+            return
+        }
+        val recognitionLog = when {
+            voiceUseOpenAiRecognition -> "speech recognized with OpenAI STT model ${state.openAiSpeechModel}, language $voiceLanguageTag"
+            voiceUseOfflineRecognition -> "speech recognized with Android offline SpeechRecognizer, language $voiceLanguageTag"
+            else -> "speech recognized with Android online SpeechRecognizer, language $voiceLanguageTag"
+        }
+        when (voiceTarget) {
+            VoiceInputTarget.ANSWER -> {
+                viewModel.updateAnswer(cleanText)
+                viewModel.appendCurrentCardLog(recognitionLog)
+                viewModel.showMessage("Voice input added")
+            }
+            VoiceInputTarget.QUICK_VOCABULARY -> {
+                viewModel.addQuickVocabularyCard(cleanText, recognitionLog)
+                val sameLanguageQuickVocabulary = mlKitLanguageTagForName(state.activeVocabularySourceLanguage)
+                    .equals(mlKitLanguageTagForName(state.activeVocabularyTargetLanguage), ignoreCase = true)
+                if (!sameLanguageQuickVocabulary && (state.useLocalTranslation || !isDeviceOnline) && !openAiTranslationPreferred) {
+                    requestGoogleOfflineTranslation(
+                        cleanText,
+                        state.activeVocabularySourceLanguage,
+                        state.activeVocabularyTargetLanguage,
+                        { translated: String ->
+                            viewModel.applyQuickVocabularyTranslation(
+                                phrase = cleanText,
+                                translated = translated,
+                                sourceLanguage = state.activeVocabularySourceLanguage,
+                                targetLanguage = state.activeVocabularyTargetLanguage
+                            )
+                        },
+                        {}
+                    )
+                }
+            }
+            VoiceInputTarget.TRANSLATE_INPUT -> {
+                viewModel.updateTranslationInput(cleanText)
+                if ((state.useLocalTranslation || !isDeviceOnline) && !openAiTranslationPreferred) {
+                    requestGoogleOfflineTranslation(
+                        cleanText,
+                        state.activeVocabularySourceLanguage,
+                        state.activeVocabularyTargetLanguage,
+                        { translated: String -> viewModel.updateTranslationOutput(translated, "Powered by Google Translator") },
+                        { viewModel.showMessage("Offline translation models are not ready for this pair") }
+                    )
+                }
+            }
+            VoiceInputTarget.TRANSLATE_OUTPUT -> viewModel.updateTranslationOutput(cleanText, "")
+            VoiceInputTarget.CARD_NATIVE -> viewModel.updateCardDraft(state.cardDraft.copy(nativeValue = cleanText))
+            VoiceInputTarget.CARD_CORRECT -> viewModel.updateCardDraft(state.cardDraft.copy(correctValue = cleanText))
+            VoiceInputTarget.CARD_HINT -> viewModel.updateCardDraft(state.cardDraft.copy(hint = cleanText))
+            VoiceInputTarget.CARD_MADE_AT -> viewModel.updateCardDraft(state.cardDraft.copy(madeAt = cleanText))
+            VoiceInputTarget.CARD_WHERE -> viewModel.updateCardDraft(state.cardDraft.copy(where = cleanText))
+        }
+    }
+
     fun buildRecognitionListener(): RecognitionListener {
         return object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) {
@@ -476,17 +988,23 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
             override fun onBeginningOfSpeech() {
                 voiceStatus = "Recording..."
                 lastVoiceActivityAt = System.currentTimeMillis()
+                voiceLastSignalAt = lastVoiceActivityAt
             }
 
             override fun onRmsChanged(rmsdB: Float) {
                 if (rmsdB > 1.5f) {
                     lastVoiceActivityAt = System.currentTimeMillis()
+                    voiceLastSignalAt = lastVoiceActivityAt
+                    voiceSignalLevel = (rmsdB / 10f).coerceIn(0.1f, 1f)
+                } else {
+                    voiceSignalLevel = (voiceSignalLevel * 0.72f).takeIf { it >= 0.03f } ?: 0f
                 }
             }
             override fun onBufferReceived(buffer: ByteArray?) = Unit
 
             override fun onEndOfSpeech() {
                 voiceRecording = false
+                voiceSignalLevel = 0f
                 voiceHoldActive = false
                 voiceHoldReleasedAt = 0L
                 voiceStatus = "Recognizing..."
@@ -494,6 +1012,7 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
 
             override fun onError(error: Int) {
                 voiceRecording = false
+                voiceSignalLevel = 0f
                 voiceHoldActive = false
                 voiceHoldReleasedAt = 0L
                 voiceDialogVisible = false
@@ -506,10 +1025,11 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
                     SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission denied"
                     else -> "Voice input failed"
                 }
-                viewModel.showMessage(message)
+                viewModel.showMessage(message + if (!context.isNetworkAvailable()) " You are offline." else "")
             }
             override fun onResults(results: Bundle?) {
                 voiceRecording = false
+                voiceSignalLevel = 0f
                 voiceHoldActive = false
                 voiceHoldReleasedAt = 0L
                 voiceDialogVisible = false
@@ -519,45 +1039,7 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
                     ?.firstOrNull()
                     .orEmpty()
                     .trim()
-                if (spokenText.isNotBlank()) {
-                    when (voiceTarget) {
-                        VoiceInputTarget.ANSWER -> {
-                            viewModel.updateAnswer(spokenText)
-                            viewModel.showMessage("Voice input added")
-                        }
-                        VoiceInputTarget.QUICK_VOCABULARY -> {
-                            viewModel.addQuickVocabularyCard(spokenText)
-                            if (state.useLocalTranslation || !isDeviceOnline) {
-                                requestGoogleOfflineTranslation(
-                                    spokenText,
-                                    state.quickVocabularyTargetLanguage,
-                                    state.quickVocabularySourceLanguage,
-                                    { translated: String -> viewModel.applyQuickVocabularyGoogleTranslation(spokenText, translated) },
-                                    {}
-                                )
-                            }
-                        }
-                        VoiceInputTarget.TRANSLATE_INPUT -> {
-                            viewModel.updateTranslationInput(spokenText)
-                            if (state.useLocalTranslation || !isDeviceOnline) {
-                                requestGoogleOfflineTranslation(
-                                    spokenText,
-                                    state.quickVocabularyTargetLanguage,
-                                    state.quickVocabularySourceLanguage,
-                                    { translated: String -> viewModel.updateTranslationOutput(translated) },
-                                    { viewModel.showMessage("Offline translation models are not ready for this pair") }
-                                )
-                            }
-                        }
-                        VoiceInputTarget.CARD_NATIVE -> viewModel.updateCardDraft(state.cardDraft.copy(nativeValue = spokenText))
-                        VoiceInputTarget.CARD_CORRECT -> viewModel.updateCardDraft(state.cardDraft.copy(correctValue = spokenText))
-                        VoiceInputTarget.CARD_HINT -> viewModel.updateCardDraft(state.cardDraft.copy(hint = spokenText))
-                        VoiceInputTarget.CARD_MADE_AT -> viewModel.updateCardDraft(state.cardDraft.copy(madeAt = spokenText))
-                        VoiceInputTarget.CARD_WHERE -> viewModel.updateCardDraft(state.cardDraft.copy(where = spokenText))
-                    }
-                } else {
-                    viewModel.showMessage("No speech recognized")
-                }
+                handleRecognizedVoiceText(spokenText)
             }
             override fun onPartialResults(partialResults: Bundle?) {
                 partialResults
@@ -579,6 +1061,7 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
 
     DisposableEffect(textToSpeech) {
         onDispose {
+            AppAudioPlayer.stop()
             textToSpeech.stop()
             textToSpeech.shutdown()
         }
@@ -627,6 +1110,18 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
     }
 
 
+    LaunchedEffect("cardStatusBlink", state.cardStatusBlinkIntervalMs) {
+        cardStatusBlinkOn = false
+        if (state.cardStatusBlinkIntervalMs > 0L) {
+            while (true) {
+                delay(state.cardStatusBlinkIntervalMs)
+                cardStatusBlinkOn = true
+                delay(280L)
+                cardStatusBlinkOn = false
+            }
+        }
+    }
+
     LaunchedEffect(Unit) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
@@ -640,7 +1135,7 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
     }
     LaunchedEffect(Unit) {
         if (state.soundEffectsEnabled) {
-            withContext(Dispatchers.Default) { prewarmFeedbackSound() }
+            launch(Dispatchers.Default) { prewarmFeedbackSound(context) }
         }
         splashReady = true
         delay(1300)
@@ -650,16 +1145,32 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
     fun startVoiceInput(target: VoiceInputTarget = VoiceInputTarget.ANSWER) {
         if (voiceRecording) {
             voiceRecording = false
+            voiceSignalLevel = 0f
             voiceStatus = "Recognizing..."
-            activeSpeechRecognizer?.stopListening()
+            if (voiceUseOpenAiRecognition) {
+                val recorder = openAiRecorder
+                openAiRecorder = null
+                runCatching {
+                    recorder?.stop()
+                    recorder?.release()
+                }.onFailure {
+                    recorder?.release()
+                }
+            } else {
+                activeSpeechRecognizer?.stopListening()
+            }
             return
         }
         val useOfflineRecognition = state.useLocalTranslation || !isDeviceOnline
-        if (useOfflineRecognition && !SpeechRecognizer.isOnDeviceRecognitionAvailable(context)) {
+        val useOpenAiRecognition = state.useOpenAiModels &&
+            isDeviceOnline &&
+            state.openAiApiKey.isNotBlank() &&
+            !useOfflineRecognition
+        if (!useOpenAiRecognition && useOfflineRecognition && !SpeechRecognizer.isOnDeviceRecognitionAvailable(context)) {
             viewModel.showMessage("Offline speech recognition is not available on this phone.")
             return
         }
-        if (!useOfflineRecognition && !SpeechRecognizer.isRecognitionAvailable(context)) {
+        if (!useOpenAiRecognition && !useOfflineRecognition && !SpeechRecognizer.isRecognitionAvailable(context)) {
             viewModel.showMessage("Speech recognition is not available on this phone.")
             return
         }
@@ -674,8 +1185,9 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
             } else {
                 state.currentCard.voiceLanguageForCorrectSide(state.interfaceLanguage, state.selectedLesson)
             }
-            VoiceInputTarget.QUICK_VOCABULARY -> languageForVoice(state.quickVocabularyTargetLanguage, "", state.interfaceLanguage)
-            VoiceInputTarget.TRANSLATE_INPUT -> languageForVoice(state.quickVocabularyTargetLanguage, state.translationInput, state.interfaceLanguage)
+            VoiceInputTarget.QUICK_VOCABULARY -> languageForVoice(state.activeVocabularySourceLanguage, "", state.interfaceLanguage)
+            VoiceInputTarget.TRANSLATE_INPUT -> languageForVoice(state.activeVocabularySourceLanguage, state.translationInput, state.interfaceLanguage)
+            VoiceInputTarget.TRANSLATE_OUTPUT -> languageForVoice(state.activeVocabularyTargetLanguage, state.translationOutput, state.interfaceLanguage)
             VoiceInputTarget.CARD_NATIVE -> languageForVoice(
                 draftCard?.sourceLanguage.asLessonLanguage()
                     ?: state.editorLesson?.sourceLanguage.asLessonLanguage()
@@ -683,7 +1195,7 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
                     ?: lessonSampleCard?.sourceLanguage.asLessonLanguage()
                     ?: draftCard?.frontLabel()
                     ?: lessonSampleCard?.frontLabel()
-                    ?: state.quickVocabularySourceLanguage,
+                    ?: state.activeVocabularySourceLanguage,
                 state.cardDraft.nativeValue,
                 state.interfaceLanguage
             )
@@ -694,7 +1206,7 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
                     ?: lessonSampleCard?.targetLanguage.asLessonLanguage()
                     ?: draftCard?.backLabel()
                     ?: lessonSampleCard?.backLabel()
-                    ?: state.quickVocabularyTargetLanguage,
+                    ?: state.activeVocabularyTargetLanguage,
                 state.cardDraft.correctValue,
                 state.interfaceLanguage
             )
@@ -703,20 +1215,31 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
             VoiceInputTarget.CARD_WHERE -> languageForVoice(state.interfaceLanguage, "", state.interfaceLanguage)
         }
         val requestedSpeechTag = speechTagForDictionaryLanguage(language.second)
+            ?: language.first.takeIf { it.isNotBlank() }
             ?: state.offlineSpeechLanguageTag
         val selectedSpeechLanguage = OfflineSpeechLanguages.firstOrNull { it.tag == requestedSpeechTag }
-            ?: OfflineSpeechLanguages.first()
-        val selectedSpeechStatus = state.offlineSpeechStatuses[selectedSpeechLanguage.tag]
+        val effectiveSpeechTag = selectedSpeechLanguage?.tag ?: requestedSpeechTag
+        val effectiveSpeechName = selectedSpeechLanguage?.name ?: effectiveSpeechTag.speechLanguageDisplayName()
+        val selectedSpeechStatus = state.offlineSpeechStatuses[effectiveSpeechTag]
             ?: CardRepository.OFFLINE_SPEECH_STATUS_NOT_DOWNLOADED
-        if (useOfflineRecognition && selectedSpeechStatus != CardRepository.OFFLINE_SPEECH_STATUS_READY) {
+        if (!useOpenAiRecognition && useOfflineRecognition && selectedSpeechStatus != CardRepository.OFFLINE_SPEECH_STATUS_READY) {
             viewModel.showMessage("Download this language first for offline recognition.")
             return
         }
         voiceTarget = target
         voiceUseOfflineRecognition = useOfflineRecognition
-        voiceLanguageTag = selectedSpeechLanguage.tag
-        voiceExpectedLanguage = selectedSpeechLanguage.name
-        viewModel.showMessage("Speak ${selectedSpeechLanguage.name}${if (useOfflineRecognition) " offline" else " online"}")
+        voiceUseOpenAiRecognition = useOpenAiRecognition
+        voiceLanguageTag = effectiveSpeechTag
+        voiceExpectedLanguage = if (useOpenAiRecognition) "OpenAI - $effectiveSpeechName" else effectiveSpeechName
+        voiceSignalLevel = 0f
+        voiceLastSignalAt = System.currentTimeMillis()
+        viewModel.showMessage(
+            "Speak $effectiveSpeechName${when {
+                useOpenAiRecognition -> " with OpenAI"
+                useOfflineRecognition -> " offline"
+                else -> " online"
+            }}"
+        )
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             voicePermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
             return
@@ -727,10 +1250,57 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
     fun stopVoiceInput() {
         if (!voiceRecording) return
         voiceRecording = false
+        voiceSignalLevel = 0f
         voiceHoldActive = false
         voiceHoldReleasedAt = 0L
         voiceStatus = "Recognizing..."
-        activeSpeechRecognizer?.stopListening()
+        if (voiceUseOpenAiRecognition) {
+            val recorder = openAiRecorder
+            val audioFile = openAiRecordingFile
+            openAiRecorder = null
+            openAiRecordingFile = null
+            voiceStatus = "Waiting for OpenAI..."
+            runCatching {
+                recorder?.stop()
+                recorder?.release()
+            }.onFailure {
+                recorder?.release()
+                viewModel.showMessage("Audio recording failed")
+                return
+            }
+            voiceDialogVisible = false
+            if (audioFile == null || !audioFile.exists()) {
+                viewModel.showMessage("Audio recording failed")
+                voiceDialogVisible = false
+                return
+            }
+            coroutineScope.launch {
+                val text = requestOpenAiTranscriptionFile(
+                    audioFile = audioFile,
+                    baseUrl = state.openAiBaseUrl,
+                    apiKey = state.openAiApiKey,
+                    model = state.openAiSpeechModel,
+                    languageTag = voiceLanguageTag
+                )
+                audioFile.delete()
+                voiceDialogVisible = false
+                viewModel.logOpenAiActivity(
+                    action = "speech-to-text API",
+                    details = "${state.openAiSpeechModel}; ${voiceLanguageTag}; ${text.orEmpty().take(180)}"
+                )
+                handleRecognizedVoiceText(text.orEmpty())
+            }
+        } else {
+            activeSpeechRecognizer?.stopListening()
+        }
+    }
+
+    LaunchedEffect(sharedPostSignal?.id) {
+        sharedPostSignal?.let { signal ->
+            pendingSharedPostText = signal.text
+            onSharedPostConsumed()
+            showSplash = false
+        }
     }
 
     LaunchedEffect(quickVoiceLaunchSignal, showSplash) {
@@ -739,22 +1309,307 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
             startVoiceInput(VoiceInputTarget.QUICK_VOCABULARY)
         }
     }
+
+    suspend fun requestOpenAiTranscription(
+        audioFile: File,
+        baseUrl: String,
+        apiKey: String,
+        model: String,
+        languageTag: String
+    ): String? = withContext(Dispatchers.IO) {
+        if (apiKey.isBlank() || !audioFile.exists()) return@withContext null
+        val boundary = "MurrLexBoundary${System.currentTimeMillis()}"
+        val lineBreak = "\r\n"
+        val connection = (URL(baseUrl.trimEnd('/') + "/audio/transcriptions").openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            connectTimeout = 20_000
+            readTimeout = 60_000
+            doOutput = true
+            setRequestProperty("Authorization", "Bearer $apiKey")
+            setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
+            setRequestProperty("Accept", "application/json")
+            setRequestProperty("User-Agent", "MurrLex/${BuildConfig.VERSION_NAME}")
+        }
+        connection.outputStream.use { output ->
+            fun field(name: String, value: String) {
+                output.write("--$boundary$lineBreak".toByteArray(Charsets.UTF_8))
+                output.write("Content-Disposition: form-data; name=\"$name\"$lineBreak$lineBreak".toByteArray(Charsets.UTF_8))
+                output.write(value.toByteArray(Charsets.UTF_8))
+                output.write(lineBreak.toByteArray(Charsets.UTF_8))
+            }
+            field("model", model)
+            languageTag.substringBefore('-').takeIf { it.length == 2 }?.let { field("language", it) }
+            output.write("--$boundary$lineBreak".toByteArray(Charsets.UTF_8))
+            output.write("Content-Disposition: form-data; name=\"file\"; filename=\"speech.m4a\"$lineBreak".toByteArray(Charsets.UTF_8))
+            output.write("Content-Type: audio/mp4$lineBreak$lineBreak".toByteArray(Charsets.UTF_8))
+            audioFile.inputStream().use { input -> input.copyTo(output) }
+            output.write(lineBreak.toByteArray(Charsets.UTF_8))
+            output.write("--$boundary--$lineBreak".toByteArray(Charsets.UTF_8))
+        }
+        val status = connection.responseCode
+        val responseText = (if (status in 200..299) connection.inputStream else connection.errorStream)
+            ?.bufferedReader(Charsets.UTF_8)
+            ?.use { it.readText() }
+            .orEmpty()
+        connection.disconnect()
+        if (status !in 200..299) return@withContext null
+        runCatching { JSONObject(responseText).optString("text").trim() }.getOrNull()
+    }
+
+    fun appendVisibleCardTtsLog(text: String, entry: String) {
+        val currentCardText = state.currentCard?.displayedCardText(state.isBackVisible)?.trim().orEmpty()
+        if (state.screen == AppScreen.STUDY && currentCardText.equals(text.trim(), ignoreCase = true)) {
+            viewModel.appendCurrentCardLog(entry)
+        }
+    }
+
     fun speakText(text: String, languageTag: String) {
+        if (System.currentTimeMillis() < suppressAudioStartUntilMs) {
+            return
+        }
         val cleanText = text.trim()
         if (cleanText.isBlank()) {
             viewModel.showMessage("Nothing to read")
             return
         }
-        if (!textToSpeechReady) {
-            viewModel.showMessage("Speech engine is not ready yet")
+        val currentOnline = context.isNetworkAvailable()
+        if (isDeviceOnline != currentOnline) isDeviceOnline = currentOnline
+        fun offlineSuffix(): String = if (!currentOnline) " You are offline." else ""
+        textToSpeech.stop()
+        val elevenLabsLanguageCode = elevenLabsSpecialLanguageCode(languageTag, cleanText, state)
+        findCachedCardSideAudioFile(context, cleanText, languageTag, state)?.let { cachedAudio ->
+            viewModel.logOpenAiActivity(
+                action = "text-to-speech cache",
+                details = "cached audio; ${cleanText.take(180)}"
+            )
+            viewModel.showMessage(if (currentOnline) "Cached TTS" else "Cached TTS. You are offline.")
+            if (!playOpenAiAudioFile(cachedAudio)) {
+                viewModel.showMessage("Speech playback failed${offlineSuffix()}")
+            } else {
+                appendVisibleCardTtsLog(
+                    cleanText,
+                    "speech played from cached TTS audio created by ${cachedAudioMetadataLabel(cachedAudio)}"
+                )
+            }
             return
         }
+        if (elevenLabsLanguageCode != null &&
+            currentOnline &&
+            state.elevenLabsApiKey.isNotBlank()
+        ) {
+            coroutineScope.launch {
+                val audio = requestElevenLabsSpeechAudioFile(
+                    context = context,
+                    text = cleanText,
+                    languageCode = elevenLabsLanguageCode,
+                    apiKey = state.elevenLabsApiKey,
+                    model = state.elevenLabsModel,
+                    voiceId = state.elevenLabsVoiceId,
+                    cacheDurationMinutes = state.openAiCacheDurationMinutes
+                )
+                val audioFile = audio.file
+                if (audioFile == null) {
+                    val error = audio.error.ifBlank { "ElevenLabs speech failed" }
+                    viewModel.logOpenAiActivity(
+                        action = "${elevenLabsLanguageCode.uppercase(Locale.ROOT)} TTS ElevenLabs error",
+                        details = error.take(300)
+                    )
+                    viewModel.showMessage(error.take(180))
+                } else {
+                    viewModel.logOpenAiActivity(
+                        action = "${elevenLabsLanguageCode.uppercase(Locale.ROOT)} TTS ElevenLabs ${audio.source}",
+                        details = "${state.elevenLabsModel}/${state.elevenLabsVoiceId}; ${cleanText.take(180)}"
+                    )
+                    viewModel.showMessage("ElevenLabs ${elevenLabsLanguageCode.uppercase(Locale.ROOT)} TTS: ${audio.source}")
+                    if (!playOpenAiAudioFile(audioFile)) {
+                        viewModel.showMessage("Speech playback failed")
+                    } else {
+                        appendVisibleCardTtsLog(
+                            cleanText,
+                            "speech generated with ElevenLabs model ${state.elevenLabsModel}, voice ${state.elevenLabsVoiceId}, language $elevenLabsLanguageCode, source ${audio.source}"
+                        )
+                    }
+                }
+            }
+            return
+        }
+        if (state.useOpenAiModels && currentOnline && state.openAiApiKey.isNotBlank()) {
+            coroutineScope.launch {
+                val audio = requestOpenAiSpeechAudioFile(
+                    context = context,
+                    text = cleanText,
+                    baseUrl = state.openAiBaseUrl,
+                    apiKey = state.openAiApiKey,
+                    model = state.openAiTtsModel,
+                    voice = state.openAiTtsVoice,
+                    cacheDurationMinutes = state.openAiCacheDurationMinutes
+                )
+                if (audio == null) {
+                    viewModel.showMessage("OpenAI speech failed${offlineSuffix()}")
+                } else {
+                    viewModel.logOpenAiActivity(
+                        action = "text-to-speech ${audio.source}",
+                        details = "${state.openAiTtsModel}/${state.openAiTtsVoice}; ${cleanText.take(180)}"
+                    )
+                    viewModel.showMessage("OpenAI TTS: ${audio.source}")
+                    if (!playOpenAiAudioFile(audio.file)) {
+                        viewModel.showMessage("Speech playback failed")
+                    } else {
+                        appendVisibleCardTtsLog(
+                            cleanText,
+                            "speech generated with OpenAI TTS model ${state.openAiTtsModel}, voice ${state.openAiTtsVoice}, source ${audio.source}"
+                        )
+                    }
+                }
+            }
+            return
+        }
+        if (!textToSpeechReady) {
+            viewModel.showMessage("Speech engine is not ready yet${offlineSuffix()}")
+            return
+        }
+        AppAudioPlayer.stop()
         val languageResult = textToSpeech.setLanguage(Locale.forLanguageTag(languageTag))
         if (languageResult == TextToSpeech.LANG_MISSING_DATA || languageResult == TextToSpeech.LANG_NOT_SUPPORTED) {
-            viewModel.showMessage("Speech language is not supported on this device")
+            viewModel.showMessage("Speech language is not supported on this device${offlineSuffix()}")
             return
         }
         textToSpeech.speak(cleanText, TextToSpeech.QUEUE_FLUSH, null, "speech-${System.currentTimeMillis()}")
+        appendVisibleCardTtsLog(cleanText, "speech played with device TextToSpeech, language $languageTag")
+    }
+
+    fun shareCachedCardSideAudio(card: Flashcard, sideIsBack: Boolean) {
+        val text = card.displayedCardText(sideIsBack).trim()
+        if (text.isBlank()) {
+            viewModel.showMessage("Nothing to share for this card side")
+            return
+        }
+        val languageTag = card.speechLanguageTagForSide(sideIsBack, state.interfaceLanguage, state.selectedLesson)
+        val cachedAudio = findCachedCardSideAudioFile(
+            context = context,
+            text = text,
+            languageTag = languageTag,
+            state = state
+        )
+        if (cachedAudio != null) {
+            shareAudioFile(
+                context = context,
+                sourceFile = cachedAudio,
+                fileName = "${card.audioFileBaseName(sideIsBack)}.mp3"
+            )
+            viewModel.appendCardLog(
+                card.id,
+                "shared cached TTS audio created by ${cachedAudioMetadataLabel(cachedAudio)} for ${card.sideLanguageCode(sideIsBack, state.selectedLesson)} side"
+            )
+            viewModel.showMessage("Cached audio ready to share")
+            return
+        }
+        val elevenLabsLanguageCode = elevenLabsSpecialLanguageCode(languageTag, text, state)
+        when {
+            elevenLabsLanguageCode != null &&
+                isDeviceOnline &&
+                state.elevenLabsApiKey.isNotBlank() -> coroutineScope.launch {
+                    val audio = requestElevenLabsSpeechAudioFile(
+                        context = context,
+                        text = text,
+                        languageCode = elevenLabsLanguageCode,
+                        apiKey = state.elevenLabsApiKey,
+                        model = state.elevenLabsModel,
+                        voiceId = state.elevenLabsVoiceId,
+                        cacheDurationMinutes = state.openAiCacheDurationMinutes
+                    )
+                    val audioFile = audio.file
+                    if (audioFile == null) {
+                        val error = audio.error.ifBlank { "ElevenLabs audio download failed" }
+                        viewModel.logOpenAiActivity(
+                            action = "${elevenLabsLanguageCode.uppercase(Locale.ROOT)} audio file ElevenLabs error",
+                            details = error.take(300)
+                        )
+                        viewModel.showMessage(error.take(180))
+                    } else {
+                        viewModel.logOpenAiActivity(
+                            action = "${elevenLabsLanguageCode.uppercase(Locale.ROOT)} audio file ${audio.source}",
+                            details = "${state.elevenLabsModel}/${state.elevenLabsVoiceId}; ${text.take(180)}"
+                        )
+                        viewModel.appendCardLog(
+                            card.id,
+                            "audio file generated with ElevenLabs model ${state.elevenLabsModel}, voice ${state.elevenLabsVoiceId}, language $elevenLabsLanguageCode, source ${audio.source}"
+                        )
+                        shareAudioFile(context, audioFile, "${card.audioFileBaseName(sideIsBack)}.mp3")
+                    }
+                }
+            state.useOpenAiModels && isDeviceOnline && state.openAiApiKey.isNotBlank() -> coroutineScope.launch {
+                val audio = requestOpenAiSpeechAudioFile(
+                    context = context,
+                    text = text,
+                    baseUrl = state.openAiBaseUrl,
+                    apiKey = state.openAiApiKey,
+                    model = state.openAiTtsModel,
+                    voice = state.openAiTtsVoice,
+                    cacheDurationMinutes = state.openAiCacheDurationMinutes
+                )
+                if (audio == null) {
+                    viewModel.showMessage("OpenAI audio download failed")
+                } else {
+                    viewModel.logOpenAiActivity(
+                        action = "card audio file ${audio.source}",
+                        details = "${state.openAiTtsModel}/${state.openAiTtsVoice}; ${text.take(180)}"
+                    )
+                    viewModel.appendCardLog(
+                        card.id,
+                        "audio file generated with OpenAI TTS model ${state.openAiTtsModel}, voice ${state.openAiTtsVoice}, source ${audio.source}"
+                    )
+                    shareAudioFile(context, audio.file, "${card.audioFileBaseName(sideIsBack)}.mp3")
+                }
+            }
+            else -> viewModel.showMessage("No cached audio yet. Enable online TTS with a key first.")
+        }
+    }
+
+    suspend fun requestOpenAiSpeechFile(
+        context: Context,
+        text: String,
+        baseUrl: String,
+        apiKey: String,
+        model: String,
+        voice: String
+    ): File? = withContext(Dispatchers.IO) {
+        if (apiKey.isBlank()) return@withContext null
+        val payload = JSONObject()
+            .put("model", model)
+            .put("voice", voice)
+            .put("input", text)
+            .put("format", "mp3")
+            .toString()
+        val connection = (URL(baseUrl.trimEnd('/') + "/audio/speech").openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            connectTimeout = 20_000
+            readTimeout = 45_000
+            doOutput = true
+            setRequestProperty("Authorization", "Bearer $apiKey")
+            setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            setRequestProperty("Accept", "audio/mpeg")
+            setRequestProperty("User-Agent", "MurrLex/${BuildConfig.VERSION_NAME}")
+        }
+        connection.outputStream.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
+        val status = connection.responseCode
+        if (status !in 200..299) {
+            connection.errorStream?.close()
+            connection.disconnect()
+            return@withContext null
+        }
+        val output = File(context.cacheDir, "openai_tts_${System.currentTimeMillis()}.mp3")
+        connection.inputStream.use { input ->
+            output.outputStream().use { outputStream -> input.copyTo(outputStream) }
+        }
+        connection.disconnect()
+        output
+    }
+
+    fun playAudioFile(file: File) {
+        if (!AppAudioPlayer.playFile(file, deleteOnFailure = true)) {
+            viewModel.showMessage("Speech playback failed")
+        }
     }
 
     fun mlKitLanguage(language: String): String? {
@@ -806,6 +1661,29 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
                 onComplete(false)
             }
     }
+
+    fun deleteGoogleLanguageModel(languageName: String) {
+        val languageCode = mlKitLanguage(languageName)
+        val displayCode = dictionaryLanguageCode(languageName)
+        if (languageCode == null) {
+            viewModel.showMessage("Translation language is not supported")
+            return
+        }
+        translationDownloadingLabel = "Deleting $displayCode"
+        val model = TranslateRemoteModel.Builder(languageCode).build()
+        RemoteModelManager.getInstance()
+            .deleteDownloadedModel(model)
+            .addOnSuccessListener {
+                translationDownloadingLabel = null
+                refreshDownloadedTranslationLanguages()
+                viewModel.showMessage("$displayCode translation model removed")
+            }
+            .addOnFailureListener {
+                translationDownloadingLabel = null
+                viewModel.showMessage("$displayCode delete failed")
+            }
+    }
+
     fun translateGoogleOfflineText(
         text: String,
         sourceLanguageName: String,
@@ -848,14 +1726,14 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
     ) {
         val cleanText = text.trim()
         if (cleanText.isBlank()) {
-            viewModel.updateTranslationOutput("")
+            viewModel.updateTranslationOutput("", "")
             return
         }
         translateGoogleOfflineText(
             text = cleanText,
-            sourceLanguageName = state.quickVocabularyTargetLanguage,
-            targetLanguageName = state.quickVocabularySourceLanguage,
-            onSuccess = { translated -> viewModel.updateTranslationOutput(translated) },
+            sourceLanguageName = state.activeVocabularySourceLanguage,
+            targetLanguageName = state.activeVocabularyTargetLanguage,
+            onSuccess = { translated -> viewModel.updateTranslationOutput(translated, "Powered by Google Translator") },
             onFailure = {
                 if (notifyOnFailure) viewModel.showMessage("Offline translation models are not ready for this pair")
             }
@@ -863,8 +1741,8 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
     }
 
     fun downloadGoogleTranslationModels() {
-        val sourceName = state.quickVocabularyTargetLanguage
-        val targetName = state.quickVocabularySourceLanguage
+        val sourceName = state.activeVocabularySourceLanguage
+        val targetName = state.activeVocabularyTargetLanguage
         val sourceCode = dictionaryLanguageCode(sourceName)
         val targetCode = dictionaryLanguageCode(targetName)
         translationDownloadingLabel = "Downloading $sourceCode and $targetCode"
@@ -948,6 +1826,21 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
         }
     }
 
+    fun downloadLocalLanguage(languageName: String) {
+        downloadGoogleLanguageModel(languageName)
+        speechTagForDictionaryLanguage(languageName)?.let { tag ->
+            if (state.offlineSpeechStatuses[tag] != CardRepository.OFFLINE_SPEECH_STATUS_READY) {
+                downloadOfflineSpeechModel(tag)
+            }
+        }
+    }
+
+    fun downloadDefaultLocalLanguages() {
+        listOf(state.quickVocabularySourceLanguage, state.quickVocabularyTargetLanguage)
+            .distinctBy { dictionaryLanguageCode(it) }
+            .forEach(::downloadLocalLanguage)
+    }
+
     LaunchedEffect("downloadedTranslationLanguages") {
         refreshDownloadedTranslationLanguages()
     }
@@ -955,25 +1848,26 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
     LaunchedEffect(
         state.screen,
         state.translationInput,
-        state.quickVocabularySourceLanguage,
-        state.quickVocabularyTargetLanguage,
+        state.activeVocabularySourceLanguage,
+        state.activeVocabularyTargetLanguage,
         state.useLocalTranslation,
+        openAiTranslationPreferred,
         isDeviceOnline
     ) {
         if (state.screen != AppScreen.TRANSLATE) return@LaunchedEffect
         if (state.translationInput.isBlank()) {
-            viewModel.updateTranslationOutput("")
+            viewModel.updateTranslationOutput("", "")
             return@LaunchedEffect
         }
         delay(650)
-        val useOfflineTranslation = state.useLocalTranslation || !isDeviceOnline
+        val useOfflineTranslation = (state.useLocalTranslation || !isDeviceOnline) && !openAiTranslationPreferred
         if (useOfflineTranslation) {
             translateWithGoogleOffline(state.translationInput, notifyOnFailure = false)
         } else {
             viewModel.translateOnlineText(
                 text = state.translationInput,
-                sourceLanguage = state.quickVocabularyTargetLanguage,
-                targetLanguage = state.quickVocabularySourceLanguage
+                sourceLanguage = state.activeVocabularySourceLanguage,
+                targetLanguage = state.activeVocabularyTargetLanguage
             )
         }
     }
@@ -986,24 +1880,24 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
             }
             speakText(
                 state.translationOutput,
-                languageForVoice(state.quickVocabularySourceLanguage, state.translationOutput, state.interfaceLanguage).first
+                languageForVoice(state.activeVocabularyTargetLanguage, state.translationOutput, state.interfaceLanguage).first
             )
         }
     }
     LaunchedEffect(pendingVoiceStart) {
         if (!pendingVoiceStart) return@LaunchedEffect
         pendingVoiceStart = false
-        if (voiceUseOfflineRecognition && !SpeechRecognizer.isOnDeviceRecognitionAvailable(context)) {
+        if (!voiceUseOpenAiRecognition && voiceUseOfflineRecognition && !SpeechRecognizer.isOnDeviceRecognitionAvailable(context)) {
             viewModel.showMessage("Offline speech recognition is not available on this phone.")
             return@LaunchedEffect
         }
-        if (!voiceUseOfflineRecognition && !SpeechRecognizer.isRecognitionAvailable(context)) {
+        if (!voiceUseOpenAiRecognition && !voiceUseOfflineRecognition && !SpeechRecognizer.isRecognitionAvailable(context)) {
             viewModel.showMessage("Speech recognition is not available on this phone.")
             return@LaunchedEffect
         }
         val selectedSpeechStatus = state.offlineSpeechStatuses[voiceLanguageTag]
             ?: CardRepository.OFFLINE_SPEECH_STATUS_NOT_DOWNLOADED
-        if (voiceUseOfflineRecognition && selectedSpeechStatus != CardRepository.OFFLINE_SPEECH_STATUS_READY) {
+        if (!voiceUseOpenAiRecognition && voiceUseOfflineRecognition && selectedSpeechStatus != CardRepository.OFFLINE_SPEECH_STATUS_READY) {
             viewModel.showMessage("Download this language first for offline recognition.")
             return@LaunchedEffect
         }
@@ -1014,7 +1908,27 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
         voiceHoldActive = false
         voiceHoldReleasedAt = 0L
         lastVoiceActivityAt = System.currentTimeMillis()
+        voiceSignalLevel = 0f
+        voiceLastSignalAt = lastVoiceActivityAt
         try {
+            if (voiceUseOpenAiRecognition) {
+                releaseSpeechRecognizer()
+                val audioFile = File(context.cacheDir, "openai_stt_${System.currentTimeMillis()}.m4a")
+                openAiRecordingFile = audioFile
+                openAiRecorder = MediaRecorder(context).apply {
+                    setAudioSource(MediaRecorder.AudioSource.MIC)
+                    setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                    setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                    setAudioSamplingRate(44_100)
+                    setAudioEncodingBitRate(128_000)
+                    setOutputFile(audioFile.absolutePath)
+                    prepare()
+                    start()
+                }
+                voiceStatus = "Recording for OpenAI..."
+                voiceLastSignalAt = System.currentTimeMillis()
+                return@LaunchedEffect
+            }
             releaseSpeechRecognizer()
             activeSpeechRecognizer = (
                 if (voiceUseOfflineRecognition) {
@@ -1034,6 +1948,7 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
             }
         } catch (_: Exception) {
             voiceRecording = false
+            voiceSignalLevel = 0f
             voiceDialogVisible = false
             releaseSpeechRecognizer()
             viewModel.showMessage("Voice input failed")
@@ -1045,11 +1960,38 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
             delay(100)
             voiceElapsedMs += 100
             val now = System.currentTimeMillis()
-            when {
-                voiceHoldActive -> Unit
-                voiceHoldReleasedAt > 0L && now - voiceHoldReleasedAt >= 2000L -> stopVoiceInput()
-                voiceHoldReleasedAt == 0L && now - lastVoiceActivityAt >= 10000L -> stopVoiceInput()
+            if (voiceUseOpenAiRecognition) {
+                val amplitude = runCatching { openAiRecorder?.maxAmplitude ?: 0 }.getOrDefault(0)
+                val normalizedSignal = (amplitude / 32767f).coerceIn(0f, 1f)
+                if (normalizedSignal > 0.035f) {
+                    val boosted = (normalizedSignal * 2.4f).coerceIn(0.12f, 1f)
+                    voiceSignalLevel = boosted
+                    voiceLastSignalAt = now
+                    lastVoiceActivityAt = now
+                } else {
+                    voiceSignalLevel = (voiceSignalLevel * 0.72f).takeIf { it >= 0.03f } ?: 0f
+                }
+                when {
+                    voiceHoldActive -> Unit
+                    voiceHoldReleasedAt > 0L && now - voiceHoldReleasedAt >= 2000L -> stopVoiceInput()
+                    now - voiceLastSignalAt >= state.openAiVoiceSilenceTimeoutMs -> stopVoiceInput()
+                }
+            } else {
+                when {
+                    voiceHoldActive -> Unit
+                    voiceHoldReleasedAt > 0L && now - voiceHoldReleasedAt >= 2000L -> stopVoiceInput()
+                    voiceHoldReleasedAt == 0L && now - lastVoiceActivityAt >= 10000L -> stopVoiceInput()
+                }
             }
+        }
+    }
+
+    LaunchedEffect(voiceDialogVisible, voiceRecording, voiceStatus) {
+        while (voiceDialogVisible && !voiceRecording &&
+            (voiceStatus.contains("Recognizing", ignoreCase = true) || voiceStatus.contains("Waiting", ignoreCase = true))
+        ) {
+            delay(140)
+            voiceElapsedMs += 140
         }
     }
 
@@ -1075,6 +2017,10 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
     }
 
     LaunchedEffect(state.screen) {
+        if (state.screen != AppScreen.STUDY) {
+            AppAudioPlayer.stop()
+            textToSpeech.stop()
+        }
         if (state.screen != AppScreen.CATALOG) {
             titleActivated = true
         }
@@ -1117,7 +2063,10 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
             interfaceLanguage = state.interfaceLanguage,
             defaultKnownLanguage = state.quickVocabularySourceLanguage,
             defaultLearningLanguage = state.quickVocabularyTargetLanguage,
-            onComplete = viewModel::completeOnboarding
+            onComplete = { interfaceLanguage, knownLanguage, learningLanguage, explanationLanguage ->
+                viewModel.completeOnboarding(interfaceLanguage, knownLanguage, learningLanguage, explanationLanguage)
+                showOnboardingLocalLanguageOffer = true
+            }
         )
     }
     if (showResetProgressConfirm) {
@@ -1142,6 +2091,7 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
             languageLabel = "${if (voiceUseOfflineRecognition) "Offline" else "Online"} - $voiceExpectedLanguage",
             elapsedMs = voiceElapsedMs,
             isRecording = voiceRecording,
+            signalLevel = voiceSignalLevel,
             onHoldStart = {
                 voiceHoldActive = true
                 voiceHoldReleasedAt = 0L
@@ -1153,7 +2103,34 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
             onTapStop = { stopVoiceInput() }
         )
     }
-    val headerLessonInfo = state.selectedLesson?.let { lesson ->
+    pendingSharedPostText?.let { sharedText ->
+        SharedPostImportDialog(
+            sharedText = sharedText,
+            sourceLanguage = state.activeVocabularySourceLanguage,
+            targetLanguage = state.activeVocabularyTargetLanguage,
+            onDismiss = { pendingSharedPostText = null },
+            onCreate = {
+                pendingSharedPostText = null
+                viewModel.importSharedPostCards(sharedText)
+            }
+        )
+    }
+    trainSourceCard?.let { sourceCard ->
+        TrainCardOptionsDialog(
+            sourceCard = sourceCard,
+            onDismiss = { trainSourceCard = null },
+            onGenerate = { options ->
+                trainSourceCard = null
+                viewModel.generateTrainCardsFromMistake(sourceCard.id, options)
+            }
+        )
+    }
+    val headerLessonInfo = remember(
+        state.selectedLesson?.id,
+        state.selectedLesson?.title,
+        state.selectedLesson?.lessonInfo
+    ) {
+        state.selectedLesson?.let { lesson ->
         buildString {
             append("Lesson title:\n")
             append(lesson.title.ifBlank { "Untitled lesson" })
@@ -1162,7 +2139,11 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
                 append(lesson.lessonInfo)
             }
         }
-    }.orEmpty()
+        }.orEmpty()
+    }
+    val downloadedTranslationLabel = remember(downloadedTranslationLanguages) {
+        downloadedTranslationLanguages.sorted().joinToString().ifBlank { "none" }
+    }
     if (showHeaderLessonInfo && headerLessonInfo.isNotBlank()) {
         CardTextDialog(
             title = "Lesson info",
@@ -1180,8 +2161,8 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
             title = { Text("Download Google Translate languages") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Download offline translation models for ${nativeLanguageLabel(state.quickVocabularyTargetLanguage)} -> ${nativeLanguageLabel(state.quickVocabularySourceLanguage)}.")
-                    Text("Downloaded: ${downloadedTranslationLanguages.sorted().joinToString().ifBlank { "none" }}")
+                    Text("Download offline translation models for ${nativeLanguageLabel(state.activeVocabularySourceLanguage)} -> ${nativeLanguageLabel(state.activeVocabularyTargetLanguage)}.")
+                    Text("Downloaded: $downloadedTranslationLabel")
                     translationDownloadingLabel?.let { Text(it, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold) }
                     Text(
                         text = "Translations are powered by Google Translate. Google disclaims warranties related to translation accuracy and reliability.",
@@ -1199,6 +2180,37 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
             dismissButton = {
                 TextButton(onClick = { showTranslationDownloadDialog = false }) { Text("Cancel") }
             }
+        )
+    }
+    if (showOnboardingLocalLanguageOffer) {
+        AlertDialog(
+            onDismissRequest = { showOnboardingLocalLanguageOffer = false },
+            title = { Text("Download local languages?") },
+            text = {
+                Text(
+                    "Download local translation and speech recognition libraries for ${nativeLanguageLabel(state.quickVocabularySourceLanguage)} and ${nativeLanguageLabel(state.quickVocabularyTargetLanguage)} now, or do it later and keep working online."
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    showOnboardingLocalLanguageOffer = false
+                    downloadDefaultLocalLanguages()
+                }) { Text("Download locally") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showOnboardingLocalLanguageOffer = false }) { Text("Later") }
+            }
+        )
+    }
+    if (showLocalLanguageDialog) {
+        LocalLanguagesDialog(
+            downloadedTranslationLanguages = downloadedTranslationLanguages,
+            offlineSpeechStatuses = state.offlineSpeechStatuses,
+            offlineSpeechDownloadingTag = state.offlineSpeechDownloadingTag,
+            translationDownloadingLabel = translationDownloadingLabel,
+            onDownloadLanguage = ::downloadLocalLanguage,
+            onDeleteTranslationLanguage = ::deleteGoogleLanguageModel,
+            onDismiss = { showLocalLanguageDialog = false }
         )
     }
     Scaffold(
@@ -1223,16 +2235,27 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
                             horizontalArrangement = Arrangement.Center,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("MurrLex", fontWeight = FontWeight.SemiBold, color = appTitleColor)
+                            Text(
+                                "MurrLex",
+                                fontWeight = FontWeight.SemiBold,
+                                color = appTitleColor,
+                                modifier = Modifier.clickable {
+                                    titleActivated = true
+                                    forceRefreshOnlineState()
+                                }
+                            )
                             Box(
                                 modifier = Modifier
                                     .padding(start = 7.dp, top = 2.dp)
                                     .size(9.dp)
                                     .clip(RoundedCornerShape(percent = 50))
                                     .background(if (isDeviceOnline) OnlineStatusColor else BrandRedColor)
-                                    .clickable(enabled = state.screen == AppScreen.TRANSLATE) {
+                                    .clickable {
                                         titleActivated = true
-                                        showTranslationDownloadDialog = true
+                                        forceRefreshOnlineState()
+                                        if (state.screen == AppScreen.TRANSLATE) {
+                                            showTranslationDownloadDialog = true
+                                        }
                                     }
                             )
                         }
@@ -1325,7 +2348,10 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
             if (state.screen == AppScreen.STUDY && (state.workMode == WorkMode.CARDS || quickEditActive) && !state.isPortionFinished && state.currentCard != null) {
                 AnswerBar(
                     answer = state.answer,
-               answerLabel = state.currentCard?.answerInputLabel(state.isBackVisible).orEmpty().ifBlank { ui.makeItRight },
+                    answerLabel = state.currentCard
+                        ?.answerInputLabel(state.isBackVisible, state.selectedLesson)
+                        .orEmpty()
+                        .ifBlank { ui.makeItRight },
                     currentCard = state.currentCard,
                     isBackVisible = state.isBackVisible,
                     isCurrentCardDone = state.currentCard?.id in state.completedCardIds,
@@ -1350,26 +2376,40 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
                         val fillBackSide = cardBeforeSave?.correctText()?.isEmptyPlaceholder() == true
                         viewModel.saveVisibleSideFromAnswer(state.isBackVisible)
                         quickEditCardId = null
-                        if (state.useLocalTranslation && cardBeforeSave != null && enteredText.isNotBlank()) {
+                        if ((state.useLocalTranslation || !isDeviceOnline) && !openAiTranslationPreferred && cardBeforeSave != null && enteredText.isNotBlank()) {
                             val sourceLanguage = if (fillBackSide) cardBeforeSave.sourceLanguage.ifBlank { state.selectedLesson?.sourceLanguage.orEmpty() } else cardBeforeSave.targetLanguage.ifBlank { state.selectedLesson?.targetLanguage.orEmpty() }
                             val targetLanguage = if (fillBackSide) cardBeforeSave.targetLanguage.ifBlank { state.selectedLesson?.targetLanguage.orEmpty() } else cardBeforeSave.sourceLanguage.ifBlank { state.selectedLesson?.sourceLanguage.orEmpty() }
                             translateGoogleOfflineText(
                                 text = enteredText,
                                 sourceLanguageName = sourceLanguage,
                                 targetLanguageName = targetLanguage,
-                                onSuccess = { translated -> viewModel.applyGoogleTranslationToCard(cardBeforeSave.id, translated, fillBackSide) },
+                                onSuccess = { translated ->
+                                    viewModel.applyTranslationToCard(
+                                        cardId = cardBeforeSave.id,
+                                        translated = translated,
+                                        targetBackSide = fillBackSide
+                                    )
+                                },
                                 onFailure = {}
+                            )
+                        } else if (cardBeforeSave != null && enteredText.isNotBlank()) {
+                            val sourceLanguage = if (fillBackSide) cardBeforeSave.sourceLanguage.ifBlank { state.selectedLesson?.sourceLanguage.orEmpty() } else cardBeforeSave.targetLanguage.ifBlank { state.selectedLesson?.targetLanguage.orEmpty() }
+                            val targetLanguage = if (fillBackSide) cardBeforeSave.targetLanguage.ifBlank { state.selectedLesson?.targetLanguage.orEmpty() } else cardBeforeSave.sourceLanguage.ifBlank { state.selectedLesson?.sourceLanguage.orEmpty() }
+                            viewModel.translateAndApplyCardText(
+                                cardId = cardBeforeSave.id,
+                                text = enteredText,
+                                sourceLanguage = sourceLanguage,
+                                targetLanguage = targetLanguage,
+                                targetBackSide = fillBackSide
                             )
                         }
                     },
-                    onGoogleTranslateEmptySide = {
+                    onTranslateEmptySide = {
                         val card = state.currentCard ?: return@AnswerBar
                         val sourceText = if (state.isBackVisible) card.nativeText() else card.correctText()
                         val sourceLanguage = if (state.isBackVisible) card.sourceLanguage.ifBlank { state.selectedLesson?.sourceLanguage.orEmpty() } else card.targetLanguage.ifBlank { state.selectedLesson?.targetLanguage.orEmpty() }
                         val targetLanguage = if (state.isBackVisible) card.targetLanguage.ifBlank { state.selectedLesson?.targetLanguage.orEmpty() } else card.sourceLanguage.ifBlank { state.selectedLesson?.sourceLanguage.orEmpty() }
-                        if (!state.useLocalTranslation) {
-                            viewModel.showMessage("Enable critical offline mode")
-                        } else {
+                        if ((state.useLocalTranslation || !isDeviceOnline) && !openAiTranslationPreferred) {
                             translateGoogleOfflineText(
                                 text = sourceText,
                                 sourceLanguageName = sourceLanguage,
@@ -1377,7 +2417,14 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
                                 onSuccess = { translated ->
                                     viewModel.updateAnswer(translated)
                                     viewModel.showMessage("Powered by Google Translator")
-                                }
+                                },
+                                onFailure = { viewModel.showMessage("Offline translation models are not ready for this pair") }
+                            )
+                        } else {
+                            viewModel.translateCardTextIntoAnswer(
+                                text = sourceText,
+                                sourceLanguage = sourceLanguage,
+                                targetLanguage = targetLanguage
                             )
                         }
                     },
@@ -1387,6 +2434,7 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
                     },
                     onCopy = { text ->
                         viewModel.updateAnswer(text)
+                        copyToClipboard(context, text)
                         viewModel.showMessage(ui.copiedToInput)
                     },
                     onVoiceToggle = { startVoiceInput(VoiceInputTarget.ANSWER) },
@@ -1414,6 +2462,21 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
             modifier = Modifier
                 .fillMaxSize()
                 .background(MaterialTheme.colorScheme.background)
+                .pointerInput(Unit) {
+                    awaitPointerEventScope {
+                        while (true) {
+                            val event = awaitPointerEvent(PointerEventPass.Initial)
+                            if (event.changes.any { it.changedToDownIgnoreConsumed() }) {
+                                val stoppedAppAudio = AppAudioPlayer.stop()
+                                val stoppedTts = runCatching { textToSpeech.isSpeaking }.getOrDefault(false)
+                                textToSpeech.stop()
+                                if (stoppedAppAudio || stoppedTts) {
+                                    suppressAudioStartUntilMs = System.currentTimeMillis() + 350L
+                                }
+                            }
+                        }
+                    }
+                }
                 .padding(padding)
         ) {
             when (state.screen) {
@@ -1443,21 +2506,21 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
                         shareJson(context, "${lesson.title.exportFileName()}.json", exportJson.encodeToString(lesson))
                     },
                     onSetLessonHidden = { lesson, hidden -> titleActivated = true; viewModel.setLessonHidden(lesson, hidden) },
-                    quickVocabularySourceLanguage = state.quickVocabularySourceLanguage,
-                    quickVocabularyTargetLanguage = state.quickVocabularyTargetLanguage,
+                    quickVocabularySourceLanguage = state.activeVocabularySourceLanguage,
+                    quickVocabularyTargetLanguage = state.activeVocabularyTargetLanguage,
                     onQuickVocabularySourceChange = { language ->
                         titleActivated = true
-                        viewModel.setQuickVocabularySourceLanguage(language)
+                        viewModel.setActiveVocabularySourceLanguage(language)
+                        speechTagForDictionaryLanguage(language)?.let(viewModel::setOfflineSpeechLanguage)
                     },
                     onQuickVocabularyTargetChange = { language ->
                         titleActivated = true
-                        viewModel.setQuickVocabularyTargetLanguage(language)
-                        speechTagForDictionaryLanguage(language)?.let(viewModel::setOfflineSpeechLanguage)
+                        viewModel.setActiveVocabularyTargetLanguage(language)
                     },
                     onSwapQuickVocabularyLanguages = {
                         titleActivated = true
-                        val nextRecognitionLanguage = state.quickVocabularySourceLanguage
-                        viewModel.swapQuickVocabularyLanguages()
+                        val nextRecognitionLanguage = state.activeVocabularyTargetLanguage
+                        viewModel.swapActiveVocabularyLanguages()
                         speechTagForDictionaryLanguage(nextRecognitionLanguage)?.let(viewModel::setOfflineSpeechLanguage)
                     },
                     onQuickVoiceInput = {
@@ -1474,34 +2537,37 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
                     state = state,
                     onSourceLanguageChange = { language ->
                         suppressTranslateAutoSpeak = true
-                        viewModel.setQuickVocabularyTargetLanguage(language)
+                        viewModel.setActiveVocabularySourceLanguage(language)
                         speechTagForDictionaryLanguage(language)?.let(viewModel::setOfflineSpeechLanguage)
                     },
                     onTargetLanguageChange = { language ->
                         suppressTranslateAutoSpeak = true
-                        viewModel.setQuickVocabularySourceLanguage(language)
+                        viewModel.setActiveVocabularyTargetLanguage(language)
                     },
                     onInputChange = viewModel::updateTranslationInput,
                     onClear = viewModel::clearTranslationInput,
                     onAddCard = viewModel::addTranslationCard,
                     onSwapLanguages = {
                         suppressTranslateAutoSpeak = true
-                        val nextRecognitionLanguage = state.quickVocabularySourceLanguage
-                        viewModel.swapQuickVocabularyLanguages()
+                        val nextRecognitionLanguage = state.activeVocabularyTargetLanguage
+                        viewModel.swapActiveVocabularyLanguages()
                         speechTagForDictionaryLanguage(nextRecognitionLanguage)?.let(viewModel::setOfflineSpeechLanguage)
                     },
                     translateAutoSpeakEnabled = translateAutoSpeakEnabled,
                     onTranslateAutoSpeakChange = { translateAutoSpeakEnabled = it },
                     onSpeakTranslation = {
-                        speakText(state.translationOutput, languageForVoice(state.quickVocabularySourceLanguage, state.translationOutput, state.interfaceLanguage).first)
+                        speakText(state.translationOutput, languageForVoice(state.activeVocabularyTargetLanguage, state.translationOutput, state.interfaceLanguage).first)
                     },
                     onSpeakInput = {
-                        speakText(state.translationInput, languageForVoice(state.quickVocabularyTargetLanguage, state.translationInput, state.interfaceLanguage).first)
+                        speakText(state.translationInput, languageForVoice(state.activeVocabularySourceLanguage, state.translationInput, state.interfaceLanguage).first)
                     },
-                    onVoiceInput = { startVoiceInput(VoiceInputTarget.TRANSLATE_INPUT) }
+                    onVoiceInput = { startVoiceInput(VoiceInputTarget.TRANSLATE_INPUT) },
+                    onTargetVoiceInput = { startVoiceInput(VoiceInputTarget.TRANSLATE_OUTPUT) }
                 )
                 AppScreen.STUDY -> StudyScreen(
                     state = state,
+                    isDeviceOnline = isDeviceOnline,
+                    statusBlinkOn = cardStatusBlinkOn,
                     onModeChange = viewModel::setMode,
                     onShowAllCardsChange = viewModel::setShowAllCards,
                     onPreviousCard = viewModel::previousCard,
@@ -1512,6 +2578,7 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
                     onNewPortion = viewModel::startNewPortion,
                     onNextLesson = viewModel::openNextVisibleLesson,
                     onOpenCatalog = viewModel::openCatalog,
+                    onRefreshOnlineState = { forceRefreshOnlineState() },
                     onToggleCard = {
                         quickEditCardId = null
                         viewModel.toggleCard()
@@ -1540,7 +2607,11 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
                     onShareCard = { lesson, card ->
                         performFeedback(context, state.soundEffectsEnabled, state.vibrationEnabled, FeedbackCue.TAP)
                         shareSingleCard(context, exportJson, lesson, card)
-                    }
+                    },
+                    onShareCardSideAudio = { card, sideIsBack ->
+                        shareCachedCardSideAudio(card, sideIsBack)
+                    },
+                    onGenerateTrainCards = { card -> trainSourceCard = card }
                 )
                 AppScreen.SETTINGS -> SettingsScreen(
                     cardStartSide = state.cardStartSide,
@@ -1559,6 +2630,22 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
               autoSaveTranslatorCards = state.autoSaveTranslatorCards,
               translationApiUrl = state.translationApiUrl,
               translationApiToken = state.translationApiToken,
+                    useOpenAiModels = state.useOpenAiModels,
+                    openAiBaseUrl = state.openAiBaseUrl,
+                    openAiApiKey = state.openAiApiKey,
+                    openAiSpeechModel = state.openAiSpeechModel,
+                    openAiTextModel = state.openAiTextModel,
+                    openAiTtsModel = state.openAiTtsModel,
+                    openAiTtsVoice = state.openAiTtsVoice,
+                    belarusianTtsProvider = state.belarusianTtsProvider,
+                    elevenLabsApiKey = state.elevenLabsApiKey,
+                    elevenLabsModel = state.elevenLabsModel,
+                    elevenLabsVoiceId = state.elevenLabsVoiceId,
+                    elevenLabsTtsLanguageCodes = state.elevenLabsTtsLanguageCodes,
+                    openAiCacheDurationMinutes = state.openAiCacheDurationMinutes,
+                    openAiVoiceSilenceTimeoutMs = state.openAiVoiceSilenceTimeoutMs,
+                    cardStatusBlinkIntervalMs = state.cardStatusBlinkIntervalMs,
+                    openAiActivityLog = state.openAiActivityLog,
                     offlineSpeechLanguageTag = state.offlineSpeechLanguageTag,
                     offlineSpeechStatuses = state.offlineSpeechStatuses,
                     offlineSpeechDownloadingTag = state.offlineSpeechDownloadingTag,
@@ -1569,6 +2656,7 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
                     onDownloadSelectedTranslationLanguage = { downloadGoogleLanguageModel(translationDownloadLanguage) },
                     onOfflineSpeechLanguageChange = viewModel::setOfflineSpeechLanguage,
                     onDownloadOfflineSpeechModel = ::downloadOfflineSpeechModel,
+                    onOpenLocalLanguages = { showLocalLanguageDialog = true },
                     onCardStartSideChange = viewModel::setCardStartSide,
                     onExcludeMasteredCardsChange = viewModel::setExcludeMasteredCards,
                     onShowCardLogChange = viewModel::setShowCardLog,
@@ -1588,6 +2676,22 @@ var isDeviceOnline by remember { mutableStateOf(context.isNetworkAvailable()) }
         onAutoSaveTranslatorCardsChange = viewModel::setAutoSaveTranslatorCards,
         onTranslationApiUrlChange = viewModel::setTranslationApiUrl,
         onTranslationApiTokenChange = viewModel::setTranslationApiToken,
+                    onUseOpenAiModelsChange = viewModel::setUseOpenAiModels,
+                    onOpenAiBaseUrlChange = viewModel::setOpenAiBaseUrl,
+                    onOpenAiApiKeyChange = viewModel::setOpenAiApiKey,
+                    onOpenAiSpeechModelChange = viewModel::setOpenAiSpeechModel,
+                    onOpenAiTextModelChange = viewModel::setOpenAiTextModel,
+                    onOpenAiTtsModelChange = viewModel::setOpenAiTtsModel,
+                    onOpenAiTtsVoiceChange = viewModel::setOpenAiTtsVoice,
+                    onBelarusianTtsProviderChange = viewModel::setBelarusianTtsProvider,
+                    onElevenLabsApiKeyChange = viewModel::setElevenLabsApiKey,
+                    onElevenLabsModelChange = viewModel::setElevenLabsModel,
+                    onElevenLabsVoiceIdChange = viewModel::setElevenLabsVoiceId,
+                    onElevenLabsTtsLanguageEnabledChange = viewModel::setElevenLabsTtsLanguageEnabled,
+                    onOpenAiCacheDurationChange = viewModel::setOpenAiCacheDurationMinutes,
+                    onOpenAiVoiceSilenceTimeoutChange = viewModel::setOpenAiVoiceSilenceTimeoutMs,
+                    onCardStatusBlinkIntervalChange = viewModel::setCardStatusBlinkIntervalMs,
+                    onClearOpenAiCache = viewModel::clearOpenAiCache,
                     onSaveNotificationInterval = { viewModel.saveNotificationInterval(context) },
                     onSaveNotificationMax = viewModel::saveNotificationMax,
                     onDownloadTranslationLanguages = { showTranslationDownloadDialog = true },
@@ -1924,6 +3028,22 @@ private fun SettingsScreen(
     autoSaveTranslatorCards: Boolean,
     translationApiUrl: String,
     translationApiToken: String,
+    useOpenAiModels: Boolean,
+    openAiBaseUrl: String,
+    openAiApiKey: String,
+    openAiSpeechModel: String,
+    openAiTextModel: String,
+    openAiTtsModel: String,
+    openAiTtsVoice: String,
+    belarusianTtsProvider: String,
+    elevenLabsApiKey: String,
+    elevenLabsModel: String,
+    elevenLabsVoiceId: String,
+    elevenLabsTtsLanguageCodes: Set<String>,
+    openAiCacheDurationMinutes: Long,
+    openAiVoiceSilenceTimeoutMs: Long,
+    cardStatusBlinkIntervalMs: Long,
+    openAiActivityLog: List<String>,
     offlineSpeechLanguageTag: String,
     offlineSpeechStatuses: Map<String, String>,
     offlineSpeechDownloadingTag: String?,
@@ -1934,6 +3054,7 @@ private fun SettingsScreen(
     onDownloadSelectedTranslationLanguage: () -> Unit,
     onOfflineSpeechLanguageChange: (String) -> Unit,
     onDownloadOfflineSpeechModel: (String) -> Unit,
+    onOpenLocalLanguages: () -> Unit,
     onCardStartSideChange: (CardStartSide) -> Unit,
     onExcludeMasteredCardsChange: (Boolean) -> Unit,
     onShowCardLogChange: (Boolean) -> Unit,
@@ -1950,12 +3071,32 @@ private fun SettingsScreen(
     onAutoSaveTranslatorCardsChange: (Boolean) -> Unit,
     onTranslationApiUrlChange: (String) -> Unit,
     onTranslationApiTokenChange: (String) -> Unit,
+    onUseOpenAiModelsChange: (Boolean) -> Unit,
+    onOpenAiBaseUrlChange: (String) -> Unit,
+    onOpenAiApiKeyChange: (String) -> Unit,
+    onOpenAiSpeechModelChange: (String) -> Unit,
+    onOpenAiTextModelChange: (String) -> Unit,
+    onOpenAiTtsModelChange: (String) -> Unit,
+    onOpenAiTtsVoiceChange: (String) -> Unit,
+    onBelarusianTtsProviderChange: (String) -> Unit,
+    onElevenLabsApiKeyChange: (String) -> Unit,
+    onElevenLabsModelChange: (String) -> Unit,
+    onElevenLabsVoiceIdChange: (String) -> Unit,
+    onElevenLabsTtsLanguageEnabledChange: (String, Boolean) -> Unit,
+    onOpenAiCacheDurationChange: (Long) -> Unit,
+    onOpenAiVoiceSilenceTimeoutChange: (Long) -> Unit,
+    onCardStatusBlinkIntervalChange: (Long) -> Unit,
+    onClearOpenAiCache: () -> Unit,
     onSaveNotificationInterval: () -> Unit,
     onSaveNotificationMax: () -> Unit,
     onDownloadTranslationLanguages: () -> Unit,
     onDownloadSampleJson: () -> Unit
 ) {
     val ui = rememberUiText()
+    val downloadedTranslationLabel = remember(downloadedTranslationLanguages) {
+        downloadedTranslationLanguages.sorted().joinToString().ifBlank { "none" }
+    }
+    val versionLogLines = remember { versionLogText().lines() }
     fun st(en: String, de: String, be: String, es: String, uk: String, ru: String, pl: String): String {
         return en
     }
@@ -2006,7 +3147,10 @@ private fun SettingsScreen(
                     "ru" to "\uD83C\uDFF3\uFE0F RU - Russian",
                     "be" to "\uD83C\uDFF3\uFE0F BY - Belarusian",
                     "uk" to "UA - Ukrainian",
-                    "de" to "DE - Deutsch"
+                    "de" to "DE - Deutsch",
+                    "lv" to "LV - Latvian",
+                    "lt" to "LT - Lithuanian",
+                    "pt" to "PT - Portuguese"
                 )
                 var languageMenuExpanded by remember { mutableStateOf(false) }
                 Box {
@@ -2030,6 +3174,13 @@ private fun SettingsScreen(
                 }
             }
         }
+        LocalLanguagesSettingsCard(
+            downloadedTranslationLanguages = downloadedTranslationLanguages,
+            offlineSpeechStatuses = offlineSpeechStatuses,
+            translationDownloadingLabel = translationDownloadingLabel,
+            offlineSpeechDownloadingTag = offlineSpeechDownloadingTag,
+            onOpenLocalLanguages = onOpenLocalLanguages
+        )
         if (false) {
         Card(
             modifier = Modifier.fillMaxWidth(),
@@ -2042,19 +3193,19 @@ private fun SettingsScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(
-                    text = st("Default card side", "Standard-Kartenseite", "ÃƒÂÃ…Â¸ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬Â¡ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚ÂºÃƒÂÃ‚Â¾ÃƒÂÃ‚Â²Ãƒâ€˜Ã¢â‚¬Â¹ ÃƒÂÃ‚Â±ÃƒÂÃ‚Â¾ÃƒÂÃ‚Âº ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚ÂºÃƒâ€˜Ã¢â‚¬â€œ", "Lado inicial de la tarjeta", "ÃƒÂÃ…Â¸ÃƒÂÃ‚Â¾Ãƒâ€˜Ã¢â‚¬Â¡ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚ÂºÃƒÂÃ‚Â¾ÃƒÂÃ‚Â²ÃƒÂÃ‚Â¸ÃƒÂÃ‚Â¹ ÃƒÂÃ‚Â±Ãƒâ€˜Ã¢â‚¬â€œÃƒÂÃ‚Âº ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚ÂºÃƒÂÃ‚Â¸", "ÃƒÂÃ‚Â¡Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚Â¾Ãƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â½ÃƒÂÃ‚Â° ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚Â¾Ãƒâ€˜Ã¢â‚¬Â¡ÃƒÂÃ‚ÂºÃƒÂÃ‚Â¸ ÃƒÂÃ‚Â¿ÃƒÂÃ‚Â¾ Ãƒâ€˜Ã†â€™ÃƒÂÃ‚Â¼ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â»Ãƒâ€˜Ã¢â‚¬Â¡ÃƒÂÃ‚Â°ÃƒÂÃ‚Â½ÃƒÂÃ‚Â¸Ãƒâ€˜Ã…Â½", "DomyÃƒâ€¦Ã¢â‚¬Âºlna strona karty"),
+                    text = st("Default card side", "Standard-Kartenseite", "ÃƒÆ’Ã‚ÂÃƒâ€¦Ã‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â±ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âº ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“", "Lado inicial de la tarjeta", "ÃƒÆ’Ã‚ÂÃƒâ€¦Ã‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¹ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â±ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âº ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸", "ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¡ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â° ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¼ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã‚Â½", "DomyÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã‚Âºlna strona karty"),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
                     text = st(
                         "Choose which side is shown first when a card opens.",
-                        "WÃƒÆ’Ã‚Â¤hle, welche Seite beim ÃƒÆ’Ã¢â‚¬â€œffnen zuerst erscheint.",
-                        "ÃƒÂÃ¢â‚¬â„¢Ãƒâ€˜Ã¢â‚¬Â¹ÃƒÂÃ‚Â±ÃƒÂÃ‚ÂµÃƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã¢â‚¬Â¹, Ãƒâ€˜Ã‚ÂÃƒÂÃ‚ÂºÃƒâ€˜Ã¢â‚¬â€œ ÃƒÂÃ‚Â±ÃƒÂÃ‚Â¾ÃƒÂÃ‚Âº ÃƒÂÃ‚Â¿ÃƒÂÃ‚Â°ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°ÃƒÂÃ‚Â·ÃƒÂÃ‚Â²ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬Â Ãƒâ€˜Ã…â€™ ÃƒÂÃ‚Â¿ÃƒÂÃ‚ÂµÃƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã‹â€ Ãƒâ€˜Ã¢â‚¬Â¹ÃƒÂÃ‚Â¼ ÃƒÂÃ‚Â¿Ãƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã¢â‚¬Â¹ ÃƒÂÃ‚Â°ÃƒÂÃ‚Â´ÃƒÂÃ‚ÂºÃƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã¢â‚¬Â¹Ãƒâ€˜Ã¢â‚¬Â Ãƒâ€˜Ã¢â‚¬Â Ãƒâ€˜Ã¢â‚¬â€œ ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚ÂºÃƒâ€˜Ã¢â‚¬â€œ.",
-                        "Elige quÃƒÆ’Ã‚Â© lado se muestra primero al abrir una tarjeta.",
-                        "ÃƒÂÃ¢â‚¬â„¢ÃƒÂÃ‚Â¸ÃƒÂÃ‚Â±ÃƒÂÃ‚ÂµÃƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â¸, Ãƒâ€˜Ã‚ÂÃƒÂÃ‚ÂºÃƒÂÃ‚Â¸ÃƒÂÃ‚Â¹ ÃƒÂÃ‚Â±Ãƒâ€˜Ã¢â‚¬â€œÃƒÂÃ‚Âº ÃƒÂÃ‚Â¿ÃƒÂÃ‚Â¾ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°ÃƒÂÃ‚Â·Ãƒâ€˜Ã†â€™ÃƒÂÃ‚Â²ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚Â¸ ÃƒÂÃ‚Â¿ÃƒÂÃ‚ÂµÃƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã‹â€ ÃƒÂÃ‚Â¸ÃƒÂÃ‚Â¼ ÃƒÂÃ‚Â¿Ãƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â¸ ÃƒÂÃ‚Â²Ãƒâ€˜Ã¢â‚¬â€œÃƒÂÃ‚Â´ÃƒÂÃ‚ÂºÃƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â¸Ãƒâ€˜Ã¢â‚¬Å¡Ãƒâ€˜Ã¢â‚¬Å¡Ãƒâ€˜Ã¢â‚¬â€œ ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚ÂºÃƒÂÃ‚Â¸.",
-                        "ÃƒÂÃ¢â‚¬â„¢Ãƒâ€˜Ã¢â‚¬Â¹ÃƒÂÃ‚Â±ÃƒÂÃ‚ÂµÃƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â¸, ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°Ãƒâ€˜Ã‚Â Ãƒâ€˜Ã‚ÂÃƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚Â¾Ãƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â½ÃƒÂÃ‚Â° ÃƒÂÃ‚Â¿ÃƒÂÃ‚Â¾ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°ÃƒÂÃ‚Â·Ãƒâ€˜Ã¢â‚¬Â¹ÃƒÂÃ‚Â²ÃƒÂÃ‚Â°ÃƒÂÃ‚ÂµÃƒâ€˜Ã¢â‚¬Å¡Ãƒâ€˜Ã‚ÂÃƒâ€˜Ã‚Â ÃƒÂÃ‚Â¿ÃƒÂÃ‚ÂµÃƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â²ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â¹ ÃƒÂÃ‚Â¿Ãƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â¸ ÃƒÂÃ‚Â¾Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚ÂºÃƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã¢â‚¬Â¹Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚Â¸ÃƒÂÃ‚Â¸ ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚Â¾Ãƒâ€˜Ã¢â‚¬Â¡ÃƒÂÃ‚ÂºÃƒÂÃ‚Â¸.",
-                        "Wybierz, ktÃƒÆ’Ã‚Â³ra strona pokazuje siÃƒâ€žÃ¢â€žÂ¢ pierwsza po otwarciu karty."
+                        "WÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤hle, welche Seite beim ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ffnen zuerst erscheint.",
+                        "ÃƒÆ’Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â±ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹, ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â±ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âº ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã¢â‚¬â„¢ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¼ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“.",
+                        "Elige quÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â© lado se muestra primero al abrir una tarjeta.",
+                        "ÃƒÆ’Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â±ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸, ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¹ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â±ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âº ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¼ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸.",
+                        "ÃƒÆ’Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â±ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸, ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â° ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¹ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸.",
+                        "Wybierz, ktÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â³ra strona pokazuje siÃƒÆ’Ã¢â‚¬Å¾ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ pierwsza po otwarciu karty."
                     ),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -2089,18 +3240,18 @@ private fun SettingsScreen(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = st("Hide done cards", "Fertige Karten ausblenden", "ÃƒÂÃ‚Â¡Ãƒâ€˜Ã¢â‚¬Â¦ÃƒÂÃ‚Â°ÃƒÂÃ‚Â²ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬Â Ãƒâ€˜Ã…â€™ ÃƒÂÃ‚Â·Ãƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â±ÃƒÂÃ‚Â»ÃƒÂÃ‚ÂµÃƒÂÃ‚Â½Ãƒâ€˜Ã¢â‚¬Â¹Ãƒâ€˜Ã‚Â ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚ÂºÃƒâ€˜Ã¢â‚¬â€œ", "Ocultar tarjetas hechas", "ÃƒÂÃ‚Â¡Ãƒâ€˜Ã¢â‚¬Â¦ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â²ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚Â¸ ÃƒÂÃ‚Â²ÃƒÂÃ‚Â¸ÃƒÂÃ‚ÂºÃƒÂÃ‚Â¾ÃƒÂÃ‚Â½ÃƒÂÃ‚Â°ÃƒÂÃ‚Â½Ãƒâ€˜Ã¢â‚¬â€œ ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚ÂºÃƒÂÃ‚Â¸", "ÃƒÂÃ‚Â¡ÃƒÂÃ‚ÂºÃƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã¢â‚¬Â¹ÃƒÂÃ‚Â²ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬Å¡Ãƒâ€˜Ã…â€™ ÃƒÂÃ‚Â²Ãƒâ€˜Ã¢â‚¬Â¹ÃƒÂÃ‚Â¿ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â»ÃƒÂÃ‚Â½ÃƒÂÃ‚ÂµÃƒÂÃ‚Â½ÃƒÂÃ‚Â½Ãƒâ€˜Ã¢â‚¬Â¹ÃƒÂÃ‚Âµ ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚Â¾Ãƒâ€˜Ã¢â‚¬Â¡ÃƒÂÃ‚ÂºÃƒÂÃ‚Â¸", "Ukryj zrobione karty"),
+                        text = st("Hide done cards", "Fertige Karten ausblenden", "ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¡ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã¢â‚¬â„¢ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â±ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“", "Ocultar tarjetas hechas", "ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¡ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸", "ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã¢â‚¬â„¢ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âµ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸", "Ukryj zrobione karty"),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
                         text = st(
                             "Do not show or count cards marked with 3 stars inside a lesson.",
-                            "Karten mit 3 Sternen in der Lektion nicht anzeigen oder zÃƒÆ’Ã‚Â¤hlen.",
-                            "ÃƒÂÃ‚ÂÃƒÂÃ‚Âµ ÃƒÂÃ‚Â¿ÃƒÂÃ‚Â°ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°ÃƒÂÃ‚Â·ÃƒÂÃ‚Â²ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬Â Ãƒâ€˜Ã…â€™ Ãƒâ€˜Ã¢â‚¬â€œ ÃƒÂÃ‚Â½ÃƒÂÃ‚Âµ Ãƒâ€˜Ã…Â¾ÃƒÂÃ‚Â»Ãƒâ€˜Ã¢â‚¬â€œÃƒâ€˜Ã¢â‚¬Â¡ÃƒÂÃ‚Â²ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬Â Ãƒâ€˜Ã…â€™ Ãƒâ€˜Ã†â€™ Ãƒâ€˜Ã…Â¾Ãƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â¾ÃƒÂÃ‚ÂºÃƒâ€˜Ã†â€™ ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚ÂºÃƒâ€˜Ã¢â‚¬â€œ ÃƒÂÃ‚Â· 3 ÃƒÂÃ‚Â·ÃƒÂÃ‚Â¾Ãƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°ÃƒÂÃ‚Â¼Ãƒâ€˜Ã¢â‚¬â€œ.",
-                            "No mostrar ni contar dentro de la lecciÃƒÆ’Ã‚Â³n las tarjetas con 3 estrellas.",
-                            "ÃƒÂÃ‚ÂÃƒÂÃ‚Âµ ÃƒÂÃ‚Â¿ÃƒÂÃ‚Â¾ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°ÃƒÂÃ‚Â·Ãƒâ€˜Ã†â€™ÃƒÂÃ‚Â²ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚Â¸ ÃƒÂÃ‚Â¹ ÃƒÂÃ‚Â½ÃƒÂÃ‚Âµ Ãƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬Â¦Ãƒâ€˜Ã†â€™ÃƒÂÃ‚Â²ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚Â¸ ÃƒÂÃ‚Â² Ãƒâ€˜Ã†â€™Ãƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â¾Ãƒâ€˜Ã¢â‚¬Â Ãƒâ€˜Ã¢â‚¬â€œ ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚ÂºÃƒÂÃ‚Â¸ ÃƒÂÃ‚Â· 3 ÃƒÂÃ‚Â·Ãƒâ€˜Ã¢â‚¬â€œÃƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°ÃƒÂÃ‚Â¼ÃƒÂÃ‚Â¸.",
-                            "ÃƒÂÃ‚ÂÃƒÂÃ‚Âµ ÃƒÂÃ‚Â¿ÃƒÂÃ‚Â¾ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°ÃƒÂÃ‚Â·Ãƒâ€˜Ã¢â‚¬Â¹ÃƒÂÃ‚Â²ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬Å¡Ãƒâ€˜Ã…â€™ ÃƒÂÃ‚Â¸ ÃƒÂÃ‚Â½ÃƒÂÃ‚Âµ Ãƒâ€˜Ã†â€™Ãƒâ€˜Ã¢â‚¬Â¡ÃƒÂÃ‚Â¸Ãƒâ€˜Ã¢â‚¬Å¡Ãƒâ€˜Ã¢â‚¬Â¹ÃƒÂÃ‚Â²ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬Å¡Ãƒâ€˜Ã…â€™ ÃƒÂÃ‚Â² Ãƒâ€˜Ã†â€™Ãƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â¾ÃƒÂÃ‚ÂºÃƒÂÃ‚Âµ ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚Â¾Ãƒâ€˜Ã¢â‚¬Â¡ÃƒÂÃ‚ÂºÃƒÂÃ‚Â¸ Ãƒâ€˜Ã‚Â 3 ÃƒÂÃ‚Â·ÃƒÂÃ‚Â²ÃƒÂÃ‚ÂµÃƒÂÃ‚Â·ÃƒÂÃ‚Â´ÃƒÂÃ‚Â°ÃƒÂÃ‚Â¼ÃƒÂÃ‚Â¸.",
+                            "Karten mit 3 Sternen in der Lektion nicht anzeigen oder zÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤hlen.",
+                            "ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âµ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã¢â‚¬â„¢ ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âµ ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã¢â‚¬â„¢ ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â· 3 ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¼ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“.",
+                            "No mostrar ni contar dentro de la lecciÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â³n las tarjetas con 3 estrellas.",
+                            "ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âµ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¹ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âµ ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â² ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â· 3 ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¼ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸.",
+                            "ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âµ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã¢â‚¬â„¢ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âµ ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã¢â‚¬â„¢ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â² ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âµ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚Â 3 ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¼ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸.",
                             "Nie pokazuj i nie licz w lekcji kart z 3 gwiazdkami."
                         ),
                         style = MaterialTheme.typography.bodyMedium,
@@ -2220,7 +3371,7 @@ private fun SettingsScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(
-                    text = st("Card and feedback", "Karte und Feedback", "ÃƒÂÃ…Â¡ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚ÂºÃƒÂÃ‚Â° Ãƒâ€˜Ã¢â‚¬â€œ ÃƒÂÃ‚Â²ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â´ÃƒÂÃ‚Â³Ãƒâ€˜Ã†â€™ÃƒÂÃ‚Âº", "Tarjeta y respuesta", "ÃƒÂÃ…Â¡ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚ÂºÃƒÂÃ‚Â° Ãƒâ€˜Ã¢â‚¬â€œ ÃƒÂÃ‚Â²Ãƒâ€˜Ã¢â‚¬â€œÃƒÂÃ‚Â´ÃƒÂÃ‚Â³Ãƒâ€˜Ã†â€™ÃƒÂÃ‚Âº", "ÃƒÂÃ…Â¡ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚Â¾Ãƒâ€˜Ã¢â‚¬Â¡ÃƒÂÃ‚ÂºÃƒÂÃ‚Â° ÃƒÂÃ‚Â¸ ÃƒÂÃ‚Â¾Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚ÂºÃƒÂÃ‚Â»ÃƒÂÃ‚Â¸ÃƒÂÃ‚Âº", "Karta i reakcje"),
+                    text = st("Card and feedback", "Karte und Feedback", "ÃƒÆ’Ã‚ÂÃƒâ€¦Ã‚Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â° ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â³ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âº", "Tarjeta y respuesta", "ÃƒÆ’Ã‚ÂÃƒâ€¦Ã‚Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â° ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â³ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âº", "ÃƒÆ’Ã‚ÂÃƒâ€¦Ã‚Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â° ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âº", "Karta i reakcje"),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
@@ -2258,45 +3409,58 @@ private fun SettingsScreen(
                         )
                     }
                 }
+                val blinkIntervalLabel = CardStatusBlinkIntervalOptions
+                    .firstOrNull { it.second == cardStatusBlinkIntervalMs }
+                    ?.first
+                    ?: "2 seconds"
+                ModelDropdown(
+                    label = "Card status blink",
+                    value = blinkIntervalLabel,
+                    options = CardStatusBlinkIntervalOptions.map { it.first },
+                    onValueChange = { selected ->
+                        CardStatusBlinkIntervalOptions.firstOrNull { it.first == selected }?.second
+                            ?.let(onCardStatusBlinkIntervalChange)
+                    }
+                )
 
                 SettingsSwitchRow(
-                    title = st("Show card log", "Kartenlog anzeigen", "ÃƒÂÃ…Â¸ÃƒÂÃ‚Â°ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°ÃƒÂÃ‚Â·ÃƒÂÃ‚Â²ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬Â Ãƒâ€˜Ã…â€™ ÃƒÂÃ‚Â»ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â³ ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚ÂºÃƒâ€˜Ã¢â‚¬â€œ", "Mostrar registro de tarjeta", "ÃƒÂÃ…Â¸ÃƒÂÃ‚Â¾ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°ÃƒÂÃ‚Â·Ãƒâ€˜Ã†â€™ÃƒÂÃ‚Â²ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚Â¸ ÃƒÂÃ‚Â»ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â³ ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚ÂºÃƒÂÃ‚Â¸", "ÃƒÂÃ…Â¸ÃƒÂÃ‚Â¾ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°ÃƒÂÃ‚Â·Ãƒâ€˜Ã¢â‚¬Â¹ÃƒÂÃ‚Â²ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬Å¡Ãƒâ€˜Ã…â€™ ÃƒÂÃ‚Â»ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â³ ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚Â¾Ãƒâ€˜Ã¢â‚¬Â¡ÃƒÂÃ‚ÂºÃƒÂÃ‚Â¸", "PokaÃƒâ€¦Ã‚Â¼ log karty"),
+                    title = st("Show card log", "Kartenlog anzeigen", "ÃƒÆ’Ã‚ÂÃƒâ€¦Ã‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã¢â‚¬â„¢ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â³ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“", "Mostrar registro de tarjeta", "ÃƒÆ’Ã‚ÂÃƒâ€¦Ã‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â³ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸", "ÃƒÆ’Ã‚ÂÃƒâ€¦Ã‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã¢â‚¬â„¢ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â³ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸", "PokaÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¼ log karty"),
                     description = st(
                         "Show the M icon with mistakes and work log on study cards.",
                         "Zeigt das M-Symbol mit Fehlern und Arbeitslog auf Lernkarten.",
-                        "ÃƒÂÃ…Â¸ÃƒÂÃ‚Â°ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°ÃƒÂÃ‚Â·ÃƒÂÃ‚Â²ÃƒÂÃ‚Â°ÃƒÂÃ‚Âµ ÃƒÂÃ‚Â·ÃƒÂÃ‚Â½ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬Â¡ÃƒÂÃ‚Â¾ÃƒÂÃ‚Âº M ÃƒÂÃ‚Â· ÃƒÂÃ‚Â¿ÃƒÂÃ‚Â°ÃƒÂÃ‚Â¼Ãƒâ€˜Ã¢â‚¬Â¹ÃƒÂÃ‚Â»ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°ÃƒÂÃ‚Â¼Ãƒâ€˜Ã¢â‚¬â€œ Ãƒâ€˜Ã¢â‚¬â€œ ÃƒÂÃ‚Â»ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â³ÃƒÂÃ‚Â°ÃƒÂÃ‚Â¼ ÃƒÂÃ‚Â¿Ãƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬Â Ãƒâ€˜Ã¢â‚¬Â¹ ÃƒÂÃ‚Â½ÃƒÂÃ‚Â° ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬Â¦.",
+                        "ÃƒÆ’Ã‚ÂÃƒâ€¦Ã‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âµ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âº M ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â· ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¼ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¼ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â³ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¼ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â° ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦.",
                         "Muestra el icono M con errores y registro de trabajo en las tarjetas.",
-                        "ÃƒÂÃ…Â¸ÃƒÂÃ‚Â¾ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°ÃƒÂÃ‚Â·Ãƒâ€˜Ã†â€™Ãƒâ€˜Ã¢â‚¬Â ÃƒÂÃ‚Â·ÃƒÂÃ‚Â½ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬Â¡ÃƒÂÃ‚Â¾ÃƒÂÃ‚Âº M ÃƒÂÃ‚Â· ÃƒÂÃ‚Â¿ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â¼ÃƒÂÃ‚Â¸ÃƒÂÃ‚Â»ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°ÃƒÂÃ‚Â¼ÃƒÂÃ‚Â¸ ÃƒÂÃ‚Â¹ ÃƒÂÃ‚Â»ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â³ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â¼ Ãƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â±ÃƒÂÃ‚Â¾Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚Â¸ ÃƒÂÃ‚Â½ÃƒÂÃ‚Â° ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬Â¦.",
-                        "ÃƒÂÃ…Â¸ÃƒÂÃ‚Â¾ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°ÃƒÂÃ‚Â·Ãƒâ€˜Ã¢â‚¬Â¹ÃƒÂÃ‚Â²ÃƒÂÃ‚Â°ÃƒÂÃ‚ÂµÃƒâ€˜Ã¢â‚¬Å¡ ÃƒÂÃ‚Â·ÃƒÂÃ‚Â½ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬Â¡ÃƒÂÃ‚Â¾ÃƒÂÃ‚Âº M Ãƒâ€˜Ã‚Â ÃƒÂÃ‚Â¾Ãƒâ€˜Ã‹â€ ÃƒÂÃ‚Â¸ÃƒÂÃ‚Â±ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°ÃƒÂÃ‚Â¼ÃƒÂÃ‚Â¸ ÃƒÂÃ‚Â¸ ÃƒÂÃ‚Â»ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â³ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â¼ Ãƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â°ÃƒÂÃ‚Â±ÃƒÂÃ‚Â¾Ãƒâ€˜Ã¢â‚¬Å¡Ãƒâ€˜Ã¢â‚¬Â¹ ÃƒÂÃ‚Â½ÃƒÂÃ‚Â° ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚Â¾Ãƒâ€˜Ã¢â‚¬Â¡ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬Â¦.",
-                        "Pokazuje ikonÃƒâ€žÃ¢â€žÂ¢ M z bÃƒâ€¦Ã¢â‚¬Å¡Ãƒâ€žÃ¢â€žÂ¢dami i logiem pracy na kartach."
+                        "ÃƒÆ’Ã‚ÂÃƒâ€¦Ã‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âº M ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â· ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¼ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¼ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¹ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â³ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¼ ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â±ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â° ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦.",
+                        "ÃƒÆ’Ã‚ÂÃƒâ€¦Ã‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âº M ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â±ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¼ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â³ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¼ ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â±ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â° ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦.",
+                        "Pokazuje ikonÃƒÆ’Ã¢â‚¬Å¾ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ M z bÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¾ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢dami i logiem pracy na kartach."
                     ),
                     checked = showCardLog,
                     onCheckedChange = onShowCardLogChange
                 )
                 SettingsSwitchRow(
-                    title = st("Sound effects", "Soundeffekte", "ÃƒÂÃ¢â‚¬Å“Ãƒâ€˜Ã†â€™ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°ÃƒÂÃ‚Â²Ãƒâ€˜Ã¢â‚¬Â¹Ãƒâ€˜Ã‚Â Ãƒâ€˜Ã‚ÂÃƒâ€˜Ã¢â‚¬Å¾ÃƒÂÃ‚ÂµÃƒÂÃ‚ÂºÃƒâ€˜Ã¢â‚¬Å¡Ãƒâ€˜Ã¢â‚¬Â¹", "Efectos de sonido", "ÃƒÂÃ¢â‚¬â€ÃƒÂÃ‚Â²Ãƒâ€˜Ã†â€™ÃƒÂÃ‚ÂºÃƒÂÃ‚Â¾ÃƒÂÃ‚Â²Ãƒâ€˜Ã¢â‚¬â€œ ÃƒÂÃ‚ÂµÃƒâ€˜Ã¢â‚¬Å¾ÃƒÂÃ‚ÂµÃƒÂÃ‚ÂºÃƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚Â¸", "ÃƒÂÃ¢â‚¬â€ÃƒÂÃ‚Â²Ãƒâ€˜Ã†â€™ÃƒÂÃ‚ÂºÃƒÂÃ‚Â¾ÃƒÂÃ‚Â²Ãƒâ€˜Ã¢â‚¬Â¹ÃƒÂÃ‚Âµ Ãƒâ€˜Ã‚ÂÃƒâ€˜Ã¢â‚¬Å¾Ãƒâ€˜Ã¢â‚¬Å¾ÃƒÂÃ‚ÂµÃƒÂÃ‚ÂºÃƒâ€˜Ã¢â‚¬Å¡Ãƒâ€˜Ã¢â‚¬Â¹", "Efekty dÃƒâ€¦Ã‚ÂºwiÃƒâ€žÃ¢â€žÂ¢kowe"),
+                    title = st("Startup purr", "Soundeffekte", "ÃƒÆ’Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹", "Efectos de sonido", "ÃƒÆ’Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸", "ÃƒÆ’Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âµ ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹", "Efekty dÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚ÂºwiÃƒÆ’Ã¢â‚¬Å¾ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢kowe"),
                     description = st(
-                        "Play short sounds for app actions and the splash screen.",
-                        "Spielt kurze Sounds fÃƒÆ’Ã‚Â¼r Aktionen und den Startbildschirm.",
-                        "ÃƒÂÃ…Â¸Ãƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â°ÃƒÂÃ‚Â¹ÃƒÂÃ‚Â³Ãƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â°ÃƒÂÃ‚Âµ ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â¾Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚ÂºÃƒâ€˜Ã¢â‚¬â€œÃƒâ€˜Ã‚Â ÃƒÂÃ‚Â³Ãƒâ€˜Ã†â€™ÃƒÂÃ‚ÂºÃƒâ€˜Ã¢â‚¬â€œ ÃƒÂÃ‚Â´ÃƒÂÃ‚Â»Ãƒâ€˜Ã‚Â ÃƒÂÃ‚Â´ÃƒÂÃ‚Â·ÃƒÂÃ‚ÂµÃƒâ€˜Ã‚ÂÃƒÂÃ‚Â½ÃƒÂÃ‚Â½Ãƒâ€˜Ã‚ÂÃƒâ€˜Ã…Â¾ Ãƒâ€˜Ã¢â‚¬â€œ ÃƒÂÃ‚Â·ÃƒÂÃ‚Â°Ãƒâ€˜Ã‚ÂÃƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚Â°Ãƒâ€˜Ã…Â¾ÃƒÂÃ‚ÂºÃƒâ€˜Ã¢â‚¬â€œ.",
+                        "Play one soft purr on the startup screen. Other app actions stay silent.",
+                        "Spielt kurze Sounds fÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¼r Aktionen und den Startbildschirm.",
+                        "ÃƒÆ’Ã‚ÂÃƒâ€¦Ã‚Â¸ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¹ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â³ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âµ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â³ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã‚Â¾ ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“.",
                         "Reproduce sonidos cortos para acciones y la pantalla inicial.",
-                        "ÃƒÂÃ¢â‚¬â„¢Ãƒâ€˜Ã¢â‚¬â€œÃƒÂÃ‚Â´Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚Â²ÃƒÂÃ‚Â¾Ãƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã…Â½Ãƒâ€˜Ã¢â‚¬Â ÃƒÂÃ‚ÂºÃƒÂÃ‚Â¾Ãƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â¾Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚ÂºÃƒâ€˜Ã¢â‚¬â€œ ÃƒÂÃ‚Â·ÃƒÂÃ‚Â²Ãƒâ€˜Ã†â€™ÃƒÂÃ‚ÂºÃƒÂÃ‚Â¸ ÃƒÂÃ‚Â´ÃƒÂÃ‚Â»Ãƒâ€˜Ã‚Â ÃƒÂÃ‚Â´Ãƒâ€˜Ã¢â‚¬â€œÃƒÂÃ‚Â¹ Ãƒâ€˜Ã¢â‚¬â€œ ÃƒÂÃ‚Â·ÃƒÂÃ‚Â°Ãƒâ€˜Ã‚ÂÃƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚Â°ÃƒÂÃ‚Â²ÃƒÂÃ‚ÂºÃƒÂÃ‚Â¸.",
-                        "ÃƒÂÃ¢â‚¬â„¢ÃƒÂÃ‚Â¾Ãƒâ€˜Ã‚ÂÃƒÂÃ‚Â¿Ãƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â¸ÃƒÂÃ‚Â·ÃƒÂÃ‚Â²ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â´ÃƒÂÃ‚Â¸Ãƒâ€˜Ã¢â‚¬Å¡ ÃƒÂÃ‚ÂºÃƒÂÃ‚Â¾Ãƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â¾Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚ÂºÃƒÂÃ‚Â¸ÃƒÂÃ‚Âµ ÃƒÂÃ‚Â·ÃƒÂÃ‚Â²Ãƒâ€˜Ã†â€™ÃƒÂÃ‚ÂºÃƒÂÃ‚Â¸ ÃƒÂÃ‚Â´ÃƒÂÃ‚Â»Ãƒâ€˜Ã‚Â ÃƒÂÃ‚Â´ÃƒÂÃ‚ÂµÃƒÂÃ‚Â¹Ãƒâ€˜Ã‚ÂÃƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚Â²ÃƒÂÃ‚Â¸ÃƒÂÃ‚Â¹ ÃƒÂÃ‚Â¸ ÃƒÂÃ‚Â·ÃƒÂÃ‚Â°Ãƒâ€˜Ã‚ÂÃƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚Â°ÃƒÂÃ‚Â²ÃƒÂÃ‚ÂºÃƒÂÃ‚Â¸.",
-                        "Odtwarza krÃƒÆ’Ã‚Â³tkie dÃƒâ€¦Ã‚ÂºwiÃƒâ€žÃ¢â€žÂ¢ki dla akcji i ekranu startowego."
+                        "ÃƒÆ’Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã‚Â½ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¹ ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸.",
+                        "ÃƒÆ’Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âµ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¹ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¹ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸.",
+                        "Odtwarza krÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â³tkie dÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚ÂºwiÃƒÆ’Ã¢â‚¬Å¾ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ki dla akcji i ekranu startowego."
                     ),
                     checked = soundEffectsEnabled,
                     onCheckedChange = onSoundEffectsEnabledChange
                 )
                 SettingsSwitchRow(
-                    title = st("Vibration", "Vibration", "ÃƒÂÃ¢â‚¬â„¢Ãƒâ€˜Ã¢â‚¬â€œÃƒÂÃ‚Â±Ãƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬Â Ãƒâ€˜Ã¢â‚¬Â¹Ãƒâ€˜Ã‚Â", "VibraciÃƒÆ’Ã‚Â³n", "ÃƒÂÃ¢â‚¬â„¢Ãƒâ€˜Ã¢â‚¬â€œÃƒÂÃ‚Â±Ãƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬Â Ãƒâ€˜Ã¢â‚¬â€œÃƒâ€˜Ã‚Â", "ÃƒÂÃ¢â‚¬â„¢ÃƒÂÃ‚Â¸ÃƒÂÃ‚Â±Ãƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬Â ÃƒÂÃ‚Â¸Ãƒâ€˜Ã‚Â", "Wibracja"),
+                    title = st("Vibration", "Vibration", "ÃƒÆ’Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â±ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚Â", "VibraciÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â³n", "ÃƒÆ’Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â±ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚Â", "ÃƒÆ’Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â±ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚Â", "Wibracja"),
                     description = st(
                         "Use short haptic feedback for app actions.",
-                        "Nutzt kurze haptische RÃƒÆ’Ã‚Â¼ckmeldung fÃƒÆ’Ã‚Â¼r Aktionen.",
-                        "ÃƒÂÃ¢â‚¬â„¢Ãƒâ€˜Ã¢â‚¬Â¹ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã¢â‚¬Â¹Ãƒâ€˜Ã‚ÂÃƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚Â¾Ãƒâ€˜Ã…Â¾ÃƒÂÃ‚Â²ÃƒÂÃ‚Â°ÃƒÂÃ‚Âµ ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â¾Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚ÂºÃƒâ€˜Ã¢â‚¬â€œ ÃƒÂÃ‚Â²Ãƒâ€˜Ã¢â‚¬â€œÃƒÂÃ‚Â±Ãƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â°ÃƒÂÃ‚Â°ÃƒÂÃ‚Â´ÃƒÂÃ‚Â³Ãƒâ€˜Ã†â€™ÃƒÂÃ‚Âº ÃƒÂÃ‚Â´ÃƒÂÃ‚Â»Ãƒâ€˜Ã‚Â ÃƒÂÃ‚Â´ÃƒÂÃ‚Â·ÃƒÂÃ‚ÂµÃƒâ€˜Ã‚ÂÃƒÂÃ‚Â½ÃƒÂÃ‚Â½Ãƒâ€˜Ã‚ÂÃƒâ€˜Ã…Â¾.",
-                        "Usa respuesta hÃƒÆ’Ã‚Â¡ptica corta para acciones.",
-                        "ÃƒÂÃ¢â‚¬â„¢ÃƒÂÃ‚Â¸ÃƒÂÃ‚ÂºÃƒÂÃ‚Â¾Ãƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â¸Ãƒâ€˜Ã‚ÂÃƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â²Ãƒâ€˜Ã†â€™Ãƒâ€˜Ã¢â‚¬Â ÃƒÂÃ‚ÂºÃƒÂÃ‚Â¾Ãƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â¾Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚ÂºÃƒÂÃ‚Â¸ÃƒÂÃ‚Â¹ ÃƒÂÃ‚Â²Ãƒâ€˜Ã¢â‚¬â€œÃƒÂÃ‚Â±Ãƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â²Ãƒâ€˜Ã¢â‚¬â€œÃƒÂÃ‚Â´ÃƒÂÃ‚Â³Ãƒâ€˜Ã†â€™ÃƒÂÃ‚Âº ÃƒÂÃ‚Â´ÃƒÂÃ‚Â»Ãƒâ€˜Ã‚Â ÃƒÂÃ‚Â´Ãƒâ€˜Ã¢â‚¬â€œÃƒÂÃ‚Â¹.",
-                        "ÃƒÂÃ‹Å“Ãƒâ€˜Ã‚ÂÃƒÂÃ‚Â¿ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â»Ãƒâ€˜Ã…â€™ÃƒÂÃ‚Â·Ãƒâ€˜Ã†â€™ÃƒÂÃ‚ÂµÃƒâ€˜Ã¢â‚¬Å¡ ÃƒÂÃ‚ÂºÃƒÂÃ‚Â¾Ãƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â¾Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚ÂºÃƒÂÃ‚Â¸ÃƒÂÃ‚Â¹ ÃƒÂÃ‚Â²ÃƒÂÃ‚Â¸ÃƒÂÃ‚Â±Ãƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â¾Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚ÂºÃƒÂÃ‚Â»ÃƒÂÃ‚Â¸ÃƒÂÃ‚Âº ÃƒÂÃ‚Â´ÃƒÂÃ‚Â»Ãƒâ€˜Ã‚Â ÃƒÂÃ‚Â´ÃƒÂÃ‚ÂµÃƒÂÃ‚Â¹Ãƒâ€˜Ã‚ÂÃƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚Â²ÃƒÂÃ‚Â¸ÃƒÂÃ‚Â¹.",
-                        "UÃƒâ€¦Ã‚Â¼ywa krÃƒÆ’Ã‚Â³tkiej reakcji haptycznej dla akcji."
+                        "Nutzt kurze haptische RÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¼ckmeldung fÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¼r Aktionen.",
+                        "ÃƒÆ’Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âµ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â±ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â³ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âº ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã‚Â¾.",
+                        "Usa respuesta hÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¡ptica corta para acciones.",
+                        "ÃƒÆ’Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¹ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â±ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â³ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âº ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¹.",
+                        "ÃƒÆ’Ã‚ÂÃƒâ€¹Ã…â€œÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã¢â‚¬â„¢ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¹ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â±ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âº ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¹ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¹.",
+                        "UÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¼ywa krÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â³tkiej reakcji haptycznej dla akcji."
                     ),
                     checked = vibrationEnabled,
                     onCheckedChange = onVibrationEnabledChange
@@ -2319,17 +3483,17 @@ private fun SettingsScreen(
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
-                    text = "Choose the language pair for microphone input and Translate. Online translation uses the free Google Translate service by default; local translation is only for critical offline use.",
+                    text = "Basic Language is your Native Language: quick vocabulary, Translate dictation, AI explanations, and generated documentation use it by default. Target Language is the language you are learning and the checked side of cards.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
            DictionaryLanguageDropdown(
-               label = "Target language",
+               label = "Basic Language / Native Language",
                value = quickVocabularySourceLanguage,
                onValueChange = onQuickVocabularySourceChange
            )
            DictionaryLanguageDropdown(
-               label = "Source language",
+               label = "Target Language / Learning Language",
                value = quickVocabularyTargetLanguage,
                onValueChange = onQuickVocabularyTargetChange
            )
@@ -2355,7 +3519,7 @@ private fun SettingsScreen(
                     Text("Download current pair")
                 }
                 Text(
-                    text = "Downloaded languages: ${downloadedTranslationLanguages.sorted().joinToString().ifBlank { "none" }}",
+                    text = "Downloaded languages: $downloadedTranslationLabel",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -2387,20 +3551,173 @@ private fun SettingsScreen(
                         Icon(Icons.Default.FileDownload, contentDescription = "Download language")
                     }
                 }
+                SettingsSwitchRow(
+                    title = "Use OpenAI online models",
+                    description = "When online and API key is present, use OpenAI for transcription, translation/text tasks, and text-to-speech instead of Google online translation/system speech.",
+                    checked = useOpenAiModels,
+                    onCheckedChange = onUseOpenAiModelsChange
+                )
                 OutlinedTextField(
-                    value = translationApiUrl,
-                    onValueChange = onTranslationApiUrlChange,
-                    label = { Text("Future Translation API URL") },
+                    value = openAiBaseUrl,
+                    onValueChange = {
+                        onOpenAiBaseUrlChange(it)
+                        onTranslationApiUrlChange(it)
+                    },
+                    label = { Text("OpenAI base URL") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
-                    value = translationApiToken,
-                    onValueChange = onTranslationApiTokenChange,
-                    label = { Text("Future Translation API token") },
+                    value = openAiApiKey,
+                    onValueChange = {
+                        onOpenAiApiKeyChange(it)
+                        onTranslationApiTokenChange(it)
+                    },
+                    label = { Text("OpenAI API key") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
+                ModelDropdown(
+                    label = "Speech-to-text model",
+                    value = openAiSpeechModel,
+                    options = OpenAiSpeechModels,
+                    onValueChange = onOpenAiSpeechModelChange
+                )
+                ModelDropdown(
+                    label = "Translation / text model",
+                    value = openAiTextModel,
+                    options = OpenAiTextModels,
+                    onValueChange = onOpenAiTextModelChange
+                )
+                ModelDropdown(
+                    label = "Text-to-speech model",
+                    value = openAiTtsModel,
+                    options = OpenAiTtsModels,
+                    onValueChange = onOpenAiTtsModelChange
+                )
+                ModelDropdown(
+                    label = "Text-to-speech voice",
+                    value = openAiTtsVoice,
+                    options = OpenAiTtsVoices,
+                    onValueChange = onOpenAiTtsVoiceChange
+                )
+                Text(
+                    text = "Special ElevenLabs text-to-speech",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "Enabled languages use ElevenLabs for voice generation before OpenAI or device speech.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                ElevenLabsSpecialTtsLanguages.chunked(2).forEach { rowLanguages ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        rowLanguages.forEach { (code, label) ->
+                            FilterChip(
+                                selected = code in elevenLabsTtsLanguageCodes,
+                                onClick = {
+                                    onElevenLabsTtsLanguageEnabledChange(
+                                        code,
+                                        code !in elevenLabsTtsLanguageCodes
+                                    )
+                                },
+                                label = { Text(label) },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        if (rowLanguages.size == 1) {
+                            Spacer(Modifier.weight(1f))
+                        }
+                    }
+                }
+                OutlinedTextField(
+                    value = elevenLabsApiKey,
+                    onValueChange = onElevenLabsApiKeyChange,
+                    label = { Text("ElevenLabs API key") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                ModelDropdown(
+                    label = "ElevenLabs model",
+                    value = elevenLabsModel,
+                    options = ElevenLabsModels,
+                    onValueChange = onElevenLabsModelChange
+                )
+                OutlinedTextField(
+                    value = elevenLabsVoiceId,
+                    onValueChange = onElevenLabsVoiceIdChange,
+                    label = { Text("ElevenLabs voice ID") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                val voiceSilenceLabel = OpenAiVoiceSilenceTimeoutOptions
+                    .firstOrNull { it.second == openAiVoiceSilenceTimeoutMs }
+                    ?.first
+                    ?: "5 seconds"
+                ModelDropdown(
+                    label = "Voice silence timeout",
+                    value = voiceSilenceLabel,
+                    options = OpenAiVoiceSilenceTimeoutOptions.map { it.first },
+                    onValueChange = { selected ->
+                        OpenAiVoiceSilenceTimeoutOptions.firstOrNull { it.first == selected }?.second
+                            ?.let(onOpenAiVoiceSilenceTimeoutChange)
+                    }
+                )
+                val cacheLabel = OpenAiCacheDurationOptions.firstOrNull { it.second == openAiCacheDurationMinutes }?.first
+                    ?: "5 minutes"
+                ModelDropdown(
+                    label = "OpenAI cache lifetime",
+                    value = cacheLabel,
+                    options = OpenAiCacheDurationOptions.map { it.first },
+                    onValueChange = { selected ->
+                        OpenAiCacheDurationOptions.firstOrNull { it.first == selected }?.second
+                            ?.let(onOpenAiCacheDurationChange)
+                    }
+                )
+                OutlinedButton(
+                    onClick = onClearOpenAiCache,
+                    shape = RoundedCornerShape(18.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.Delete, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Clear app cache")
+                }
+                Text(
+                    text = "OpenAI activity log, last 2 days",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+                if (openAiActivityLog.isEmpty()) {
+                    Text(
+                        text = "No OpenAI activity yet.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            openAiActivityLog.take(40).forEach { line ->
+                                Text(
+                                    text = line,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
         Card(
@@ -2414,7 +3731,7 @@ private fun SettingsScreen(
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Text(
-                    text = st("JSON template", "JSON-Vorlage", "ÃƒÂÃ‚Â¨ÃƒÂÃ‚Â°ÃƒÂÃ‚Â±ÃƒÂÃ‚Â»ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â½ JSON", "Plantilla JSON", "ÃƒÂÃ‚Â¨ÃƒÂÃ‚Â°ÃƒÂÃ‚Â±ÃƒÂÃ‚Â»ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â½ JSON", "ÃƒÂÃ‚Â¨ÃƒÂÃ‚Â°ÃƒÂÃ‚Â±ÃƒÂÃ‚Â»ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â½ JSON", "Szablon JSON"),
+                    text = st("JSON template", "JSON-Vorlage", "ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¨ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â±ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ JSON", "Plantilla JSON", "ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¨ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â±ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ JSON", "ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¨ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â±ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ JSON", "Szablon JSON"),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
@@ -2422,11 +3739,11 @@ private fun SettingsScreen(
                     text = st(
                         "Download an instruction-ready JSON template for generating lessons from your mistakes.",
                         "Lade eine JSON-Vorlage mit Anweisungen herunter, um Lektionen aus deinen Fehlern zu erzeugen.",
-                        "ÃƒÂÃ‚Â¡ÃƒÂÃ‚Â¿ÃƒÂÃ‚Â°ÃƒÂÃ‚Â¼ÃƒÂÃ‚Â¿Ãƒâ€˜Ã†â€™ÃƒÂÃ‚Â¹ JSON-Ãƒâ€˜Ã‹â€ ÃƒÂÃ‚Â°ÃƒÂÃ‚Â±ÃƒÂÃ‚Â»ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â½ ÃƒÂÃ‚Â· Ãƒâ€˜Ã¢â‚¬â€œÃƒÂÃ‚Â½Ãƒâ€˜Ã‚ÂÃƒâ€˜Ã¢â‚¬Å¡Ãƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã†â€™ÃƒÂÃ‚ÂºÃƒâ€˜Ã¢â‚¬Â Ãƒâ€˜Ã¢â‚¬Â¹Ãƒâ€˜Ã‚ÂÃƒÂÃ‚Â¹ ÃƒÂÃ‚Â´ÃƒÂÃ‚Â»Ãƒâ€˜Ã‚Â Ãƒâ€˜Ã‚ÂÃƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚Â²ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã‚ÂÃƒÂÃ‚Â½ÃƒÂÃ‚Â½Ãƒâ€˜Ã‚Â Ãƒâ€˜Ã…Â¾Ãƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â¾ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°Ãƒâ€˜Ã…Â¾ ÃƒÂÃ‚Â· Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚Â²ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬â€œÃƒâ€˜Ã¢â‚¬Â¦ ÃƒÂÃ‚Â¿ÃƒÂÃ‚Â°ÃƒÂÃ‚Â¼Ãƒâ€˜Ã¢â‚¬Â¹ÃƒÂÃ‚Â»ÃƒÂÃ‚Â°ÃƒÂÃ‚Âº.",
-                        "Descarga una plantilla JSON lista como instrucciÃƒÆ’Ã‚Â³n para generar lecciones desde tus errores.",
-                        "ÃƒÂÃ¢â‚¬â€ÃƒÂÃ‚Â°ÃƒÂÃ‚Â²ÃƒÂÃ‚Â°ÃƒÂÃ‚Â½Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚Â°ÃƒÂÃ‚Â¶ JSON-Ãƒâ€˜Ã‹â€ ÃƒÂÃ‚Â°ÃƒÂÃ‚Â±ÃƒÂÃ‚Â»ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â½ ÃƒÂÃ‚Â· Ãƒâ€˜Ã¢â‚¬â€œÃƒÂÃ‚Â½Ãƒâ€˜Ã‚ÂÃƒâ€˜Ã¢â‚¬Å¡Ãƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã†â€™ÃƒÂÃ‚ÂºÃƒâ€˜Ã¢â‚¬Â Ãƒâ€˜Ã¢â‚¬â€œÃƒâ€˜Ã¢â‚¬ÂÃƒâ€˜Ã…Â½ ÃƒÂÃ‚Â´ÃƒÂÃ‚Â»Ãƒâ€˜Ã‚Â Ãƒâ€˜Ã‚ÂÃƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚Â²ÃƒÂÃ‚Â¾Ãƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚ÂµÃƒÂÃ‚Â½ÃƒÂÃ‚Â½Ãƒâ€˜Ã‚Â Ãƒâ€˜Ã†â€™Ãƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â¾ÃƒÂÃ‚ÂºÃƒâ€˜Ã¢â‚¬â€œÃƒÂÃ‚Â² Ãƒâ€˜Ã¢â‚¬â€œÃƒÂÃ‚Â· Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚Â²ÃƒÂÃ‚Â¾Ãƒâ€˜Ã¢â‚¬â€Ãƒâ€˜Ã¢â‚¬Â¦ ÃƒÂÃ‚Â¿ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â¼ÃƒÂÃ‚Â¸ÃƒÂÃ‚Â»ÃƒÂÃ‚Â¾ÃƒÂÃ‚Âº.",
-                        "ÃƒÂÃ‚Â¡ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬Â¡ÃƒÂÃ‚Â°ÃƒÂÃ‚Â¹ JSON-Ãƒâ€˜Ã‹â€ ÃƒÂÃ‚Â°ÃƒÂÃ‚Â±ÃƒÂÃ‚Â»ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â½ Ãƒâ€˜Ã‚Â ÃƒÂÃ‚Â¸ÃƒÂÃ‚Â½Ãƒâ€˜Ã‚ÂÃƒâ€˜Ã¢â‚¬Å¡Ãƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã†â€™ÃƒÂÃ‚ÂºÃƒâ€˜Ã¢â‚¬Â ÃƒÂÃ‚Â¸ÃƒÂÃ‚ÂµÃƒÂÃ‚Â¹ ÃƒÂÃ‚Â´ÃƒÂÃ‚Â»Ãƒâ€˜Ã‚Â Ãƒâ€˜Ã‚ÂÃƒÂÃ‚Â¾ÃƒÂÃ‚Â·ÃƒÂÃ‚Â´ÃƒÂÃ‚Â°ÃƒÂÃ‚Â½ÃƒÂÃ‚Â¸Ãƒâ€˜Ã‚Â Ãƒâ€˜Ã†â€™Ãƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â¾ÃƒÂÃ‚ÂºÃƒÂÃ‚Â¾ÃƒÂÃ‚Â² ÃƒÂÃ‚Â¸ÃƒÂÃ‚Â· Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚Â²ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â¸Ãƒâ€˜Ã¢â‚¬Â¦ ÃƒÂÃ‚Â¾Ãƒâ€˜Ã‹â€ ÃƒÂÃ‚Â¸ÃƒÂÃ‚Â±ÃƒÂÃ‚Â¾ÃƒÂÃ‚Âº.",
-                        "Pobierz szablon JSON z instrukcjÃƒâ€žÃ¢â‚¬Â¦ do tworzenia lekcji z Twoich bÃƒâ€¦Ã¢â‚¬Å¡Ãƒâ€žÃ¢â€žÂ¢dÃƒÆ’Ã‚Â³w."
+                        "ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¼ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¹ JSON-ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â±ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â· ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¹ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã‚Â¾ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â· ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¼ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âº.",
+                        "Descarga una plantilla JSON lista como instrucciÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â³n para generar lecciones desde tus errores.",
+                        "ÃƒÆ’Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¶ JSON-ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â±ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â· ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã‚Â½ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â² ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â· ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬ÂÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¼ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âº.",
+                        "ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¹ JSON-ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â±ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¹ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â² ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â· ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â±ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âº.",
+                        "Pobierz szablon JSON z instrukcjÃƒÆ’Ã¢â‚¬Å¾ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ do tworzenia lekcji z Twoich bÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¾ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢dÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â³w."
                     ),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -2449,19 +3766,19 @@ private fun SettingsScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(
-                    text = st("Notifications", "Benachrichtigungen", "ÃƒÂÃ‚ÂÃƒÂÃ‚Â¿ÃƒÂÃ‚Â°ÃƒÂÃ‚Â²Ãƒâ€˜Ã‚ÂÃƒâ€˜Ã‹â€ Ãƒâ€˜Ã¢â‚¬Â¡Ãƒâ€˜Ã‚ÂÃƒÂÃ‚Â½ÃƒÂÃ‚Â½Ãƒâ€˜Ã¢â‚¬â€œ", "Notificaciones", "ÃƒÂÃ‚Â¡ÃƒÂÃ‚Â¿ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â²Ãƒâ€˜Ã¢â‚¬â€œÃƒâ€˜Ã¢â‚¬Â°ÃƒÂÃ‚ÂµÃƒÂÃ‚Â½ÃƒÂÃ‚Â½Ãƒâ€˜Ã‚Â", "ÃƒÂÃ‚Â£ÃƒÂÃ‚Â²ÃƒÂÃ‚ÂµÃƒÂÃ‚Â´ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â¼ÃƒÂÃ‚Â»ÃƒÂÃ‚ÂµÃƒÂÃ‚Â½ÃƒÂÃ‚Â¸Ãƒâ€˜Ã‚Â", "Powiadomienia"),
+                    text = st("Notifications", "Benachrichtigungen", "ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“", "Notificaciones", "ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚Â", "ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â£ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¼ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚Â", "Powiadomienia"),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
                     text = st(
                         "Shows weighted reminders for cards with 0-2 stars. Cards with 0 stars appear most often; 3-star cards are excluded.",
-                        "Zeigt gewichtete Erinnerungen fÃƒÆ’Ã‚Â¼r Karten mit 0-2 Sternen. 0 Sterne erscheinen am hÃƒÆ’Ã‚Â¤ufigsten; 3 Sterne sind ausgeschlossen.",
-                        "ÃƒÂÃ…Â¸ÃƒÂÃ‚Â°ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°ÃƒÂÃ‚Â·ÃƒÂÃ‚Â²ÃƒÂÃ‚Â°ÃƒÂÃ‚Âµ Ãƒâ€˜Ã…Â¾ÃƒÂÃ‚Â·ÃƒÂÃ‚Â²ÃƒÂÃ‚Â°ÃƒÂÃ‚Â¶ÃƒÂÃ‚Â°ÃƒÂÃ‚Â½Ãƒâ€˜Ã¢â‚¬Â¹Ãƒâ€˜Ã‚Â ÃƒÂÃ‚Â½ÃƒÂÃ‚Â°ÃƒÂÃ‚Â¿ÃƒÂÃ‚Â°ÃƒÂÃ‚Â¼Ãƒâ€˜Ã¢â‚¬â€œÃƒÂÃ‚Â½Ãƒâ€˜Ã¢â‚¬Â¹ ÃƒÂÃ‚Â´ÃƒÂÃ‚Â»Ãƒâ€˜Ã‚Â ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚Â°ÃƒÂÃ‚Âº ÃƒÂÃ‚Â· 0-2 ÃƒÂÃ‚Â·ÃƒÂÃ‚Â¾Ãƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°ÃƒÂÃ‚Â¼Ãƒâ€˜Ã¢â‚¬â€œ. 0 ÃƒÂÃ‚Â·ÃƒÂÃ‚Â¾Ãƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â°ÃƒÂÃ‚Âº Ãƒâ€˜Ã¢â‚¬Å¡Ãƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â°ÃƒÂÃ‚Â¿ÃƒÂÃ‚Â»Ãƒâ€˜Ã‚ÂÃƒâ€˜Ã…Â½Ãƒâ€˜Ã¢â‚¬Â Ãƒâ€˜Ã…â€™ Ãƒâ€˜Ã¢â‚¬Â¡ÃƒÂÃ‚Â°Ãƒâ€˜Ã‚ÂÃƒâ€˜Ã¢â‚¬Â ÃƒÂÃ‚ÂµÃƒÂÃ‚Â¹; 3 ÃƒÂÃ‚Â·ÃƒÂÃ‚Â¾Ãƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚ÂºÃƒâ€˜Ã¢â‚¬â€œ ÃƒÂÃ‚Â²Ãƒâ€˜Ã¢â‚¬Â¹ÃƒÂÃ‚ÂºÃƒÂÃ‚Â»Ãƒâ€˜Ã…Â½Ãƒâ€˜Ã¢â‚¬Â¡ÃƒÂÃ‚Â°Ãƒâ€˜Ã…Â½Ãƒâ€˜Ã¢â‚¬Â Ãƒâ€˜Ã¢â‚¬Â ÃƒÂÃ‚Â°.",
-                        "Muestra recordatorios ponderados para tarjetas con 0-2 estrellas. Las de 0 salen mÃƒÆ’Ã‚Â¡s; las de 3 no salen.",
-                        "ÃƒÂÃ…Â¸ÃƒÂÃ‚Â¾ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°ÃƒÂÃ‚Â·Ãƒâ€˜Ã†â€™Ãƒâ€˜Ã¢â‚¬Â ÃƒÂÃ‚Â·ÃƒÂÃ‚Â²ÃƒÂÃ‚Â°ÃƒÂÃ‚Â¶ÃƒÂÃ‚ÂµÃƒÂÃ‚Â½Ãƒâ€˜Ã¢â‚¬â€œ ÃƒÂÃ‚Â½ÃƒÂÃ‚Â°ÃƒÂÃ‚Â³ÃƒÂÃ‚Â°ÃƒÂÃ‚Â´Ãƒâ€˜Ã†â€™ÃƒÂÃ‚Â²ÃƒÂÃ‚Â°ÃƒÂÃ‚Â½ÃƒÂÃ‚Â½Ãƒâ€˜Ã‚Â ÃƒÂÃ‚Â´ÃƒÂÃ‚Â»Ãƒâ€˜Ã‚Â ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚Â¾ÃƒÂÃ‚Âº Ãƒâ€˜Ã¢â‚¬â€œÃƒÂÃ‚Â· 0-2 ÃƒÂÃ‚Â·Ãƒâ€˜Ã¢â‚¬â€œÃƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°ÃƒÂÃ‚Â¼ÃƒÂÃ‚Â¸. 0 ÃƒÂÃ‚Â·Ãƒâ€˜Ã¢â‚¬â€œÃƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â¾ÃƒÂÃ‚Âº ÃƒÂÃ‚Â·'Ãƒâ€˜Ã‚ÂÃƒÂÃ‚Â²ÃƒÂÃ‚Â»Ãƒâ€˜Ã‚ÂÃƒâ€˜Ã…Â½Ãƒâ€˜Ã¢â‚¬Å¡Ãƒâ€˜Ã…â€™Ãƒâ€˜Ã‚ÂÃƒâ€˜Ã‚Â ÃƒÂÃ‚Â½ÃƒÂÃ‚Â°ÃƒÂÃ‚Â¹Ãƒâ€˜Ã¢â‚¬Â¡ÃƒÂÃ‚Â°Ãƒâ€˜Ã‚ÂÃƒâ€˜Ã¢â‚¬Å¡Ãƒâ€˜Ã¢â‚¬â€œÃƒâ€˜Ã‹â€ ÃƒÂÃ‚Âµ; 3 ÃƒÂÃ‚Â·Ãƒâ€˜Ã¢â‚¬â€œÃƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚ÂºÃƒÂÃ‚Â¸ ÃƒÂÃ‚Â²ÃƒÂÃ‚Â¸ÃƒÂÃ‚ÂºÃƒÂÃ‚Â»Ãƒâ€˜Ã…Â½Ãƒâ€˜Ã¢â‚¬Â¡ÃƒÂÃ‚ÂµÃƒÂÃ‚Â½Ãƒâ€˜Ã¢â‚¬â€œ.",
-                        "ÃƒÂÃ…Â¸ÃƒÂÃ‚Â¾ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°ÃƒÂÃ‚Â·Ãƒâ€˜Ã¢â‚¬Â¹ÃƒÂÃ‚Â²ÃƒÂÃ‚Â°ÃƒÂÃ‚ÂµÃƒâ€˜Ã¢â‚¬Å¡ ÃƒÂÃ‚Â²ÃƒÂÃ‚Â·ÃƒÂÃ‚Â²ÃƒÂÃ‚ÂµÃƒâ€˜Ã‹â€ ÃƒÂÃ‚ÂµÃƒÂÃ‚Â½ÃƒÂÃ‚Â½Ãƒâ€˜Ã¢â‚¬Â¹ÃƒÂÃ‚Âµ ÃƒÂÃ‚Â½ÃƒÂÃ‚Â°ÃƒÂÃ‚Â¿ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â¼ÃƒÂÃ‚Â¸ÃƒÂÃ‚Â½ÃƒÂÃ‚Â°ÃƒÂÃ‚Â½ÃƒÂÃ‚Â¸Ãƒâ€˜Ã‚Â ÃƒÂÃ‚Â´ÃƒÂÃ‚Â»Ãƒâ€˜Ã‚Â ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚Â¾Ãƒâ€˜Ã¢â‚¬Â¡ÃƒÂÃ‚ÂµÃƒÂÃ‚Âº Ãƒâ€˜Ã‚Â 0-2 ÃƒÂÃ‚Â·ÃƒÂÃ‚Â²ÃƒÂÃ‚ÂµÃƒÂÃ‚Â·ÃƒÂÃ‚Â´ÃƒÂÃ‚Â°ÃƒÂÃ‚Â¼ÃƒÂÃ‚Â¸. ÃƒÂÃ…Â¡ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚Â¾Ãƒâ€˜Ã¢â‚¬Â¡ÃƒÂÃ‚ÂºÃƒÂÃ‚Â¸ Ãƒâ€˜Ã‚Â 0 ÃƒÂÃ‚Â·ÃƒÂÃ‚Â²ÃƒÂÃ‚ÂµÃƒÂÃ‚Â·ÃƒÂÃ‚Â´ÃƒÂÃ‚Â°ÃƒÂÃ‚Â¼ÃƒÂÃ‚Â¸ ÃƒÂÃ‚Â¿ÃƒÂÃ‚Â¾Ãƒâ€˜Ã‚ÂÃƒÂÃ‚Â²ÃƒÂÃ‚Â»Ãƒâ€˜Ã‚ÂÃƒâ€˜Ã…Â½Ãƒâ€˜Ã¢â‚¬Å¡Ãƒâ€˜Ã‚ÂÃƒâ€˜Ã‚Â Ãƒâ€˜Ã¢â‚¬Â¡ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬Â°ÃƒÂÃ‚Âµ ÃƒÂÃ‚Â²Ãƒâ€˜Ã‚ÂÃƒÂÃ‚ÂµÃƒÂÃ‚Â³ÃƒÂÃ‚Â¾; 3 ÃƒÂÃ‚Â·ÃƒÂÃ‚Â²ÃƒÂÃ‚ÂµÃƒÂÃ‚Â·ÃƒÂÃ‚Â´Ãƒâ€˜Ã¢â‚¬Â¹ ÃƒÂÃ‚Â¸Ãƒâ€˜Ã‚ÂÃƒÂÃ‚ÂºÃƒÂÃ‚Â»Ãƒâ€˜Ã…Â½Ãƒâ€˜Ã¢â‚¬Â¡ÃƒÂÃ‚ÂµÃƒÂÃ‚Â½Ãƒâ€˜Ã¢â‚¬Â¹.",
-                        "Pokazuje waÃƒâ€¦Ã‚Â¼one przypomnienia dla kart z 0-2 gwiazdkami. 0 gwiazdek pojawia siÃƒâ€žÃ¢â€žÂ¢ najczÃƒâ€žÃ¢â€žÂ¢Ãƒâ€¦Ã¢â‚¬Âºciej; 3 gwiazdki sÃƒâ€žÃ¢â‚¬Â¦ wykluczone."
+                        "Zeigt gewichtete Erinnerungen fÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¼r Karten mit 0-2 Sternen. 0 Sterne erscheinen am hÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¤ufigsten; 3 Sterne sind ausgeschlossen.",
+                        "ÃƒÆ’Ã‚ÂÃƒâ€¦Ã‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âµ ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¶ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¼ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âº ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â· 0-2 ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¼ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“. 0 ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âº ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã‚Â½ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã¢â‚¬â„¢ ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¹; 3 ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã‚Â½ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã‚Â½ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°.",
+                        "Muestra recordatorios ponderados para tarjetas con 0-2 estrellas. Las de 0 salen mÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¡s; las de 3 no salen.",
+                        "ÃƒÆ’Ã‚ÂÃƒâ€¦Ã‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¶ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â³ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âº ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â· 0-2 ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¼ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸. 0 ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âº ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·'ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã‚Â½ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¹ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âµ; 3 ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã‚Â½ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“.",
+                        "ÃƒÆ’Ã‚ÂÃƒâ€¦Ã‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã¢â‚¬ËœÃƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âµ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¼ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âº ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚Â 0-2 ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¼ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸. ÃƒÆ’Ã‚ÂÃƒâ€¦Ã‚Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚Â 0 ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¼ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã‚Â½ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚Â ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âµ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â³ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾; 3 ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã‚Â½ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹.",
+                        "Pokazuje waÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¼one przypomnienia dla kart z 0-2 gwiazdkami. 0 gwiazdek pojawia siÃƒÆ’Ã¢â‚¬Å¾ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ najczÃƒÆ’Ã¢â‚¬Å¾ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã‚Âºciej; 3 gwiazdki sÃƒÆ’Ã¢â‚¬Å¾ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ wykluczone."
                     ),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -2469,7 +3786,7 @@ private fun SettingsScreen(
                 OutlinedTextField(
                     value = notificationIntervalDraft,
                     onValueChange = onNotificationIntervalChange,
-                    label = { Text(st("Interval minutes", "Intervall in Minuten", "ÃƒÂÃ¢â‚¬Â ÃƒÂÃ‚Â½Ãƒâ€˜Ã¢â‚¬Å¡Ãƒâ€˜Ã‚ÂÃƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â²ÃƒÂÃ‚Â°ÃƒÂÃ‚Â» Ãƒâ€˜Ã†â€™ Ãƒâ€˜Ã¢â‚¬Â¦ÃƒÂÃ‚Â²Ãƒâ€˜Ã¢â‚¬â€œÃƒÂÃ‚Â»Ãƒâ€˜Ã¢â‚¬â€œÃƒÂÃ‚Â½ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬Â¦", "Intervalo en minutos", "ÃƒÂÃ¢â‚¬Â ÃƒÂÃ‚Â½Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚ÂµÃƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â²ÃƒÂÃ‚Â°ÃƒÂÃ‚Â» Ãƒâ€˜Ã†â€™ Ãƒâ€˜Ã¢â‚¬Â¦ÃƒÂÃ‚Â²ÃƒÂÃ‚Â¸ÃƒÂÃ‚Â»ÃƒÂÃ‚Â¸ÃƒÂÃ‚Â½ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬Â¦", "ÃƒÂÃ‹Å“ÃƒÂÃ‚Â½Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚ÂµÃƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â²ÃƒÂÃ‚Â°ÃƒÂÃ‚Â» ÃƒÂÃ‚Â² ÃƒÂÃ‚Â¼ÃƒÂÃ‚Â¸ÃƒÂÃ‚Â½Ãƒâ€˜Ã†â€™Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬Â¦", "InterwaÃƒâ€¦Ã¢â‚¬Å¡ w minutach")) },
+                    label = { Text(st("Interval minutes", "Intervall in Minuten", "ÃƒÆ’Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â» ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦", "Intervalo en minutos", "ÃƒÆ’Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â» ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦", "ÃƒÆ’Ã‚ÂÃƒâ€¹Ã…â€œÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â» ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â² ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¼ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦", "InterwaÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ w minutach")) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                     modifier = Modifier.fillMaxWidth()
@@ -2480,7 +3797,7 @@ private fun SettingsScreen(
                 OutlinedTextField(
                     value = notificationMaxDraft,
                     onValueChange = onNotificationMaxChange,
-                    label = { Text(st("Maximum active notifications", "Maximale aktive Benachrichtigungen", "ÃƒÂÃ…â€œÃƒÂÃ‚Â°ÃƒÂÃ‚ÂºÃƒâ€˜Ã‚ÂÃƒâ€˜Ã¢â‚¬â€œÃƒÂÃ‚Â¼Ãƒâ€˜Ã†â€™ÃƒÂÃ‚Â¼ ÃƒÂÃ‚Â°ÃƒÂÃ‚ÂºÃƒâ€˜Ã¢â‚¬Å¡Ãƒâ€˜Ã¢â‚¬Â¹Ãƒâ€˜Ã…Â¾ÃƒÂÃ‚Â½Ãƒâ€˜Ã¢â‚¬Â¹Ãƒâ€˜Ã¢â‚¬Â¦ ÃƒÂÃ‚Â°ÃƒÂÃ‚Â¿ÃƒÂÃ‚Â°ÃƒÂÃ‚Â²Ãƒâ€˜Ã‚ÂÃƒâ€˜Ã‹â€ Ãƒâ€˜Ã¢â‚¬Â¡Ãƒâ€˜Ã‚ÂÃƒÂÃ‚Â½ÃƒÂÃ‚Â½Ãƒâ€˜Ã‚ÂÃƒâ€˜Ã…Â¾", "MÃƒÆ’Ã‚Â¡ximo de notificaciones activas", "ÃƒÂÃ…â€œÃƒÂÃ‚Â°ÃƒÂÃ‚ÂºÃƒâ€˜Ã‚ÂÃƒÂÃ‚Â¸ÃƒÂÃ‚Â¼Ãƒâ€˜Ã†â€™ÃƒÂÃ‚Â¼ ÃƒÂÃ‚Â°ÃƒÂÃ‚ÂºÃƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚Â¸ÃƒÂÃ‚Â²ÃƒÂÃ‚Â½ÃƒÂÃ‚Â¸Ãƒâ€˜Ã¢â‚¬Â¦ Ãƒâ€˜Ã‚ÂÃƒÂÃ‚Â¿ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â²Ãƒâ€˜Ã¢â‚¬â€œÃƒâ€˜Ã¢â‚¬Â°ÃƒÂÃ‚ÂµÃƒÂÃ‚Â½Ãƒâ€˜Ã…â€™", "ÃƒÂÃ…â€œÃƒÂÃ‚Â°ÃƒÂÃ‚ÂºÃƒâ€˜Ã‚ÂÃƒÂÃ‚Â¸ÃƒÂÃ‚Â¼Ãƒâ€˜Ã†â€™ÃƒÂÃ‚Â¼ ÃƒÂÃ‚Â°ÃƒÂÃ‚ÂºÃƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚Â¸ÃƒÂÃ‚Â²ÃƒÂÃ‚Â½Ãƒâ€˜Ã¢â‚¬Â¹Ãƒâ€˜Ã¢â‚¬Â¦ Ãƒâ€˜Ã†â€™ÃƒÂÃ‚Â²ÃƒÂÃ‚ÂµÃƒÂÃ‚Â´ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â¼ÃƒÂÃ‚Â»ÃƒÂÃ‚ÂµÃƒÂÃ‚Â½ÃƒÂÃ‚Â¸ÃƒÂÃ‚Â¹", "Maksimum aktywnych powiadomieÃƒâ€¦Ã¢â‚¬Å¾")) },
+                    label = { Text(st("Maximum active notifications", "Maximale aktive Benachrichtigungen", "ÃƒÆ’Ã‚ÂÃƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¼ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¼ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒâ€¹Ã¢â‚¬Â ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã‚Â¾", "MÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¡ximo de notificaciones activas", "ÃƒÆ’Ã‚ÂÃƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¼ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¼ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã¢â‚¬â„¢", "ÃƒÆ’Ã‚ÂÃƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¼ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¼ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¼ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¹", "Maksimum aktywnych powiadomieÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾")) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                     modifier = Modifier.fillMaxWidth()
@@ -2491,12 +3808,12 @@ private fun SettingsScreen(
                 Text(
                     text = st(
                         "Android may run background work with system scheduling delays, especially when the phone is idle.",
-                        "Android kann Hintergrundaufgaben verzÃƒÆ’Ã‚Â¶gert ausfÃƒÆ’Ã‚Â¼hren, besonders wenn das Telefon inaktiv ist.",
-                        "Android ÃƒÂÃ‚Â¼ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â¶ÃƒÂÃ‚Â° ÃƒÂÃ‚Â·ÃƒÂÃ‚Â°ÃƒÂÃ‚Â¿Ãƒâ€˜Ã†â€™Ãƒâ€˜Ã‚ÂÃƒÂÃ‚ÂºÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬Â Ãƒâ€˜Ã…â€™ Ãƒâ€˜Ã¢â‚¬Å¾ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â½ÃƒÂÃ‚Â°ÃƒÂÃ‚Â²Ãƒâ€˜Ã¢â‚¬Â¹Ãƒâ€˜Ã‚Â ÃƒÂÃ‚Â·ÃƒÂÃ‚Â°ÃƒÂÃ‚Â´ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬Â¡Ãƒâ€˜Ã¢â‚¬Â¹ ÃƒÂÃ‚Â· ÃƒÂÃ‚Â·ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬Å¡Ãƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã¢â‚¬Â¹ÃƒÂÃ‚Â¼ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°ÃƒÂÃ‚Â¹, ÃƒÂÃ‚Â°Ãƒâ€˜Ã‚ÂÃƒÂÃ‚Â°ÃƒÂÃ‚Â±ÃƒÂÃ‚Â»Ãƒâ€˜Ã¢â‚¬â€œÃƒÂÃ‚Â²ÃƒÂÃ‚Â° ÃƒÂÃ‚ÂºÃƒÂÃ‚Â°ÃƒÂÃ‚Â»Ãƒâ€˜Ã¢â‚¬â€œ Ãƒâ€˜Ã¢â‚¬Å¡Ãƒâ€˜Ã‚ÂÃƒÂÃ‚Â»ÃƒÂÃ‚ÂµÃƒâ€˜Ã¢â‚¬Å¾ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â½ ÃƒÂÃ‚Â½ÃƒÂÃ‚ÂµÃƒÂÃ‚Â°ÃƒÂÃ‚ÂºÃƒâ€˜Ã¢â‚¬Å¡Ãƒâ€˜Ã¢â‚¬Â¹Ãƒâ€˜Ã…Â¾ÃƒÂÃ‚Â½Ãƒâ€˜Ã¢â‚¬Â¹.",
-                        "Android puede retrasar tareas en segundo plano, sobre todo cuando el telÃƒÆ’Ã‚Â©fono estÃƒÆ’Ã‚Â¡ inactivo.",
-                        "Android ÃƒÂÃ‚Â¼ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â¶ÃƒÂÃ‚Âµ ÃƒÂÃ‚Â·ÃƒÂÃ‚Â°ÃƒÂÃ‚Â¿Ãƒâ€˜Ã†â€™Ãƒâ€˜Ã‚ÂÃƒÂÃ‚ÂºÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚Â¸ Ãƒâ€˜Ã¢â‚¬Å¾ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â½ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â²Ãƒâ€˜Ã¢â‚¬â€œ ÃƒÂÃ‚Â·ÃƒÂÃ‚Â°ÃƒÂÃ‚Â´ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬Â¡Ãƒâ€˜Ã¢â‚¬â€œ Ãƒâ€˜Ã¢â‚¬â€œÃƒÂÃ‚Â· ÃƒÂÃ‚Â·ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬Å¡Ãƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â¸ÃƒÂÃ‚Â¼ÃƒÂÃ‚ÂºÃƒÂÃ‚Â¾Ãƒâ€˜Ã…Â½, ÃƒÂÃ‚Â¾Ãƒâ€˜Ã‚ÂÃƒÂÃ‚Â¾ÃƒÂÃ‚Â±ÃƒÂÃ‚Â»ÃƒÂÃ‚Â¸ÃƒÂÃ‚Â²ÃƒÂÃ‚Â¾ ÃƒÂÃ‚ÂºÃƒÂÃ‚Â¾ÃƒÂÃ‚Â»ÃƒÂÃ‚Â¸ Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚ÂµÃƒÂÃ‚Â»ÃƒÂÃ‚ÂµÃƒâ€˜Ã¢â‚¬Å¾ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â½ ÃƒÂÃ‚Â½ÃƒÂÃ‚ÂµÃƒÂÃ‚Â°ÃƒÂÃ‚ÂºÃƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚Â¸ÃƒÂÃ‚Â²ÃƒÂÃ‚Â½ÃƒÂÃ‚Â¸ÃƒÂÃ‚Â¹.",
-                        "Android ÃƒÂÃ‚Â¼ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â¶ÃƒÂÃ‚ÂµÃƒâ€˜Ã¢â‚¬Å¡ ÃƒÂÃ‚Â·ÃƒÂÃ‚Â°ÃƒÂÃ‚Â¿Ãƒâ€˜Ã†â€™Ãƒâ€˜Ã‚ÂÃƒÂÃ‚ÂºÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬Å¡Ãƒâ€˜Ã…â€™ Ãƒâ€˜Ã¢â‚¬Å¾ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â½ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â²Ãƒâ€˜Ã¢â‚¬Â¹ÃƒÂÃ‚Âµ ÃƒÂÃ‚Â·ÃƒÂÃ‚Â°ÃƒÂÃ‚Â´ÃƒÂÃ‚Â°Ãƒâ€˜Ã¢â‚¬Â¡ÃƒÂÃ‚Â¸ Ãƒâ€˜Ã‚Â ÃƒÂÃ‚Â·ÃƒÂÃ‚Â°ÃƒÂÃ‚Â´ÃƒÂÃ‚ÂµÃƒâ€˜Ã¢â€šÂ¬ÃƒÂÃ‚Â¶ÃƒÂÃ‚ÂºÃƒÂÃ‚Â¾ÃƒÂÃ‚Â¹, ÃƒÂÃ‚Â¾Ãƒâ€˜Ã‚ÂÃƒÂÃ‚Â¾ÃƒÂÃ‚Â±ÃƒÂÃ‚ÂµÃƒÂÃ‚Â½ÃƒÂÃ‚Â½ÃƒÂÃ‚Â¾ ÃƒÂÃ‚ÂºÃƒÂÃ‚Â¾ÃƒÂÃ‚Â³ÃƒÂÃ‚Â´ÃƒÂÃ‚Â° Ãƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚ÂµÃƒÂÃ‚Â»ÃƒÂÃ‚ÂµÃƒâ€˜Ã¢â‚¬Å¾ÃƒÂÃ‚Â¾ÃƒÂÃ‚Â½ ÃƒÂÃ‚Â½ÃƒÂÃ‚ÂµÃƒÂÃ‚Â°ÃƒÂÃ‚ÂºÃƒâ€˜Ã¢â‚¬Å¡ÃƒÂÃ‚Â¸ÃƒÂÃ‚Â²ÃƒÂÃ‚ÂµÃƒÂÃ‚Â½.",
-                        "Android moÃƒâ€¦Ã‚Â¼e opÃƒÆ’Ã‚Â³Ãƒâ€¦Ã‚ÂºniaÃƒâ€žÃ¢â‚¬Â¡ pracÃƒâ€žÃ¢â€žÂ¢ w tle, szczegÃƒÆ’Ã‚Â³lnie gdy telefon jest bezczynny."
+                        "Android kann Hintergrundaufgaben verzÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¶gert ausfÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¼hren, besonders wenn das Telefon inaktiv ist.",
+                        "Android ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¼ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¶ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â° ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã¢â‚¬â„¢ ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â· ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¼ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¹, ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â±ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â° ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹.",
+                        "Android puede retrasar tareas en segundo plano, sobre todo cuando el telÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â©fono estÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¡ inactivo.",
+                        "Android ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¼ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¶ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âµ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â· ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¼ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã‚Â½, ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â±ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¹.",
+                        "Android ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¼ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¶ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¿ÃƒÆ’Ã¢â‚¬ËœÃƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬ËœÃƒâ€¦Ã¢â‚¬â„¢ ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Âµ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚Â ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â·ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¶ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¹, ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â±ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â³ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â´ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â° ÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â»ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â°ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂºÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â½.",
+                        "Android moÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¼e opÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â³ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚ÂºniaÃƒÆ’Ã¢â‚¬Å¾ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ pracÃƒÆ’Ã¢â‚¬Å¾ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ w tle, szczegÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â³lnie gdy telefon jest bezczynny."
                     ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -2514,11 +3831,11 @@ private fun SettingsScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Text(
-                    text = st("Version log", "Versionslog", "ÃƒÂÃ¢â‚¬ÂºÃƒÂÃ‚Â¾ÃƒÂÃ‚Â³ ÃƒÂÃ‚Â²ÃƒÂÃ‚ÂµÃƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã‚ÂÃƒâ€˜Ã¢â‚¬â€œÃƒÂÃ‚Â¹", "Registro de versiones", "ÃƒÂÃ¢â‚¬ÂºÃƒÂÃ‚Â¾ÃƒÂÃ‚Â³ ÃƒÂÃ‚Â²ÃƒÂÃ‚ÂµÃƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã‚ÂÃƒâ€˜Ã¢â‚¬â€œÃƒÂÃ‚Â¹", "ÃƒÂÃ¢â‚¬ÂºÃƒÂÃ‚Â¾ÃƒÂÃ‚Â³ ÃƒÂÃ‚Â²ÃƒÂÃ‚ÂµÃƒâ€˜Ã¢â€šÂ¬Ãƒâ€˜Ã‚ÂÃƒÂÃ‚Â¸ÃƒÂÃ‚Â¹", "Historia wersji"),
+                    text = st("Version log", "Versionslog", "ÃƒÆ’Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â³ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¹", "Registro de versiones", "ÃƒÆ’Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â³ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¹", "ÃƒÆ’Ã‚ÂÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂºÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¾ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â³ ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â²ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚ÂµÃƒÆ’Ã¢â‚¬ËœÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÆ’Ã¢â‚¬ËœÃƒâ€šÃ‚ÂÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¸ÃƒÆ’Ã‚ÂÃƒâ€šÃ‚Â¹", "Historia wersji"),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
-                versionLogText().lines().forEach { line ->
+                versionLogLines.forEach { line ->
                     Text(
                         text = line,
                         style = MaterialTheme.typography.bodyMedium,
@@ -2537,7 +3854,10 @@ private val DictionaryLanguageOptions = listOf(
     "Russian" to "RU - \u0440\u0443\u0441\u0441\u043a\u0438\u0439",
     "Belarusian" to "BY - \u0431\u0435\u043b\u0430\u0440\u0443\u0441\u043a\u0430\u044f",
     "Ukrainian" to "UA - \u0443\u043a\u0440\u0430\u0457\u043d\u0441\u044c\u043a\u0430",
-    "German" to "DE - Deutsch"
+    "German" to "DE - Deutsch",
+    "Latvian" to "LV - latvie\u0161u",
+    "Lithuanian" to "LT - lietuvi\u0173",
+    "Portuguese" to "PT - portugu\u00eas"
 )
 
 private fun dictionaryLanguageCode(language: String): String {
@@ -2554,6 +3874,9 @@ private fun mlKitLanguageTagForName(language: String): String {
         "belarusian", "belarus", "by", "be" -> "be"
         "ukrainian", "uk", "ua" -> "uk"
         "german", "de", "deutsch" -> "de"
+        "latvian", "lv" -> "lv"
+        "lithuanian", "lt" -> "lt"
+        "portuguese", "pt" -> "pt"
         else -> language.trim().takeIf { it.length in 2..3 }?.lowercase(Locale.ROOT).orEmpty()
     }
 }
@@ -2569,8 +3892,12 @@ private fun speechTagForDictionaryLanguage(language: String): String? {
         "EN" -> "en-US"
         "PL" -> "pl-PL"
         "RU" -> "ru-RU"
+        "BE", "BY" -> "be-BY"
         "DE" -> "de-DE"
         "ES" -> "es-ES"
+        "LV" -> "lv-LV"
+        "LT" -> "lt-LT"
+        "PT" -> "pt-PT"
         else -> null
     }
 }
@@ -2578,6 +3905,15 @@ private fun speechTagForDictionaryLanguage(language: String): String? {
 private fun nativeLanguageLabel(language: String): String {
     return DictionaryLanguageOptions.firstOrNull { it.first.equals(language, ignoreCase = true) }?.second
         ?: language.ifBlank { "Language" }
+}
+
+private fun String.shortCodeForUi(): String {
+    return nativeLanguageLabel(this).substringBefore(" - ").ifBlank { take(2).uppercase(Locale.ROOT) }
+}
+
+private fun String.trimToWordLimit(limit: Int): String {
+    val words = trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+    return words.take(limit).joinToString(" ")
 }
 
 @Composable
@@ -2634,6 +3970,307 @@ private fun DictionaryLanguageDropdown(
         }
     }
 }
+
+@Composable
+private fun ModelDropdown(
+    label: String,
+    value: String,
+    options: List<String>,
+    onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Box {
+            OutlinedButton(
+                onClick = { expanded = true },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Text(
+                    text = value,
+                    modifier = Modifier.weight(1f),
+                    textAlign = TextAlign.Start,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Icon(Icons.Default.KeyboardArrowDown, contentDescription = null, modifier = Modifier.size(32.dp))
+            }
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                options.forEach { option ->
+                    DropdownMenuItem(
+                        text = { Text(option) },
+                        onClick = {
+                            expanded = false
+                            onValueChange(option)
+                        }
+                    )
+                }
+            }
+        }
+    }
+
+}
+
+@Composable
+private fun LocalLanguagesSettingsCard(
+    downloadedTranslationLanguages: Set<String>,
+    offlineSpeechStatuses: Map<String, String>,
+    translationDownloadingLabel: String?,
+    offlineSpeechDownloadingTag: String?,
+    onOpenLocalLanguages: () -> Unit
+) {
+    val downloadedLanguages = remember(downloadedTranslationLanguages, offlineSpeechStatuses) {
+        DictionaryLanguageOptions.filter { (language, _) ->
+            val code = dictionaryLanguageCode(language)
+            val speechTag = speechTagForDictionaryLanguage(language)
+            downloadedTranslationLanguages.contains(code) ||
+                speechTag?.let { offlineSpeechStatuses[it] == CardRepository.OFFLINE_SPEECH_STATUS_READY } == true
+        }
+    }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                text = "Local languages",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                text = "Downloaded languages for critical offline mode. Translation uses ML Kit models; speech recognition uses Android on-device models.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            if (downloadedLanguages.isEmpty()) {
+                Text(
+                    text = "No local languages downloaded yet.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                downloadedLanguages.forEach { (language, label) ->
+                    LocalLanguageStatusRow(
+                        languageName = language,
+                        label = label,
+                        translationReady = downloadedTranslationLanguages.contains(dictionaryLanguageCode(language)),
+                        speechStatus = speechTagForDictionaryLanguage(language)?.let { offlineSpeechStatuses[it] },
+                        compact = true
+                    )
+                }
+            }
+            translationDownloadingLabel?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+            offlineSpeechDownloadingTag?.let {
+                Text(
+                    text = "Speech recognition downloading: $it",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+            Button(
+                onClick = onOpenLocalLanguages,
+                shape = RoundedCornerShape(18.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Default.FileDownload, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Download or remove languages")
+            }
+        }
+    }
+}
+
+@Composable
+private fun LocalLanguagesDialog(
+    downloadedTranslationLanguages: Set<String>,
+    offlineSpeechStatuses: Map<String, String>,
+    offlineSpeechDownloadingTag: String?,
+    translationDownloadingLabel: String?,
+    onDownloadLanguage: (String) -> Unit,
+    onDeleteTranslationLanguage: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Local languages") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 520.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = "Choose languages to keep on the phone for critical offline mode.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                translationDownloadingLabel?.let {
+                    Text(it, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.SemiBold)
+                }
+                DictionaryLanguageOptions.forEach { (language, label) ->
+                    val code = dictionaryLanguageCode(language)
+                    val speechTag = speechTagForDictionaryLanguage(language)
+                    val speechStatus = speechTag?.let { offlineSpeechStatuses[it] }
+                        ?: CardRepository.OFFLINE_SPEECH_STATUS_NOT_SUPPORTED
+                    val translationReady = downloadedTranslationLanguages.contains(code)
+                    val speechReady = speechStatus == CardRepository.OFFLINE_SPEECH_STATUS_READY
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            LocalLanguageStatusRow(
+                                languageName = language,
+                                label = label,
+                                translationReady = translationReady,
+                                speechStatus = speechStatus,
+                                compact = false
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                OutlinedButton(
+                                    onClick = { onDownloadLanguage(language) },
+                                    enabled = offlineSpeechDownloadingTag == null || speechReady,
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(12.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp)
+                                ) {
+                                    Icon(Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Download", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                                OutlinedButton(
+                                    onClick = { onDeleteTranslationLanguage(language) },
+                                    enabled = translationReady,
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(12.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp)
+                                ) {
+                                    Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Remove", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
+                        }
+                    }
+                }
+                Text(
+                    text = "Speech recognition models are managed by Android. MurrLex can request/download them and show their status; removal may be handled by the system.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Done") }
+        }
+    )
+}
+
+@Composable
+private fun LocalLanguageStatusRow(
+    languageName: String,
+    label: String,
+    translationReady: Boolean,
+    speechStatus: String?,
+    compact: Boolean
+) {
+    var hint by remember { mutableStateOf<String?>(null) }
+    val speechReady = speechStatus == CardRepository.OFFLINE_SPEECH_STATUS_READY
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = label,
+                style = if (compact) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Medium
+            )
+            Text(
+                text = dictionaryLanguageCode(languageName),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        IconButton(
+            onClick = {
+                hint = if (translationReady) {
+                    "Translation model is downloaded."
+                } else {
+                    "Translation model is not downloaded."
+                }
+            },
+            modifier = Modifier.size(30.dp)
+        ) {
+            Icon(
+                Icons.Default.Translate,
+                contentDescription = "Translation status",
+                modifier = Modifier.size(16.dp),
+                tint = if (translationReady) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+            )
+        }
+        IconButton(
+            onClick = {
+                hint = when (speechStatus) {
+                    CardRepository.OFFLINE_SPEECH_STATUS_READY -> "Offline speech recognition is downloaded."
+                    CardRepository.OFFLINE_SPEECH_STATUS_DOWNLOADING -> "Offline speech recognition is downloading."
+                    CardRepository.OFFLINE_SPEECH_STATUS_ERROR -> "Offline speech recognition download failed."
+                    CardRepository.OFFLINE_SPEECH_STATUS_NOT_SUPPORTED -> "Offline speech recognition is not supported for this language on this device."
+                    else -> "Offline speech recognition is not downloaded."
+                }
+            },
+            modifier = Modifier.size(30.dp)
+        ) {
+            Icon(
+                Icons.Default.Mic,
+                contentDescription = "Speech recognition status",
+                modifier = Modifier.size(16.dp),
+                tint = if (speechReady) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+            )
+        }
+    }
+    hint?.let { text ->
+        AlertDialog(
+            onDismissRequest = { hint = null },
+            title = { Text(dictionaryLanguageCode(languageName)) },
+            text = { Text(text) },
+            confirmButton = {
+                TextButton(onClick = { hint = null }) { Text("OK") }
+            }
+        )
+    }
+}
+
 @Composable
 private fun SettingsSwitchRow(
     title: String,
@@ -2794,8 +4431,11 @@ private val OnboardingLanguages = listOf(
     OnboardingLanguageOption("de", "German", "\uD83C\uDDE9\uD83C\uDDEA DE - Deutsch"),
     OnboardingLanguageOption("pl", "Polish", "\uD83C\uDDF5\uD83C\uDDF1 PL - polski"),
     OnboardingLanguageOption("ru", "Russian", "\uD83C\uDFF3\uFE0F RU - Russian"),
-    OnboardingLanguageOption("es", "Spanish", "\uD83C\uDDEA\uD83C\uDDF8 ES - español"),
-    OnboardingLanguageOption("uk", "Ukrainian", "\uD83C\uDDFA\uD83C\uDDE6 UA - українська")
+    OnboardingLanguageOption("es", "Spanish", "\uD83C\uDDEA\uD83C\uDDF8 ES - espaÃ±ol"),
+    OnboardingLanguageOption("lv", "Latvian", "LV - Latvian"),
+    OnboardingLanguageOption("lt", "Lithuanian", "LT - Lithuanian"),
+    OnboardingLanguageOption("pt", "Portuguese", "PT - Portuguese"),
+    OnboardingLanguageOption("uk", "Ukrainian", "\uD83C\uDDFA\uD83C\uDDE6 UA - ÑƒÐºÑ€Ð°Ñ—Ð½ÑÑŒÐºÐ°")
 )
 
 @Composable
@@ -2805,17 +4445,18 @@ private fun OnboardingDialog(
     defaultLearningLanguage: String,
     onComplete: (String, String, String, String) -> Unit
 ) {
-    val initialInterface = OnboardingLanguages.firstOrNull { it.code == interfaceLanguage }
-        ?: OnboardingLanguages.first { it.code == "en" }
     val systemKnown = OnboardingLanguages.firstOrNull { it.code == interfaceLanguage }?.storageName ?: "English"
-    var selectedInterface by remember { mutableStateOf(initialInterface) }
     var knownLanguage by remember {
         mutableStateOf(
             OnboardingLanguages.firstOrNull { it.storageName.equals(defaultKnownLanguage, ignoreCase = true) }
                 ?: OnboardingLanguages.firstOrNull { it.storageName == systemKnown }
-                ?: OnboardingLanguages.first { it.storageName == "English" }
+                ?: OnboardingLanguages.first { it.storageName == "Russian" }
         )
     }
+    val initialInterface = OnboardingLanguages.firstOrNull { it.code == knownLanguage.code }
+        ?: OnboardingLanguages.firstOrNull { it.code == interfaceLanguage }
+        ?: OnboardingLanguages.first { it.code == "en" }
+    var selectedInterface by remember { mutableStateOf(initialInterface) }
     var learningLanguage by remember {
         mutableStateOf(
             OnboardingLanguages.firstOrNull { it.storageName.equals(defaultLearningLanguage, ignoreCase = true) }
@@ -2841,13 +4482,14 @@ private fun OnboardingDialog(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(copy.guide, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                OnboardingDropdown(copy.interfaceLanguage, selectedInterface) { selectedInterface = it }
-                OnboardingDropdown(copy.knownLanguage, knownLanguage) {
+                OnboardingDropdown("Basic Language / Native Language", knownLanguage) {
                     knownLanguage = it
                     explanationLanguage = it
+                    selectedInterface = it
                 }
-                OnboardingDropdown(copy.learningLanguage, learningLanguage) { learningLanguage = it }
-                OnboardingDropdown(copy.explanationLanguage, explanationLanguage) { explanationLanguage = it }
+                OnboardingDropdown("Interface Language", selectedInterface) { selectedInterface = it }
+                OnboardingDropdown("Target Language / Learning Language", learningLanguage) { learningLanguage = it }
+                OnboardingDropdown("AI explanation language", explanationLanguage) { explanationLanguage = it }
             }
         },
         confirmButton = {
@@ -2912,13 +4554,13 @@ private fun onboardingCopy(language: String): OnboardingCopy {
             start = "Start"
         )
         "be" -> OnboardingCopy(
-            title = "MurrLex вітае",
-            guide = "Кароткі старт: выберы мову інтэрфейсу, сваю мову, мову навучання і мову тлумачэнняў.",
-            interfaceLanguage = "Мова інтэрфейсу",
-            knownLanguage = "Ваша мова",
-            learningLanguage = "Мова, якую вывучаеце",
-            explanationLanguage = "Мова тлумачэнняў",
-            start = "Пачаць"
+            title = "MurrLex Ð²Ñ–Ñ‚Ð°Ðµ",
+            guide = "ÐšÐ°Ñ€Ð¾Ñ‚ÐºÑ– ÑÑ‚Ð°Ñ€Ñ‚: Ð²Ñ‹Ð±ÐµÑ€Ñ‹ Ð¼Ð¾Ð²Ñƒ Ñ–Ð½Ñ‚ÑÑ€Ñ„ÐµÐ¹ÑÑƒ, ÑÐ²Ð°ÑŽ Ð¼Ð¾Ð²Ñƒ, Ð¼Ð¾Ð²Ñƒ Ð½Ð°Ð²ÑƒÑ‡Ð°Ð½Ð½Ñ Ñ– Ð¼Ð¾Ð²Ñƒ Ñ‚Ð»ÑƒÐ¼Ð°Ñ‡ÑÐ½Ð½ÑÑž.",
+            interfaceLanguage = "ÐœÐ¾Ð²Ð° Ñ–Ð½Ñ‚ÑÑ€Ñ„ÐµÐ¹ÑÑƒ",
+            knownLanguage = "Ð’Ð°ÑˆÐ° Ð¼Ð¾Ð²Ð°",
+            learningLanguage = "ÐœÐ¾Ð²Ð°, ÑÐºÑƒÑŽ Ð²Ñ‹Ð²ÑƒÑ‡Ð°ÐµÑ†Ðµ",
+            explanationLanguage = "ÐœÐ¾Ð²Ð° Ñ‚Ð»ÑƒÐ¼Ð°Ñ‡ÑÐ½Ð½ÑÑž",
+            start = "ÐŸÐ°Ñ‡Ð°Ñ†ÑŒ"
         )
         "es" -> OnboardingCopy(
             title = "MurrLex te da la bienvenida",
@@ -2930,22 +4572,22 @@ private fun onboardingCopy(language: String): OnboardingCopy {
             start = "Empezar"
         )
         "uk" -> OnboardingCopy(
-            title = "MurrLex вітає",
-            guide = "Короткий старт: оберіть мову інтерфейсу, вашу мову, мову навчання і мову пояснень.",
-            interfaceLanguage = "Мова інтерфейсу",
-            knownLanguage = "Ваша мова",
-            learningLanguage = "Мова, яку вивчаєте",
-            explanationLanguage = "Мова пояснень",
-            start = "Почати"
+            title = "MurrLex Ð²Ñ–Ñ‚Ð°Ñ”",
+            guide = "ÐšÐ¾Ñ€Ð¾Ñ‚ÐºÐ¸Ð¹ ÑÑ‚Ð°Ñ€Ñ‚: Ð¾Ð±ÐµÑ€Ñ–Ñ‚ÑŒ Ð¼Ð¾Ð²Ñƒ Ñ–Ð½Ñ‚ÐµÑ€Ñ„ÐµÐ¹ÑÑƒ, Ð²Ð°ÑˆÑƒ Ð¼Ð¾Ð²Ñƒ, Ð¼Ð¾Ð²Ñƒ Ð½Ð°Ð²Ñ‡Ð°Ð½Ð½Ñ Ñ– Ð¼Ð¾Ð²Ñƒ Ð¿Ð¾ÑÑÐ½ÐµÐ½ÑŒ.",
+            interfaceLanguage = "ÐœÐ¾Ð²Ð° Ñ–Ð½Ñ‚ÐµÑ€Ñ„ÐµÐ¹ÑÑƒ",
+            knownLanguage = "Ð’Ð°ÑˆÐ° Ð¼Ð¾Ð²Ð°",
+            learningLanguage = "ÐœÐ¾Ð²Ð°, ÑÐºÑƒ Ð²Ð¸Ð²Ñ‡Ð°Ñ”Ñ‚Ðµ",
+            explanationLanguage = "ÐœÐ¾Ð²Ð° Ð¿Ð¾ÑÑÐ½ÐµÐ½ÑŒ",
+            start = "ÐŸÐ¾Ñ‡Ð°Ñ‚Ð¸"
         )
         "ru" -> OnboardingCopy(
-            title = "MurrLex приветствует",
-            guide = "Краткий старт: выберите язык интерфейса, ваш язык, язык, который изучаете, и язык объяснений.",
-            interfaceLanguage = "Язык интерфейса",
-            knownLanguage = "Ваш язык",
-            learningLanguage = "Язык, который вы изучаете",
-            explanationLanguage = "Язык объяснений",
-            start = "Начать"
+            title = "MurrLex Ð¿Ñ€Ð¸Ð²ÐµÑ‚ÑÑ‚Ð²ÑƒÐµÑ‚",
+            guide = "ÐšÑ€Ð°Ñ‚ÐºÐ¸Ð¹ ÑÑ‚Ð°Ñ€Ñ‚: Ð²Ñ‹Ð±ÐµÑ€Ð¸Ñ‚Ðµ ÑÐ·Ñ‹Ðº Ð¸Ð½Ñ‚ÐµÑ€Ñ„ÐµÐ¹ÑÐ°, Ð²Ð°Ñˆ ÑÐ·Ñ‹Ðº, ÑÐ·Ñ‹Ðº, ÐºÐ¾Ñ‚Ð¾Ñ€Ñ‹Ð¹ Ð¸Ð·ÑƒÑ‡Ð°ÐµÑ‚Ðµ, Ð¸ ÑÐ·Ñ‹Ðº Ð¾Ð±ÑŠÑÑÐ½ÐµÐ½Ð¸Ð¹.",
+            interfaceLanguage = "Ð¯Ð·Ñ‹Ðº Ð¸Ð½Ñ‚ÐµÑ€Ñ„ÐµÐ¹ÑÐ°",
+            knownLanguage = "Ð’Ð°Ñˆ ÑÐ·Ñ‹Ðº",
+            learningLanguage = "Ð¯Ð·Ñ‹Ðº, ÐºÐ¾Ñ‚Ð¾Ñ€Ñ‹Ð¹ Ð²Ñ‹ Ð¸Ð·ÑƒÑ‡Ð°ÐµÑ‚Ðµ",
+            explanationLanguage = "Ð¯Ð·Ñ‹Ðº Ð¾Ð±ÑŠÑÑÐ½ÐµÐ½Ð¸Ð¹",
+            start = "ÐÐ°Ñ‡Ð°Ñ‚ÑŒ"
         )
         "pl" -> OnboardingCopy(
             title = "MurrLex wita",
@@ -2972,19 +4614,18 @@ private fun Context.isNetworkAvailable(): Boolean {
     val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
     val network = connectivityManager.activeNetwork ?: return false
     val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
-    return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-        capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+    return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
 }
 
 private fun offlineSpeechLocalizedName(tag: String, interfaceLanguage: String): String {
     val key = tag.substringBefore("-").lowercase(Locale.ROOT)
     return when (interfaceLanguage.lowercase(Locale.ROOT)) {
         "ru" -> when (key) {
-            "en" -> "Английский"
-            "pl" -> "Польский"
-            "ru" -> "Русский"
-            "de" -> "Немецкий"
-            "es" -> "Испанский"
+            "en" -> "ÐÐ½Ð³Ð»Ð¸Ð¹ÑÐºÐ¸Ð¹"
+            "pl" -> "ÐŸÐ¾Ð»ÑŒÑÐºÐ¸Ð¹"
+            "ru" -> "Ð ÑƒÑÑÐºÐ¸Ð¹"
+            "de" -> "ÐÐµÐ¼ÐµÑ†ÐºÐ¸Ð¹"
+            "es" -> "Ð˜ÑÐ¿Ð°Ð½ÑÐºÐ¸Ð¹"
             else -> tag
         }
         "pl" -> when (key) {
@@ -3012,19 +4653,19 @@ private fun offlineSpeechLocalizedName(tag: String, interfaceLanguage: String): 
             else -> tag
         }
         "uk", "ua" -> when (key) {
-            "en" -> "Англійська"
-            "pl" -> "Польська"
-            "ru" -> "Російська"
-            "de" -> "Німецька"
-            "es" -> "Іспанська"
+            "en" -> "ÐÐ½Ð³Ð»Ñ–Ð¹ÑÑŒÐºÐ°"
+            "pl" -> "ÐŸÐ¾Ð»ÑŒÑÑŒÐºÐ°"
+            "ru" -> "Ð Ð¾ÑÑ–Ð¹ÑÑŒÐºÐ°"
+            "de" -> "ÐÑ–Ð¼ÐµÑ†ÑŒÐºÐ°"
+            "es" -> "Ð†ÑÐ¿Ð°Ð½ÑÑŒÐºÐ°"
             else -> tag
         }
         "be", "by" -> when (key) {
-            "en" -> "Англійская"
-            "pl" -> "Польская"
-            "ru" -> "Руская"
-            "de" -> "Нямецкая"
-            "es" -> "Іспанская"
+            "en" -> "ÐÐ½Ð³Ð»Ñ–Ð¹ÑÐºÐ°Ñ"
+            "pl" -> "ÐŸÐ¾Ð»ÑŒÑÐºÐ°Ñ"
+            "ru" -> "Ð ÑƒÑÐºÐ°Ñ"
+            "de" -> "ÐÑÐ¼ÐµÑ†ÐºÐ°Ñ"
+            "es" -> "Ð†ÑÐ¿Ð°Ð½ÑÐºÐ°Ñ"
             else -> tag
         }
         else -> when (key) {
@@ -3051,7 +4692,8 @@ private fun TranslateScreen(
     onTranslateAutoSpeakChange: (Boolean) -> Unit,
     onSpeakTranslation: () -> Unit,
     onSpeakInput: () -> Unit,
-    onVoiceInput: () -> Unit
+    onVoiceInput: () -> Unit,
+    onTargetVoiceInput: () -> Unit
 ) {
     val splitMode = state.workMode == WorkMode.SPLIT
     var splitResultExpanded by remember { mutableStateOf(false) }
@@ -3075,26 +4717,27 @@ private fun TranslateScreen(
     ) {
         if (splitMode) {
             SplitTranslationPanel(
-                title = nativeLanguageLabel(state.quickVocabularySourceLanguage),
+                title = nativeLanguageLabel(state.activeVocabularyTargetLanguage),
                 text = state.translationOutput,
                 flipped = true,
                 modifier = Modifier.weight(1f),
-                attribution = state.translationOutput.isNotBlank(),
+                attribution = state.translationAttribution,
                 onSpeak = onSpeakTranslation,
-                onVoiceInput = onVoiceInput,
+                onVoiceInput = onTargetVoiceInput,
                 borderColor = translationBorderColor,
                 borderHighlighted = translationPulse,
                 onClick = { splitResultExpanded = !splitResultExpanded }
             )
             if (!splitResultExpanded) {
                 SplitTranslationPanel(
-                    title = nativeLanguageLabel(state.quickVocabularyTargetLanguage),
+                    title = nativeLanguageLabel(state.activeVocabularySourceLanguage),
                     text = state.translationInput,
                     flipped = false,
                     editable = true,
                     onValueChange = onInputChange,
                     modifier = Modifier.weight(1f),
-                    onSpeak = onSpeakInput
+                    onSpeak = onSpeakInput,
+                    onVoiceInput = onVoiceInput
                 )
             }
         } else {
@@ -3109,7 +4752,7 @@ private fun TranslateScreen(
             ) {
                 Box(Modifier.fillMaxSize().padding(18.dp)) {
                     LanguageSpeakerRow(
-                        title = nativeLanguageLabel(state.quickVocabularySourceLanguage),
+                        title = nativeLanguageLabel(state.activeVocabularyTargetLanguage),
                         enabled = state.translationOutput.isNotBlank(),
                         autoSpeakEnabled = translateAutoSpeakEnabled,
                         onSpeak = onSpeakTranslation,
@@ -3131,11 +4774,13 @@ private fun TranslateScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 textAlign = TextAlign.Start
                             )
-                            Text(
-                                text = "Powered by Google Translator",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
-                            )
+                            if (state.translationAttribution.isNotBlank()) {
+                                Text(
+                                    text = state.translationAttribution,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
+                                )
+                            }
                         }
                     }
                 }
@@ -3148,12 +4793,17 @@ private fun TranslateScreen(
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
                 ) {
                     Box(Modifier.fillMaxSize().padding(18.dp)) {
-                        Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            LanguageSpeakerRow(
-                                title = nativeLanguageLabel(state.quickVocabularyTargetLanguage),
-                                enabled = state.translationInput.isNotBlank(),
-                                onSpeak = onSpeakInput
-                            )
+                        LanguageSpeakerRow(
+                            title = nativeLanguageLabel(state.activeVocabularySourceLanguage),
+                            enabled = state.translationInput.isNotBlank(),
+                            onSpeak = onSpeakInput,
+                            modifier = Modifier.align(Alignment.TopStart)
+                        )
+                        Column(
+                            Modifier
+                                .fillMaxSize()
+                                .padding(top = 42.dp)
+                        ) {
                             OutlinedTextField(
                                 value = state.translationInput,
                                 onValueChange = onInputChange,
@@ -3184,7 +4834,7 @@ private fun TranslateScreen(
             ) {
                 DictionaryLanguageDropdown(
                     label = "",
-                    value = state.quickVocabularyTargetLanguage,
+                    value = state.activeVocabularySourceLanguage,
                     onValueChange = onSourceLanguageChange,
                     modifier = Modifier.weight(1f)
                 )
@@ -3200,7 +4850,7 @@ private fun TranslateScreen(
                 }
                 DictionaryLanguageDropdown(
                     label = "",
-                    value = state.quickVocabularySourceLanguage,
+                    value = state.activeVocabularyTargetLanguage,
                     onValueChange = onTargetLanguageChange,
                     modifier = Modifier.weight(1f)
                 )
@@ -3308,7 +4958,7 @@ private fun SplitTranslationPanel(
     modifier: Modifier = Modifier,
     editable: Boolean = false,
     onValueChange: (String) -> Unit = {},
-    attribution: Boolean = false,
+    attribution: String = "",
     onSpeak: (() -> Unit)? = null,
     onVoiceInput: (() -> Unit)? = null,
     borderColor: Color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f),
@@ -3344,7 +4994,7 @@ private fun SplitTranslationPanel(
                     IconButton(onClick = onVoiceInput) {
                         Icon(
                             Icons.Default.Mic,
-                            contentDescription = "Speak target language",
+                            contentDescription = "Speak this language",
                             modifier = Modifier.size(28.dp),
                             tint = Color(0xFF234231)
                         )
@@ -3394,9 +5044,9 @@ private fun SplitTranslationPanel(
                                 style = MaterialTheme.typography.headlineSmall,
                                 textAlign = TextAlign.Start
                             )
-                            if (attribution) {
+                            if (attribution.isNotBlank()) {
                                 Text(
-                                    text = "Powered by Google Translator",
+                                    text = attribution,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
                                 )
@@ -3419,7 +5069,9 @@ private fun TestAnswerOptions(
     modifier: Modifier = Modifier
 ) {
     if (card == null) return
-    val choices = remember(card.id, card.expectedAnswerText(isBackVisible), cards.map { it.id to it.expectedAnswerText(isBackVisible) }) {
+    val expectedAnswer = card.expectedAnswerText(isBackVisible)
+    val normalizedExpectedAnswer = remember(expectedAnswer) { normalizeAnswerText(expectedAnswer) }
+    val choices = remember(card.id, cards, isBackVisible) {
         testChoices(card, cards, isBackVisible)
     }
     Column(
@@ -3435,7 +5087,7 @@ private fun TestAnswerOptions(
                 border = BorderStroke(
                     1.dp,
                     when {
-                        selected && normalizeAnswerText(choice) == normalizeAnswerText(card.expectedAnswerText(isBackVisible)) -> BrandSaladColor
+                        selected && normalizeAnswerText(choice) == normalizedExpectedAnswer -> BrandSaladColor
                         selected && answerFeedbackVisible -> BrandRedColor
                         else -> MaterialTheme.colorScheme.outline.copy(alpha = 0.55f)
                     }
@@ -3449,19 +5101,26 @@ private fun TestAnswerOptions(
 
 private fun testChoices(card: Flashcard, cards: List<Flashcard>, isBackVisible: Boolean): List<String> {
     val correct = card.expectedAnswerText(isBackVisible).ifBlank { card.correctText().ifBlank { card.nativeText() } }.ifBlank { "Correct" }
-    val distractors = cards
+    val normalizedCorrect = normalizeAnswerText(correct)
+    val distractors = cards.asSequence()
         .filterNot { it.id == card.id }
         .map { it.expectedAnswerText(isBackVisible).ifBlank { it.correctText().ifBlank { it.nativeText() } } }
-        .filter { it.isNotBlank() && normalizeAnswerText(it) != normalizeAnswerText(correct) }
-        .distinctBy { normalizeAnswerText(it) }
+        .filter { it.isNotBlank() }
+        .map { it to normalizeAnswerText(it) }
+        .filter { (_, normalized) -> normalized != normalizedCorrect }
+        .distinctBy { (_, normalized) -> normalized }
+        .map { (text, _) -> text }
+        .toList()
         .shuffled(Random(card.id + cards.size + correct.hashCode()))
         .take(3)
     val fallback = listOf("I am not sure", "Review later", "Skip this one")
-        .filter { normalizeAnswerText(it) != normalizeAnswerText(correct) && distractors.none { d -> normalizeAnswerText(d) == normalizeAnswerText(it) } }
+        .map { it to normalizeAnswerText(it) }
+        .filter { (_, normalized) -> normalized != normalizedCorrect && distractors.none { d -> normalizeAnswerText(d) == normalized } }
+        .map { (text, _) -> text }
     return (listOf(correct) + distractors + fallback)
         .distinctBy { normalizeAnswerText(it) }
         .take(4)
-        .shuffled(Random(System.nanoTime()))
+        .shuffled(Random(card.id * 31 + cards.size + correct.hashCode()))
 }
 @Composable
 private fun LessonCatalogScreen(
@@ -3551,7 +5210,12 @@ private fun LessonCatalogScreen(
             }
         }
 
-        val selectedLessons = lessons.filter { it.id in selectedLessonIds }
+        val selectedLessons = remember(lessons, selectedLessonIds) {
+            lessons.filter { it.id in selectedLessonIds }
+        }
+        val lessonIndexById = remember(lessons) {
+            lessons.mapIndexed { index, lesson -> lesson.id to index }.toMap()
+        }
         if (selectedLessonIds.isNotEmpty()) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -3640,14 +5304,14 @@ private fun LessonCatalogScreen(
                             onSetLessonHidden(lesson, hidden)
                         },
                         onMoveUp = {
-                            val index = lessons.indexOfFirst { it.id == lesson.id }
+                            val index = lessonIndexById[lesson.id] ?: -1
                             if (index > 0) {
                                 onMoveLesson(lesson.id, lessons[index - 1].id)
                                 onSaveLessonOrder()
                             }
                         },
                         onMoveDown = {
-                            val index = lessons.indexOfFirst { it.id == lesson.id }
+                            val index = lessonIndexById[lesson.id] ?: -1
                             if (index >= 0 && index < lessons.lastIndex) {
                                 onMoveLesson(lesson.id, lessons[index + 1].id)
                                 onSaveLessonOrder()
@@ -3717,10 +5381,10 @@ private fun LessonCatalogScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 QuickVocabularyLanguageCode(
-                    language = quickVocabularyTargetLanguage,
-                    contentDescription = "Recognition language",
+                    language = quickVocabularySourceLanguage,
+                    contentDescription = "Basic recognition language",
                     onTap = onSwapQuickVocabularyLanguages,
-                    onLanguageChange = onQuickVocabularyTargetChange
+                    onLanguageChange = onQuickVocabularySourceChange
                 )
                 Icon(
                     Icons.Default.Mic,
@@ -3729,10 +5393,10 @@ private fun LessonCatalogScreen(
                     modifier = Modifier.size(30.dp)
                 )
                 QuickVocabularyLanguageCode(
-                    language = quickVocabularySourceLanguage,
-                    contentDescription = "Translation language",
+                    language = quickVocabularyTargetLanguage,
+                    contentDescription = "Target translation language",
                     onTap = onSwapQuickVocabularyLanguages,
-                    onLanguageChange = onQuickVocabularySourceChange
+                    onLanguageChange = onQuickVocabularyTargetChange
                 )
             }
         }
@@ -4003,6 +5667,8 @@ private fun LessonTile(
 @Composable
 private fun StudyScreen(
     state: StudyUiState,
+    isDeviceOnline: Boolean,
+    statusBlinkOn: Boolean,
     onModeChange: (StudyMode) -> Unit,
     onShowAllCardsChange: (Boolean) -> Unit,
     onPreviousCard: () -> Unit,
@@ -4013,6 +5679,7 @@ private fun StudyScreen(
     onNewPortion: () -> Unit,
     onNextLesson: () -> Unit,
     onOpenCatalog: () -> Unit,
+    onRefreshOnlineState: () -> Unit,
     onToggleCard: () -> Unit,
     onToggleStar: (Int, Int) -> Unit,
     onQuickEditCard: () -> Unit,
@@ -4020,7 +5687,9 @@ private fun StudyScreen(
     quickEditMode: Boolean,
     showCardLog: Boolean,
     onTestAnswer: (String) -> Unit,
-    onShareCard: (Lesson, Flashcard) -> Unit
+    onShareCard: (Lesson, Flashcard) -> Unit,
+    onShareCardSideAudio: (Flashcard, Boolean) -> Unit,
+    onGenerateTrainCards: (Flashcard) -> Unit
 ) {
     val context = LocalContext.current
     val selectedLesson = state.selectedLesson
@@ -4076,10 +5745,38 @@ private fun StudyScreen(
                     label = "studyCardSlide"
                 ) { animatedIndex ->
                     val animatedCard = state.currentPortion.getOrNull(animatedIndex)
-                                        val canFlipTestCard = state.workMode != WorkMode.TESTS ||
+                    val visibleCardText = animatedCard?.displayedCardText(state.isBackVisible).orEmpty()
+                    val visibleCardSpeechTag = animatedCard?.speechLanguageTagForSide(
+                        state.isBackVisible,
+                        state.interfaceLanguage,
+                        state.selectedLesson
+                    ).orEmpty()
+                    val cardSideAudioCached = remember(
+                        animatedCard?.id,
+                        state.isBackVisible,
+                        visibleCardText,
+                        visibleCardSpeechTag,
+                        state.openAiTtsModel,
+                        state.openAiTtsVoice,
+                        state.elevenLabsTtsLanguageCodes,
+                        state.elevenLabsModel,
+                        state.elevenLabsVoiceId
+                    ) {
+                        animatedCard != null && findCachedCardSideAudioFile(
+                            context = context,
+                            text = visibleCardText,
+                            languageTag = visibleCardSpeechTag,
+                            state = state
+                        ) != null
+                    }
+                    val cardAudioStatus = when {
+                        !isDeviceOnline -> CardAudioStatus.OFFLINE
+                        else -> CardAudioStatus.ONLINE
+                    }
+                    val canFlipTestCard = state.workMode != WorkMode.TESTS ||
                         animatedCard?.id in state.completedCardIds ||
                         animatedCard?.hasEmptySide() == true
-StudyCard(
+                    StudyCard(
                         card = animatedCard,
                         isBackVisible = state.isBackVisible,
                         onClick = if (canFlipTestCard) onToggleCard else ({}),
@@ -4091,6 +5788,10 @@ StudyCard(
                         controlSize = state.controlSize,
                         isCompleted = animatedCard?.id in state.completedCardIds,
                         positionLabel = animatedCard.sideLanguageCode(state.isBackVisible, state.selectedLesson),
+                        cardAudioStatus = cardAudioStatus,
+                        cardSideAudioCached = cardSideAudioCached,
+                        statusBlinkOn = isDeviceOnline && statusBlinkOn,
+                        onRefreshOnlineState = onRefreshOnlineState,
                         onSwipePrevious = {
                             if (state.currentIndex > 0) {
                                 onPreviousCard()
@@ -4103,6 +5804,8 @@ StudyCard(
                         },
                         showCardLog = showCardLog,
                         onShareCard = { card -> state.selectedLesson?.let { lesson -> onShareCard(lesson, card) } },
+                        onShareCardSideAudio = { card -> onShareCardSideAudio(card, state.isBackVisible) },
+                        onGenerateTrainCards = onGenerateTrainCards,
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
@@ -4361,10 +6064,16 @@ private fun StudyCard(
     controlSize: ControlSize,
     isCompleted: Boolean,
     positionLabel: String,
+    cardAudioStatus: CardAudioStatus,
+    cardSideAudioCached: Boolean,
+    statusBlinkOn: Boolean,
+    onRefreshOnlineState: () -> Unit,
     onSwipePrevious: () -> Unit,
     onSwipeNext: () -> Unit,
     showCardLog: Boolean,
     onShareCard: (Flashcard) -> Unit,
+    onShareCardSideAudio: (Flashcard) -> Unit,
+    onGenerateTrainCards: (Flashcard) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var showRule by remember { mutableStateOf(false) }
@@ -4432,7 +6141,17 @@ private fun StudyCard(
                     spotColor = BrandSaladColor.copy(alpha = 0.95f)
                 )
                 .clip(RoundedCornerShape(18.dp))
-                .clickable(onClick = onClick),
+                .pointerInput(card?.id, onClick) {
+                    detectTapGestures(
+                        onTap = { onClick() },
+                        onLongPress = {
+                            val currentCard = card
+                            if (currentCard?.kindCode() == "MK") {
+                                onGenerateTrainCards(currentCard)
+                            }
+                        }
+                    )
+                },
             shape = RoundedCornerShape(18.dp),
             colors = CardDefaults.cardColors(
                 containerColor = if (showingFront) frontColor else backColor
@@ -4448,13 +6167,24 @@ private fun StudyCard(
                         rotationY = if (rotation > 90f) 180f else 0f
                     }
             ) {
-                Text(
-                    text = positionLabel,
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.68f),
-                    modifier = Modifier.align(Alignment.TopStart)
-                )
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .clickable(onClick = onRefreshOnlineState)
+                ) {
+                    Text(
+                        text = positionLabel,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.68f)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    CardAudioStatusDot(
+                        status = cardAudioStatus,
+                        cached = cardSideAudioCached,
+                        blinkOn = statusBlinkOn
+                    )
+                }
 
                 Row(
                     modifier = Modifier.align(Alignment.TopEnd),
@@ -4479,7 +6209,7 @@ private fun StudyCard(
                     ) {
                         Icon(Icons.Default.Edit, contentDescription = "Edit card", tint = Color(0xFF111111))
                     }
-                                    IconButton(
+                    IconButton(
                         onClick = { card?.let(onShareCard) },
                         enabled = card != null,
                         modifier = Modifier
@@ -4488,6 +6218,31 @@ private fun StudyCard(
                             .background(Color.White.copy(alpha = 0.92f))
                     ) {
                         Icon(Icons.Default.Share, contentDescription = "Share card JSON", tint = Color(0xFF111111))
+                    }
+                    IconButton(
+                        onClick = { card?.let(onShareCardSideAudio) },
+                        enabled = card != null,
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(RoundedCornerShape(22.dp))
+                            .background(Color.White.copy(alpha = 0.92f))
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                Icons.Default.FileDownload,
+                                contentDescription = "Share cached audio for this side",
+                                tint = Color(0xFF111111),
+                                modifier = Modifier.size(25.dp)
+                            )
+                            Icon(
+                                Icons.Default.MusicNote,
+                                contentDescription = null,
+                                tint = Color(0xFF111111),
+                                modifier = Modifier
+                                    .size(14.dp)
+                                    .align(Alignment.BottomEnd)
+                            )
+                        }
                     }
                 }
 
@@ -4513,7 +6268,7 @@ private fun StudyCard(
                             Spacer(Modifier.height(12.dp))
                             Text(
                                 text = card?.let { flashcard ->
-                                    if (flashcard.kindCode() == "LN") {
+                                    if (flashcard.isLearningKind()) {
                                         flashcard.frontDisplayText()
                                     } else {
                                         flashcard.mistakeText().ifBlank { "No mistake recorded yet" }
@@ -4563,6 +6318,35 @@ private fun StudyCard(
             }
         }
     }
+}
+
+@Composable
+private fun CardAudioStatusDot(status: CardAudioStatus, cached: Boolean, blinkOn: Boolean) {
+    val color = when (status) {
+        CardAudioStatus.ONLINE -> OnlineStatusColor
+        CardAudioStatus.OFFLINE -> BrandRedColor
+    }
+    val shouldBlink = status == CardAudioStatus.ONLINE && blinkOn
+    val alpha by animateFloatAsState(
+        targetValue = if (shouldBlink) 0.28f else 1f,
+        animationSpec = tween(durationMillis = 220),
+        label = "cardAudioStatusBlink"
+    )
+    Box(
+        modifier = Modifier
+            .padding(top = 4.dp)
+            .size(9.dp)
+            .graphicsLayer { this.alpha = alpha }
+            .clip(RoundedCornerShape(5.dp))
+            .background(color)
+            .then(
+                if (cached) {
+                    Modifier.border(1.dp, Color.Black, RoundedCornerShape(5.dp))
+                } else {
+                    Modifier
+                }
+            )
+    )
 }
 
 @Composable
@@ -4628,7 +6412,11 @@ private fun Lesson.cardKindSummary(ui: UiText): String {
 
 private fun UiText.languageKey(): String = "en"
 
-private fun UiText.kindText(kindCode: String): String = if (kindCode == "LN") "Lesson" else "Mistakes"
+private fun UiText.kindText(kindCode: String): String = when (kindCode) {
+    "LN" -> "Lesson"
+    "TR" -> "Train"
+    else -> "Mistakes"
+}
 
 private fun UiText.mixedKindText(): String = "Mixed"
 
@@ -4641,7 +6429,7 @@ private fun UiText.completedText(count: Int): String = "Completed $count times"
 private fun Flashcard.displayedCardText(isBackVisible: Boolean): String {
     return if (isBackVisible) {
         correctText()
-    } else if (kindCode() == "LN") {
+    } else if (isLearningKind()) {
         frontDisplayText()
     } else {
         mistakeText().ifBlank { nativeText().ifBlank { correctText() } }
@@ -4649,7 +6437,7 @@ private fun Flashcard.displayedCardText(isBackVisible: Boolean): String {
 }
 
 private fun Flashcard?.sideLanguageCode(isBackVisible: Boolean, lesson: Lesson? = null): String {
-    if (this != null && kindCode() != "LN") return "Mistake"
+    if (this != null && !isLearningKind()) return "Mistake"
     val language = if (isBackVisible) {
         this?.targetLanguage.asLessonLanguage()
             ?: lesson?.targetLanguage.asLessonLanguage()
@@ -4682,7 +6470,7 @@ private fun Flashcard.frontDisplayText(): String {
 }
 
 private fun Flashcard.hasPendingNativeTranslation(): Boolean {
-    if (kindCode() != "LN" || correctText().isBlank()) return false
+    if (!isLearningKind() || correctText().isBlank()) return false
     val native = nativeText().trim()
     return native.isBlank() || native.isEmptyPlaceholder() || native.contains("translation pending", ignoreCase = true)
 }
@@ -4691,13 +6479,13 @@ private fun String.isEmptyPlaceholder(): Boolean = trim().equals("Empty", ignore
 
 private fun Flashcard.hasEmptySide(): Boolean = nativeText().isEmptyPlaceholder() || correctText().isEmptyPlaceholder()
 
-private fun Flashcard.answerInputLabel(isBackVisible: Boolean): String {
-    return when {
-        nativeText().isEmptyPlaceholder() -> sourceLanguage.ifBlank { frontLabel() }
-        correctText().isEmptyPlaceholder() -> targetLanguage.ifBlank { backLabel() }
-        isBackVisible -> frontLabel()
-        else -> backLabel()
+private fun Flashcard.answerInputLabel(isBackVisible: Boolean, lesson: Lesson? = null): String {
+    val language = if (isBackVisible) {
+        sourceLanguage.asLessonLanguage() ?: lesson?.sourceLanguage.asLessonLanguage() ?: frontLabel()
+    } else {
+        targetLanguage.asLessonLanguage() ?: lesson?.targetLanguage.asLessonLanguage() ?: backLabel()
     }
+    return language.ifBlank { if (isBackVisible) frontLabel() else backLabel() }
 }
 
 private fun Flashcard?.speechLanguageTag(interfaceLanguage: String, lesson: Lesson? = null): String {
@@ -4707,7 +6495,7 @@ private fun Flashcard?.speechLanguageTag(interfaceLanguage: String, lesson: Less
     (targetLanguage.asLessonLanguage() ?: lesson?.targetLanguage.asLessonLanguage())
         ?.speechLanguageTagFromName()
         ?.let { return it }
-    if (kindCode() == "LN") {
+    if (isLearningKind()) {
         backLabel().speechLanguageTagFromName()?.let { return it }
     }
     correctText().speechLanguageTagFromText()?.let { return it }
@@ -4721,7 +6509,7 @@ private fun Flashcard?.speechLanguageTag(interfaceLanguage: String, lesson: Less
 private fun Flashcard.speechLanguageTagForSide(isBackVisible: Boolean, interfaceLanguage: String, lesson: Lesson? = null): String {
     val explicitLanguage = if (isBackVisible || hasPendingNativeTranslation()) {
         targetLanguage.asLessonLanguage() ?: lesson?.targetLanguage.asLessonLanguage() ?: backLabel()
-    } else if (kindCode() == "LN") {
+    } else if (isLearningKind()) {
         sourceLanguage.asLessonLanguage() ?: lesson?.sourceLanguage.asLessonLanguage() ?: frontLabel()
     } else {
         targetLanguage.asLessonLanguage() ?: lesson?.targetLanguage.asLessonLanguage()
@@ -4787,9 +6575,18 @@ private fun String.speechLanguageDisplayName(): String {
         "uk" -> "Ukrainian"
         "ru" -> "Russian"
         "pl" -> "Polish"
+        "lv" -> "Latvian"
+        "lt" -> "Lithuanian"
+        "pt" -> "Portuguese"
         else -> "System language"
     }
 }
+
+private fun String.isBelarusianSpeechTag(): Boolean {
+    val normalized = trim().lowercase(Locale.ROOT)
+    return normalized == "be" || normalized == "by" || normalized.startsWith("be-")
+}
+
 private fun String.speechLanguageTagFromName(): String? {
     val normalized = trim().lowercase(Locale.ROOT)
     return when {
@@ -4800,6 +6597,9 @@ private fun String.speechLanguageTagFromName(): String? {
         normalized in listOf("uk", "ua", "ukrainian", "\u0443\u043a\u0440\u0430\u0438\u043d\u0441\u043a\u0438\u0439", "\u0443\u043a\u0440\u0430\u0457\u043d\u0441\u044c\u043a\u0430", "\u0443\u043a\u0440\u0430\u0456\u043d\u0441\u043a\u0430\u044f") -> "uk-UA"
         normalized in listOf("ru", "rus", "russian", "rosyjski", "\u0440\u0443\u0441\u0441\u043a\u0438\u0439", "\u0440\u0443\u0441\u0441\u043a\u0430\u044f") -> "ru-RU"
         normalized in listOf("pl", "pol", "polish", "polski", "\u043f\u043e\u043b\u044c\u0441\u043a\u0438\u0439", "\u043f\u043e\u043b\u044c\u0441\u043a\u0430\u044f") -> "pl-PL"
+        normalized in listOf("lv", "lav", "latvian", "latviesu", "latvie\u0161u") -> "lv-LV"
+        normalized in listOf("lt", "lit", "lithuanian", "lietuviu", "lietuvi\u0173") -> "lt-LT"
+        normalized in listOf("pt", "por", "portuguese", "portugues", "portugu\u00eas") -> "pt-PT"
         else -> null
     }
 }
@@ -4812,6 +6612,9 @@ private fun String.speechLanguageTagFromText(): String? {
         text.any { it in "\u0105\u0107\u0119\u0142\u0144\u00f3\u015b\u017a\u017c" } -> "pl-PL"
         text.any { it in "\u00e4\u00f6\u00fc\u00df" } -> "de-DE"
         text.any { it in "\u00e1\u00e9\u00ed\u00f1\u00f3\u00fa\u00fc\u00bf\u00a1" } -> "es-ES"
+        text.any { it in "\u0101\u010d\u0113\u0123\u012b\u0137\u013c\u0146\u0161\u016b\u017e" } -> "lv-LV"
+        text.any { it in "\u0105\u010d\u0117\u0119\u012f\u0161\u0173\u016b\u017e" } -> "lt-LT"
+        text.any { it in "\u00e3\u00f5\u00e7" } -> "pt-PT"
         text.any { it in '\u0430'..'\u044f' || it == '\u0451' } -> "ru-RU"
         text.any { it in 'a'..'z' } -> "en-US"
         else -> null
@@ -4855,6 +6658,7 @@ private fun VoiceInputDialog(
     languageLabel: String,
     elapsedMs: Long,
     isRecording: Boolean,
+    signalLevel: Float,
     onHoldStart: () -> Unit,
     onHoldEnd: () -> Unit,
     onTapStop: () -> Unit
@@ -4900,6 +6704,12 @@ private fun VoiceInputDialog(
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                VoiceWaveform(
+                    active = isRecording && signalLevel > 0.03f,
+                    elapsedMs = elapsedMs,
+                    signalLevel = signalLevel,
+                    modifier = Modifier.fillMaxWidth().height(48.dp)
+                )
                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 Text(
                     text = if (isRecording) "Tap to stop. Hold this window to keep recording through silence." else "Please wait...",
@@ -4909,6 +6719,141 @@ private fun VoiceInputDialog(
             }
         }
     )
+}
+
+@Composable
+private fun TrainCardOptionsDialog(
+    sourceCard: Flashcard,
+    onDismiss: () -> Unit,
+    onGenerate: (List<String>) -> Unit
+) {
+    var selectedOptions by remember(sourceCard.id) { mutableStateOf(TrainCardGenerationOptions.toSet()) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Create Train cards") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 460.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = sourceCard.mistakeText().ifBlank { sourceCard.nativeText() }.take(180),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                TrainCardGenerationOptions.forEach { option ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                selectedOptions = if (option in selectedOptions) {
+                                    selectedOptions - option
+                                } else {
+                                    selectedOptions + option
+                                }
+                            }
+                            .padding(vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = option in selectedOptions,
+                            onCheckedChange = { checked ->
+                                selectedOptions = if (checked) selectedOptions + option else selectedOptions - option
+                            }
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(option, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onGenerate(TrainCardGenerationOptions.filter { it in selectedOptions }) },
+                enabled = selectedOptions.isNotEmpty()
+            ) { Text("Generate") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+@Composable
+private fun SharedPostImportDialog(
+    sharedText: String,
+    sourceLanguage: String,
+    targetLanguage: String,
+    onDismiss: () -> Unit,
+    onCreate: () -> Unit
+) {
+    val preview = remember(sharedText) { sharedText.trimToWordLimit(100) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Import shared post") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 420.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = "${sourceLanguage.shortCodeForUi()} -> ${targetLanguage.shortCodeForUi()}",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = "Up to 100 words will become sentence cards. If the post is already in the Target language, MurrLex will create vocabulary cards for this Basic/Target pair.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = preview,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onCreate) { Text("Create cards") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel") }
+        }
+    )
+}
+
+@Composable
+private fun VoiceWaveform(
+    active: Boolean,
+    elapsedMs: Long,
+    signalLevel: Float,
+    modifier: Modifier = Modifier
+) {
+    val phase = (elapsedMs / 90L).toFloat()
+    val color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+    val level = signalLevel.coerceIn(0f, 1f)
+    Canvas(modifier = modifier) {
+        val bars = 28
+        val gap = size.width / (bars * 1.75f)
+        val barWidth = gap * 0.72f
+        val centerY = size.height / 2f
+        for (index in 0 until bars) {
+            val wave = if (active) abs(sin((index * 0.72f + phase).toDouble())).toFloat() else 0f
+            val height = (size.height * (0.08f + level * (0.22f + wave * 0.7f))).coerceAtLeast(4f)
+            val x = index * gap * 1.75f
+            drawRoundRect(
+                color = color.copy(alpha = if (active) 0.5f + wave * 0.5f else 0.28f),
+                topLeft = Offset(x, centerY - height / 2f),
+                size = androidx.compose.ui.geometry.Size(barWidth, height),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(barWidth / 2f, barWidth / 2f)
+            )
+        }
+    }
 }
 
 private fun formatVoiceElapsed(elapsedMs: Long): String {
@@ -4965,7 +6910,7 @@ private fun AnswerBar(
     onCheck: () -> Unit,
     onOk: () -> Unit,
     onSaveEmptySide: () -> Unit,
-    onGoogleTranslateEmptySide: () -> Unit,
+    onTranslateEmptySide: () -> Unit,
     onClearAnswer: () -> Unit,
     onCopy: (String) -> Unit,
     onVoiceToggle: () -> Unit,
@@ -5036,13 +6981,13 @@ val typedAnswerCorrect = currentCard?.let { card ->
                     }
                     Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
                         OutlinedButton(
-                            onClick = onGoogleTranslateEmptySide,
+                            onClick = onTranslateEmptySide,
                             enabled = currentCard != null,
                             shape = RoundedCornerShape(18.dp),
                             contentPadding = PaddingValues(horizontal = 0.dp),
                             modifier = Modifier.size(controlSize.answerIconButtonSize())
                         ) {
-                            Text("G", fontWeight = FontWeight.Bold)
+                            Text("T", fontWeight = FontWeight.Bold)
                         }
                     }
                     Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
@@ -5741,6 +7686,12 @@ private fun String.exportFileName(): String {
         .ifBlank { "lesson" }
 }
 
+private fun Flashcard.audioFileBaseName(isBackVisible: Boolean): String {
+    val side = if (isBackVisible) backLabel() else frontLabel()
+    val text = displayedCardText(isBackVisible)
+    return "murrlex_${side}_${text.take(32)}".exportFileName().ifBlank { "murrlex_card_audio" }
+}
+
 @Composable
 private fun MakeMistakeTheme(content: @Composable () -> Unit) {
     val colorScheme = androidx.compose.material3.lightColorScheme(
@@ -5783,85 +7734,22 @@ private enum class FeedbackCue {
 }
 
 private fun performFeedback(context: Context, soundEnabled: Boolean, vibrationEnabled: Boolean, cue: FeedbackCue) {
-    if (soundEnabled) {
-        playSound(cue)
+    if (soundEnabled && cue == FeedbackCue.SPLASH) {
+        playStartupPurr(context)
     }
     if (vibrationEnabled) {
         vibrate(context, cue)
     }
 }
 
-private fun prewarmFeedbackSound() {
+private fun prewarmFeedbackSound(context: Context) {
     runCatching {
-        val generator = ToneGenerator(AudioManager.STREAM_MUSIC, 1)
-        generator.startTone(ToneGenerator.TONE_PROP_BEEP2, 1)
-        Thread.sleep(20)
-        generator.release()
+        MediaPlayer.create(context, R.raw.startup_purr)?.release()
     }
 }
 
-private fun playSound(cue: FeedbackCue) {
-    if (cue == FeedbackCue.SWIPE) {
-        playSwipeRustle()
-        return
-    }
-    val tone = when (cue) {
-        FeedbackCue.SPLASH -> ToneGenerator.TONE_PROP_ACK
-        FeedbackCue.SUCCESS -> ToneGenerator.TONE_PROP_BEEP
-        FeedbackCue.TAP -> ToneGenerator.TONE_PROP_BEEP2
-        FeedbackCue.SWIPE -> ToneGenerator.TONE_PROP_BEEP2
-    }
-    val duration = when (cue) {
-        FeedbackCue.SPLASH -> 420
-        FeedbackCue.SUCCESS -> 90
-        FeedbackCue.TAP -> 45
-        FeedbackCue.SWIPE -> 1
-    }
-    val generator = ToneGenerator(AudioManager.STREAM_MUSIC, if (cue == FeedbackCue.SPLASH) 62 else 38)
-    generator.startTone(tone, duration)
-    Handler(Looper.getMainLooper()).postDelayed({ generator.release() }, (duration + 80).toLong())
-}
-
-private fun playSwipeRustle() {
-    val sampleRate = 22_050
-    val durationMs = 72
-    val sampleCount = sampleRate * durationMs / 1000
-    val data = ByteArray(sampleCount * 2)
-    var smoothedNoise = 0.0
-    repeat(sampleCount) { index ->
-        val envelope = 1.0 - (index.toDouble() / sampleCount.toDouble())
-        val rawNoise = Random.nextDouble(-1.0, 1.0)
-        smoothedNoise = smoothedNoise * 0.78 + rawNoise * 0.22
-        val sample = (smoothedNoise * envelope * 2600.0)
-            .toInt()
-            .coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
-        val byteIndex = index * 2
-        data[byteIndex] = (sample and 0xFF).toByte()
-        data[byteIndex + 1] = ((sample shr 8) and 0xFF).toByte()
-    }
-    val track = AudioTrack.Builder()
-        .setAudioAttributes(
-            AudioAttributes.Builder()
-                .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
-                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                .build()
-        )
-        .setAudioFormat(
-            AudioFormat.Builder()
-                .setSampleRate(sampleRate)
-                .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                .build()
-        )
-        .setBufferSizeInBytes(data.size)
-        .setTransferMode(AudioTrack.MODE_STATIC)
-        .build()
-    track.write(data, 0, data.size)
-    track.play()
-    Handler(Looper.getMainLooper()).postDelayed({
-        runCatching { track.stop() }
-        track.release()
-    }, (durationMs + 80).toLong())
+private fun playStartupPurr(context: Context) {
+    AppAudioPlayer.playResource(context, R.raw.startup_purr)
 }
 
 private fun vibrate(context: Context, cue: FeedbackCue) {
@@ -5891,7 +7779,7 @@ private fun shareSingleCard(context: Context, json: Json, lesson: Lesson, card: 
         id = 1,
         log = (card.log + "$timestamp - copied from lesson: ${lesson.title}").takeLast(100)
     )
-    val kindTitle = if (exportedCard.kindCode() == "LN") "Lesson" else "Mistakes"
+    val kindTitle = if (exportedCard.isLearningKind()) exportedCard.kindLabel() else "Mistakes"
     val exportedLesson = Lesson(
         id = "shared_${lesson.id}_${card.id}_${System.currentTimeMillis()}",
         title = "$kindTitle - ${lesson.title} - 1 card",
@@ -5917,4 +7805,24 @@ private fun shareJson(context: Context, fileName: String, jsonText: String) {
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
     context.startActivity(Intent.createChooser(sendIntent, "Share lesson JSON"))
+}
+
+private fun shareAudioFile(context: Context, sourceFile: File, fileName: String) {
+    val safeFileName = fileName.takeIf { it.endsWith(".mp3", ignoreCase = true) }
+        ?: "${fileName.ifBlank { "murrlex_card_audio" }}.mp3"
+    val shareDir = File(context.cacheDir, "shared_audio").apply { mkdirs() }
+    val shareFile = File(shareDir, safeFileName)
+    sourceFile.inputStream().use { input ->
+        shareFile.outputStream().use { output -> input.copyTo(output) }
+    }
+    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", shareFile)
+    val sendIntent = Intent(Intent.ACTION_SEND).apply {
+        type = "audio/mpeg"
+        putExtra(Intent.EXTRA_TITLE, safeFileName)
+        putExtra(Intent.EXTRA_SUBJECT, safeFileName)
+        putExtra(Intent.EXTRA_STREAM, uri)
+        clipData = ClipData.newUri(context.contentResolver, safeFileName, uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(Intent.createChooser(sendIntent, "Share or save cached audio"))
 }

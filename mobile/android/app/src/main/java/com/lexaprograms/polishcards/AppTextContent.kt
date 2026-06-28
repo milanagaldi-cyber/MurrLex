@@ -61,6 +61,30 @@ internal fun sampleLessonJson(): String {
 internal fun versionLogText(): String {
     return """
         Google Translate attribution - Translate mode can use on-device Google Translate via ML Kit. Google disclaims warranties related to translation accuracy and reliability. See https://cloud.google.com/translate and https://translate.google.com.
+        MurrLex v0.35 - Added Android share-target import for text posts from other apps, with a 100-word preview and automatic sentence/vocabulary card creation for the current Basic/Target pair.
+        MurrLex v0.34 - Added manual online/offline refresh from the title and card status, same-language microphone Mistake correction with OpenAI, and long-press Mistake generation of Train cards.
+        MurrLex v0.33 - OpenAI card translation now writes a short explanation, rule, and examples into the card, copy-to-input also copies to clipboard, and the answer input label follows the current card side language.
+        MurrLex v0.32 - Made newer audio playback stop older audio, added configurable card status blink timing, changed cached audio to a black outline, expanded ElevenLabs TTS selection to all app languages, and logs STT/translation/TTS model details on cards.
+        MurrLex v0.31 - Added Latvian, Lithuanian, and Portuguese language choices and a Settings menu for choosing which languages use ElevenLabs special TTS.
+        MurrLex v0.30 - Plays cached card-side TTS audio even while offline and adds blinking card status dots for online, offline, and cached-audio states.
+        MurrLex v0.29 - Added OpenAI voice silence timeout options from 1 to 10 seconds, sped up online status detection, and made app audio stop on taps, navigation, or a new playback request.
+        MurrLex v0.28 - Added a 1 second OpenAI voice silence timeout option so speech recognition can stop sooner after the user stops speaking.
+        MurrLex v0.27 - Gave enabled OpenAI translation priority for automatic card and Translate paths even when critical offline mode is toggled on, falling back to local models only when OpenAI is unavailable.
+        MurrLex v0.26 - Routed card auto-translation and the manual T button through the configured translation provider, using OpenAI when enabled and keeping ElevenLabs only for Belarusian audio.
+        MurrLex v0.25 - Replaced the generated startup purr with the provided mp3 asset and made the ElevenLabs Belarusian voice ID editable by hand.
+        MurrLex v0.24 - Fixed Belarusian OpenAI speech recognition routing to be-BY and added clear ElevenLabs HTTP error diagnostics for Belarusian TTS without logging API keys.
+        MurrLex v0.23 - Added a card-side cached audio download/share action with a download and music-note icon, generating TTS audio first when needed.
+        MurrLex v0.22 - Made the startup purr audible on phone speakers and added ElevenLabs Belarusian TTS settings with a separate API key, model, and voice.
+        MurrLex v0.21 - Replaced the startup beep with a soft purr and removed sound effects from other app actions.
+        MurrLex v0.20 - Added persistent card content cache, punctuation-insensitive OpenAI cache lookup, and configurable voice-signal silence timeout for OpenAI speech recognition.
+        MurrLex v0.19 - Added OpenAI cache/API technical status messages and a two-day OpenAI activity log in Settings with automatic pruning.
+        MurrLex v0.18 - Added OpenAI response caching with configurable lifetime, cache clearing, cached translation/TTS reuse, cached audio metadata, and a voice waveform while OpenAI speech recognition waits.
+        MurrLex v0.17 - Added optional OpenAI online models with separate settings for speech-to-text, translation/text, text-to-speech, TTS voice, base URL, and API key; OpenAI translation no longer shows Google attribution.
+        MurrLex v0.16 - Added local language setup after onboarding and a Settings manager for downloaded translation/speech languages, extra downloads, status hints, and translation-model removal.
+        MurrLex v0.15 - Quick Vocabulary now treats each Basic/Target pair as a strict lesson boundary, and normal Translate keeps translation on top with input at the bottom.
+        MurrLex v0.14 - Split language-pair buttons now override only the current dictionary/Translate session, keep Settings unchanged, keep Split input at the bottom, and create separate lessons per active Basic/Target pair.
+        MurrLex v0.13 - Normalized language roles around Basic/Native and Target/Learning languages so quick voice, Translate, card creation, speech recognition, and handoff docs use the same direction.
+        MurrLex v0.12 - Reduced repeated Compose recomposition work in Translate/Settings/Test/Catalog paths and made notification card weighting avoid duplicated in-memory lists for weaker phones.
         MurrLex v0.11 - Confirmed Split/Translate offline speech and offline ML Kit translation handoff, added mirrored target-side microphone support, defaulted translation to free online Google Translate when available, and kept critical offline fallback using downloaded models.
         MurrLex v0.05 - Prepared the MurrLex v0.02 working thread build, keeping backend and connector preserved while updating the visible Android version.
         MurrLex v0.03 - Started the clean MurrLex repository checkpoint, kept backend and connector preserved, and aligned the visible Android version with the new product line.
