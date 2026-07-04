@@ -1,6 +1,6 @@
-# Backend
+# MurrLex Backend
 
-Django backend for Make Mistake.
+Django backend prototype for MurrLex.
 
 Current state:
 
@@ -11,15 +11,16 @@ Current state:
 - internal lesson import API is available at `/api/internal/import-lesson`;
 - SQLite is used by default for local development;
 - `DATABASE_URL` can later switch the project to PostgreSQL settings;
+- optional `/api/translate` endpoint can call OpenAI when `OPENAI_API_KEY` is configured.
 
 ## Local Setup
 
 From the repository:
 
 ```powershell
-cd C:\CodexProjects\MakeMistake
+cd C:\CodexProjects\murrlex
 Copy-Item .env.example .env
-cd C:\CodexProjects\MakeMistake\backend
+cd C:\CodexProjects\murrlex\backend
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
@@ -27,8 +28,8 @@ python -m venv .venv
 The project reads environment variables from:
 
 ```text
-C:\CodexProjects\MakeMistake\.env
-C:\CodexProjects\MakeMistake\backend\.env
+C:\CodexProjects\murrlex\.env
+C:\CodexProjects\murrlex\backend\.env
 ```
 
 For local development, copy the root `.env.example` to `.env`.
@@ -46,7 +47,7 @@ If `DATABASE_URL` is empty, Django uses SQLite.
 Later PostgreSQL example:
 
 ```text
-DATABASE_URL=postgresql://make_mistake_user:password@localhost:5432/make_mistake
+DATABASE_URL=postgresql://murrlex_user:password@localhost:5432/murrlex
 ```
 
 ## Verification
@@ -91,7 +92,7 @@ Content-Type: application/json
 PowerShell example:
 
 ```powershell
-cd C:\CodexProjects\MakeMistake
+cd C:\CodexProjects\murrlex
 $headers = @{ Authorization = "Bearer change-me-import-token" }
 $json = Get-Content -Raw .\connector\sample_lesson.json
 Invoke-RestMethod `
@@ -115,6 +116,12 @@ Expected success response:
 ChatGPT Action setup:
 
 ```text
-C:\CodexProjects\MakeMistake\docs\chatgpt-action-setup.md
-C:\CodexProjects\MakeMistake\docs\chatgpt-action-openapi.yaml
+C:\CodexProjects\murrlex\docs\chatgpt-action-setup.md
+C:\CodexProjects\murrlex\docs\chatgpt-action-openapi.yaml
+```
+
+Server handoff:
+
+```text
+C:\CodexProjects\murrlex\docs\SERVER_HANDOFF.md
 ```

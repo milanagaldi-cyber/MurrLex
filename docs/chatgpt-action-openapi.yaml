@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
-  title: Make Mistake Import API
+  title: MurrLex Import API
   version: 0.1.0
-  description: Internal API for saving Make Mistake lesson JSON into the Django backend.
+  description: Internal API for saving MurrLex lesson JSON into the Django backend.
 servers:
   - url: https://YOUR-TUNNEL-URL
     description: Replace with your HTTPS tunnel URL, for example an ngrok or Cloudflare Tunnel URL.
@@ -10,7 +10,7 @@ paths:
   /api/health:
     get:
       operationId: healthCheck
-      summary: Check that the Make Mistake backend is reachable.
+      summary: Check that the MurrLex backend is reachable.
       responses:
         "200":
           description: Backend is reachable.
@@ -28,7 +28,7 @@ paths:
   /api/internal/import-lesson:
     post:
       operationId: importLesson
-      summary: Import one Make Mistake lesson JSON object.
+      summary: Import one MurrLex lesson JSON object.
       security:
         - bearerAuth: []
       requestBody:

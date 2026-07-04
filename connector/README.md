@@ -1,6 +1,6 @@
 # Connector
 
-Python connector code for sending lesson JSON into the Make Mistake Django backend.
+Python connector code for sending lesson JSON into the MurrLex Django backend.
 
 Current CLI script:
 
@@ -31,14 +31,14 @@ This function is the MCP-style boundary we will wrap later. It already calls the
 Start Django first:
 
 ```powershell
-cd C:\CodexProjects\MakeMistake\backend
+cd C:\CodexProjects\murrlex\backend
 .\.venv\Scripts\python.exe manage.py runserver
 ```
 
 In another PowerShell:
 
 ```powershell
-cd C:\CodexProjects\MakeMistake
+cd C:\CodexProjects\murrlex
 $env:DJANGO_IMPORT_URL = "http://127.0.0.1:8000/api/internal/import-lesson"
 $env:INTERNAL_IMPORT_TOKEN = "change-me-import-token"
 python connector\send_lesson.py connector\sample_lesson.json

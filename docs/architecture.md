@@ -7,7 +7,7 @@
 MurrLex is currently a monorepo:
 
 ```text
-MakeMistake/
+MurrLex/
   mobile/android/  Android app
   backend/         Django backend prototype
   connector/       Python connector

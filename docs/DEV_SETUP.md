@@ -7,7 +7,7 @@
 - Windows PowerShell is used in the current local workflow.
 - Android Studio is installed.
 - Android Gradle wrapper exists in `mobile/android/`.
-- Backend virtual environment exists at `backend/.venv/`.
+- Backend virtual environment should be created at `backend/.venv/`.
 - Backend dependency file: `backend/requirements.txt`.
 - Root `.env.example` exists.
 
@@ -16,26 +16,26 @@
 Open this folder in Android Studio:
 
 ```text
-C:\CodexProjects\MakeMistake\mobile\android
+C:\CodexProjects\murrlex\mobile\android
 ```
 
 Build debug APK from PowerShell:
 
 ```powershell
-cd C:\CodexProjects\MakeMistake\mobile\android
+cd C:\CodexProjects\murrlex\mobile\android
 .\gradlew.bat assembleDebug
 ```
 
 Debug APK output:
 
 ```text
-C:\CodexProjects\MakeMistake\mobile\android\app\build\outputs\apk\debug\app-debug.apk
+C:\CodexProjects\murrlex\mobile\android\app\build\outputs\apk\debug\app-debug.apk
 ```
 
 Run lint:
 
 ```powershell
-cd C:\CodexProjects\MakeMistake\mobile\android
+cd C:\CodexProjects\murrlex\mobile\android
 .\gradlew.bat lintDebug
 ```
 
@@ -44,7 +44,7 @@ cd C:\CodexProjects\MakeMistake\mobile\android
 Create local environment if needed:
 
 ```powershell
-cd C:\CodexProjects\MakeMistake\backend
+cd C:\CodexProjects\murrlex\backend
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
@@ -52,14 +52,14 @@ python -m venv .venv
 Copy local env file if needed:
 
 ```powershell
-cd C:\CodexProjects\MakeMistake
+cd C:\CodexProjects\murrlex
 Copy-Item .env.example .env
 ```
 
 Run checks:
 
 ```powershell
-cd C:\CodexProjects\MakeMistake\backend
+cd C:\CodexProjects\murrlex\backend
 .\.venv\Scripts\python.exe manage.py check
 .\.venv\Scripts\python.exe manage.py migrate
 .\.venv\Scripts\python.exe manage.py test
@@ -68,7 +68,7 @@ cd C:\CodexProjects\MakeMistake\backend
 Run local server:
 
 ```powershell
-cd C:\CodexProjects\MakeMistake\backend
+cd C:\CodexProjects\murrlex\backend
 .\.venv\Scripts\python.exe manage.py runserver
 ```
 
@@ -85,14 +85,14 @@ http://127.0.0.1:8000/lab/imports/
 Run connector tests:
 
 ```powershell
-cd C:\CodexProjects\MakeMistake
+cd C:\CodexProjects\murrlex
 python -m unittest connector.test_client
 ```
 
 Send sample lesson to a running backend:
 
 ```powershell
-cd C:\CodexProjects\MakeMistake
+cd C:\CodexProjects\murrlex
 $env:DJANGO_IMPORT_URL = "http://127.0.0.1:8000/api/internal/import-lesson"
 $env:INTERNAL_IMPORT_TOKEN = "change-me-import-token"
 python connector\send_lesson.py connector\sample_lesson.json

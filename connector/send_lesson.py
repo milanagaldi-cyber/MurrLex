@@ -11,7 +11,7 @@ except ModuleNotFoundError:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Send one Make Mistake lesson JSON file to Django.")
+    parser = argparse.ArgumentParser(description="Send one MurrLex lesson JSON file to Django.")
     parser.add_argument("json_file", help="Path to a lesson JSON file.")
     args = parser.parse_args()
 
