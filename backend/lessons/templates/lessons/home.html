@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>MurrLex Server Home</title>
+    <style>
+        :root {
+            color-scheme: light;
+            --bg: #f5f7fb;
+            --panel: #ffffff;
+            --ink: #18202f;
+            --muted: #5f6d80;
+            --line: #dce4ef;
+            --accent: #1d6f9f;
+            --accent-soft: #e8f5fb;
+            --secure: #f4eee4;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background:
+                radial-gradient(circle at 10% 10%, rgba(29, 111, 159, 0.12), transparent 28%),
+                linear-gradient(180deg, #ffffff 0%, var(--bg) 45%, #edf2f7 100%);
+            color: var(--ink);
+        }
+        main {
+            width: min(1080px, calc(100% - 32px));
+            margin: 0 auto;
+            padding: 44px 0 56px;
+        }
+        .hero {
+            display: grid;
+            grid-template-columns: minmax(0, 1.4fr) minmax(260px, 0.6fr);
+            gap: 28px;
+            align-items: center;
+            min-height: 320px;
+        }
+        h1 {
+            margin: 0;
+            font-size: clamp(40px, 7vw, 72px);
+            line-height: 0.98;
+            letter-spacing: 0;
+        }
+        .lead {
+            max-width: 720px;
+            margin: 20px 0 0;
+            color: var(--muted);
+            font-size: 19px;
+            line-height: 1.55;
+        }
+        .mark {
+            border: 1px solid var(--line);
+            background: rgba(255, 255, 255, 0.72);
+            border-radius: 8px;
+            padding: 24px;
+        }
+        .mark-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+        }
+        .tile {
+            aspect-ratio: 1;
+            border-radius: 8px;
+            background: var(--accent-soft);
+            border: 1px solid #c7e6f5;
+        }
+        .tile:nth-child(2n) { background: #edf7ee; border-color: #d1ead4; }
+        .tile:nth-child(3n) { background: #f8efe6; border-color: #eddcc9; }
+        .section-title {
+            margin: 36px 0 14px;
+            font-size: 24px;
+        }
+        .site-map {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 14px;
+        }
+        .service {
+            min-height: 160px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: var(--panel);
+            padding: 18px;
+        }
+        .service a {
+            color: var(--accent);
+            font-weight: 750;
+            text-decoration: none;
+        }
+        .service p {
+            margin: 12px 0 0;
+            color: var(--muted);
+            line-height: 1.45;
+        }
+        .badge {
+            display: inline-flex;
+            margin-top: 16px;
+            padding: 5px 8px;
+            border-radius: 999px;
+            background: var(--accent-soft);
+            color: #175574;
+            font-size: 12px;
+            font-weight: 750;
+            text-transform: uppercase;
+        }
+        .badge.secure {
+            background: var(--secure);
+            color: #755324;
+        }
+        footer {
+            margin-top: 28px;
+            color: var(--muted);
+            font-size: 14px;
+        }
+        @media (max-width: 760px) {
+            main { padding-top: 28px; }
+            .hero { grid-template-columns: 1fr; min-height: auto; }
+        }
+    </style>
+</head>
+<body>
+    <main>
+        <section class="hero">
+            <div>
+                <h1>MurrLex Server</h1>
+                <p class="lead">
+                    Staging backend for the MurrLex content pipeline: import lessons,
+                    review cards, check service health, and route internal tools from one place.
+                </p>
+            </div>
+            <div class="mark" aria-label="MurrLex content pipeline illustration">
+                <div class="mark-grid">
+                    <div class="tile"></div>
+                    <div class="tile"></div>
+                    <div class="tile"></div>
+                    <div class="tile"></div>
+                    <div class="tile"></div>
+                    <div class="tile"></div>
+                    <div class="tile"></div>
+                    <div class="tile"></div>
+                    <div class="tile"></div>
+                </div>
+            </div>
+        </section>
+
+        <h2 class="section-title">Site map</h2>
+        <section class="site-map" aria-label="Available services">
+            {% for link in site_links %}
+                <article class="service">
+                    <a href="{{ link.href }}">{{ link.label }}</a>
+                    <p>{{ link.description }}</p>
+                    <span class="badge{% if link.access != 'Public' %} secure{% endif %}">
+                        {{ link.access }}
+                    </span>
+                </article>
+            {% endfor %}
+        </section>
+
+        <footer>
+            Public home is open. Lab, admin, and internal APIs keep their existing protection.
+        </footer>
+    </main>
+</body>
+</html>

@@ -169,6 +169,30 @@ class LessonImportServiceTests(TestCase):
         self.assertEqual(ImportLog.objects.filter(status=ImportLog.Status.SUCCESS).count(), 2)
 
 
+class HomePageTests(TestCase):
+    def test_home_page_is_public(self):
+        response = self.client.get("/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "MurrLex Server")
+
+    def test_home_page_contains_site_map_links(self):
+        response = self.client.get("/")
+
+        expected_links = [
+            "/api/health",
+            "/login/",
+            "/admin/",
+            "/lab/import-json/",
+            "/lab/lessons/",
+            "/lab/imports/",
+            "/api/internal/import-lesson",
+            "/api/translate",
+        ]
+        for href in expected_links:
+            self.assertContains(response, f'href="{href}"')
+
+
 @override_settings(INTERNAL_IMPORT_TOKEN="test-token")
 class LabUiAuthTests(TestCase):
     def test_lab_requires_login(self):

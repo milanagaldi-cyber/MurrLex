@@ -14,6 +14,61 @@ from .models import ImportLog, Lesson
 from .services import LessonImportError, import_lesson_payload, log_failed_import
 
 
+@require_http_methods(["GET"])
+def home(request):
+    site_links = [
+        {
+            "label": "Health check",
+            "href": "/api/health",
+            "access": "Public",
+            "description": "Small JSON endpoint for checking that the backend is alive.",
+        },
+        {
+            "label": "Login",
+            "href": "/login/",
+            "access": "Public",
+            "description": "Entry point for staff and lab users.",
+        },
+        {
+            "label": "Django admin",
+            "href": "/admin/",
+            "access": "Password",
+            "description": "Admin area for managing users, lessons, cards, and import logs.",
+        },
+        {
+            "label": "Import JSON",
+            "href": "/lab/import-json/",
+            "access": "Password",
+            "description": "Lab tool for importing lesson JSON by hand.",
+        },
+        {
+            "label": "Lessons",
+            "href": "/lab/lessons/",
+            "access": "Password",
+            "description": "Review imported lessons and their cards.",
+        },
+        {
+            "label": "Import logs",
+            "href": "/lab/imports/",
+            "access": "Password",
+            "description": "Review recent import attempts and errors.",
+        },
+        {
+            "label": "Internal lesson import API",
+            "href": "/api/internal/import-lesson",
+            "access": "Bearer token",
+            "description": "Machine endpoint used by connector scripts to send lesson payloads.",
+        },
+        {
+            "label": "Translation API",
+            "href": "/api/translate",
+            "access": "Bearer token",
+            "description": "Machine endpoint for text translation requests.",
+        },
+    ]
+    return render(request, "lessons/home.html", {"site_links": site_links})
+
+
 @require_http_methods(["GET", "POST"])
 @login_required
 def import_json(request):
