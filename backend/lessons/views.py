@@ -44,6 +44,12 @@ def home(request):
             "description": "A first version of the personal cabinet for signed-in users.",
         },
         {
+            "label": "Premium",
+            "href": "/premium/",
+            "access": "Preview",
+            "description": "Placeholder for future paid features.",
+        },
+        {
             "label": "Django admin",
             "href": "/admin/",
             "access": "Password",
@@ -105,6 +111,11 @@ def register(request):
 @require_http_methods(["GET"])
 def account(request):
     return render(request, "registration/account.html")
+
+
+@require_http_methods(["GET"])
+def premium(request):
+    return render(request, "registration/premium.html")
 
 
 @require_http_methods(["GET", "POST"])

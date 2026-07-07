@@ -184,6 +184,7 @@ class HomePageTests(TestCase):
             "/login/",
             "/register/",
             "/account/",
+            "/premium/",
             "/admin/",
             "/lab/import-json/",
             "/lab/lessons/",
@@ -193,6 +194,15 @@ class HomePageTests(TestCase):
         ]
         for href in expected_links:
             self.assertContains(response, f'href="{href}"')
+
+
+class PremiumPageTests(TestCase):
+    def test_premium_page_is_public_placeholder(self):
+        response = self.client.get("/premium/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Premium preview")
+        self.assertContains(response, "Not available yet")
 
 
 class PublicAccountTests(TestCase):
@@ -261,6 +271,9 @@ class PublicAccountTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "User cabinet")
         self.assertContains(response, "learner@example.com")
+        self.assertContains(response, "Current plan")
+        self.assertContains(response, "Free")
+        self.assertContains(response, "Premium area")
 
 
 @override_settings(INTERNAL_IMPORT_TOKEN="test-token")
