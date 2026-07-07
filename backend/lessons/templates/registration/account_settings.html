@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>MurrLex Account Settings</title>
+    <style>
+        :root {
+            color-scheme: light;
+            --bg: #f5f7fb;
+            --panel: #ffffff;
+            --ink: #18202f;
+            --muted: #5f6d80;
+            --line: #dce4ef;
+            --accent: #1d6f9f;
+            --danger: #b42318;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background: linear-gradient(180deg, #ffffff 0%, var(--bg) 100%);
+            color: var(--ink);
+        }
+        header {
+            border-bottom: 1px solid var(--line);
+            background: rgba(255, 255, 255, 0.86);
+        }
+        .bar, main {
+            width: min(720px, calc(100% - 32px));
+            margin: 0 auto;
+        }
+        .bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+            padding: 18px 0;
+        }
+        nav {
+            display: flex;
+            gap: 14px;
+            flex-wrap: wrap;
+        }
+        a {
+            color: var(--accent);
+            font-weight: 750;
+            text-decoration: none;
+        }
+        main { padding: 40px 0; }
+        .panel {
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            padding: 24px;
+        }
+        h1 { margin: 0 0 10px; }
+        p { color: var(--muted); line-height: 1.45; }
+        label { display: block; margin: 14px 0 6px; font-weight: 650; }
+        input {
+            width: 100%;
+            border: 1px solid #cfd8d0;
+            border-radius: 8px;
+            padding: 11px 12px;
+            font: inherit;
+        }
+        button {
+            margin-top: 18px;
+            border: 0;
+            border-radius: 8px;
+            padding: 11px 16px;
+            background: var(--accent);
+            color: #fff;
+            font-weight: 750;
+            cursor: pointer;
+        }
+        .errors {
+            margin: 10px 0 0;
+            color: var(--danger);
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="bar">
+            <a href="{% url 'account' %}">Cabinet</a>
+            <nav aria-label="Account settings navigation">
+                <a href="{% url 'home' %}">Home</a>
+                <a href="{% url 'password_change' %}">Change password</a>
+            </nav>
+        </div>
+    </header>
+    <main>
+        <section class="panel">
+            <h1>Account settings</h1>
+            <p>Update the basic profile details shown in your cabinet.</p>
+            <form method="post">
+                {% csrf_token %}
+                {% for field in form %}
+                    <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+                    {{ field }}
+                    {% if field.help_text %}
+                        <p>{{ field.help_text }}</p>
+                    {% endif %}
+                    {% if field.errors %}
+                        <div class="errors">{{ field.errors }}</div>
+                    {% endif %}
+                {% endfor %}
+                {% if form.non_field_errors %}
+                    <div class="errors">{{ form.non_field_errors }}</div>
+                {% endif %}
+                <button type="submit">Save settings</button>
+            </form>
+        </section>
+    </main>
+</body>
+</html>

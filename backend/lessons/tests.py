@@ -275,6 +275,86 @@ class PublicAccountTests(TestCase):
         self.assertContains(response, "Free")
         self.assertContains(response, "Premium area")
 
+    def test_account_settings_requires_login(self):
+        response = self.client.get("/account/settings/")
+
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response["Location"].startswith("/login/"))
+
+    def test_logged_in_user_can_update_account_settings(self):
+        user_model = get_user_model()
+        user = user_model.objects.create_user(
+            username="learner",
+            email="learner@example.com",
+            password="test-password",
+        )
+        self.client.force_login(user)
+
+        response = self.client.post(
+            "/account/settings/",
+            data={
+                "username": "updatedlearner",
+                "email": "updated@example.com",
+                "display_name": "Updated Learner",
+            },
+        )
+
+        self.assertRedirects(response, "/account/")
+        user.refresh_from_db()
+        self.assertEqual(user.username, "updatedlearner")
+        self.assertEqual(user.email, "updated@example.com")
+        self.assertEqual(user.first_name, "Updated Learner")
+
+    def test_account_settings_rejects_duplicate_email(self):
+        user_model = get_user_model()
+        user_model.objects.create_user(
+            username="existing",
+            email="existing@example.com",
+            password="test-password",
+        )
+        user = user_model.objects.create_user(
+            username="learner",
+            email="learner@example.com",
+            password="test-password",
+        )
+        self.client.force_login(user)
+
+        response = self.client.post(
+            "/account/settings/",
+            data={
+                "username": "learner",
+                "email": "EXISTING@example.com",
+                "display_name": "",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "A user with this email already exists.")
+        user.refresh_from_db()
+        self.assertEqual(user.email, "learner@example.com")
+
+    def test_logged_in_user_can_change_password(self):
+        user_model = get_user_model()
+        user = user_model.objects.create_user(
+            username="learner",
+            email="learner@example.com",
+            password="OldPass-2026!",
+        )
+        self.client.force_login(user)
+
+        response = self.client.post(
+            "/password-change/",
+            data={
+                "old_password": "OldPass-2026!",
+                "new_password1": "NewPass-2026!",
+                "new_password2": "NewPass-2026!",
+            },
+        )
+
+        self.assertRedirects(response, "/password-change/done/")
+        user.refresh_from_db()
+        self.assertTrue(user.check_password("NewPass-2026!"))
+
 
 @override_settings(INTERNAL_IMPORT_TOKEN="test-token")
 class LabUiAuthTests(TestCase):

@@ -113,6 +113,7 @@
         <div class="bar">
             <a href="{% url 'home' %}">MurrLex</a>
             <nav aria-label="Account navigation">
+                <a href="{% url 'account_settings' %}">Settings</a>
                 <a href="{% url 'premium' %}">Premium</a>
                 <form method="post" action="{% url 'logout' %}" style="margin:0;">
                     {% csrf_token %}
@@ -128,6 +129,8 @@
             <dl>
                 <dt>Username</dt>
                 <dd>{{ request.user.username }}</dd>
+                <dt>Display name</dt>
+                <dd>{{ request.user.first_name|default:"Not set" }}</dd>
                 <dt>Email</dt>
                 <dd>{{ request.user.email|default:"Not set" }}</dd>
                 <dt>Account status</dt>
@@ -144,7 +147,11 @@
             </article>
             <article class="card">
                 <h2>Available now</h2>
-                <p class="muted">You can register, log in, open this cabinet, and follow public project links.</p>
+                <p class="muted">You can register, log in, open this cabinet, and update basic account settings.</p>
+                <a href="{% url 'account_settings' %}">Edit account settings</a>
+                <br>
+                <a href="{% url 'password_change' %}">Change password</a>
+                <br>
                 <span class="badge">Open</span>
             </article>
             <article class="card">

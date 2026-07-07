@@ -11,7 +11,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
-from .forms import PublicRegistrationForm
+from .forms import AccountSettingsForm, PublicRegistrationForm
 from .models import ImportLog, Lesson
 from .services import LessonImportError, import_lesson_payload, log_failed_import
 
@@ -42,6 +42,12 @@ def home(request):
             "href": "/account/",
             "access": "Login",
             "description": "A first version of the personal cabinet for signed-in users.",
+        },
+        {
+            "label": "Account settings",
+            "href": "/account/settings/",
+            "access": "Login",
+            "description": "Update profile basics and find password tools.",
         },
         {
             "label": "Premium",
@@ -111,6 +117,21 @@ def register(request):
 @require_http_methods(["GET"])
 def account(request):
     return render(request, "registration/account.html")
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def account_settings(request):
+    if request.method == "POST":
+        form = AccountSettingsForm(request.POST, instance=request.user)
+        if form.is_valid():
+            form.save()
+            messages.success(request, "Account settings updated.")
+            return redirect("account")
+    else:
+        form = AccountSettingsForm(instance=request.user)
+
+    return render(request, "registration/account_settings.html", {"form": form})
 
 
 @require_http_methods(["GET"])
