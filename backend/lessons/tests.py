@@ -182,6 +182,8 @@ class HomePageTests(TestCase):
         expected_links = [
             "/api/health",
             "/login/",
+            "/register/",
+            "/account/",
             "/admin/",
             "/lab/import-json/",
             "/lab/lessons/",
@@ -191,6 +193,74 @@ class HomePageTests(TestCase):
         ]
         for href in expected_links:
             self.assertContains(response, f'href="{href}"')
+
+
+class PublicAccountTests(TestCase):
+    def test_register_page_is_public(self):
+        response = self.client.get("/register/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Create account")
+
+    def test_registration_creates_user_and_logs_them_in(self):
+        response = self.client.post(
+            "/register/",
+            data={
+                "username": "newlearner",
+                "email": "newlearner@example.com",
+                "password1": "StrongPass-2026!",
+                "password2": "StrongPass-2026!",
+            },
+        )
+
+        self.assertRedirects(response, "/account/")
+        user_model = get_user_model()
+        user = user_model.objects.get(username="newlearner")
+        self.assertEqual(user.email, "newlearner@example.com")
+        self.assertEqual(int(self.client.session["_auth_user_id"]), user.id)
+
+    def test_duplicate_email_is_rejected(self):
+        user_model = get_user_model()
+        user_model.objects.create_user(
+            username="existing",
+            email="learner@example.com",
+            password="test-password",
+        )
+
+        response = self.client.post(
+            "/register/",
+            data={
+                "username": "otherlearner",
+                "email": "LEARNER@example.com",
+                "password1": "StrongPass-2026!",
+                "password2": "StrongPass-2026!",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "A user with this email already exists.")
+        self.assertFalse(user_model.objects.filter(username="otherlearner").exists())
+
+    def test_account_requires_login(self):
+        response = self.client.get("/account/")
+
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response["Location"].startswith("/login/"))
+
+    def test_logged_in_user_can_open_account(self):
+        user_model = get_user_model()
+        user = user_model.objects.create_user(
+            username="learner",
+            email="learner@example.com",
+            password="test-password",
+        )
+        self.client.force_login(user)
+
+        response = self.client.get("/account/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "User cabinet")
+        self.assertContains(response, "learner@example.com")
 
 
 @override_settings(INTERNAL_IMPORT_TOKEN="test-token")

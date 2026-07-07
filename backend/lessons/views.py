@@ -4,12 +4,14 @@ import urllib.request
 
 from django.conf import settings
 from django.contrib import messages
+from django.contrib.auth import login
 from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
+from .forms import PublicRegistrationForm
 from .models import ImportLog, Lesson
 from .services import LessonImportError, import_lesson_payload, log_failed_import
 
@@ -27,7 +29,19 @@ def home(request):
             "label": "Login",
             "href": "/login/",
             "access": "Public",
-            "description": "Entry point for staff and lab users.",
+            "description": "Sign in to a public user account.",
+        },
+        {
+            "label": "Register",
+            "href": "/register/",
+            "access": "Public",
+            "description": "Create a public MurrLex account.",
+        },
+        {
+            "label": "User account",
+            "href": "/account/",
+            "access": "Login",
+            "description": "A first version of the personal cabinet for signed-in users.",
         },
         {
             "label": "Django admin",
@@ -67,6 +81,30 @@ def home(request):
         },
     ]
     return render(request, "lessons/home.html", {"site_links": site_links})
+
+
+@require_http_methods(["GET", "POST"])
+def register(request):
+    if request.user.is_authenticated:
+        return redirect("account")
+
+    if request.method == "POST":
+        form = PublicRegistrationForm(request.POST)
+        if form.is_valid():
+            user = form.save()
+            login(request, user)
+            messages.success(request, "Your account has been created.")
+            return redirect("account")
+    else:
+        form = PublicRegistrationForm()
+
+    return render(request, "registration/register.html", {"form": form})
+
+
+@login_required
+@require_http_methods(["GET"])
+def account(request):
+    return render(request, "registration/account.html")
 
 
 @require_http_methods(["GET", "POST"])

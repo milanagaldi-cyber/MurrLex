@@ -73,6 +73,28 @@
             margin: 36px 0 14px;
             font-size: 24px;
         }
+        .actions {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-top: 24px;
+        }
+        .action {
+            display: inline-flex;
+            align-items: center;
+            min-height: 44px;
+            border-radius: 8px;
+            padding: 0 14px;
+            background: var(--accent);
+            color: #fff;
+            font-weight: 750;
+            text-decoration: none;
+        }
+        .action.secondary {
+            background: #ffffff;
+            color: var(--accent);
+            border: 1px solid var(--line);
+        }
         .site-map {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -130,6 +152,14 @@
                     Staging backend for the MurrLex content pipeline: import lessons,
                     review cards, check service health, and route internal tools from one place.
                 </p>
+                <div class="actions">
+                    {% if request.user.is_authenticated %}
+                        <a class="action" href="{% url 'account' %}">Open cabinet</a>
+                    {% else %}
+                        <a class="action" href="{% url 'register' %}">Create account</a>
+                        <a class="action secondary" href="{% url 'login' %}">Log in</a>
+                    {% endif %}
+                </div>
             </div>
             <div class="mark" aria-label="MurrLex content pipeline illustration">
                 <div class="mark-grid">

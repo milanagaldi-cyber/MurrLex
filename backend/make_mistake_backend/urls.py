@@ -23,6 +23,8 @@ from lessons import views as lesson_views
 urlpatterns = [
     path("", lesson_views.home, name="home"),
     path("admin/", admin.site.urls),
+    path("register/", lesson_views.register, name="register"),
+    path("account/", lesson_views.account, name="account"),
     path("login/", auth_views.LoginView.as_view(template_name="registration/login.html"), name="login"),
     path("logout/", auth_views.LogoutView.as_view(), name="logout"),
     path("lab/", include("lessons.urls")),
