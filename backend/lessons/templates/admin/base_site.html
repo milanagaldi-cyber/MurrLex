@@ -1,0 +1,172 @@
+{% extends "admin/base.html" %}
+
+{% block title %}{% if subtitle %}{{ subtitle }} | {% endif %}{{ title }} | MurrLex Admin{% endblock %}
+
+{% block extrastyle %}
+{{ block.super }}
+<style>
+    :root {
+        color-scheme: dark;
+        --primary: #111821;
+        --secondary: #151e29;
+        --accent: #18b7ff;
+        --primary-fg: #edf5ff;
+        --body-fg: #edf5ff;
+        --body-bg: #0b0f14;
+        --body-quiet-color: #93a4b8;
+        --body-loud-color: #ffffff;
+        --header-color: #edf5ff;
+        --header-branding-color: #edf5ff;
+        --header-bg: #0b0f14;
+        --header-link-color: #65d8ff;
+        --breadcrumbs-fg: #93a4b8;
+        --breadcrumbs-link-fg: #65d8ff;
+        --breadcrumbs-bg: #111821;
+        --link-fg: #65d8ff;
+        --link-hover-color: #ffffff;
+        --link-selected-fg: #42e68a;
+        --hairline-color: #263241;
+        --border-color: #263241;
+        --error-fg: #ff6b6b;
+        --message-success-bg: rgba(66, 230, 138, 0.14);
+        --message-warning-bg: rgba(242, 201, 76, 0.14);
+        --message-error-bg: rgba(255, 107, 107, 0.14);
+        --darkened-bg: #111821;
+        --selected-bg: #151e29;
+        --selected-row: #151e29;
+        --button-fg: #03111a;
+        --button-bg: #18b7ff;
+        --button-hover-bg: #65d8ff;
+        --default-button-bg: #18b7ff;
+        --default-button-hover-bg: #65d8ff;
+        --close-button-bg: #263241;
+        --close-button-hover-bg: #34465b;
+        --delete-button-bg: #ff6b6b;
+        --delete-button-hover-bg: #ff8585;
+        --object-tools-fg: #03111a;
+        --object-tools-bg: #18b7ff;
+        --object-tools-hover-bg: #65d8ff;
+        --font-family-primary: Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        --font-family-monospace: "JetBrains Mono", "Fira Code", Consolas, monospace;
+    }
+    body {
+        background: var(--body-bg);
+        letter-spacing: 0;
+    }
+    #header {
+        border-bottom: 1px solid var(--hairline-color);
+        box-shadow: none;
+    }
+    #branding h1, #branding h1 a:link, #branding h1 a:visited {
+        color: var(--header-branding-color);
+    }
+    .murrlex-admin-brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        color: var(--primary-fg);
+        font-weight: 850;
+    }
+    .murrlex-admin-mark {
+        display: grid;
+        place-items: center;
+        width: 34px;
+        height: 34px;
+        border: 1px solid var(--accent);
+        border-radius: 8px;
+        color: #65d8ff;
+        font-family: var(--font-family-monospace);
+        font-size: 14px;
+    }
+    .murrlex-admin-subtitle {
+        color: var(--body-quiet-color);
+        font-size: 12px;
+        font-weight: 700;
+        margin-left: 4px;
+    }
+    .murrlex-admin-home {
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 9px 12px;
+        color: #65d8ff !important;
+        font-weight: 800;
+    }
+    div.breadcrumbs {
+        border-bottom: 1px solid var(--hairline-color);
+    }
+    .module, .inline-group, fieldset, .submit-row, .paginator, #content-related {
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        background: var(--primary);
+        box-shadow: none;
+    }
+    .module h2, .module caption, .inline-group h2 {
+        background: var(--secondary);
+        color: var(--primary-fg);
+        border-radius: 8px 8px 0 0;
+    }
+    table {
+        border-color: var(--border-color);
+    }
+    thead th, tfoot td {
+        background: var(--secondary);
+        color: var(--body-quiet-color);
+        text-transform: uppercase;
+        font-size: 12px;
+    }
+    tr:nth-child(odd), .row-form-errors {
+        background: #0f151d;
+    }
+    tr:nth-child(even), tr:nth-child(even) .errorlist, tr:nth-child(odd) + .row-form-errors {
+        background: var(--primary);
+    }
+    input, textarea, select, .vTextField {
+        background: #0e141c;
+        color: var(--body-fg);
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+    }
+    input:focus, textarea:focus, select:focus {
+        border-color: var(--accent);
+        outline: 2px solid rgba(24, 183, 255, 0.35);
+    }
+    .button, input[type=submit], input[type=button], .submit-row input, a.button {
+        border-radius: 8px;
+        border: 1px solid var(--accent);
+        font-weight: 850;
+    }
+    .object-tools a:link, .object-tools a:visited {
+        border-radius: 8px;
+        font-weight: 850;
+    }
+    #changelist, #changelist-filter, #toolbar, .filtered #changelist-form {
+        background: var(--primary);
+        border-color: var(--border-color);
+    }
+    #changelist-filter h2, #toolbar form input[type="submit"] {
+        background: var(--secondary);
+    }
+    .login #container {
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        background: var(--primary);
+        box-shadow: none;
+    }
+    .login #header {
+        border-radius: 8px 8px 0 0;
+        background: var(--primary);
+    }
+</style>
+{% endblock %}
+
+{% block branding %}
+<div class="murrlex-admin-brand">
+    <span class="murrlex-admin-mark">ML</span>
+    <span>MurrLex Admin</span>
+    <span class="murrlex-admin-subtitle">Server control panel</span>
+</div>
+{% endblock %}
+
+{% block nav-global %}
+<a class="murrlex-admin-home" href="/">Public Home</a>
+{% endblock %}

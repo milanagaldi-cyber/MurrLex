@@ -16,9 +16,9 @@
 
     <div class="account-layout">
         <aside class="sidebar" aria-label="Account navigation">
-            <a href="{% url 'account' %}">Профиль</a>
-            <a class="active" href="{% url 'account_settings' %}">Настройки безопасности</a>
-            <a href="{% url 'premium' %}">Подписка/Premium</a>
+            <a href="{% url 'account' %}">Profile</a>
+            <a class="active" href="{% url 'account_settings' %}">Security settings</a>
+            <a href="{% url 'premium' %}">Subscription/Premium</a>
             <form method="post" action="{% url 'logout' %}" style="margin:0;">
                 {% csrf_token %}
                 <button type="submit">Log out</button>

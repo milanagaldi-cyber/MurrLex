@@ -203,7 +203,7 @@ class PremiumPageTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Premium preview")
-        self.assertContains(response, "Скоро здесь появится расширенный API")
+        self.assertContains(response, "Advanced API access is coming soon")
         self.assertContains(response, "Higher API limits")
 
 
@@ -212,8 +212,8 @@ class LoginAuthenticationTests(TestCase):
         response = self.client.get("/login/")
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Username или Email")
-        self.assertContains(response, "Google OAuth awaits server credentials")
+        self.assertContains(response, "Username or Email")
+        self.assertContains(response, "Google sign-in needs server credentials")
         self.assertNotContains(response, "Continue with Google")
 
     @override_settings(

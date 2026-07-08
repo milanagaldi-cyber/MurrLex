@@ -63,18 +63,18 @@
             <span class="badge locked">Restricted</span>
             <h2>Locked areas</h2>
             <p>Lab and admin are protected by the existing access gates.</p>
-            <p><a href="/lab/lessons/">Lock Lab lessons</a></p>
-            <p><a href="/lab/imports/">Lock Import logs</a></p>
-            <p><a href="/admin/">Lock Django admin</a></p>
+            <p><a href="/lab/lessons/">Lab lessons</a></p>
+            <p><a href="/lab/imports/">Import logs</a></p>
+            <p><a href="/admin/">Django admin</a></p>
         </article>
 
         <article class="card">
             <span class="badge">API & Network</span>
-            <h2>Network map</h2>
+            <h2>API status</h2>
             <p>Health endpoint is public. API endpoints still require bearer tokens.</p>
             <p><a href="{% url 'api_health' %}"><code>/api/health</code></a></p>
-            <p class="mono">HTTPS: 443 -> nginx -> Django</p>
-            <p class="mono">Xray: 9443</p>
+            <p class="mono">Public HTTPS: 443</p>
+            <p class="mono">Backend: nginx -> Django</p>
         </article>
     </section>
 </main>

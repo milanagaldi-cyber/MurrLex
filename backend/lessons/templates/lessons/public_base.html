@@ -107,6 +107,46 @@
             grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
             gap: 14px;
         }
+        .stack { display: grid; gap: 16px; }
+        .table-wrap {
+            width: 100%;
+            overflow-x: auto;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 720px;
+        }
+        th, td {
+            padding: 12px 10px;
+            border-bottom: 1px solid var(--line);
+            text-align: left;
+            vertical-align: top;
+        }
+        th {
+            color: var(--muted);
+            font-size: 13px;
+            text-transform: uppercase;
+        }
+        textarea {
+            width: 100%;
+            min-height: 360px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            padding: 14px;
+            background: #0e141c;
+            color: var(--ink);
+            font: 14px/1.45 var(--mono);
+        }
+        .message {
+            padding: 12px 14px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: var(--panel);
+            color: var(--ink);
+        }
+        .message.success { border-color: rgba(66, 230, 138, 0.55); }
+        .message.error { border-color: rgba(255, 107, 107, 0.7); color: var(--danger); }
         .status {
             display: inline-flex;
             align-items: center;

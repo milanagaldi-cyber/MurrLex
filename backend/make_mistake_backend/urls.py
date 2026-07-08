@@ -21,6 +21,10 @@ from django.urls import include, path
 from lessons.forms import UsernameOrEmailAuthenticationForm
 from lessons import views as lesson_views
 
+admin.site.site_header = "MurrLex Admin"
+admin.site.site_title = "MurrLex Admin"
+admin.site.index_title = "Server control panel"
+
 urlpatterns = [
     path("", lesson_views.home, name="home"),
     path("accounts/", include("allauth.urls")),

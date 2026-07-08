@@ -1,112 +1,33 @@
-<!doctype html>
-<html lang="en">
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>MurrLex Lab</title>
-    <style>
-        :root {
-            color-scheme: light;
-            --bg: #f7f7f3;
-            --card: #ffffff;
-            --ink: #1d2721;
-            --muted: #637067;
-            --line: #dde4dc;
-            --danger: #b42318;
-        }
-        * { box-sizing: border-box; }
-        body {
-            margin: 0;
-            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-            background: var(--bg);
-            color: var(--ink);
-        }
-        header {
-            padding: 24px clamp(16px, 4vw, 48px);
-            border-bottom: 1px solid var(--line);
-            background: rgba(255, 255, 255, 0.78);
-        }
-        nav {
-            display: flex;
-            gap: 12px;
-            flex-wrap: wrap;
-            margin-top: 12px;
-        }
-        a { color: #274c35; font-weight: 650; text-decoration: none; }
-        main {
-            width: min(1040px, calc(100% - 32px));
-            margin: 28px auto;
-        }
-        .panel {
-            background: var(--card);
-            border: 1px solid var(--line);
-            border-radius: 18px;
-            padding: 20px;
-            box-shadow: 0 10px 30px rgba(24, 45, 32, 0.08);
-        }
-        .stack { display: grid; gap: 16px; }
-        textarea {
-            width: 100%;
-            min-height: 360px;
-            border: 1px solid var(--line);
-            border-radius: 14px;
-            padding: 14px;
-            font: 14px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
-        }
-        button {
-            display: inline-flex;
-            align-items: center;
-            border: 0;
-            border-radius: 14px;
-            padding: 11px 16px;
-            background: #2c3f35;
-            color: white;
-            font-weight: 750;
-            cursor: pointer;
-        }
-        table { width: 100%; border-collapse: collapse; }
-        th, td {
-            padding: 12px 10px;
-            border-bottom: 1px solid var(--line);
-            text-align: left;
-            vertical-align: top;
-        }
-        th { color: var(--muted); font-size: 13px; }
-        .muted { color: var(--muted); }
-        .message {
-            padding: 12px 14px;
-            border-radius: 14px;
-            background: #edf9e8;
-            border: 1px solid #caeabd;
-        }
-        .message.error {
-            color: var(--danger);
-            background: #fff0ee;
-            border-color: #ffd1cc;
-        }
-    </style>
-</head>
-<body>
-    <header>
-        <strong>MurrLex Lab</strong>
-        <nav>
+{% extends "lessons/public_base.html" %}
+
+{% block title %}MurrLex Lab{% endblock %}
+
+{% block body %}
+<main class="site-shell">
+    <header class="topbar">
+        <a class="brand" href="{% url 'home' %}">
+            <span class="brand-mark">ML</span>
+            <span>MurrLex Lab</span>
+        </a>
+        <nav class="nav" aria-label="Lab navigation">
             <a href="{% url 'lessons:import_json' %}">Import JSON</a>
             <a href="{% url 'lessons:lesson_list' %}">Lessons</a>
             <a href="{% url 'lessons:import_log_list' %}">Import logs</a>
             <a href="/admin/">Admin</a>
             <form method="post" action="{% url 'logout' %}" style="margin:0;">
                 {% csrf_token %}
-                <button type="submit" style="padding:0;background:transparent;color:#274c35;">Logout</button>
+                <button class="secondary" type="submit">Logout</button>
             </form>
         </nav>
     </header>
-    <main class="stack">
+
+    <section class="stack">
         {% if messages %}
             {% for message in messages %}
                 <div class="message {{ message.tags }}">{{ message }}</div>
             {% endfor %}
         {% endif %}
         {% block content %}{% endblock %}
-    </main>
-</body>
-</html>
+    </section>
+</main>
+{% endblock %}
