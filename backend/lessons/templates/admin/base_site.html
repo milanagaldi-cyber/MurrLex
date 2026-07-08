@@ -53,9 +53,70 @@
         background: var(--body-bg);
         letter-spacing: 0;
     }
+    .skip-to-content-link {
+        position: absolute;
+        left: -999px;
+        top: 8px;
+        z-index: 999;
+        padding: 8px 12px;
+        border-radius: 8px;
+        background: var(--button-bg);
+        color: var(--button-fg) !important;
+        font-weight: 850;
+    }
+    .skip-to-content-link:focus {
+        left: 16px;
+    }
+    #container {
+        background: var(--body-bg);
+    }
     #header {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        min-height: 72px;
+        padding: 14px clamp(18px, 4vw, 44px);
         border-bottom: 1px solid var(--hairline-color);
         box-shadow: none;
+    }
+    #branding {
+        flex: 1 1 auto;
+        min-width: 240px;
+    }
+    #user-tools {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 10px;
+        flex-wrap: wrap;
+        color: var(--body-quiet-color);
+        font-size: 13px;
+        letter-spacing: 0;
+        text-transform: none;
+    }
+    #user-tools a,
+    #user-tools button,
+    #logout-form button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 36px;
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 0 10px;
+        background: #0e141c;
+        color: #65d8ff !important;
+        font: inherit;
+        font-weight: 800;
+        text-transform: none;
+    }
+    #logout-form {
+        display: inline-flex;
+        margin: 0;
+    }
+    .theme-toggle,
+    button.theme-toggle {
+        display: none !important;
     }
     #branding h1, #branding h1 a:link, #branding h1 a:visited {
         color: var(--header-branding-color);
@@ -85,14 +146,35 @@
         margin-left: 4px;
     }
     .murrlex-admin-home {
+        display: inline-flex;
+        align-items: center;
+        min-height: 36px;
         border: 1px solid var(--border-color);
         border-radius: 8px;
-        padding: 9px 12px;
+        padding: 0 12px;
         color: #65d8ff !important;
         font-weight: 800;
     }
     div.breadcrumbs {
+        padding: 12px clamp(18px, 4vw, 44px);
+        background: #0e141c;
         border-bottom: 1px solid var(--hairline-color);
+    }
+    .main {
+        padding: 24px clamp(18px, 4vw, 44px) 48px;
+    }
+    #content {
+        width: min(1180px, 100%);
+        max-width: none;
+        margin: 0;
+        padding: 0;
+    }
+    #content h1 {
+        margin: 0 0 20px;
+        color: var(--primary-fg);
+        font-size: 30px;
+        font-weight: 850;
+        line-height: 1.15;
     }
     .module, .inline-group, fieldset, .submit-row, .paginator, #content-related {
         border: 1px solid var(--border-color);
@@ -100,19 +182,33 @@
         background: var(--primary);
         box-shadow: none;
     }
+    .module {
+        overflow: hidden;
+        margin-bottom: 16px;
+    }
     .module h2, .module caption, .inline-group h2 {
         background: var(--secondary);
         color: var(--primary-fg);
         border-radius: 8px 8px 0 0;
+        padding: 12px 14px;
+        font-size: 13px;
+        letter-spacing: 0;
+        text-transform: uppercase;
     }
     table {
+        width: 100%;
         border-color: var(--border-color);
+        border-collapse: collapse;
     }
     thead th, tfoot td {
         background: var(--secondary);
         color: var(--body-quiet-color);
         text-transform: uppercase;
         font-size: 12px;
+    }
+    th, td {
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--border-color);
     }
     tr:nth-child(odd), .row-form-errors {
         background: #0f151d;
@@ -139,12 +235,72 @@
         border-radius: 8px;
         font-weight: 850;
     }
+    .object-tools {
+        margin-top: 0;
+    }
+    .object-tools li {
+        margin-left: 8px;
+    }
     #changelist, #changelist-filter, #toolbar, .filtered #changelist-form {
         background: var(--primary);
         border-color: var(--border-color);
+        border-radius: 8px;
     }
     #changelist-filter h2, #toolbar form input[type="submit"] {
         background: var(--secondary);
+    }
+    #changelist {
+        display: grid;
+        gap: 14px;
+        padding: 14px;
+    }
+    #toolbar {
+        padding: 12px;
+    }
+    #toolbar form input[type="text"],
+    #changelist-search input[type="text"] {
+        min-height: 40px;
+        min-width: min(360px, 100%);
+    }
+    #changelist table {
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        overflow: hidden;
+    }
+    #nav-sidebar {
+        width: 300px;
+        margin-right: 24px;
+        background: transparent;
+        border-right: 0;
+    }
+    #nav-sidebar .module {
+        margin-bottom: 12px;
+    }
+    #nav-sidebar table {
+        min-width: 0;
+    }
+    #nav-sidebar th,
+    #nav-sidebar td {
+        padding: 10px 12px;
+    }
+    #nav-filter {
+        min-height: 40px;
+        margin: 0 0 12px;
+    }
+    .dashboard #content-main {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
+        gap: 24px;
+        align-items: start;
+    }
+    .dashboard #content-related {
+        margin: 0;
+        padding: 0;
+        width: auto;
+    }
+    .dashboard .app-list {
+        display: grid;
+        gap: 16px;
     }
     .login #container {
         border: 1px solid var(--border-color);
@@ -155,6 +311,29 @@
     .login #header {
         border-radius: 8px 8px 0 0;
         background: var(--primary);
+    }
+    .login .submit-row {
+        padding: 16px;
+        margin-top: 14px;
+    }
+    @media (max-width: 900px) {
+        #header {
+            align-items: flex-start;
+            flex-direction: column;
+        }
+        #user-tools {
+            justify-content: flex-start;
+        }
+        .main {
+            padding-inline: 16px;
+        }
+        .dashboard #content-main {
+            grid-template-columns: 1fr;
+        }
+        #nav-sidebar {
+            width: 100%;
+            margin-right: 0;
+        }
     }
 </style>
 {% endblock %}
