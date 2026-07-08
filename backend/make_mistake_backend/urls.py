@@ -18,6 +18,7 @@ Including another URLconf
 from django.contrib import admin
 from django.contrib.auth import views as auth_views
 from django.urls import include, path
+from lessons.forms import UsernameOrEmailAuthenticationForm
 from lessons import views as lesson_views
 
 urlpatterns = [
@@ -27,7 +28,14 @@ urlpatterns = [
     path("account/", lesson_views.account, name="account"),
     path("account/settings/", lesson_views.account_settings, name="account_settings"),
     path("premium/", lesson_views.premium, name="premium"),
-    path("login/", auth_views.LoginView.as_view(template_name="registration/login.html"), name="login"),
+    path(
+        "login/",
+        auth_views.LoginView.as_view(
+            authentication_form=UsernameOrEmailAuthenticationForm,
+            template_name="registration/login.html",
+        ),
+        name="login",
+    ),
     path(
         "password-change/",
         auth_views.PasswordChangeView.as_view(template_name="registration/password_change_form.html"),

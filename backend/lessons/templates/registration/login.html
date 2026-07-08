@@ -55,14 +55,14 @@
 <body>
     <main class="panel">
         <h1>Log in</h1>
-        <p>Use your MurrLex account to open your user cabinet or protected lab pages.</p>
+        <p>Use your username or email to open your user cabinet or protected lab pages.</p>
         {% if form.errors %}
             <p class="error">Invalid username or password.</p>
         {% endif %}
         <form method="post">
             {% csrf_token %}
             <input type="hidden" name="next" value="{{ next }}">
-            <label for="{{ form.username.id_for_label }}">Username</label>
+            <label for="{{ form.username.id_for_label }}">Username or email</label>
             {{ form.username }}
             <label for="{{ form.password.id_for_label }}">Password</label>
             {{ form.password }}

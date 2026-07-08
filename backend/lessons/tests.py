@@ -205,6 +205,85 @@ class PremiumPageTests(TestCase):
         self.assertContains(response, "Not available yet")
 
 
+class LoginAuthenticationTests(TestCase):
+    def test_login_accepts_username(self):
+        user_model = get_user_model()
+        user = user_model.objects.create_user(
+            username="learner",
+            email="learner@example.com",
+            password="StrongPass-2026!",
+        )
+
+        response = self.client.post(
+            "/login/",
+            data={"username": "learner", "password": "StrongPass-2026!"},
+        )
+
+        self.assertRedirects(response, "/account/")
+        self.assertEqual(int(self.client.session["_auth_user_id"]), user.id)
+
+    def test_login_accepts_email(self):
+        user_model = get_user_model()
+        user = user_model.objects.create_user(
+            username="learner",
+            email="learner@example.com",
+            password="StrongPass-2026!",
+        )
+
+        response = self.client.post(
+            "/login/",
+            data={"username": "learner@example.com", "password": "StrongPass-2026!"},
+        )
+
+        self.assertRedirects(response, "/account/")
+        self.assertEqual(int(self.client.session["_auth_user_id"]), user.id)
+
+    def test_login_accepts_email_case_insensitively(self):
+        user_model = get_user_model()
+        user = user_model.objects.create_user(
+            username="learner",
+            email="learner@example.com",
+            password="StrongPass-2026!",
+        )
+
+        response = self.client.post(
+            "/login/",
+            data={"username": "LEARNER@example.com", "password": "StrongPass-2026!"},
+        )
+
+        self.assertRedirects(response, "/account/")
+        self.assertEqual(int(self.client.session["_auth_user_id"]), user.id)
+
+    def test_login_rejects_unknown_email(self):
+        self.client.post(
+            "/login/",
+            data={"username": "missing@example.com", "password": "StrongPass-2026!"},
+        )
+
+        self.assertNotIn("_auth_user_id", self.client.session)
+
+    def test_login_rejects_ambiguous_email(self):
+        user_model = get_user_model()
+        user_model.objects.create_user(
+            username="first",
+            email="shared@example.com",
+            password="StrongPass-2026!",
+        )
+        user_model.objects.create_user(
+            username="second",
+            email="shared@example.com",
+            password="StrongPass-2026!",
+        )
+
+        response = self.client.post(
+            "/login/",
+            data={"username": "shared@example.com", "password": "StrongPass-2026!"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("_auth_user_id", self.client.session)
+
+
 class PublicAccountTests(TestCase):
     def test_register_page_is_public(self):
         response = self.client.get("/register/")
