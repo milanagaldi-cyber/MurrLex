@@ -1,6 +1,7 @@
 import json
 
 from django.contrib.auth import get_user_model
+from django.urls import reverse
 from django.test import TestCase, override_settings
 
 from .models import Card, ImportLog, Lesson
@@ -202,10 +203,41 @@ class PremiumPageTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Premium preview")
-        self.assertContains(response, "Not available yet")
+        self.assertContains(response, "Скоро здесь появится расширенный API")
+        self.assertContains(response, "Higher API limits")
 
 
 class LoginAuthenticationTests(TestCase):
+    def test_login_page_shows_google_setup_hint_without_credentials(self):
+        response = self.client.get("/login/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Username или Email")
+        self.assertContains(response, "Google OAuth awaits server credentials")
+        self.assertNotContains(response, "Continue with Google")
+
+    @override_settings(
+        GOOGLE_OAUTH_ENABLED=True,
+        SOCIALACCOUNT_PROVIDERS={
+            "google": {
+                "APP": {
+                    "client_id": "test-client-id",
+                    "secret": "test-secret",
+                    "key": "",
+                }
+            }
+        },
+    )
+    def test_login_page_shows_google_button_when_enabled(self):
+        response = self.client.get("/login/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Continue with Google")
+        self.assertContains(response, 'action="/accounts/google/login/')
+
+    def test_google_login_route_is_connected(self):
+        self.assertEqual(reverse("google_login"), "/accounts/google/login/")
+
     def test_login_accepts_username(self):
         user_model = get_user_model()
         user = user_model.objects.create_user(

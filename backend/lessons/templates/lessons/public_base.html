@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}MurrLex Server{% endblock %}</title>
+    <style>
+        :root {
+            color-scheme: dark;
+            --bg: #0b0f14;
+            --panel: #111821;
+            --panel-2: #151e29;
+            --ink: #edf5ff;
+            --muted: #93a4b8;
+            --line: #263241;
+            --accent: #18b7ff;
+            --accent-strong: #65d8ff;
+            --good: #42e68a;
+            --warn: #f2c94c;
+            --danger: #ff6b6b;
+            --mono: "JetBrains Mono", "Fira Code", Consolas, monospace;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            min-height: 100vh;
+            background: var(--bg);
+            color: var(--ink);
+            font-family: Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            letter-spacing: 0;
+        }
+        a { color: var(--accent-strong); font-weight: 750; text-decoration: none; }
+        a:hover { color: #ffffff; }
+        code, .mono { font-family: var(--mono); }
+        h1, h2, h3, p { margin-top: 0; }
+        p { color: var(--muted); line-height: 1.55; }
+        .site-shell {
+            width: min(1160px, calc(100% - 32px));
+            margin: 0 auto;
+            padding: 24px 0 56px;
+        }
+        .topbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 14px 0 28px;
+        }
+        .brand {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            color: var(--ink);
+            font-weight: 850;
+        }
+        .brand-mark {
+            display: grid;
+            place-items: center;
+            width: 34px;
+            height: 34px;
+            border: 1px solid var(--accent);
+            border-radius: 8px;
+            color: var(--accent-strong);
+            font-family: var(--mono);
+        }
+        .nav {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+        .button, button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 44px;
+            border: 1px solid var(--accent);
+            border-radius: 8px;
+            padding: 0 16px;
+            background: var(--accent);
+            color: #03111a;
+            font: inherit;
+            font-weight: 850;
+            cursor: pointer;
+        }
+        .button.secondary, button.secondary {
+            background: transparent;
+            color: var(--accent-strong);
+            border-color: var(--line);
+        }
+        .button.full, button.full { width: 100%; }
+        .button.disabled {
+            pointer-events: none;
+            color: var(--muted);
+            background: #0f151d;
+            border-color: var(--line);
+        }
+        .panel, .card {
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 8px;
+        }
+        .panel { padding: 24px; }
+        .card { padding: 20px; min-height: 168px; }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 14px;
+        }
+        .status {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--good);
+            font-weight: 800;
+        }
+        .dot {
+            width: 9px;
+            height: 9px;
+            border-radius: 999px;
+            background: var(--good);
+        }
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            width: fit-content;
+            border: 1px solid var(--line);
+            border-radius: 999px;
+            padding: 5px 9px;
+            color: var(--muted);
+            font-size: 12px;
+            font-weight: 850;
+            text-transform: uppercase;
+        }
+        .badge.open { color: var(--good); }
+        .badge.locked { color: var(--warn); }
+        .muted { color: var(--muted); }
+        .auth-page {
+            min-height: 100vh;
+            display: grid;
+            place-items: center;
+            padding: 32px 16px;
+        }
+        .auth-card {
+            width: min(460px, 100%);
+            padding: 26px;
+        }
+        .auth-logo {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 18px;
+        }
+        label {
+            display: block;
+            margin: 14px 0 7px;
+            color: var(--ink);
+            font-weight: 750;
+        }
+        input, textarea, select {
+            width: 100%;
+            min-height: 46px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            padding: 11px 12px;
+            background: #0e141c;
+            color: var(--ink);
+            font: inherit;
+        }
+        input:focus, textarea:focus, select:focus {
+            outline: 2px solid rgba(24, 183, 255, 0.35);
+            border-color: var(--accent);
+        }
+        .errors, .errorlist {
+            color: var(--danger);
+            font-size: 14px;
+        }
+        .divider {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin: 18px 0;
+            color: var(--muted);
+            font-size: 13px;
+        }
+        .divider::before, .divider::after {
+            content: "";
+            height: 1px;
+            flex: 1;
+            background: var(--line);
+        }
+        .account-layout {
+            display: grid;
+            grid-template-columns: 240px minmax(0, 1fr);
+            gap: 18px;
+            align-items: start;
+        }
+        .sidebar {
+            position: sticky;
+            top: 16px;
+            display: grid;
+            gap: 8px;
+            padding: 14px;
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 8px;
+        }
+        .sidebar a, .sidebar button {
+            justify-content: flex-start;
+            min-height: 40px;
+            width: 100%;
+            border-color: transparent;
+            background: transparent;
+            color: var(--muted);
+            padding: 0 10px;
+        }
+        .sidebar a.active, .sidebar a:hover, .sidebar button:hover {
+            background: var(--panel-2);
+            color: var(--ink);
+        }
+        .profile-name {
+            margin-bottom: 6px;
+            font-size: 34px;
+            line-height: 1.1;
+        }
+        dl {
+            display: grid;
+            grid-template-columns: 160px minmax(0, 1fr);
+            gap: 12px 18px;
+            margin: 22px 0 0;
+        }
+        dt { color: var(--muted); }
+        dd { margin: 0; font-weight: 750; word-break: break-word; }
+        .strength {
+            margin-top: 10px;
+        }
+        .strength-bar {
+            height: 8px;
+            border-radius: 999px;
+            overflow: hidden;
+            background: #0e141c;
+            border: 1px solid var(--line);
+        }
+        .strength-fill {
+            width: 0%;
+            height: 100%;
+            background: var(--danger);
+            transition: width .18s ease, background .18s ease;
+        }
+        @media (max-width: 760px) {
+            .topbar { align-items: flex-start; flex-direction: column; }
+            .account-layout { grid-template-columns: 1fr; }
+            .sidebar { position: static; }
+            dl { grid-template-columns: 1fr; }
+        }
+    </style>
+    {% block extra_head %}{% endblock %}
+</head>
+<body class="{% block body_class %}{% endblock %}">
+    {% block body %}{% endblock %}
+</body>
+</html>

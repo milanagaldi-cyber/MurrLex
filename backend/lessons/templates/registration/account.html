@@ -1,167 +1,68 @@
-<!doctype html>
-<html lang="en">
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>MurrLex Account</title>
-    <style>
-        :root {
-            color-scheme: light;
-            --bg: #f5f7fb;
-            --panel: #ffffff;
-            --ink: #18202f;
-            --muted: #5f6d80;
-            --line: #dce4ef;
-            --accent: #1d6f9f;
-            --soft: #e8f5fb;
-            --warn: #f4eee4;
-        }
-        * { box-sizing: border-box; }
-        body {
-            margin: 0;
-            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-            background: linear-gradient(180deg, #ffffff 0%, var(--bg) 100%);
-            color: var(--ink);
-        }
-        header {
-            border-bottom: 1px solid var(--line);
-            background: rgba(255, 255, 255, 0.86);
-        }
-        .bar, main {
-            width: min(960px, calc(100% - 32px));
-            margin: 0 auto;
-        }
-        .bar {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 16px;
-            padding: 18px 0;
-        }
-        a, button.link {
-            color: var(--accent);
-            font-weight: 750;
-            text-decoration: none;
-        }
-        nav {
-            display: flex;
-            align-items: center;
-            gap: 14px;
-            flex-wrap: wrap;
-        }
-        button.link {
-            border: 0;
-            background: transparent;
-            padding: 0;
-            cursor: pointer;
-            font: inherit;
-        }
-        main { padding: 40px 0; }
-        .panel {
-            background: var(--panel);
-            border: 1px solid var(--line);
-            border-radius: 8px;
-            padding: 24px;
-        }
-        .grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-            gap: 14px;
-            margin-top: 18px;
-        }
-        .card {
-            min-height: 150px;
-            background: var(--panel);
-            border: 1px solid var(--line);
-            border-radius: 8px;
-            padding: 18px;
-        }
-        h1 { margin: 0 0 10px; }
-        h2 { margin: 0 0 10px; font-size: 18px; }
-        .muted { color: var(--muted); }
-        .badge {
-            display: inline-flex;
-            margin-top: 10px;
-            border-radius: 999px;
-            padding: 5px 9px;
-            background: var(--soft);
-            color: #175574;
-            font-size: 12px;
-            font-weight: 750;
-            text-transform: uppercase;
-        }
-        .badge.warn {
-            background: var(--warn);
-            color: #755324;
-        }
-        dl {
-            display: grid;
-            grid-template-columns: 160px minmax(0, 1fr);
-            gap: 12px 18px;
-            margin: 24px 0 0;
-        }
-        dt { color: var(--muted); }
-        dd { margin: 0; font-weight: 650; }
-        @media (max-width: 640px) {
-            .bar { align-items: flex-start; flex-direction: column; }
-            dl { grid-template-columns: 1fr; }
-        }
-    </style>
-</head>
-<body>
-    <header>
-        <div class="bar">
-            <a href="{% url 'home' %}">MurrLex</a>
-            <nav aria-label="Account navigation">
-                <a href="{% url 'account_settings' %}">Settings</a>
-                <a href="{% url 'premium' %}">Premium</a>
-                <form method="post" action="{% url 'logout' %}" style="margin:0;">
-                    {% csrf_token %}
-                    <button class="link" type="submit">Log out</button>
-                </form>
-            </nav>
-        </div>
+{% extends "lessons/public_base.html" %}
+
+{% block title %}MurrLex Account{% endblock %}
+
+{% block body %}
+<main class="site-shell">
+    <header class="topbar">
+        <a class="brand" href="{% url 'home' %}">
+            <span class="brand-mark">ML</span>
+            <span>MurrLex Server</span>
+        </a>
+        <nav class="nav" aria-label="Top navigation">
+            <a href="{% url 'home' %}">Home</a>
+        </nav>
     </header>
-    <main>
-        <section class="panel">
-            <h1>User cabinet</h1>
-            <p class="muted">This is the first public account area. Paid features are still closed.</p>
-            <dl>
-                <dt>Username</dt>
-                <dd>{{ request.user.username }}</dd>
-                <dt>Display name</dt>
-                <dd>{{ request.user.first_name|default:"Not set" }}</dd>
-                <dt>Email</dt>
-                <dd>{{ request.user.email|default:"Not set" }}</dd>
-                <dt>Account status</dt>
-                <dd>{% if request.user.is_staff %}Staff{% else %}Public user{% endif %}</dd>
-                <dt>Date joined</dt>
-                <dd>{{ request.user.date_joined|date:"Y-m-d H:i" }}</dd>
-            </dl>
+
+    <div class="account-layout">
+        <aside class="sidebar" aria-label="Account navigation">
+            <a class="active" href="{% url 'account' %}">Профиль</a>
+            <a href="{% url 'account_settings' %}">Настройки безопасности</a>
+            <a href="{% url 'premium' %}">Подписка/Premium</a>
+            <form method="post" action="{% url 'logout' %}" style="margin:0;">
+                {% csrf_token %}
+                <button type="submit">Log out</button>
+            </form>
+        </aside>
+
+        <section>
+            <article class="panel">
+                <h1 class="profile-name">{{ request.user.first_name|default:request.user.username }}</h1>
+                <p>User cabinet for public MurrLex accounts. Paid features are still closed.</p>
+                <dl>
+                    <dt>Username</dt>
+                    <dd>{{ request.user.username }}</dd>
+                    <dt>Email</dt>
+                    <dd>{{ request.user.email|default:"Not set" }}</dd>
+                    <dt>Display name</dt>
+                    <dd>{{ request.user.first_name|default:"Not set" }}</dd>
+                    <dt>Account status</dt>
+                    <dd>{% if request.user.is_staff %}Staff{% else %}Public user{% endif %}</dd>
+                    <dt>Date joined</dt>
+                    <dd>{{ request.user.date_joined|date:"Y-m-d H:i" }}</dd>
+                </dl>
+            </article>
+
+            <section class="grid" aria-label="Account overview" style="margin-top:14px;">
+                <article class="card">
+                    <span class="badge open">Free</span>
+                    <h2>Current plan</h2>
+                    <p>Your account is on the public free plan while paid access is being designed.</p>
+                </article>
+                <article class="card">
+                    <span class="badge open">Open</span>
+                    <h2>Available now</h2>
+                    <p>You can update profile basics and change the local password.</p>
+                    <p><a href="{% url 'account_settings' %}">Edit account settings</a></p>
+                </article>
+                <article class="card">
+                    <span class="badge locked">Locked</span>
+                    <h2>Premium area</h2>
+                    <p>Protected API and lab tools remain closed while the paid model is planned.</p>
+                    <p><a href="{% url 'premium' %}">View premium preview</a></p>
+                </article>
+            </section>
         </section>
-        <section class="grid" aria-label="Account overview">
-            <article class="card">
-                <h2>Current plan</h2>
-                <p class="muted">Your account is on the public free plan while paid access is being designed.</p>
-                <span class="badge">Free</span>
-            </article>
-            <article class="card">
-                <h2>Available now</h2>
-                <p class="muted">You can register, log in, open this cabinet, and update basic account settings.</p>
-                <a href="{% url 'account_settings' %}">Edit account settings</a>
-                <br>
-                <a href="{% url 'password_change' %}">Change password</a>
-                <br>
-                <span class="badge">Open</span>
-            </article>
-            <article class="card">
-                <h2>Premium area</h2>
-                <p class="muted">Protected API and lab tools remain closed while the paid model is planned.</p>
-                <a href="{% url 'premium' %}">View premium preview</a>
-                <br>
-                <span class="badge warn">Locked</span>
-            </article>
-        </section>
-    </main>
-</body>
-</html>
+    </div>
+</main>
+{% endblock %}

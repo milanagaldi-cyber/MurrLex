@@ -6,7 +6,7 @@ from django.contrib.auth.forms import AuthenticationForm, UserCreationForm
 class UsernameOrEmailAuthenticationForm(AuthenticationForm):
     username = forms.CharField(
         label="Username or email",
-        widget=forms.TextInput(attrs={"autofocus": True}),
+        widget=forms.TextInput(attrs={"autofocus": True, "placeholder": "Username или Email"}),
     )
 
     def clean(self):

@@ -104,7 +104,7 @@ def register(request):
         form = PublicRegistrationForm(request.POST)
         if form.is_valid():
             user = form.save()
-            login(request, user)
+            login(request, user, backend="django.contrib.auth.backends.ModelBackend")
             messages.success(request, "Your account has been created.")
             return redirect("account")
     else:

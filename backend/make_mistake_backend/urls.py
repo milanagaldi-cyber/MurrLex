@@ -23,6 +23,7 @@ from lessons import views as lesson_views
 
 urlpatterns = [
     path("", lesson_views.home, name="home"),
+    path("accounts/", include("allauth.urls")),
     path("admin/", admin.site.urls),
     path("register/", lesson_views.register, name="register"),
     path("account/", lesson_views.account, name="account"),
