@@ -43,8 +43,10 @@
                 {% if form.non_field_errors %}
                     <div class="errors">{{ form.non_field_errors }}</div>
                 {% endif %}
-                <button type="submit">Save settings</button>
-                <a class="button secondary" href="{% url 'password_change' %}" style="margin-left:8px;">Change password</a>
+                <div class="form-actions">
+                    <button type="submit">Save settings</button>
+                    <a class="button secondary" href="{% url 'password_change' %}">Change password</a>
+                </div>
             </form>
         </section>
     </div>

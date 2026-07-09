@@ -304,11 +304,30 @@
             background: var(--danger);
             transition: width .18s ease, background .18s ease;
         }
+        .form-actions {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-top: 20px;
+        }
+        .form-actions button,
+        .form-actions .button {
+            margin: 0;
+        }
         @media (max-width: 760px) {
             .topbar { align-items: flex-start; flex-direction: column; }
             .account-layout { grid-template-columns: 1fr; }
             .sidebar { position: static; }
             dl { grid-template-columns: 1fr; }
+            .form-actions {
+                align-items: stretch;
+                flex-direction: column;
+            }
+            .form-actions button,
+            .form-actions .button {
+                width: 100%;
+            }
         }
     </style>
     {% block extra_head %}{% endblock %}
