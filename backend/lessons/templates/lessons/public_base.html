@@ -245,23 +245,34 @@
             position: sticky;
             top: 16px;
             display: grid;
-            gap: 8px;
+            gap: 6px;
             padding: 14px;
             background: var(--panel);
             border: 1px solid var(--line);
             border-radius: 8px;
         }
         .sidebar a, .sidebar button {
+            position: relative;
+            display: flex;
+            align-items: center;
             justify-content: flex-start;
-            min-height: 40px;
+            min-height: 48px;
             width: 100%;
-            border-color: transparent;
+            border: 1px solid transparent;
+            border-radius: 8px;
             background: transparent;
             color: var(--muted);
-            padding: 0 10px;
+            padding: 0 14px 0 16px;
+            line-height: 1.2;
+            text-align: left;
         }
         .sidebar a.active, .sidebar a:hover, .sidebar button:hover {
             background: var(--panel-2);
+            color: var(--ink);
+        }
+        .sidebar a.active {
+            border-color: #2d4054;
+            box-shadow: inset 3px 0 0 var(--accent);
             color: var(--ink);
         }
         .profile-name {
