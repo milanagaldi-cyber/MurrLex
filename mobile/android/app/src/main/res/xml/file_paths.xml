@@ -2,4 +2,6 @@
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
     <cache-path name="shared_json" path="shared_json/" />
     <cache-path name="shared_audio" path="shared_audio/" />
+    <cache-path name="camera_images" path="camera/" />
+    <cache-path name="crash_logs" path="crash_logs/" />
 </paths>

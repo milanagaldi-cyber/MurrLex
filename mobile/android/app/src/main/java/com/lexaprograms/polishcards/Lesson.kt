@@ -10,6 +10,8 @@ data class Lesson(
     val sourceLanguage: String = "",
     val targetLanguage: String = "",
     val cards: List<Flashcard>,
+    val createdAt: String = "",
+    val updatedAt: String = "",
     val timesCompleted: Int = 0,
     val editable: Boolean = true,
     val hidden: Boolean = false

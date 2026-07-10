@@ -27,6 +27,11 @@ class CardRepository(private val context: Context) {
         prettyPrint = true
     }
 
+    init {
+        // Provider keys belong exclusively to the MurrLex server.
+        preferences.edit().remove(KEY_ELEVENLABS_API_KEY).apply()
+    }
+
 
     fun loadCardStartSide(): CardStartSide {
         val raw = preferences.getString(KEY_CARD_START_SIDE, CardStartSide.POLISH.name)
@@ -174,29 +179,70 @@ class CardRepository(private val context: Context) {
     }
 
     fun loadUseOpenAiModels(): Boolean {
-        return preferences.getBoolean(KEY_USE_OPENAI_MODELS, false)
+        return preferences.getBoolean(KEY_USE_OPENAI_MODELS, true)
     }
 
     fun saveUseOpenAiModels(enabled: Boolean) {
         preferences.edit().putBoolean(KEY_USE_OPENAI_MODELS, enabled).apply()
     }
 
+    fun loadMurrLexServerSession(): MurrLexServerSession {
+        return MurrLexServerSession(
+            serverUrl = preferences.getString(KEY_MURRLEX_SERVER_URL, DEFAULT_MURRLEX_SERVER_URL)
+                ?.trim()
+                ?.trimEnd('/')
+                .orEmpty(),
+            accessToken = SecureSessionValue.decrypt(preferences.getString(KEY_MURRLEX_SERVER_ACCESS_TOKEN, "").orEmpty()),
+            refreshToken = SecureSessionValue.decrypt(preferences.getString(KEY_MURRLEX_SERVER_REFRESH_TOKEN, "").orEmpty()),
+            accessExpiresAtMillis = preferences.getLong(KEY_MURRLEX_SERVER_ACCESS_EXPIRES_AT, 0L),
+            username = preferences.getString(KEY_MURRLEX_SERVER_USERNAME, "").orEmpty(),
+            email = preferences.getString(KEY_MURRLEX_SERVER_EMAIL, "").orEmpty()
+        )
+    }
+
+    fun saveMurrLexServerSession(session: MurrLexServerSession) {
+        preferences.edit()
+            .putString(KEY_MURRLEX_SERVER_URL, session.serverUrl.trim().trimEnd('/'))
+            .putString(KEY_MURRLEX_SERVER_ACCESS_TOKEN, SecureSessionValue.encrypt(session.accessToken))
+            .putString(KEY_MURRLEX_SERVER_REFRESH_TOKEN, SecureSessionValue.encrypt(session.refreshToken))
+            .putLong(KEY_MURRLEX_SERVER_ACCESS_EXPIRES_AT, session.accessExpiresAtMillis)
+            .putString(KEY_MURRLEX_SERVER_USERNAME, session.username)
+            .putString(KEY_MURRLEX_SERVER_EMAIL, session.email)
+            .remove(KEY_OPENAI_API_KEY)
+            .remove(KEY_ELEVENLABS_API_KEY)
+            .apply()
+    }
+
+    fun saveMurrLexServerUrl(serverUrl: String) {
+        preferences.edit().putString(KEY_MURRLEX_SERVER_URL, serverUrl.trim().trimEnd('/')).apply()
+    }
+
+    fun clearMurrLexServerSession() {
+        preferences.edit()
+            .remove(KEY_MURRLEX_SERVER_ACCESS_TOKEN)
+            .remove(KEY_MURRLEX_SERVER_REFRESH_TOKEN)
+            .remove(KEY_MURRLEX_SERVER_ACCESS_EXPIRES_AT)
+            .remove(KEY_MURRLEX_SERVER_USERNAME)
+            .remove(KEY_MURRLEX_SERVER_EMAIL)
+            .remove(KEY_OPENAI_API_KEY)
+            .remove(KEY_ELEVENLABS_API_KEY)
+            .apply()
+    }
+
     fun loadOpenAiBaseUrl(): String {
-        return preferences.getString(KEY_OPENAI_BASE_URL, DEFAULT_OPENAI_BASE_URL)?.trim()
-            ?.ifBlank { DEFAULT_OPENAI_BASE_URL }
-            ?: DEFAULT_OPENAI_BASE_URL
+        return loadMurrLexServerSession().serverUrl
     }
 
     fun saveOpenAiBaseUrl(url: String) {
-        preferences.edit().putString(KEY_OPENAI_BASE_URL, url.trim().ifBlank { DEFAULT_OPENAI_BASE_URL }).apply()
+        saveMurrLexServerUrl(url)
     }
 
     fun loadOpenAiApiKey(): String {
-        return preferences.getString(KEY_OPENAI_API_KEY, "") ?: ""
+        return loadMurrLexServerSession().accessToken
     }
 
     fun saveOpenAiApiKey(apiKey: String) {
-        preferences.edit().putString(KEY_OPENAI_API_KEY, apiKey.trim()).apply()
+        // Provider API keys are intentionally not stored on the device anymore.
     }
 
     fun loadOpenAiSpeechModel(): String {
@@ -215,6 +261,15 @@ class CardRepository(private val context: Context) {
 
     fun saveOpenAiTextModel(model: String) {
         preferences.edit().putString(KEY_OPENAI_TEXT_MODEL, model.trim().ifBlank { DEFAULT_OPENAI_TEXT_MODEL }).apply()
+    }
+
+    fun loadOpenAiImageTextModel(): String {
+        return preferences.getString(KEY_OPENAI_IMAGE_TEXT_MODEL, DEFAULT_OPENAI_IMAGE_TEXT_MODEL)
+            ?: DEFAULT_OPENAI_IMAGE_TEXT_MODEL
+    }
+
+    fun saveOpenAiImageTextModel(model: String) {
+        preferences.edit().putString(KEY_OPENAI_IMAGE_TEXT_MODEL, model.trim().ifBlank { DEFAULT_OPENAI_IMAGE_TEXT_MODEL }).apply()
     }
 
     fun loadOpenAiTtsModel(): String {
@@ -247,11 +302,11 @@ class CardRepository(private val context: Context) {
     }
 
     fun loadElevenLabsApiKey(): String {
-        return preferences.getString(KEY_ELEVENLABS_API_KEY, "") ?: ""
+        return ""
     }
 
     fun saveElevenLabsApiKey(apiKey: String) {
-        preferences.edit().putString(KEY_ELEVENLABS_API_KEY, apiKey.trim()).apply()
+        preferences.edit().remove(KEY_ELEVENLABS_API_KEY).apply()
     }
 
     fun loadElevenLabsModel(): String {
@@ -313,6 +368,29 @@ class CardRepository(private val context: Context) {
     fun loadCardStatusBlinkIntervalMs(): Long {
         val saved = preferences.getLong(KEY_CARD_STATUS_BLINK_INTERVAL_MS, DEFAULT_CARD_STATUS_BLINK_INTERVAL_MS)
         return if (saved in CARD_STATUS_BLINK_INTERVAL_OPTIONS_MS) saved else DEFAULT_CARD_STATUS_BLINK_INTERVAL_MS
+    }
+
+    fun loadCatReplySpeechRate(): Float {
+        return preferences.getFloat(KEY_CAT_REPLY_SPEECH_RATE, DEFAULT_CAT_REPLY_SPEECH_RATE)
+            .coerceIn(MIN_CAT_REPLY_SPEECH_RATE, MAX_CAT_REPLY_SPEECH_RATE)
+    }
+
+    fun saveCatReplySpeechRate(rate: Float) {
+        preferences.edit()
+            .putFloat(KEY_CAT_REPLY_SPEECH_RATE, rate.coerceIn(MIN_CAT_REPLY_SPEECH_RATE, MAX_CAT_REPLY_SPEECH_RATE))
+            .apply()
+    }
+
+    fun loadCatDialogRetentionDays(): Int {
+        return preferences.getInt(KEY_CAT_DIALOG_RETENTION_DAYS, DEFAULT_CAT_DIALOG_RETENTION_DAYS)
+            .coerceIn(MIN_CAT_DIALOG_RETENTION_DAYS, MAX_CAT_DIALOG_RETENTION_DAYS)
+    }
+
+    fun saveCatDialogRetentionDays(days: Int) {
+        preferences.edit()
+            .putInt(KEY_CAT_DIALOG_RETENTION_DAYS, days.coerceIn(MIN_CAT_DIALOG_RETENTION_DAYS, MAX_CAT_DIALOG_RETENTION_DAYS))
+            .apply()
+        pruneCatDialogs()
     }
 
     fun saveCardStatusBlinkIntervalMs(intervalMs: Long) {
@@ -539,6 +617,78 @@ class CardRepository(private val context: Context) {
         return updatedCard
     }
 
+    fun loadCatDialogs(includeHidden: Boolean = false): List<CatDialog> {
+        pruneCatDialogs()
+        return loadStoredCatDialogs().filter { includeHidden || !it.hidden }
+    }
+
+    fun saveCatDialog(dialog: CatDialog) {
+        val nowMs = System.currentTimeMillis()
+        val now = storageTimestamp()
+        val stored = loadStoredCatDialogs()
+        val existing = stored.firstOrNull { it.id == dialog.id }
+        val savedDialog = dialog.copy(
+            createdAt = existing?.createdAt?.takeIf { it.isNotBlank() } ?: dialog.createdAt.ifBlank { now },
+            updatedAt = now,
+            createdAtMillis = existing?.createdAtMillis?.takeIf { it > 0L } ?: dialog.createdAtMillis.takeIf { it > 0L } ?: nowMs,
+            updatedAtMillis = nowMs
+        )
+        val next = stored.filterNot { it.id == savedDialog.id } + savedDialog
+        preferences.edit().putString(KEY_CAT_DIALOGS, json.encodeToString(next)).apply()
+        pruneCatDialogs()
+    }
+
+    fun deleteCatDialog(dialogId: String) {
+        val next = loadStoredCatDialogs().filterNot { it.id == dialogId }
+        preferences.edit().putString(KEY_CAT_DIALOGS, json.encodeToString(next)).apply()
+    }
+
+    fun setCatDialogHidden(dialogId: String, hidden: Boolean) {
+        val next = loadStoredCatDialogs().map { dialog ->
+            if (dialog.id == dialogId) dialog.copy(hidden = hidden, updatedAt = storageTimestamp(), updatedAtMillis = System.currentTimeMillis()) else dialog
+        }
+        preferences.edit().putString(KEY_CAT_DIALOGS, json.encodeToString(next)).apply()
+    }
+
+    fun setCatDialogFeatured(dialogId: String, featured: Boolean) {
+        val next = loadStoredCatDialogs().map { dialog ->
+            if (dialog.id == dialogId) dialog.copy(featured = featured, updatedAt = storageTimestamp(), updatedAtMillis = System.currentTimeMillis()) else dialog
+        }
+        preferences.edit().putString(KEY_CAT_DIALOGS, json.encodeToString(next)).apply()
+    }
+
+    fun setCatDialogMessageFeaturedSelection(dialogId: String, messageId: String, selection: String) {
+        val cleanSelection = selection.trim()
+        if (dialogId.isBlank() || messageId.isBlank() || cleanSelection.isBlank()) return
+        val now = storageTimestamp()
+        val nowMs = System.currentTimeMillis()
+        val next = loadStoredCatDialogs().map { dialog ->
+            if (dialog.id == dialogId) {
+                dialog.copy(
+                    messages = dialog.messages.map { message ->
+                        if (message.id == messageId) message.copy(featuredSelection = cleanSelection) else message
+                    },
+                    updatedAt = now,
+                    updatedAtMillis = nowMs
+                )
+            } else {
+                dialog
+            }
+        }
+        preferences.edit().putString(KEY_CAT_DIALOGS, json.encodeToString(next)).apply()
+    }
+
+    fun moveCatDialog(draggedDialogId: String, targetDialogId: String) {
+        if (draggedDialogId == targetDialogId) return
+        val dialogs = loadStoredCatDialogs().toMutableList()
+        val fromIndex = dialogs.indexOfFirst { it.id == draggedDialogId }
+        val toIndex = dialogs.indexOfFirst { it.id == targetDialogId }
+        if (fromIndex !in dialogs.indices || toIndex !in dialogs.indices) return
+        val moved = dialogs.removeAt(fromIndex)
+        dialogs.add(toIndex, moved)
+        preferences.edit().putString(KEY_CAT_DIALOGS, json.encodeToString(dialogs)).apply()
+    }
+
     fun loadLessons(includeHidden: Boolean = false): List<Lesson> {
         val hiddenLessonIds = loadHiddenLessonIds()
         val builtInLessons = loadBuiltInLessons().map { it.copy(hidden = it.id in hiddenLessonIds) }
@@ -564,17 +714,25 @@ class CardRepository(private val context: Context) {
         } else {
             loadHiddenLessonIds().filterNot { it == lesson.id }
         }
-        val lessons = loadStoredLessons().filterNot { it.id == lesson.id } + lesson.withHeaderLanguages().copy(
+        val storedLessons = loadStoredLessons()
+        val existingLesson = storedLessons.firstOrNull { it.id == lesson.id }
+        val savedAt = storageTimestamp()
+        val createdAt = listOf(existingLesson?.createdAt, lesson.createdAt).firstOrNull { !it.isNullOrBlank() } ?: savedAt
+        val lessonForStorage = lesson.withHeaderLanguages().copy(
             title = lesson.title.cleanKindSuffix(),
+            createdAt = createdAt,
+            updatedAt = savedAt,
             editable = true
         )
+        val lessons = storedLessons.filterNot { it.id == lesson.id } + lessonForStorage
         val lessonOrder = (loadLessonOrder() + lesson.id).distinct()
         preferences.edit()
             .putString(KEY_LESSONS, json.encodeToString(lessons))
             .putString(KEY_HIDDEN_LESSONS, json.encodeToString(hiddenLessonIds))
             .putString(KEY_LESSON_ORDER, json.encodeToString(lessonOrder))
             .commit()
-        syncLessonCardCache(lesson.id, lesson.withHeaderLanguages())
+        syncLessonCardCache(lesson.id, lessonForStorage)
+        pruneOriginalVoiceCache(lessons)
     }
 
     fun saveLessonOrder(lessonIds: List<String>) {
@@ -613,6 +771,7 @@ class CardRepository(private val context: Context) {
             .also { editor -> lessonIds.forEach { editor.remove(studySessionKey(it)) } }
             .apply()
         lessonIds.forEach(::deleteLessonCardCache)
+        pruneOriginalVoiceCache(lessons)
     }
 
     fun incrementCompletedCount(lessonId: String) {
@@ -714,6 +873,27 @@ class CardRepository(private val context: Context) {
         )
     }
 
+    private fun storageTimestamp(): String {
+        return SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date())
+    }
+
+    private fun loadStoredCatDialogs(): List<CatDialog> {
+        val raw = preferences.getString(KEY_CAT_DIALOGS, null) ?: return emptyList()
+        return runCatching { json.decodeFromString<List<CatDialog>>(raw) }.getOrDefault(emptyList())
+    }
+
+    private fun pruneCatDialogs() {
+        val retentionDays = loadCatDialogRetentionDays()
+        val cutoff = System.currentTimeMillis() - retentionDays * 86_400_000L
+        val stored = loadStoredCatDialogs()
+        val next = stored.filter { dialog ->
+            dialog.featured || (dialog.updatedAtMillis.takeIf { it > 0L } ?: dialog.createdAtMillis) >= cutoff
+        }
+        if (next.size != stored.size) {
+            preferences.edit().putString(KEY_CAT_DIALOGS, json.encodeToString(next)).apply()
+        }
+    }
+
     private fun String?.lessonLanguageOrEmpty(): String {
         val cleaned = orEmpty().trim()
         return if (cleaned.equals("Mixed", ignoreCase = true)) "" else cleaned
@@ -770,6 +950,8 @@ class CardRepository(private val context: Context) {
                 .put("nativeValue", card.nativeText())
                 .put("correctValue", card.correctText())
                 .put("hint", card.hintText())
+                .put("original", card.originalText())
+                .put("originalAudioPath", card.originalAudioPathText())
                 .put("where", card.whereText())
                 .put("madeAt", card.madeAtText())
                 .put("updatedAt", System.currentTimeMillis())
@@ -781,6 +963,20 @@ class CardRepository(private val context: Context) {
         val lessonPrefix = "${lessonId.safeCacheFilePart()}_"
         cardCacheDir().listFiles()
             ?.filter { it.name.startsWith(lessonPrefix) }
+            ?.forEach { it.delete() }
+    }
+
+    private fun originalVoiceCacheDir(): File = File(cardCacheDir(), "original_voice")
+
+    private fun pruneOriginalVoiceCache(lessons: List<Lesson>) {
+        val dir = originalVoiceCacheDir()
+        val referenced = lessons
+            .flatMap { lesson -> lesson.cards }
+            .mapNotNull { card -> card.originalAudioPathText().takeIf { it.isNotBlank() } }
+            .map { path -> runCatching { File(path).canonicalPath }.getOrDefault(path) }
+            .toSet()
+        dir.listFiles()
+            ?.filter { file -> file.isFile && runCatching { file.canonicalPath }.getOrDefault(file.absolutePath) !in referenced }
             ?.forEach { it.delete() }
     }
 
@@ -827,13 +1023,14 @@ class CardRepository(private val context: Context) {
         const val OFFLINE_SPEECH_STATUS_READY = "Ready"
         const val OFFLINE_SPEECH_STATUS_ERROR = "Error"
         const val OFFLINE_SPEECH_STATUS_NOT_SUPPORTED = "Not supported"
-        const val DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
+        const val DEFAULT_MURRLEX_SERVER_URL = "https://ml-staging-api.lexaailabs.com"
+        const val DEFAULT_OPENAI_BASE_URL = DEFAULT_MURRLEX_SERVER_URL
         const val DEFAULT_OPENAI_SPEECH_MODEL = "gpt-4o-mini-transcribe"
         const val DEFAULT_OPENAI_TEXT_MODEL = "gpt-5.4-mini"
+        const val DEFAULT_OPENAI_IMAGE_TEXT_MODEL = "gpt-4o-mini"
         const val DEFAULT_OPENAI_TTS_MODEL = "gpt-4o-mini-tts"
         const val DEFAULT_OPENAI_TTS_VOICE = "coral"
         const val DEFAULT_BELARUSIAN_TTS_PROVIDER = "ElevenLabs"
-        const val DEFAULT_ELEVENLABS_BASE_URL = "https://api.elevenlabs.io/v1"
         const val DEFAULT_ELEVENLABS_MODEL = "eleven_v3"
         const val DEFAULT_ELEVENLABS_BELARUSIAN_VOICE_ID = "q19tj6dG7gitafffmfLO"
         val DEFAULT_ELEVENLABS_TTS_LANGUAGE_CODES = setOf("be")
@@ -847,6 +1044,12 @@ class CardRepository(private val context: Context) {
         const val DEFAULT_CARD_STATUS_BLINK_INTERVAL_MS = 2_000L
         val CARD_STATUS_BLINK_INTERVAL_OPTIONS_MS = setOf(0L, 500L, 1_000L, 2_000L, 3_000L, 4_000L, 5_000L)
         const val OPENAI_ACTIVITY_LOG_RETENTION_MS = 172_800_000L
+        const val DEFAULT_CAT_DIALOG_RETENTION_DAYS = 30
+        const val MIN_CAT_DIALOG_RETENTION_DAYS = 1
+        const val MAX_CAT_DIALOG_RETENTION_DAYS = 365
+        const val DEFAULT_CAT_REPLY_SPEECH_RATE = 1.0f
+        const val MIN_CAT_REPLY_SPEECH_RATE = 0.5f
+        const val MAX_CAT_REPLY_SPEECH_RATE = 2.5f
 
         private const val KEY_LESSONS = "lessons"
         private const val KEY_STATS = "stats"
@@ -872,8 +1075,15 @@ class CardRepository(private val context: Context) {
         private const val KEY_USE_OPENAI_MODELS = "use_openai_models"
         private const val KEY_OPENAI_BASE_URL = "openai_base_url"
         private const val KEY_OPENAI_API_KEY = "openai_api_key"
+        private const val KEY_MURRLEX_SERVER_URL = "murrlex_server_url"
+        private const val KEY_MURRLEX_SERVER_ACCESS_TOKEN = "murrlex_server_access_token"
+        private const val KEY_MURRLEX_SERVER_REFRESH_TOKEN = "murrlex_server_refresh_token"
+        private const val KEY_MURRLEX_SERVER_ACCESS_EXPIRES_AT = "murrlex_server_access_expires_at"
+        private const val KEY_MURRLEX_SERVER_USERNAME = "murrlex_server_username"
+        private const val KEY_MURRLEX_SERVER_EMAIL = "murrlex_server_email"
         private const val KEY_OPENAI_SPEECH_MODEL = "openai_speech_model"
         private const val KEY_OPENAI_TEXT_MODEL = "openai_text_model"
+        private const val KEY_OPENAI_IMAGE_TEXT_MODEL = "openai_image_text_model"
         private const val KEY_OPENAI_TTS_MODEL = "openai_tts_model"
         private const val KEY_OPENAI_TTS_VOICE = "openai_tts_voice"
         private const val KEY_BELARUSIAN_TTS_PROVIDER = "belarusian_tts_provider"
@@ -884,6 +1094,9 @@ class CardRepository(private val context: Context) {
         private const val KEY_OPENAI_CACHE_DURATION_MINUTES = "openai_cache_duration_minutes"
         private const val KEY_OPENAI_VOICE_SILENCE_TIMEOUT_MS = "openai_voice_silence_timeout_ms"
         private const val KEY_CARD_STATUS_BLINK_INTERVAL_MS = "card_status_blink_interval_ms"
+        private const val KEY_CAT_DIALOGS = "cat_dialogs"
+        private const val KEY_CAT_DIALOG_RETENTION_DAYS = "cat_dialog_retention_days"
+        private const val KEY_CAT_REPLY_SPEECH_RATE = "cat_reply_speech_rate"
         private const val KEY_OPENAI_ACTIVITY_LOG = "openai_activity_log"
         private const val KEY_OFFLINE_SPEECH_LANGUAGE = "offline_speech_language"
         private const val KEY_OFFLINE_SPEECH_STATUS_PREFIX = "offline_speech_status_"

@@ -19,9 +19,9 @@ Reason: the immediate goal is a stable mobile app and clean v0.02 thread.
 
 ## Android Version At Checkpoint
 
-The visible Android version is `MurrLex v0.35`.
+The visible Android version is `MurrLex v0.88`.
 
-Reason: user requested every new Android build to increase the app version by `0.01`; v0.35 adds Android text share-import from other apps and converts shared posts into sentence or vocabulary cards for the current Basic/Target pair.
+Reason: user requested every new Android build to increase the app version by `0.01`; v0.88 improves the draggable letter-cube game with non-overlapping placement, tap controls, letters-only tokens, a sentence word-order stage, and a summer meadow background.
 
 ## Language Roles
 

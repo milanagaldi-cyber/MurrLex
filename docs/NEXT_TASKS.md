@@ -9,7 +9,7 @@ Verify a clean Android install from the current debug APK:
 1. Uninstall existing app or clear app data.
 2. Install `mobile/android/app/build/outputs/apk/debug/app-debug.apk`.
 3. Confirm the app name is MurrLex.
-4. Confirm Settings shows version `0.35`.
+4. Confirm Settings shows version `0.88`.
 5. Confirm bundled lessons show readable text.
 6. Confirm opening a lesson displays cards.
 7. Confirm Translate works online through the free Google Translate path.
@@ -49,7 +49,11 @@ Verify a clean Android install from the current debug APK:
 41. Confirm tapping `MurrLex` and the Study card language/status area immediately refreshes online/offline status.
 42. Confirm same-language microphone Quick Vocabulary input creates a Mistake card with OpenAI correction, explanation, rules, and examples.
 43. Confirm long-press on a Mistake card opens ten Train-card options, creates `TR` cards, and Train cards do not open the generator.
-44. Confirm sharing a text post from Telegram/Instagram/YouTube/Viber into MurrLex opens the import dialog and creates cards from up to 100 words.
+44. Confirm sharing a text post from Telegram/Instagram/YouTube/Viber into MurrLex opens the import dialog and creates retelling cards from up to 500 words.
+45. Confirm the URL icon left of `MurrLex` opens a link popup and creates a lesson from a pasted Telegram/web URL when page text is readable.
+46. Confirm `https://t.me/headlines_for_traders/80333` imports the Russian post text, not Telegram navigation or `<script data-telegram-post...>` content.
+47. Confirm a long shared post sends up to 500 words to OpenAI and returns one Basic -> Target retelling card per meaningful sentence.
+48. Confirm an ordinary article URL, such as `https://iz.ru/2123208/2026-06-28/politico-soobshchila-o-rastushchei-izoliatcii-izrailia-na-mirovoi-arene`, extracts readable article text and returns Basic -> Target thesis cards from up to 2000 words.
 18. Confirm OpenAI mode uses separate STT/text/TTS models, requires API key, and does not show Google attribution for OpenAI translations.
 19. Confirm OpenAI translation/TTS cache hits avoid duplicate API calls and Clear app cache removes cached entries.
 20. Confirm OpenAI cache hits ignore case and punctuation differences in the input.

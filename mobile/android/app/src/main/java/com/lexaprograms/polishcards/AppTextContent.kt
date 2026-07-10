@@ -9,6 +9,8 @@ internal fun sampleLessonJson(): String {
           "lessonInfo": "Instructions shown from the lesson info icon. Use this for the purpose of the lesson, how to answer, what to pay attention to, and any workflow notes for this set of cards.",
           "sourceLanguage": "Front side input language selected from the app settings list, for example Russian.",
           "targetLanguage": "Back side input language selected from the app settings list, for example Polish.",
+          "createdAt": "When the lesson was first saved, for example 2026-06-29 18:40.",
+          "updatedAt": "When the lesson was last changed, for example 2026-06-29 18:45.",
           "timesCompleted": 0,
           "editable": true,
           "cards": [
@@ -60,7 +62,46 @@ internal fun sampleLessonJson(): String {
 
 internal fun versionLogText(): String {
     return """
+        MurrLex v0.89 - Online text, speech recognition, text-to-speech, ElevenLabs speech, and image text recognition now use the authenticated MurrLex server gateway. Provider keys remain on the server; the device keeps only an Android Keystore-encrypted renewable session. Offline Android and ML Kit paths remain local.
         Google Translate attribution - Translate mode can use on-device Google Translate via ML Kit. Google disclaims warranties related to translation accuracy and reliability. See https://cloud.google.com/translate and https://translate.google.com.
+        MurrLex v0.73 - Added 16-bit Ginger Spin Runner as a full-screen native Canvas speed-runner with parallax depth, textured terrain, jump/spin movement, opponents, three lives, and four-choice word recovery.
+        MurrLex v0.72 - Added 8-bit Ginger Platformer as a full-screen native Canvas retro platformer with pixel-art ginger cat movement, jumping, platforms, question blocks, and card-answer choices.
+        MurrLex v0.71 - Added Pseudo 3D Cat Walk as a separate full-screen native Canvas game experiment with three-lane movement, perspective gates, card answers, and a ginger fluffy cat.
+        MurrLex v0.70 - Added a ginger fluffy cat game lab with Compose UI, Compose Canvas, and local HTML5 Canvas/WebView prototypes for experimenting with language games.
+        MurrLex v0.69 - Cat chat now shows recognized user text, cat replies, and later language checks as soon as each stage is available, keeps focus on the latest phrase, and lets taps toggle word selection for Feature/Create Card.
+        MurrLex v0.68 - Back navigation now resets sticky Settings return state, the Study translate button shows the target language code, and manual card-side edits clear cached side audio for that side.
+        MurrLex v0.67 - Search toggles by tapping the icon, lesson tiles show orange card-content match counts, searched lessons open at the first matching card, T translates into the card-side language, and quick Edit pre-fills the visible card text.
+        MurrLex v0.66 - Анимация (оригинал) now includes the full original ANIM-001 through ANIM-010 set, lessons/dialogs use compact expandable Search, lesson search includes card content, and sorting returns lesson views to the top.
+        MurrLex v0.65 - The cat menu now includes Анимация (оригинал), a separate full-screen view using the original makemistake-animations ANIM-007 talking character renderer.
+        MurrLex v0.64 - The chat text-selection menu now shows Feature first and Create Cards second, Animation Lab opens as a full screen with Back navigation instead of a popup, and lesson/Study sorting have explicit Asc/Desc controls.
+        MurrLex v0.63 - Featured chat selections are now clickable links with a mini explanation and create-card popup, Cat chat card creation confirms inside the dialog, and the Animations menu opens live preview screens for makemistake-animations ANIM-001 through ANIM-010.
+        MurrLex v0.62 - Featured chat selections now display in bold, the text-selection menu shows Create Card before Featured, card creation from Cat chat shows a quick confirmation, and the cat dropdown opens a makemistake-animations catalog.
+        MurrLex v0.61 - Cat chat correction analysis now appears after the cat answer, stays shorter and in the active message language, the chat has reply-speed and reaction emoji controls, selected chat cards become Hint-to-Answer cards, and Study sorting shows an explicit direction option.
+        MurrLex v0.60 - Cat chat voice recognition now uses the active Basic language directly, chat bubbles use native text selection with Feature and Make card actions instead of extra card buttons, Cat dialogs moved to the fifth mode icon beside dictionary modes, and Study card sorting now has Ascending/Descending direction.
+        MurrLex v0.59 - Cat chat now saves dialogs, keeps starred dialogs from auto-pruning, analyzes user replies separately from spoken cat answers, creates Mistake cards from analysis, creates featured cards from selected chat fragments, adds cat dialog cards on the main UI, and adds dialog retention plus reply-speed settings.
+        MurrLex v0.58 - Cat chat voice input now sends automatically after recognition, lesson list/map navigation restores the previous position, lessons show their last modified date, and the catalog has search plus sorting by created time, modified time, title, card count, and language pair.
+        MurrLex v0.57 - Cat chat now supports Basic-language voice input, speaker playback beside cat answers, automatic spoken cat replies, and an in-dialog Auto voice toggle.
+        MurrLex v0.56 - Cat chat messages now show an explicit Create card action, and the cat menu adds Feed the cat: an animated card game where correct answers fill the cat's bowl.
+        MurrLex v0.55 - The title cat button now opens a menu with Cat chat plus three card games: Quick quiz, Match pairs, and Spell check, using the current lesson or catalog cards.
+        MurrLex v0.54 - Cat chat Create Card now distinguishes user text from cat answers: cat answers become Target-side language cards in the current Basic -> answer-language pair, with the Basic side translated automatically.
+        MurrLex v0.53 - Added a Catalog lesson-island map opened from the main MurrLex title; tapping a lesson island opens that lesson directly into its card-island path.
+        MurrLex v0.52 - Fixed MurrLex title clicks so the online/offline status refresh stays on the status dot, added an animated Cat chat button beside the title, and lets chat phrases create Basic -> Target cards.
+        MurrLex v0.51 - Added a Duolingo-style Study map opened from the Study MurrLex title, with lightly animated card islands, island-to-card navigation, and Back returning from a map-opened card to the map.
+        MurrLex v0.50 - Tightened the top action row, removed the duplicate title URL icon, fixed Study display-menu dismissal from outside/root taps, and added clipboard URL auto-fill with Clear/Paste controls.
+        MurrLex v0.49 - Moved URL import beside the image/camera actions, changed the Study display menu to a dedicated display-settings icon that stays open after option taps, and added original OpenAI STT voice playback from the card cat menu.
+        MurrLex v0.48 - Replaced O/T original-card toggles with compact destination language-code circles, so original text can switch to Basic and translated Basic can switch back to the original language.
+        MurrLex v0.47 - Preserved original typed/OCR/URL text when its detected language differs from Basic, added original/translation card switching, Study card copy/move actions, and empty-OK card flipping.
+        MurrLex v0.46 - Fixed Catalog image/camera actions, restored separate Study card Info/Edit buttons beside the cat menu, added confirmed Delete to the cat menu, forced Study-created cards to append at the lesson end, and moved the card status dot back beside the language code.
+        MurrLex v0.45 - Restored full Study card actions inside the cat menu, added the image OCR button to the Catalog action bar, made the Study language menu toggle from the language code, and fixed image cards appended to a lesson to stay at the end with correct navigation/counts.
+        MurrLex v0.44 - Replaced separate Study card action buttons with one round cat-face menu for sharing the card, exporting cached side audio, and viewing card log/progress.
+        MurrLex v0.43 - Changed the Study language code into a display menu for sorting/done/three-star visibility, separated gallery and camera image actions, and makes Study image OCR add one card per image to the current lesson while global image import creates a new lesson.
+        MurrLex v0.42 - Moved the Study card online dot under the language code, swapped the clear and speaker answer buttons, added a Study camera photo action, and lets image import process up to five photos into one lesson.
+        MurrLex v0.41 - Added OpenAI image/screenshot text recognition with a separate image-text model setting and a photo import button next to the URL import action.
+        MurrLex v0.40 - Added ordinary website article import: URL text extraction now supports article/main/paragraph HTML and sends up to 2000 words to OpenAI for Basic-to-Target thesis cards.
+        MurrLex v0.39 - Changed shared post import so each meaningful sentence becomes one Basic-to-Target retelling card.
+        MurrLex v0.38 - Changed shared post and URL import to send up to 500 words to OpenAI and create Basic-to-Target retelling cards.
+        MurrLex v0.37 - Fixed Telegram URL import so post text is extracted from Telegram metadata/widget content instead of navigation or embed script text.
+        MurrLex v0.36 - Added a URL import button next to the MurrLex title so shared links can be pasted manually and turned into a lesson through the same post-card flow.
         MurrLex v0.35 - Added Android share-target import for text posts from other apps, with a 100-word preview and automatic sentence/vocabulary card creation for the current Basic/Target pair.
         MurrLex v0.34 - Added manual online/offline refresh from the title and card status, same-language microphone Mistake correction with OpenAI, and long-press Mistake generation of Train cards.
         MurrLex v0.33 - OpenAI card translation now writes a short explanation, rule, and examples into the card, copy-to-input also copies to clipboard, and the answer input label follows the current card side language.

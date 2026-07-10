@@ -10,7 +10,7 @@ Confirmed:
 - GitHub repository: `https://github.com/milanagaldi-cyber/MurrLex`
 - Working branch: `Android_Main`
 - Android app name: `MurrLex`
-- Android visible version: `0.35`
+- Android visible version: `0.89`
 - Android namespace/package remains legacy: `com.lexaprograms.polishcards`
 - Backend and connector are preserved in the monorepo but are not the focus of this checkpoint.
 
@@ -24,7 +24,7 @@ $env:JAVA_HOME='C:\Program Files\Android\Android Studio\jbr'
 .\gradlew.bat assembleDebug
 ```
 
-`assembleDebug` completed with `BUILD SUCCESSFUL` for v0.35. `lintDebug` was not rerun for this checkpoint.
+`compileDebugKotlin --no-daemon` and `packageDebug --no-daemon` completed for v0.89. `lintDebug` was not rerun for this checkpoint.
 
 ## What Works
 
@@ -32,6 +32,15 @@ Confirmed from code and build:
 
 - Android project compiles.
 - Debug APK builds.
+- `16-bit Ginger Spin Runner` opens as a separate full-screen native Canvas speed-runner with parallax depth, textured terrain, jump/spin movement, opponents, three lives, and four-choice word recovery.
+- `8-bit Ginger Platformer` opens as a separate full-screen native Canvas game with pixel-art ginger cat movement, jumping, platforms, question blocks, and card-answer choices.
+- `Pseudo 3D Cat Walk` opens as a separate full-screen native Canvas game with a ginger fluffy cat, three-lane movement, perspective gates, and card-answer progression.
+- The cat menu now includes a ginger fluffy cat game lab with Compose UI, Compose Canvas, and local HTML5 Canvas/WebView prototypes.
+- Cat chat now shows each stage as soon as it is available: recognized user text appears immediately, the cat answer appears before analysis finishes, the list scrolls to the latest phrase, and tapped words toggle quick selection for Feature/Create Card.
+- The cat menu has a separate `Анимация (оригинал)` entry that opens the original makemistake-animations ANIM-001 through ANIM-010 demos as a full screen.
+- Lesson and dialog screens use compact expandable Search; lesson search includes card content, and sorting scrolls lesson list/map views back to the top.
+- Lesson tiles show temporary orange card-content match counts while searching; opening a searched lesson jumps to the first matching card. Study quick Edit pre-fills the visible card text, and T translates toward the active card-side language.
+- Back navigation resets sticky Settings return state when opening lessons/catalog/dialogs; the Study translate action shows the target language code and manual side edits clear cached side audio.
 - Belarusian OpenAI speech recognition routes through `be-BY`/`language=be`.
 - ElevenLabs Belarusian TTS now reports safe HTTP diagnostics such as 403 instead of a generic failure.
 - Startup purr uses a packaged mp3 resource.
@@ -49,14 +58,24 @@ Confirmed from code and build:
 - Tapping the `MurrLex` title or the Study card language/status area forces an immediate online/offline recheck.
 - Same-language Quick Vocabulary microphone input creates a Mistake card and asks the configured OpenAI text model for a same-language correction with explanation, all applicable rules, and examples.
 - Long-pressing a Mistake card opens ten selectable Train-card generation options. Generated Train cards use card kind `TR` and do not react as generation sources.
-- Android text sharing into MurrLex is supported for `text/plain` posts. The import dialog previews up to 100 words and creates sentence cards or Target-language vocabulary cards for the current Basic/Target pair.
+- Android text sharing into MurrLex is supported for `text/plain` posts. The import dialog previews up to 500 words and creates one Basic -> Target retelling card per meaningful sentence.
+- A URL icon next to the `MurrLex` title opens a manual link-import popup and uses the same shared-post card creation flow after fetching readable page text.
+- Telegram URL parsing prefers post metadata/widget content and filters out service navigation/embed/script text before sending content to OpenAI/shared-post card creation.
+- Shared post and URL imports now send up to 500 words to OpenAI and generate one Basic -> Target retelling card per meaningful sentence.
+- Manual URL import for ordinary websites now extracts article/main/paragraph content, sends up to 2000 words to OpenAI, and generates roughly one Basic -> Target thesis card per 50 words.
+- Photo/screenshot import now uses a separate OpenAI image-text model setting, caches recognized text by image hash, and sends extracted text into shared-post card generation.
+- Image import can process up to five selected photos into one lesson, and Study has a camera action next to the card language code.
+- Study language-code tap opens the display menu for sorting, done-card visibility, and three-star-card visibility. Study gallery/camera OCR appends one card per image/photo to the current lesson; global image import creates a new lesson.
+- Study card top-right actions are grouped into one round cat-face menu for sharing, cached visible-side audio export, and card log/progress.
+- Study cat menu keeps Info/rule, quick edit, full edit, share, cached side-audio export, and log/progress. Catalog has explicit image OCR access. Study image cards append to the lesson end and navigate to that appended card with full lesson counts.
+- Catalog gallery/camera OCR actions are separate matching icons. Study card Info/Edit are separate UI buttons beside the cat menu, which includes confirmed Delete. Study-created cards append at lesson end and navigate there.
 - Lesson/card data model exists.
 - Local repository logic exists.
 - Built-in lesson assets exist.
 - Study session model exists.
 - Study ordering includes Original, Alphabetical, and Random.
 - Card, Test, Translate, and Split UI code exists.
-- Translate/Split online translation uses the free Google Translate endpoint by default.
+- v0.89 introduces the authenticated MurrLex server AI gateway. Online translation/text work, STT, TTS, and OCR route through `/api/ai/*`; provider keys are server-side only. Offline translation, recognition, TTS, and cached audio remain local.
 - Critical offline translation uses ML Kit Google Translate with downloaded models.
 - Offline speech recognition works through Android on-device SpeechRecognizer after the selected language model is downloaded.
 - The red offline title dot now drives behavior: offline recognition/translation run when the device is offline even if the manual critical offline toggle is off.

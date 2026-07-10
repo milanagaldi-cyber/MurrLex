@@ -1,0 +1,471 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}MurrLex Server{% endblock %}</title>
+    <script>
+        (() => {
+            try {
+                const savedTheme = localStorage.getItem("theme");
+                document.documentElement.dataset.theme = ["dark", "light", "auto"].includes(savedTheme)
+                    ? savedTheme
+                    : "dark";
+            } catch (error) {
+                document.documentElement.dataset.theme = "dark";
+            }
+        })();
+    </script>
+    <style>
+        :root {
+            color-scheme: dark;
+            --bg: #0b0f14;
+            --panel: #111821;
+            --panel-2: #151e29;
+            --ink: #edf5ff;
+            --muted: #93a4b8;
+            --line: #263241;
+            --accent: #18b7ff;
+            --accent-strong: #65d8ff;
+            --good: #42e68a;
+            --warn: #f2c94c;
+            --danger: #ff6b6b;
+            --input-bg: #0e141c;
+            --disabled-bg: #0f151d;
+            --button-ink: #03111a;
+            --hover-link: #ffffff;
+            --focus-ring: rgba(24, 183, 255, 0.35);
+            --active-border: #2d4054;
+            --mono: "JetBrains Mono", "Fira Code", Consolas, monospace;
+        }
+        html[data-theme="light"] {
+            color-scheme: light;
+            --bg: #f4f7fb;
+            --panel: #ffffff;
+            --panel-2: #eaf2f8;
+            --ink: #122033;
+            --muted: #53657a;
+            --line: #c9d4df;
+            --accent: #087eaf;
+            --accent-strong: #05658e;
+            --good: #198754;
+            --warn: #9a6700;
+            --danger: #c0392b;
+            --input-bg: #ffffff;
+            --disabled-bg: #e9eef3;
+            --button-ink: #ffffff;
+            --hover-link: #003f5c;
+            --focus-ring: rgba(8, 126, 175, 0.28);
+            --active-border: #8eb6c8;
+        }
+        @media (prefers-color-scheme: light) {
+            html[data-theme="auto"] {
+                color-scheme: light;
+                --bg: #f4f7fb;
+                --panel: #ffffff;
+                --panel-2: #eaf2f8;
+                --ink: #122033;
+                --muted: #53657a;
+                --line: #c9d4df;
+                --accent: #087eaf;
+                --accent-strong: #05658e;
+                --good: #198754;
+                --warn: #9a6700;
+                --danger: #c0392b;
+                --input-bg: #ffffff;
+                --disabled-bg: #e9eef3;
+                --button-ink: #ffffff;
+                --hover-link: #003f5c;
+                --focus-ring: rgba(8, 126, 175, 0.28);
+                --active-border: #8eb6c8;
+            }
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            min-height: 100vh;
+            background: var(--bg);
+            color: var(--ink);
+            font-family: Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            letter-spacing: 0;
+        }
+        a { color: var(--accent-strong); font-weight: 750; text-decoration: none; }
+        a:hover { color: var(--hover-link); }
+        code, .mono { font-family: var(--mono); }
+        h1, h2, h3, p { margin-top: 0; }
+        p { color: var(--muted); line-height: 1.55; }
+        .site-shell {
+            width: min(1160px, calc(100% - 32px));
+            margin: 0 auto;
+            padding: 24px 0 56px;
+        }
+        .topbar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 14px 0 28px;
+        }
+        .brand {
+            display: inline-flex;
+            align-items: center;
+            gap: 10px;
+            color: var(--ink);
+            font-weight: 850;
+        }
+        .brand-mark {
+            display: grid;
+            place-items: center;
+            width: 34px;
+            height: 34px;
+            border: 1px solid var(--accent);
+            border-radius: 8px;
+            color: var(--accent-strong);
+            font-family: var(--mono);
+        }
+        .nav {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+        .button, button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 44px;
+            border: 1px solid var(--accent);
+            border-radius: 8px;
+            padding: 0 16px;
+            background: var(--accent);
+            color: var(--button-ink);
+            font: inherit;
+            font-weight: 850;
+            cursor: pointer;
+        }
+        .button.secondary, button.secondary {
+            background: transparent;
+            color: var(--accent-strong);
+            border-color: var(--line);
+        }
+        .button.full, button.full { width: 100%; }
+        .button.disabled {
+            pointer-events: none;
+            color: var(--muted);
+            background: var(--disabled-bg);
+            border-color: var(--line);
+        }
+        .panel, .card {
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 8px;
+        }
+        .panel { padding: 24px; }
+        .card { padding: 20px; min-height: 168px; }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 14px;
+        }
+        .stack { display: grid; gap: 16px; }
+        .table-wrap {
+            width: 100%;
+            overflow-x: auto;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 720px;
+        }
+        th, td {
+            padding: 12px 10px;
+            border-bottom: 1px solid var(--line);
+            text-align: left;
+            vertical-align: top;
+        }
+        th {
+            color: var(--muted);
+            font-size: 13px;
+            text-transform: uppercase;
+        }
+        textarea {
+            width: 100%;
+            min-height: 360px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            padding: 14px;
+            background: var(--input-bg);
+            color: var(--ink);
+            font: 14px/1.45 var(--mono);
+        }
+        .message {
+            padding: 12px 14px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: var(--panel);
+            color: var(--ink);
+        }
+        .message.success { border-color: rgba(66, 230, 138, 0.55); }
+        .message.error { border-color: rgba(255, 107, 107, 0.7); color: var(--danger); }
+        .status {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--good);
+            font-weight: 800;
+        }
+        .dot {
+            width: 9px;
+            height: 9px;
+            border-radius: 999px;
+            background: var(--good);
+        }
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            width: fit-content;
+            border: 1px solid var(--line);
+            border-radius: 999px;
+            padding: 5px 9px;
+            color: var(--muted);
+            font-size: 12px;
+            font-weight: 850;
+            text-transform: uppercase;
+        }
+        .badge.open { color: var(--good); }
+        .badge.locked { color: var(--warn); }
+        .muted { color: var(--muted); }
+        .auth-page {
+            min-height: 100vh;
+            display: grid;
+            place-items: center;
+            padding: 32px 16px;
+        }
+        .auth-card {
+            width: min(460px, 100%);
+            padding: 26px;
+        }
+        .auth-card form button.full,
+        .auth-card form .button.full {
+            margin-top: 20px;
+        }
+        .auth-logo {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 18px;
+        }
+        label {
+            display: block;
+            margin: 14px 0 7px;
+            color: var(--ink);
+            font-weight: 750;
+        }
+        input, textarea, select {
+            width: 100%;
+            min-height: 46px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            padding: 11px 12px;
+            background: var(--input-bg);
+            color: var(--ink);
+            font: inherit;
+        }
+        .auth-card input {
+            min-height: 52px;
+        }
+        input:focus, textarea:focus, select:focus {
+            outline: 2px solid var(--focus-ring);
+            border-color: var(--accent);
+        }
+        .errors, .errorlist {
+            color: var(--danger);
+            font-size: 14px;
+        }
+        .divider {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin: 18px 0;
+            color: var(--muted);
+            font-size: 13px;
+        }
+        .divider::before, .divider::after {
+            content: "";
+            height: 1px;
+            flex: 1;
+            background: var(--line);
+        }
+        .account-layout {
+            display: grid;
+            grid-template-columns: 240px minmax(0, 1fr);
+            gap: 18px;
+            align-items: start;
+        }
+        .sidebar {
+            position: sticky;
+            top: 16px;
+            display: grid;
+            gap: 6px;
+            padding: 14px;
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 8px;
+        }
+        .sidebar a, .sidebar button {
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
+            min-height: 48px;
+            width: 100%;
+            border: 1px solid transparent;
+            border-radius: 8px;
+            background: transparent;
+            color: var(--muted);
+            padding: 0 14px 0 16px;
+            line-height: 1.2;
+            text-align: left;
+        }
+        .sidebar a.active, .sidebar a:hover, .sidebar button:hover {
+            background: var(--panel-2);
+            color: var(--ink);
+        }
+        .sidebar a.active {
+            border-color: var(--active-border);
+            box-shadow: inset 3px 0 0 var(--accent);
+            color: var(--ink);
+        }
+        .profile-name {
+            margin-bottom: 6px;
+            font-size: 34px;
+            line-height: 1.1;
+        }
+        dl {
+            display: grid;
+            grid-template-columns: 160px minmax(0, 1fr);
+            gap: 12px 18px;
+            margin: 22px 0 0;
+        }
+        dt { color: var(--muted); }
+        dd { margin: 0; font-weight: 750; word-break: break-word; }
+        .strength {
+            margin-top: 10px;
+        }
+        .strength-bar {
+            height: 8px;
+            border-radius: 999px;
+            overflow: hidden;
+            background: var(--input-bg);
+            border: 1px solid var(--line);
+        }
+        .strength-fill {
+            width: 0%;
+            height: 100%;
+            background: var(--danger);
+            transition: width .18s ease, background .18s ease;
+        }
+        .form-actions {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+            margin-top: 20px;
+        }
+        .form-actions button,
+        .form-actions .button {
+            margin: 0;
+        }
+        .theme-switcher {
+            display: inline-flex;
+            align-items: center;
+        }
+        .theme-toggle {
+            width: 72px;
+            min-height: 38px;
+            border-color: var(--line);
+            background: var(--panel);
+            color: var(--ink);
+            font-size: 13px;
+            gap: 4px;
+            white-space: nowrap;
+        }
+        .theme-icon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 20px;
+            font-size: 20px;
+            line-height: 1;
+        }
+        .theme-icon:empty {
+            display: none;
+            min-width: 0;
+        }
+        .theme-label {
+            line-height: 1;
+        }
+        .theme-toggle:hover {
+            border-color: var(--accent);
+            color: var(--ink);
+        }
+        .auth-theme-row {
+            display: flex;
+            justify-content: flex-end;
+            margin-bottom: 16px;
+        }
+        @media (max-width: 760px) {
+            .topbar {
+                align-items: flex-start;
+                flex-direction: column;
+            }
+            .account-layout { grid-template-columns: 1fr; }
+            .sidebar { position: static; }
+            dl { grid-template-columns: 1fr; }
+            .form-actions {
+                align-items: stretch;
+                flex-direction: column;
+            }
+            .form-actions button,
+            .form-actions .button {
+                width: 100%;
+            }
+        }
+    </style>
+    {% block extra_head %}{% endblock %}
+</head>
+<body class="{% block body_class %}{% endblock %}">
+    {% block body %}{% endblock %}
+    <script>
+        (() => {
+            const button = document.querySelector("[data-theme-toggle]");
+            const icon = document.querySelector("[data-theme-icon]");
+            const label = document.querySelector("[data-theme-label]");
+            if (!button || !icon || !label) return;
+
+            const updateThemeLabel = (theme) => {
+                const isLight = theme === "light";
+                const isAuto = theme === "auto";
+                const name = isLight ? "Light" : isAuto ? "Auto" : "Dark";
+                icon.textContent = isAuto ? "" : isLight ? String.fromCharCode(9788) : String.fromCharCode(9790);
+                label.textContent = isAuto ? "Auto" : "";
+                button.setAttribute("aria-label", `Theme: ${name}. Click to switch.`);
+                button.title = name;
+            };
+
+            const currentTheme = document.documentElement.dataset.theme || "dark";
+            updateThemeLabel(currentTheme);
+            button.addEventListener("click", () => {
+                const current = document.documentElement.dataset.theme || "dark";
+                const next = current === "dark" ? "light" : current === "light" ? "auto" : "dark";
+                document.documentElement.dataset.theme = next;
+                try {
+                    localStorage.setItem("theme", next);
+                } catch (error) {
+                    // The visual switch still works when browser storage is unavailable.
+                }
+                updateThemeLabel(next);
+            });
+        })();
+    </script>
+</body>
+</html>

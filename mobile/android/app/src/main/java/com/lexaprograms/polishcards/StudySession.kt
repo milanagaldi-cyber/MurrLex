@@ -6,6 +6,7 @@ import kotlinx.serialization.Serializable
 data class StudySession(
     val lessonId: String = "",
     val mode: String = StudyMode.ORIGINAL.name,
+    val sortDescending: Boolean = false,
     val currentCardId: Int = 0,
     val currentIndex: Int = 0,
     val portionCardIds: List<Int> = emptyList(),

@@ -18,14 +18,50 @@ Including another URLconf
 from django.contrib import admin
 from django.contrib.auth import views as auth_views
 from django.urls import include, path
+from lessons.forms import UsernameOrEmailAuthenticationForm
 from lessons import views as lesson_views
 
+admin.site.site_header = "MurrLex Admin"
+admin.site.site_title = "MurrLex Admin"
+admin.site.index_title = "Server control panel"
+
 urlpatterns = [
+    path("", lesson_views.home, name="home"),
+    path("accounts/", include("allauth.urls")),
     path("admin/", admin.site.urls),
-    path("login/", auth_views.LoginView.as_view(template_name="registration/login.html"), name="login"),
+    path("register/", lesson_views.register, name="register"),
+    path("account/", lesson_views.account, name="account"),
+    path("account/settings/", lesson_views.account_settings, name="account_settings"),
+    path("premium/", lesson_views.premium, name="premium"),
+    path(
+        "login/",
+        auth_views.LoginView.as_view(
+            authentication_form=UsernameOrEmailAuthenticationForm,
+            template_name="registration/login.html",
+        ),
+        name="login",
+    ),
+    path(
+        "password-change/",
+        auth_views.PasswordChangeView.as_view(template_name="registration/password_change_form.html"),
+        name="password_change",
+    ),
+    path(
+        "password-change/done/",
+        auth_views.PasswordChangeDoneView.as_view(template_name="registration/password_change_done.html"),
+        name="password_change_done",
+    ),
     path("logout/", auth_views.LogoutView.as_view(), name="logout"),
     path("lab/", include("lessons.urls")),
     path("api/health", lesson_views.api_health, name="api_health"),
+    path("api/auth/register", lesson_views.api_register, name="api_register"),
+    path("api/auth/login", lesson_views.api_login, name="api_login"),
+    path("api/auth/refresh", lesson_views.api_refresh, name="api_refresh"),
+    path("api/auth/logout", lesson_views.api_logout, name="api_logout"),
+    path("api/ai/text", lesson_views.api_text, name="api_text"),
+    path("api/ai/transcribe", lesson_views.api_transcribe, name="api_transcribe"),
+    path("api/ai/speech", lesson_views.api_speech, name="api_speech"),
+    path("api/ai/image-text", lesson_views.api_image_text, name="api_image_text"),
     path("api/internal/import-lesson", lesson_views.internal_import_lesson, name="internal_import_lesson"),
     path("api/translate", lesson_views.translate_text, name="translate_text"),
 ]

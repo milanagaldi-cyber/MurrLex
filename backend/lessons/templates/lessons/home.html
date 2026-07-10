@@ -1,0 +1,82 @@
+{% extends "lessons/public_base.html" %}
+
+{% block title %}MurrLex Server Home{% endblock %}
+
+{% block body %}
+<main class="site-shell">
+    <header class="topbar">
+        <a class="brand" href="{% url 'home' %}">
+            <span class="brand-mark">ML</span>
+            <span>MurrLex Server</span>
+        </a>
+        <nav class="nav" aria-label="Main navigation">
+            {% if request.user.is_authenticated %}
+                <a href="{% url 'account' %}">Cabinet</a>
+                <form method="post" action="{% url 'logout' %}" style="margin:0;">
+                    {% csrf_token %}
+                    <button class="secondary" type="submit">Log out</button>
+                </form>
+            {% else %}
+                <a href="{% url 'login' %}">Login</a>
+                <a class="button secondary" href="{% url 'register' %}">Register</a>
+            {% endif %}
+            {% include "lessons/theme_toggle.html" %}
+        </nav>
+    </header>
+
+    <section class="panel" style="margin-bottom:18px;">
+        <div style="display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;">
+            <div>
+                <h1 style="font-size:48px;line-height:1;margin-bottom:14px;">MurrLex Server</h1>
+                <p style="max-width:720px;">
+                    Staging hub for the MurrLex content pipeline: public account access,
+                    lesson import tools, protected lab views, and internal API endpoints.
+                </p>
+            </div>
+            <a class="status" href="{% url 'api_health' %}">
+                <span class="dot"></span>
+                <span>All systems operational</span>
+            </a>
+        </div>
+    </section>
+
+    <section class="grid" aria-label="MurrLex service dashboard">
+        <article class="card">
+            <span class="badge open">Public</span>
+            <h2>Public access</h2>
+            <p>Open entry points for users who are registering or signing in.</p>
+            <p><a href="{% url 'login' %}">Login</a></p>
+            <p><a href="{% url 'register' %}">Register</a></p>
+            <p><a href="{% url 'account' %}">User cabinet</a></p>
+            <p><a href="{% url 'premium' %}">Premium preview</a></p>
+        </article>
+
+        <article class="card">
+            <span class="badge locked">Tools</span>
+            <h2>Tools</h2>
+            <p>Manual and machine tools for content flow. Access rules stay unchanged.</p>
+            <p><a href="/api/translate"><code>/api/translate</code></a></p>
+            <p><a href="/lab/import-json/"><code>/lab/import-json/</code></a></p>
+            <p><a href="/api/internal/import-lesson"><code>/api/internal/import-lesson</code></a></p>
+        </article>
+
+        <article class="card">
+            <span class="badge locked">Restricted</span>
+            <h2>Locked areas</h2>
+            <p>Lab and admin are protected by the existing access gates.</p>
+            <p><a href="/lab/lessons/">Lab lessons</a></p>
+            <p><a href="/lab/imports/">Import logs</a></p>
+            <p><a href="/admin/">Django admin</a></p>
+        </article>
+
+        <article class="card">
+            <span class="badge">API & Network</span>
+            <h2>API status</h2>
+            <p>Health endpoint is public. API endpoints still require bearer tokens.</p>
+            <p><a href="{% url 'api_health' %}"><code>/api/health</code></a></p>
+            <p class="mono">Public HTTPS: 443</p>
+            <p class="mono">Backend: nginx -> Django</p>
+        </article>
+    </section>
+</main>
+{% endblock %}

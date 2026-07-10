@@ -1,3 +1,6 @@
+import uuid
+
+from django.conf import settings
 from django.db import models
 
 
@@ -65,3 +68,28 @@ class ImportLog(models.Model):
 
     def __str__(self) -> str:
         return f"{self.status}: {self.external_lesson_id or 'no lesson id'}"
+
+
+class ApiSession(models.Model):
+    """Revocable mobile login session. Provider credentials never live here."""
+
+    public_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="api_sessions")
+    refresh_token_hash = models.CharField(max_length=64, unique=True)
+    device_name = models.CharField(max_length=160, blank=True)
+    expires_at = models.DateTimeField()
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_used_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-last_used_at", "-id"]
+
+    @property
+    def is_active(self) -> bool:
+        from django.utils import timezone
+
+        return self.revoked_at is None and self.expires_at > timezone.now()
+
+    def __str__(self) -> str:
+        return f"{self.user} ({self.public_id})"

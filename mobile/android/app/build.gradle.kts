@@ -13,8 +13,8 @@ android {
         applicationId = "com.lexaprograms.polishcards"
         minSdk = 34
         targetSdk = 35
-        versionCode = 136
-        versionName = "0.35"
+        versionCode = 192
+        versionName = "0.91"
     }
 
     buildTypes {
@@ -56,6 +56,11 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.androidx.work.runtime)
     implementation(libs.google.mlkit.translate)
+    implementation(libs.libgdx.core)
+    implementation(libs.libgdx.backend.android)
+    implementation(libs.lottie.compose)
+    implementation(libs.rive.android)
+    implementation(libs.androidx.startup.runtime)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
 }

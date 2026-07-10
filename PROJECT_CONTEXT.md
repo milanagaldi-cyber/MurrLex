@@ -13,7 +13,7 @@ This checkpoint is a stable Android_Main handoff after the Translate/Split onlin
 - Local path: `C:\CodexProjects\murrlex`
 - Remote: `https://github.com/milanagaldi-cyber/MurrLex`
 - Main next branch: `Android_Main`
-- Current Android version: `MurrLex v0.35`
+- Current Android version: `MurrLex v0.88`
 
 ## Current Priority
 
@@ -44,4 +44,14 @@ Stability first:
 23. Keep manual online/offline refresh available from the `MurrLex` title and Study card language/status area.
 24. Keep same-language microphone captures as Mistake cards corrected by the configured OpenAI text model.
 25. Keep long-press Train-card generation limited to Mistake cards; generated Train cards are not generation sources.
-26. Keep Android text share-import working from other apps: show a 100-word preview, then create sentence or vocabulary cards for the current Basic/Target pair.
+26. Keep Android text share-import working from other apps: show a 500-word preview, then create one Basic -> Target retelling card per meaningful sentence.
+27. Keep manual URL import available from the icon left of `MurrLex`, using the same 100-word shared-post card flow.
+28. Keep Telegram URL import extracting real post text from metadata/widget HTML instead of Telegram navigation or embed script boilerplate.
+29. Keep shared post/URL imports as retelling lessons: up to 500 words into OpenAI, one Basic -> Target card per meaningful sentence.
+30. Keep manual URL import for ordinary websites as article-thesis mode: extract readable article/main/paragraph text, send up to 2000 words, and generate roughly one Basic -> Target thesis card per 50 words.
+31. Keep image/screenshot import beside the URL icon: OCR uses the separate OpenAI image-text model, caches by image hash, and feeds recognized text into shared-post card generation.
+32. Keep Study image UX: selected image import accepts up to five photos into one lesson, and the Study photo icon beside the language code opens the camera for one captured photo.
+33. Keep Study header controls compact: tapping the card language code opens the display menu for sorting, done visibility, and three-star visibility; gallery/camera OCR from Study appends one card per image/photo to the current lesson, while global image OCR creates a new lesson.
+34. Keep Study card actions grouped under the round cat-face menu: share card, export cached visible-side audio, and show card log/progress.
+35. Keep all previous Study card actions inside the cat menu, including Info/rule, quick edit, and full edit. Catalog must expose image OCR. Image cards appended from Study stay at lesson end and navigate to that appended card with correct full counts.
+36. Keep Catalog gallery/camera actions as separate matching icons; Study card Info/Edit are separate buttons beside the cat menu; cat menu includes confirmed Delete. Study-created cards append at lesson end and navigate there.

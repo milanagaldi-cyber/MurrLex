@@ -1,0 +1,55 @@
+{% extends "lessons/public_base.html" %}
+
+{% block title %}MurrLex Account Settings{% endblock %}
+
+{% block body %}
+<main class="site-shell">
+    <header class="topbar">
+        <a class="brand" href="{% url 'home' %}">
+            <span class="brand-mark">ML</span>
+            <span>MurrLex Server</span>
+        </a>
+        <nav class="nav" aria-label="Top navigation">
+            <a href="{% url 'home' %}">Home</a>
+            {% include "lessons/theme_toggle.html" %}
+        </nav>
+    </header>
+
+    <div class="account-layout">
+        <aside class="sidebar" aria-label="Account navigation">
+            <a href="{% url 'account' %}">Profile</a>
+            <a class="active" href="{% url 'account_settings' %}">Security settings</a>
+            <a href="{% url 'premium' %}">Subscription/Premium</a>
+            <form method="post" action="{% url 'logout' %}" style="margin:0;">
+                {% csrf_token %}
+                <button type="submit">Log out</button>
+            </form>
+        </aside>
+
+        <section class="panel">
+            <h1>Account settings</h1>
+            <p>Update profile details shown in your cabinet, or move to password security.</p>
+            <form method="post">
+                {% csrf_token %}
+                {% for field in form %}
+                    <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+                    {{ field }}
+                    {% if field.help_text %}
+                        <p style="font-size:13px;">{{ field.help_text }}</p>
+                    {% endif %}
+                    {% if field.errors %}
+                        <div class="errors">{{ field.errors }}</div>
+                    {% endif %}
+                {% endfor %}
+                {% if form.non_field_errors %}
+                    <div class="errors">{{ form.non_field_errors }}</div>
+                {% endif %}
+                <div class="form-actions">
+                    <button type="submit">Save settings</button>
+                    <a class="button secondary" href="{% url 'password_change' %}">Change password</a>
+                </div>
+            </form>
+        </section>
+    </div>
+</main>
+{% endblock %}

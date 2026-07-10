@@ -1,0 +1,69 @@
+{% extends "lessons/public_base.html" %}
+
+{% block title %}MurrLex Account{% endblock %}
+
+{% block body %}
+<main class="site-shell">
+    <header class="topbar">
+        <a class="brand" href="{% url 'home' %}">
+            <span class="brand-mark">ML</span>
+            <span>MurrLex Server</span>
+        </a>
+        <nav class="nav" aria-label="Top navigation">
+            <a href="{% url 'home' %}">Home</a>
+            {% include "lessons/theme_toggle.html" %}
+        </nav>
+    </header>
+
+    <div class="account-layout">
+        <aside class="sidebar" aria-label="Account navigation">
+            <a class="active" href="{% url 'account' %}">Profile</a>
+            <a href="{% url 'account_settings' %}">Security settings</a>
+            <a href="{% url 'premium' %}">Subscription/Premium</a>
+            <form method="post" action="{% url 'logout' %}" style="margin:0;">
+                {% csrf_token %}
+                <button type="submit">Log out</button>
+            </form>
+        </aside>
+
+        <section>
+            <article class="panel">
+                <h1 class="profile-name">{{ request.user.first_name|default:request.user.username }}</h1>
+                <p>User cabinet for public MurrLex accounts. Paid features are still closed.</p>
+                <dl>
+                    <dt>Username</dt>
+                    <dd>{{ request.user.username }}</dd>
+                    <dt>Email</dt>
+                    <dd>{{ request.user.email|default:"Not set" }}</dd>
+                    <dt>Display name</dt>
+                    <dd>{{ request.user.first_name|default:"Not set" }}</dd>
+                    <dt>Account status</dt>
+                    <dd>{% if request.user.is_staff %}Staff{% else %}Public user{% endif %}</dd>
+                    <dt>Date joined</dt>
+                    <dd>{{ request.user.date_joined|date:"Y-m-d H:i" }}</dd>
+                </dl>
+            </article>
+
+            <section class="grid" aria-label="Account overview" style="margin-top:14px;">
+                <article class="card">
+                    <span class="badge open">Free</span>
+                    <h2>Current plan</h2>
+                    <p>Your account is on the public free plan while paid access is being designed.</p>
+                </article>
+                <article class="card">
+                    <span class="badge open">Open</span>
+                    <h2>Available now</h2>
+                    <p>You can update profile basics and change the local password.</p>
+                    <p><a href="{% url 'account_settings' %}">Edit account settings</a></p>
+                </article>
+                <article class="card">
+                    <span class="badge locked">Locked</span>
+                    <h2>Premium area</h2>
+                    <p>Protected API and lab tools remain closed while the paid model is planned.</p>
+                    <p><a href="{% url 'premium' %}">View premium preview</a></p>
+                </article>
+            </section>
+        </section>
+    </div>
+</main>
+{% endblock %}

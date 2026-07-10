@@ -15,6 +15,8 @@ data class Flashcard(
     val correctValue: String = "",
     val wrongAnswers: List<MistakeRecord> = emptyList(),
     val hint: String = "",
+    val original: String = "",
+    val originalAudioPath: String = "",
     val madeAt: String = "",
     val where: String = "",
     val log: List<String> = emptyList(),
@@ -26,10 +28,13 @@ data class Flashcard(
     val cardKind: String = "MK",
     val sourceLanguage: String = "",
     val targetLanguage: String = "",
+    val featured: Boolean = false,
     val stars: Int = 0
 ) {
     fun nativeText(): String = nativeValue.ifBlank { ru.ifBlank { value } }
     fun correctText(): String = correctValue.ifBlank { pl.ifBlank { value } }
+    fun originalText(): String = original
+    fun originalAudioPathText(): String = originalAudioPath
     fun mistakeText(): String = mistake.ifBlank { wrongAnswers.lastOrNull()?.answer.orEmpty() }
     fun valueText(): String = correctText()
     fun hintText(): String = hint

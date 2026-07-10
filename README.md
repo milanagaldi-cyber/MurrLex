@@ -16,7 +16,7 @@ murrlex/
 
 - App name: `MurrLex`
 - Android package/namespace still uses the legacy id: `com.lexaprograms.polishcards`
-- Version visible in the app settings: `MurrLex v0.35`
+- Version visible in the app settings: `MurrLex v0.88`
 - Main working branch: `Android_Main`
 - Stable debug APK output: `mobile/android/app/build/outputs/apk/debug/app-debug.apk`
 
@@ -62,7 +62,17 @@ Confirmed from code and recent validation:
 - Tapping `MurrLex` or the Study card language/status area forces an immediate online/offline status check.
 - Same-language microphone Quick Vocabulary captures create Mistake cards, corrected by the configured OpenAI text model with explanation/rules/examples.
 - Long-pressing a Mistake card can generate Train cards from ten selectable drill options; Train cards do not generate more cards.
-- MurrLex accepts shared text posts from other Android apps and can turn up to 100 words into sentence or vocabulary cards for the current Basic/Target pair.
+- MurrLex accepts shared text posts from other Android apps and can turn up to 500 words into one Basic -> Target retelling card per meaningful sentence.
+- A URL icon beside the app title lets users paste a link manually and create a lesson through the same shared-post import flow.
+- Telegram URL import extracts real post text from metadata/widget content and filters out Telegram page navigation/embed boilerplate.
+- Shared post and URL imports can use up to 500 words and create one Basic -> Target card per meaningful sentence for retelling.
+- Manual URL import supports ordinary article pages, extracts readable article text, and sends up to 2000 words to OpenAI for Basic -> Target thesis cards.
+- Photo/screenshot import can use a separate OpenAI image-text recognition model, cache recognized text by image hash, and create cards from the extracted text.
+- Image import accepts up to five selected photos into one lesson; the Study screen also has a camera photo action near the card language code.
+- In Study, tapping the language code opens a display menu for sorting, done visibility, and three-star-card visibility; gallery/camera OCR adds one card per image/photo to the current lesson.
+- Study card actions are grouped into a round cat-face menu for sharing, cached visible-side audio export, and card log/progress.
+- The cat-face menu keeps Info/rule and edit actions; Catalog has an image OCR action; Study image cards append to the lesson end and navigate to the appended card.
+- Catalog has matching gallery/camera OCR actions; Study card Info/Edit are separate buttons beside the cat menu, which includes confirmed Delete.
 - Translate/Split uses free online Google Translate by default and falls back to ML Kit offline translation when the device is offline or critical offline mode is enabled.
 - Offline speech recognition works through Android on-device SpeechRecognizer after the selected language model is downloaded.
 - Split mode has microphones on both sides; the translated-side microphone listens in the target language.

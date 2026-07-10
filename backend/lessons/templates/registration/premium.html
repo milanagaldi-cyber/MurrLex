@@ -1,0 +1,50 @@
+{% extends "lessons/public_base.html" %}
+
+{% block title %}MurrLex Premium Preview{% endblock %}
+
+{% block body %}
+<main class="site-shell">
+    <header class="topbar">
+        <a class="brand" href="{% url 'home' %}">
+            <span class="brand-mark">ML</span>
+            <span>MurrLex Server</span>
+        </a>
+        <nav class="nav" aria-label="Public navigation">
+            {% if request.user.is_authenticated %}
+                <a href="{% url 'account' %}">Cabinet</a>
+            {% else %}
+                <a href="{% url 'register' %}">Register</a>
+                <a href="{% url 'login' %}">Login</a>
+            {% endif %}
+            {% include "lessons/theme_toggle.html" %}
+        </nav>
+    </header>
+
+    <section class="panel">
+        <p class="badge locked">Premium preview</p>
+        <h1 style="font-size:42px;line-height:1.08;">♕ Advanced API access is coming soon</h1>
+        <p style="max-width:720px;">
+            This page is a product placeholder, not an error page. The paid layer will sit
+            above the protected API and lab tools when access rules are ready.
+        </p>
+    </section>
+
+    <section class="grid" aria-label="Future premium capabilities" style="margin-top:14px;">
+        <article class="card">
+            <span class="badge locked">API</span>
+            <h2>Higher API limits</h2>
+            <p>More generous import and translation limits for active content pipelines.</p>
+        </article>
+        <article class="card">
+            <span class="badge locked">Tools</span>
+            <h2>Advanced imports</h2>
+            <p>Better validation, import history, and safer review flows for lesson batches.</p>
+        </article>
+        <article class="card">
+            <span class="badge locked">Access</span>
+            <h2>Team controls</h2>
+            <p>Future paid users may get role-based access for methodists and admins.</p>
+        </article>
+    </section>
+</main>
+{% endblock %}
