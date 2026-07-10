@@ -200,7 +200,11 @@ class HomePageTests(TestCase):
         for path in ("/", "/login/", "/register/", "/premium/"):
             with self.subTest(path=path):
                 response = self.client.get(path)
-                self.assertContains(response, "data-theme-toggle")
+                self.assertContains(
+                    response,
+                    'data-theme-toggle aria-label="Switch theme"',
+                    count=1,
+                )
                 self.assertContains(response, 'localStorage.setItem("theme", next)')
 
 

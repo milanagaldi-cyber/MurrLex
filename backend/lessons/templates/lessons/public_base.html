@@ -104,7 +104,7 @@
             align-items: center;
             justify-content: space-between;
             gap: 16px;
-            padding: 14px 132px 28px 0;
+            padding: 14px 0 28px;
         }
         .brand {
             display: inline-flex;
@@ -376,10 +376,8 @@
             margin: 0;
         }
         .theme-switcher {
-            position: fixed;
-            top: 16px;
-            right: 16px;
-            z-index: 30;
+            display: inline-flex;
+            align-items: center;
         }
         .theme-toggle {
             min-height: 38px;
@@ -394,11 +392,15 @@
             border-color: var(--accent);
             color: var(--ink);
         }
+        .auth-theme-row {
+            display: flex;
+            justify-content: flex-end;
+            margin-bottom: 16px;
+        }
         @media (max-width: 760px) {
             .topbar {
                 align-items: flex-start;
                 flex-direction: column;
-                padding-right: 0;
             }
             .account-layout { grid-template-columns: 1fr; }
             .sidebar { position: static; }
@@ -417,11 +419,6 @@
 </head>
 <body class="{% block body_class %}{% endblock %}">
     {% block body %}{% endblock %}
-    <div class="theme-switcher">
-        <button class="theme-toggle" type="button" data-theme-toggle aria-label="Switch theme">
-            Theme: <span data-theme-label>Dark</span>
-        </button>
-    </div>
     <script>
         (() => {
             const button = document.querySelector("[data-theme-toggle]");

@@ -20,6 +20,7 @@
                 <a href="{% url 'login' %}">Login</a>
                 <a class="button secondary" href="{% url 'register' %}">Register</a>
             {% endif %}
+            {% include "lessons/theme_toggle.html" %}
         </nav>
     </header>
 
