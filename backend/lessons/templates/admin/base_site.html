@@ -121,31 +121,27 @@
         display: inline-flex;
         margin: 0;
     }
-    .theme-toggle,
-    button.theme-toggle {
-        display: inline-flex !important;
-        align-items: center;
-        justify-content: center;
-        width: 36px;
+    .admin-theme-toggle {
+        width: 58px;
         min-height: 36px;
-        padding: 0;
+        padding: 0 !important;
+        gap: 4px;
         cursor: pointer;
     }
-    .theme-toggle .visually-hidden {
-        position: absolute !important;
-        width: 1px !important;
-        height: 1px !important;
-        padding: 0 !important;
-        margin: -1px !important;
-        overflow: hidden !important;
-        clip: rect(0, 0, 0, 0) !important;
-        clip-path: inset(50%) !important;
-        white-space: nowrap !important;
-        border: 0 !important;
+    .admin-theme-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 20px;
+        font-size: 20px;
+        line-height: 1;
     }
-    .theme-toggle svg {
-        width: 20px;
-        height: 20px;
+    .admin-theme-icon:empty {
+        display: none;
+        min-width: 0;
+    }
+    .admin-theme-label {
+        line-height: 1;
     }
     .admin-welcome {
         display: inline-flex;
@@ -434,6 +430,54 @@
 </style>
 {% endblock %}
 
+{% block extrahead %}
+{{ block.super }}
+<script>
+    window.addEventListener("DOMContentLoaded", () => {
+        const button = document.querySelector("[data-admin-theme-toggle]");
+        const icon = document.querySelector("[data-admin-theme-icon]");
+        const label = document.querySelector("[data-admin-theme-label]");
+        if (!button || !icon || !label) return;
+
+        const modes = ["dark", "light", "auto"];
+        const systemPrefersDark = () => window.matchMedia("(prefers-color-scheme: dark)").matches;
+        const getSavedMode = () => {
+            try {
+                const mode = localStorage.getItem("theme");
+                return modes.includes(mode) ? mode : "auto";
+            } catch (error) {
+                return "auto";
+            }
+        };
+        const applyTheme = (mode) => {
+            const isAuto = mode === "auto";
+            const appliedTheme = isAuto ? (systemPrefersDark() ? "dark" : "light") : mode;
+            const name = mode[0].toUpperCase() + mode.slice(1);
+            document.documentElement.dataset.theme = appliedTheme;
+            button.dataset.adminThemeMode = mode;
+            icon.textContent = isAuto ? "" : mode === "light" ? String.fromCharCode(9788) : String.fromCharCode(9790);
+            label.textContent = isAuto ? "Auto" : "";
+            button.setAttribute("aria-label", `Theme: ${name}. Click to switch.`);
+            button.title = name;
+            try {
+                localStorage.setItem("theme", mode);
+            } catch (error) {
+                // The current page still changes when browser storage is unavailable.
+            }
+        };
+
+        applyTheme(getSavedMode());
+        button.addEventListener("click", () => {
+            const currentMode = button.dataset.adminThemeMode || "auto";
+            const nextMode = currentMode === "auto"
+                ? (systemPrefersDark() ? "light" : "dark")
+                : currentMode === "dark" ? "light" : "auto";
+            applyTheme(nextMode);
+        });
+    });
+</script>
+{% endblock %}
+
 {% block branding %}
 <div class="murrlex-admin-brand">
     <span class="murrlex-admin-mark">ML</span>
@@ -458,7 +502,10 @@
     {% csrf_token %}
     <button type="submit">{% translate 'Log out' %}</button>
 </form>
-{% include "admin/color_theme_toggle.html" %}
+<button class="admin-theme-toggle" type="button" data-admin-theme-toggle aria-label="Switch theme">
+    <span class="admin-theme-icon" data-admin-theme-icon aria-hidden="true">&#9790;</span>
+    <span class="admin-theme-label" data-admin-theme-label></span>
+</button>
 {% endblock %}
 
 {% block nav-global %}

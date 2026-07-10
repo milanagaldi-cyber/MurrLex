@@ -217,11 +217,13 @@ class AdminThemeTests(TestCase):
         )
         self.client.force_login(self.user)
 
-    def test_admin_page_keeps_django_theme_toggle(self):
+    def test_admin_page_includes_working_theme_toggle(self):
         response = self.client.get("/admin/")
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'class="theme-toggle"')
+        self.assertContains(response, "data-admin-theme-toggle")
+        self.assertContains(response, "data-admin-theme-icon")
+        self.assertContains(response, "localStorage.setItem(\"theme\", mode)")
         self.assertContains(response, "admin/js/theme.js")
 
 
