@@ -93,3 +93,39 @@ class ApiSession(models.Model):
 
     def __str__(self) -> str:
         return f"{self.user} ({self.public_id})"
+
+
+class ProviderCredential(models.Model):
+    class Provider(models.TextChoices):
+        OPENAI = "openai", "OpenAI"
+        ELEVENLABS = "elevenlabs", "ElevenLabs"
+
+    provider = models.CharField(max_length=32, choices=Provider.choices, unique=True)
+    encrypted_api_key = models.TextField(blank=True, editable=False)
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="updated_provider_credentials",
+        null=True,
+        blank=True,
+        editable=False,
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["provider"]
+
+    @property
+    def is_configured(self) -> bool:
+        return bool(self.encrypted_api_key)
+
+    def set_api_key(self, value: str) -> None:
+        from .provider_credentials import encrypt_api_key
+
+        self.encrypted_api_key = encrypt_api_key(value)
+
+    def clear_api_key(self) -> None:
+        self.encrypted_api_key = ""
+
+    def __str__(self) -> str:
+        return self.get_provider_display()

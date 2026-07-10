@@ -32,6 +32,7 @@ urlpatterns = [
     path("register/", lesson_views.register, name="register"),
     path("account/", lesson_views.account, name="account"),
     path("account/settings/", lesson_views.account_settings, name="account_settings"),
+    path("account/provider-keys/", lesson_views.provider_credentials, name="provider_credentials"),
     path("premium/", lesson_views.premium, name="premium"),
     path(
         "login/",

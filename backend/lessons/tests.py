@@ -1,11 +1,13 @@
 import json
 from unittest.mock import patch
 
+from cryptography.fernet import Fernet
 from django.contrib.auth import get_user_model
 from django.urls import reverse
 from django.test import TestCase, override_settings
 
-from .models import Card, ImportLog, Lesson
+from .models import Card, ImportLog, Lesson, ProviderCredential
+from .provider_credentials import get_provider_api_key
 from .services import import_lesson_payload
 
 
@@ -61,6 +63,43 @@ class MobileApiTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["output"], "czesc")
         mocked_run_text.assert_called_once()
+
+
+@override_settings(CREDENTIAL_ENCRYPTION_KEY=Fernet.generate_key().decode("ascii"))
+class ProviderCredentialTests(TestCase):
+    def setUp(self):
+        self.superuser = get_user_model().objects.create_superuser(
+            username="provider-admin",
+            email="provider-admin@example.com",
+            password="Strong-admin-password-2026!",
+        )
+        self.public_user = get_user_model().objects.create_user(
+            username="public-user",
+            password="Strong-public-password-2026!",
+        )
+
+    def test_credential_is_encrypted_and_decryptable(self):
+        credential = ProviderCredential(provider=ProviderCredential.Provider.OPENAI)
+        credential.set_api_key("sk-server-secret")
+        credential.save()
+
+        self.assertNotIn("sk-server-secret", credential.encrypted_api_key)
+        self.assertEqual(get_provider_api_key("openai"), "sk-server-secret")
+
+    def test_only_superuser_can_manage_provider_keys(self):
+        self.client.force_login(self.public_user)
+        response = self.client.get("/account/provider-keys/")
+        self.assertEqual(response.status_code, 403)
+
+        self.client.force_login(self.superuser)
+        response = self.client.post(
+            "/account/provider-keys/",
+            data={"provider": "openai", "api_key": "sk-server-secret"},
+        )
+        self.assertRedirects(response, "/account/provider-keys/")
+        page = self.client.get("/account/provider-keys/")
+        self.assertNotContains(page, "sk-server-secret")
+        self.assertContains(page, "Configured")
 
 
 def sample_lesson_payload(**overrides):

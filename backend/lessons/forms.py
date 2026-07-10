@@ -2,6 +2,8 @@ from django import forms
 from django.contrib.auth import authenticate, get_user_model
 from django.contrib.auth.forms import AuthenticationForm, UserCreationForm
 
+from .models import ProviderCredential
+
 
 class UsernameOrEmailAuthenticationForm(AuthenticationForm):
     username = forms.CharField(
@@ -86,3 +88,19 @@ class AccountSettingsForm(forms.ModelForm):
         if commit:
             user.save()
         return user
+
+
+class ProviderCredentialForm(forms.Form):
+    provider = forms.ChoiceField(choices=ProviderCredential.Provider.choices)
+    api_key = forms.CharField(
+        required=False,
+        widget=forms.PasswordInput(render_value=False, attrs={"autocomplete": "new-password"}),
+        help_text="The key is encrypted before it is saved and is never shown again.",
+    )
+    clear_key = forms.BooleanField(required=False, label="Remove the saved key")
+
+    def clean(self):
+        cleaned = super().clean()
+        if not cleaned.get("api_key") and not cleaned.get("clear_key"):
+            raise forms.ValidationError("Enter a replacement key or select removal.")
+        return cleaned

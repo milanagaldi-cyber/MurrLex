@@ -12,7 +12,7 @@ Current state:
 - SQLite is used by default for local development;
 - `DATABASE_URL` can later switch the project to PostgreSQL settings;
 - mobile AI gateway with account login, rotating refresh sessions, and protected text, speech, transcription, and image-text endpoints;
-- provider keys are read only on the server from environment variables.
+- provider keys are entered by a superuser in the server cabinet, encrypted before being stored in the database, and never returned to a browser or mobile client.
 
 ## Local Setup
 
@@ -76,13 +76,14 @@ The current test suite covers:
 
 The Android app never sends OpenAI or ElevenLabs API keys. It stores only its MurrLex account session and the model choices selected by the learner.
 
+A superuser configures provider keys at `/account/provider-keys/` (or through Django admin). The server encrypts every key using `CREDENTIAL_ENCRYPTION_KEY`; the saved key is never displayed again. Do not add provider keys to `.env`.
+
 Required server environment values:
 
 ```text
 OPENAI_BASE_URL=https://api.openai.com/v1
-OPENAI_API_KEY=server-side-openai-key
 ELEVENLABS_BASE_URL=https://api.elevenlabs.io/v1
-ELEVENLABS_API_KEY=server-side-elevenlabs-key
+CREDENTIAL_ENCRYPTION_KEY=fernet-key-generated-on-the-server
 JWT_SIGNING_KEY=a-long-random-server-secret
 JWT_ACCESS_MINUTES=15
 JWT_REFRESH_DAYS=30

@@ -4,6 +4,8 @@ from dataclasses import dataclass
 import requests
 from django.conf import settings
 
+from .provider_credentials import CredentialConfigurationError, get_provider_api_key
+
 
 TEXT_MODELS = {"gpt-5.4-nano", "gpt-5.4-mini", "gpt-5.4", "gpt-5.5"}
 SPEECH_MODELS = {"gpt-4o-mini-transcribe", "gpt-4o-transcribe", "whisper-1", "gpt-4o-transcribe-diarize"}
@@ -24,9 +26,13 @@ def require_model(model: str, allowed: set[str], default: str) -> str:
 
 
 def _openai_headers() -> dict:
-    if not settings.OPENAI_API_KEY:
+    try:
+        api_key = get_provider_api_key("openai")
+    except CredentialConfigurationError as exc:
+        raise ProviderError(str(exc)) from exc
+    if not api_key:
         raise ProviderError("OpenAI is not configured on the server.")
-    return {"Authorization": f"Bearer {settings.OPENAI_API_KEY}"}
+    return {"Authorization": f"Bearer {api_key}"}
 
 
 def _safe_response(response: requests.Response) -> None:
@@ -114,7 +120,11 @@ def synthesize_openai(model: str, voice: str, text: str, speed: float) -> tuple[
 
 
 def synthesize_elevenlabs(model: str, voice_id: str, text: str) -> tuple[bytes, str, str]:
-    if not settings.ELEVENLABS_API_KEY:
+    try:
+        api_key = get_provider_api_key("elevenlabs")
+    except CredentialConfigurationError as exc:
+        raise ProviderError(str(exc)) from exc
+    if not api_key:
         raise ProviderError("ElevenLabs is not configured on the server.")
     clean_voice_id = voice_id.strip()
     if not clean_voice_id:
@@ -125,7 +135,7 @@ def synthesize_elevenlabs(model: str, voice_id: str, text: str) -> tuple[bytes, 
         response = requests.post(
             f"{settings.ELEVENLABS_BASE_URL}/text-to-speech/{clean_voice_id}",
             params={"output_format": "mp3_44100_128"},
-            headers={"xi-api-key": settings.ELEVENLABS_API_KEY, "Content-Type": "application/json"},
+            headers={"xi-api-key": api_key, "Content-Type": "application/json"},
             json={"text": text, "model_id": model.strip() or "eleven_v3"},
             timeout=90,
         )

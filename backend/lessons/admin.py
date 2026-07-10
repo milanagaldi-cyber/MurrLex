@@ -1,5 +1,7 @@
+from django import forms
 from django.contrib import admin
-from .models import ApiSession, Card, ImportLog, Lesson
+
+from .models import ApiSession, Card, ImportLog, Lesson, ProviderCredential
 
 
 class CardInline(admin.TabularInline):
@@ -60,3 +62,44 @@ class ApiSessionAdmin(admin.ModelAdmin):
     list_display = ("user", "device_name", "created_at", "last_used_at", "expires_at", "revoked_at")
     search_fields = ("user__username", "user__email", "device_name")
     readonly_fields = ("public_id", "refresh_token_hash", "created_at", "last_used_at")
+
+
+class ProviderCredentialAdminForm(forms.ModelForm):
+    api_key = forms.CharField(required=False, widget=forms.PasswordInput(render_value=False))
+    clear_key = forms.BooleanField(required=False, label="Remove saved key")
+
+    class Meta:
+        model = ProviderCredential
+        fields = ("provider",)
+
+    def clean(self):
+        cleaned = super().clean()
+        if not self.instance.pk and not cleaned.get("api_key"):
+            raise forms.ValidationError("A provider key is required for a new provider configuration.")
+        return cleaned
+
+    def save(self, commit=True):
+        credential = super().save(commit=False)
+        if self.cleaned_data.get("clear_key"):
+            credential.clear_api_key()
+        elif self.cleaned_data.get("api_key"):
+            credential.set_api_key(self.cleaned_data["api_key"])
+        if commit:
+            credential.save()
+        return credential
+
+
+@admin.register(ProviderCredential)
+class ProviderCredentialAdmin(admin.ModelAdmin):
+    form = ProviderCredentialAdminForm
+    list_display = ("provider", "configured", "updated_at", "updated_by")
+    readonly_fields = ("updated_at", "updated_by")
+    fields = ("provider", "api_key", "clear_key", "updated_at", "updated_by")
+
+    @admin.display(boolean=True, description="Configured")
+    def configured(self, credential: ProviderCredential) -> bool:
+        return credential.is_configured
+
+    def save_model(self, request, obj, form, change):
+        obj.updated_by = request.user
+        super().save_model(request, obj, form, change)

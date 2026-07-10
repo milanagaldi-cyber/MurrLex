@@ -83,7 +83,7 @@ CSRF_TRUSTED_ORIGINS=https://your-domain.example
 DATABASE_URL=
 INTERNAL_IMPORT_TOKEN=change-this-too
 DJANGO_IMPORT_URL=https://your-domain.example/api/internal/import-lesson
-OPENAI_API_KEY=
+CREDENTIAL_ENCRYPTION_KEY=fernet-key-generated-on-the-server
 OPENAI_TRANSLATION_MODEL=gpt-4o-mini
 ```
 
@@ -144,15 +144,14 @@ Expected response:
 
 ## Mobile AI Gateway
 
-Android online AI work is now served only through MurrLex. The app chooses the model and keeps an encrypted MurrLex login session; OpenAI and ElevenLabs keys must exist only in the server environment.
+Android online AI work is now served only through MurrLex. The app chooses the model and keeps an encrypted MurrLex login session. A server superuser enters OpenAI and ElevenLabs keys at `/account/provider-keys/`; keys are encrypted in the database and never returned to the browser or mobile client.
 
 Add these production values to `.env` and never commit them:
 
 ```text
 OPENAI_BASE_URL=https://api.openai.com/v1
-OPENAI_API_KEY=
 ELEVENLABS_BASE_URL=https://api.elevenlabs.io/v1
-ELEVENLABS_API_KEY=
+CREDENTIAL_ENCRYPTION_KEY=fernet-key-generated-on-the-server
 JWT_SIGNING_KEY=a-long-random-secret-different-from-SECRET_KEY
 JWT_ACCESS_MINUTES=15
 JWT_REFRESH_DAYS=30

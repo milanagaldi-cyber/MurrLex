@@ -1,18 +1,16 @@
 import json
-import urllib.error
-import urllib.request
 
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import login
 from django.contrib.auth.decorators import login_required
-from django.http import HttpResponse, JsonResponse
+from django.http import HttpResponse, HttpResponseForbidden, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
-from .forms import AccountSettingsForm, PublicRegistrationForm
-from .models import ImportLog, Lesson
+from .forms import AccountSettingsForm, ProviderCredentialForm, PublicRegistrationForm
+from .models import ImportLog, Lesson, ProviderCredential
 from .services import LessonImportError, import_lesson_payload, log_failed_import
 from .ai_gateway import ProviderError, recognize_image, run_text, synthesize_elevenlabs, synthesize_openai, transcribe
 from .api_auth import (
@@ -142,6 +140,40 @@ def account_settings(request):
         form = AccountSettingsForm(instance=request.user)
 
     return render(request, "registration/account_settings.html", {"form": form})
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def provider_credentials(request):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Administrator access is required.")
+
+    if request.method == "POST":
+        form = ProviderCredentialForm(request.POST)
+        if form.is_valid():
+            credential, _ = ProviderCredential.objects.get_or_create(provider=form.cleaned_data["provider"])
+            if form.cleaned_data["clear_key"]:
+                credential.clear_api_key()
+            else:
+                credential.set_api_key(form.cleaned_data["api_key"])
+            credential.updated_by = request.user
+            credential.save()
+            messages.success(request, "Provider key settings saved.")
+            return redirect("provider_credentials")
+    else:
+        form = ProviderCredentialForm()
+
+    credentials = {item.provider: item for item in ProviderCredential.objects.all()}
+    provider_rows = [
+        {
+            "value": value,
+            "label": label,
+            "configured": credentials.get(value).is_configured if value in credentials else False,
+            "updated_at": credentials.get(value).updated_at if value in credentials else None,
+        }
+        for value, label in ProviderCredential.Provider.choices
+    ]
+    return render(request, "registration/provider_credentials.html", {"form": form, "provider_rows": provider_rows})
 
 
 @require_http_methods(["GET"])
@@ -429,9 +461,6 @@ def translate_text(request):
     if auth_header != f"Bearer {expected_token}":
         return JsonResponse({"status": "error", "error": "Unauthorized."}, status=401)
 
-    if not settings.OPENAI_API_KEY:
-        return JsonResponse({"status": "error", "error": "OPENAI_API_KEY is not configured."}, status=503)
-
     try:
         payload = json.loads(request.body.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -443,54 +472,13 @@ def translate_text(request):
     if not text:
         return JsonResponse({"status": "error", "error": "Text is required."}, status=400)
 
-    request_body = {
-        "model": settings.OPENAI_TRANSLATION_MODEL,
-        "input": (
-            "Translate the text from "
-            f"{source_language} to {target_language}. Return only the translation, "
-            "without comments or alternatives.\n\n"
-            f"Text: {text}"
-        ),
-    }
-    request_data = json.dumps(request_body).encode("utf-8")
-    openai_request = urllib.request.Request(
-        "https://api.openai.com/v1/responses",
-        data=request_data,
-        method="POST",
-        headers={
-            "Authorization": f"Bearer {settings.OPENAI_API_KEY}",
-            "Content-Type": "application/json",
-        },
-    )
-
     try:
-        with urllib.request.urlopen(openai_request, timeout=30) as response:
-            response_payload = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        error_text = exc.read().decode("utf-8", errors="replace")
-        return JsonResponse({"status": "error", "error": error_text}, status=502)
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
-        return JsonResponse({"status": "error", "error": str(exc)}, status=502)
-
-    translation = _extract_openai_text(response_payload).strip()
-    if not translation:
-        return JsonResponse({"status": "error", "error": "Translation response was empty."}, status=502)
+        translation, _ = run_text(
+            settings.OPENAI_TRANSLATION_MODEL,
+            "Translate the text from "
+            f"{source_language} to {target_language}. Return only the translation, without comments or alternatives.\n\n"
+            f"Text: {text}",
+        )
+    except ProviderError as exc:
+        return JsonResponse({"status": "error", "error": str(exc)}, status=503)
     return JsonResponse({"status": "ok", "translation": translation})
-
-
-def _extract_openai_text(payload):
-    output_text = payload.get("output_text")
-    if isinstance(output_text, str) and output_text.strip():
-        return output_text
-
-    parts = []
-    for item in payload.get("output", []):
-        if not isinstance(item, dict):
-            continue
-        for content in item.get("content", []):
-            if not isinstance(content, dict):
-                continue
-            text = content.get("text")
-            if isinstance(text, str):
-                parts.append(text)
-    return "".join(parts)
