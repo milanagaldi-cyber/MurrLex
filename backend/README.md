@@ -11,7 +11,8 @@ Current state:
 - internal lesson import API is available at `/api/internal/import-lesson`;
 - SQLite is used by default for local development;
 - `DATABASE_URL` can later switch the project to PostgreSQL settings;
-- optional `/api/translate` endpoint can call OpenAI when `OPENAI_API_KEY` is configured.
+- mobile AI gateway with account login, rotating refresh sessions, and protected text, speech, transcription, and image-text endpoints;
+- provider keys are read only on the server from environment variables.
 
 ## Local Setup
 
@@ -69,6 +70,38 @@ The current test suite covers:
 - lesson without cards rejection;
 - imported cards linked to their lesson;
 - duplicate lesson import updating the existing lesson safely.
+- mobile registration, refresh-token rotation, and authenticated AI requests.
+
+## Mobile AI Gateway
+
+The Android app never sends OpenAI or ElevenLabs API keys. It stores only its MurrLex account session and the model choices selected by the learner.
+
+Required server environment values:
+
+```text
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_API_KEY=server-side-openai-key
+ELEVENLABS_BASE_URL=https://api.elevenlabs.io/v1
+ELEVENLABS_API_KEY=server-side-elevenlabs-key
+JWT_SIGNING_KEY=a-long-random-server-secret
+JWT_ACCESS_MINUTES=15
+JWT_REFRESH_DAYS=30
+```
+
+Mobile endpoints:
+
+```text
+POST /api/auth/register
+POST /api/auth/login
+POST /api/auth/refresh
+POST /api/auth/logout
+POST /api/ai/text
+POST /api/ai/transcribe
+POST /api/ai/speech
+POST /api/ai/image-text
+```
+
+All `/api/ai/*` endpoints require `Authorization: Bearer <access token>`. Access tokens are short-lived. Refresh tokens are opaque, stored as hashes in the database, rotated on refresh, and can be revoked by logout.
 
 Lab UI pages:
 

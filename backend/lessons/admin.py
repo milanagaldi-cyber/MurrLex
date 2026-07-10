@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Card, ImportLog, Lesson
+from .models import ApiSession, Card, ImportLog, Lesson
 
 
 class CardInline(admin.TabularInline):
@@ -53,3 +53,10 @@ class ImportLogAdmin(admin.ModelAdmin):
     search_fields = ("source", "external_lesson_id", "error_message")
     list_filter = ("status", "source")
     readonly_fields = ("created_at",)
+
+
+@admin.register(ApiSession)
+class ApiSessionAdmin(admin.ModelAdmin):
+    list_display = ("user", "device_name", "created_at", "last_used_at", "expires_at", "revoked_at")
+    search_fields = ("user__username", "user__email", "device_name")
+    readonly_fields = ("public_id", "refresh_token_hash", "created_at", "last_used_at")

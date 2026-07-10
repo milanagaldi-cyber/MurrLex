@@ -6,7 +6,7 @@ from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import login
 from django.contrib.auth.decorators import login_required
-from django.http import JsonResponse
+from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
@@ -14,6 +14,16 @@ from django.views.decorators.http import require_http_methods
 from .forms import AccountSettingsForm, PublicRegistrationForm
 from .models import ImportLog, Lesson
 from .services import LessonImportError, import_lesson_payload, log_failed_import
+from .ai_gateway import ProviderError, recognize_image, run_text, synthesize_elevenlabs, synthesize_openai, transcribe
+from .api_auth import (
+    authenticate_login,
+    authenticate_mobile_request,
+    create_session,
+    json_error,
+    revoke_refresh_session,
+    rotate_refresh_session,
+    token_payload,
+)
 
 
 @require_http_methods(["GET"])
@@ -203,7 +213,162 @@ def import_log_list(request):
 
 @require_http_methods(["GET"])
 def api_health(request):
-    return JsonResponse({"status": "ok", "service": "make-mistake-backend"})
+    return JsonResponse({"status": "ok", "service": "murrlex-ai-gateway"})
+
+
+def _api_payload(request):
+    try:
+        payload = json.loads(request.body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _mobile_user_or_error(request):
+    user = authenticate_mobile_request(request)
+    return user if user is not None else json_error("Login is required.", 401)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def api_register(request):
+    payload = _api_payload(request)
+    if payload is None:
+        return json_error("Invalid JSON.")
+    form = PublicRegistrationForm(
+        {
+            "username": str(payload.get("username", "")).strip(),
+            "email": str(payload.get("email", "")).strip(),
+            "password1": str(payload.get("password", "")),
+            "password2": str(payload.get("password", "")),
+        }
+    )
+    if not form.is_valid():
+        return JsonResponse(
+            {"status": "error", "error": "Registration details are invalid.", "fields": form.errors.get_json_data()},
+            status=400,
+        )
+    user = form.save()
+    session, refresh_token = create_session(user, str(payload.get("deviceName", "")))
+    return JsonResponse(token_payload(user, session, refresh_token), status=201)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def api_login(request):
+    payload = _api_payload(request)
+    if payload is None:
+        return json_error("Invalid JSON.")
+    user = authenticate_login(str(payload.get("login", "")).strip(), str(payload.get("password", "")))
+    if user is None:
+        return json_error("Incorrect login or password.", 401)
+    session, refresh_token = create_session(user, str(payload.get("deviceName", "")))
+    return JsonResponse(token_payload(user, session, refresh_token))
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def api_refresh(request):
+    payload = _api_payload(request)
+    if payload is None:
+        return json_error("Invalid JSON.")
+    rotated = rotate_refresh_session(str(payload.get("refreshToken", "")))
+    if rotated is None:
+        return json_error("Session has expired. Please log in again.", 401)
+    session, refresh_token = rotated
+    return JsonResponse(token_payload(session.user, session, refresh_token))
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def api_logout(request):
+    payload = _api_payload(request)
+    if payload is not None:
+        revoke_refresh_session(str(payload.get("refreshToken", "")))
+    return JsonResponse({"status": "ok"})
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def api_text(request):
+    user_or_error = _mobile_user_or_error(request)
+    if isinstance(user_or_error, JsonResponse):
+        return user_or_error
+    payload = _api_payload(request)
+    if payload is None:
+        return json_error("Invalid JSON.")
+    try:
+        output, model = run_text(str(payload.get("model", "")), str(payload.get("prompt", "")))
+    except ProviderError as exc:
+        return json_error(str(exc), 503)
+    return JsonResponse({"status": "ok", "output": output, "provider": "openai", "model": model})
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def api_transcribe(request):
+    user_or_error = _mobile_user_or_error(request)
+    if isinstance(user_or_error, JsonResponse):
+        return user_or_error
+    audio = request.FILES.get("audio") or request.FILES.get("file")
+    if audio is None:
+        return json_error("Audio file is required.")
+    try:
+        text, model = transcribe(request.POST.get("model", ""), request.POST.get("language", ""), audio)
+    except ProviderError as exc:
+        return json_error(str(exc), 503)
+    return JsonResponse({"status": "ok", "text": text, "provider": "openai", "model": model})
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def api_speech(request):
+    user_or_error = _mobile_user_or_error(request)
+    if isinstance(user_or_error, JsonResponse):
+        return user_or_error
+    payload = _api_payload(request)
+    if payload is None:
+        return json_error("Invalid JSON.")
+    provider = str(payload.get("provider", "openai")).strip().lower()
+    try:
+        if provider == "elevenlabs":
+            audio, model, voice = synthesize_elevenlabs(
+                str(payload.get("model", "eleven_v3")),
+                str(payload.get("voiceId", "")),
+                str(payload.get("text", "")),
+            )
+        else:
+            audio, model, voice = synthesize_openai(
+                str(payload.get("model", "")),
+                str(payload.get("voice", "")),
+                str(payload.get("text", "")),
+                payload.get("speed", 1.0),
+            )
+            provider = "openai"
+    except ProviderError as exc:
+        return json_error(str(exc), 503)
+    response = HttpResponse(audio, content_type="audio/mpeg")
+    response["X-MurrLex-Provider"] = provider
+    response["X-MurrLex-Model"] = model
+    response["X-MurrLex-Voice"] = voice
+    response["Cache-Control"] = "private, no-store"
+    return response
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def api_image_text(request):
+    user_or_error = _mobile_user_or_error(request)
+    if isinstance(user_or_error, JsonResponse):
+        return user_or_error
+    image = request.FILES.get("image") or request.FILES.get("file")
+    if image is None:
+        return json_error("Image file is required.")
+    try:
+        text, model = recognize_image(request.POST.get("model", ""), request.POST.get("prompt", ""), image)
+    except ProviderError as exc:
+        return json_error(str(exc), 503)
+    return JsonResponse({"status": "ok", "text": text, "provider": "openai", "model": model})
 
 
 @csrf_exempt

@@ -141,3 +141,39 @@ Expected response:
 4. Clean legacy Make Mistake names when it is safe to rename Django modules.
 5. Fix mojibake in backend test fixtures without changing import behavior.
 6. Add CI for backend tests and connector tests.
+
+## Mobile AI Gateway
+
+Android online AI work is now served only through MurrLex. The app chooses the model and keeps an encrypted MurrLex login session; OpenAI and ElevenLabs keys must exist only in the server environment.
+
+Add these production values to `.env` and never commit them:
+
+```text
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_API_KEY=
+ELEVENLABS_BASE_URL=https://api.elevenlabs.io/v1
+ELEVENLABS_API_KEY=
+JWT_SIGNING_KEY=a-long-random-secret-different-from-SECRET_KEY
+JWT_ACCESS_MINUTES=15
+JWT_REFRESH_DAYS=30
+```
+
+Mobile authentication routes:
+
+```text
+POST /api/auth/register
+POST /api/auth/login
+POST /api/auth/refresh
+POST /api/auth/logout
+```
+
+Authenticated AI routes:
+
+```text
+POST /api/ai/text
+POST /api/ai/transcribe
+POST /api/ai/speech
+POST /api/ai/image-text
+```
+
+All AI routes require `Authorization: Bearer <access token>`. Access tokens expire quickly; refresh tokens are opaque, stored as SHA-256 hashes in `ApiSession`, rotate on refresh, and are revoked by logout. Before public release, rate-limit login and AI endpoints at the reverse proxy and use PostgreSQL rather than SQLite.

@@ -1,4 +1,5 @@
 import json
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.urls import reverse
@@ -6,6 +7,60 @@ from django.test import TestCase, override_settings
 
 from .models import Card, ImportLog, Lesson
 from .services import import_lesson_payload
+
+
+@override_settings(JWT_SIGNING_KEY="mobile-api-test-key-at-least-32-bytes", JWT_ACCESS_MINUTES=15, JWT_REFRESH_DAYS=30)
+class MobileApiTests(TestCase):
+    def create_user_and_login(self):
+        response = self.client.post(
+            "/api/auth/register",
+            data=json.dumps(
+                {
+                    "username": "mobilelearner",
+                    "email": "mobile@example.com",
+                    "password": "StrongPass-2026!",
+                    "deviceName": "Android test",
+                }
+            ),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 201)
+        return response.json()
+
+    def test_mobile_register_creates_rotatable_session(self):
+        payload = self.create_user_and_login()
+        self.assertTrue(payload["accessToken"])
+        self.assertTrue(payload["refreshToken"])
+        self.assertEqual(payload["user"]["username"], "mobilelearner")
+
+        refresh_response = self.client.post(
+            "/api/auth/refresh",
+            data=json.dumps({"refreshToken": payload["refreshToken"]}),
+            content_type="application/json",
+        )
+        self.assertEqual(refresh_response.status_code, 200)
+        self.assertNotEqual(refresh_response.json()["refreshToken"], payload["refreshToken"])
+
+    def test_mobile_ai_text_requires_session(self):
+        response = self.client.post(
+            "/api/ai/text",
+            data=json.dumps({"model": "gpt-5.4-mini", "prompt": "hello"}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 401)
+
+    @patch("lessons.views.run_text", return_value=("czesc", "gpt-5.4-mini"))
+    def test_mobile_ai_text_uses_authenticated_session(self, mocked_run_text):
+        session = self.create_user_and_login()
+        response = self.client.post(
+            "/api/ai/text",
+            data=json.dumps({"model": "gpt-5.4-mini", "prompt": "Translate hello"}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {session['accessToken']}",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["output"], "czesc")
+        mocked_run_text.assert_called_once()
 
 
 def sample_lesson_payload(**overrides):
