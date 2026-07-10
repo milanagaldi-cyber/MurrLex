@@ -196,6 +196,30 @@ class HomePageTests(TestCase):
         for href in expected_links:
             self.assertContains(response, f'href="{href}"')
 
+    def test_public_pages_include_theme_switcher(self):
+        for path in ("/", "/login/", "/register/", "/premium/"):
+            with self.subTest(path=path):
+                response = self.client.get(path)
+                self.assertContains(response, "data-theme-toggle")
+                self.assertContains(response, 'localStorage.setItem("theme", next)')
+
+
+class AdminThemeTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_superuser(
+            username="admin-theme-test",
+            email="admin-theme@example.com",
+            password="Strong-admin-theme-password-2026!",
+        )
+        self.client.force_login(self.user)
+
+    def test_admin_page_keeps_django_theme_toggle(self):
+        response = self.client.get("/admin/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'class="theme-toggle"')
+        self.assertContains(response, "admin/js/theme.js")
+
 
 class PremiumPageTests(TestCase):
     def test_premium_page_is_public_placeholder(self):
