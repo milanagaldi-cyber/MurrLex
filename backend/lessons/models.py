@@ -4,6 +4,24 @@ from django.conf import settings
 from django.db import models
 
 
+class UserApiAccess(models.Model):
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="api_access",
+    )
+    ai_api_enabled = models.BooleanField(default=False, verbose_name="AI API access")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "API access"
+        verbose_name_plural = "API access"
+        ordering = ["user__username"]
+
+    def __str__(self) -> str:
+        return f"{self.user.get_username()}: {'enabled' if self.ai_api_enabled else 'disabled'}"
+
+
 class Lesson(models.Model):
     external_id = models.CharField(max_length=255, unique=True)
     title = models.CharField(max_length=255)

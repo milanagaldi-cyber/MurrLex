@@ -1,7 +1,29 @@
 from django import forms
 from django.contrib import admin
 
-from .models import ApiSession, Card, ImportLog, Lesson, ProviderCredential
+from .models import ApiSession, Card, ImportLog, Lesson, ProviderCredential, UserApiAccess
+
+
+@admin.register(UserApiAccess)
+class UserApiAccessAdmin(admin.ModelAdmin):
+    list_display = ("username", "email", "account_active", "ai_api_enabled", "updated_at")
+    list_editable = ("ai_api_enabled",)
+    list_filter = ("ai_api_enabled", "user__is_active")
+    search_fields = ("user__username", "user__email")
+    readonly_fields = ("user", "updated_at")
+    list_select_related = ("user",)
+
+    @admin.display(ordering="user__username", description="Username")
+    def username(self, access):
+        return access.user.get_username()
+
+    @admin.display(ordering="user__email", description="Email")
+    def email(self, access):
+        return access.user.email
+
+    @admin.display(boolean=True, ordering="user__is_active", description="Active account")
+    def account_active(self, access):
+        return access.user.is_active
 
 
 class CardInline(admin.TabularInline):

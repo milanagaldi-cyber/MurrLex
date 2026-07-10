@@ -40,6 +40,8 @@
                     <dd>{{ request.user.first_name|default:"Not set" }}</dd>
                     <dt>Account status</dt>
                     <dd>{% if request.user.is_staff %}Staff{% else %}Public user{% endif %}</dd>
+                    <dt>AI API access</dt>
+                    <dd>{% if api_access.ai_api_enabled %}Enabled{% else %}Waiting for administrator approval{% endif %}</dd>
                     <dt>Date joined</dt>
                     <dd>{{ request.user.date_joined|date:"Y-m-d H:i" }}</dd>
                 </dl>

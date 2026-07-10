@@ -10,7 +10,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
 from .forms import AccountSettingsForm, ProviderCredentialForm, PublicRegistrationForm
-from .models import ImportLog, Lesson, ProviderCredential
+from .models import ImportLog, Lesson, ProviderCredential, UserApiAccess
 from .services import LessonImportError, import_lesson_payload, log_failed_import
 from .ai_gateway import ProviderError, recognize_image, run_text, synthesize_elevenlabs, synthesize_openai, transcribe
 from .api_auth import (
@@ -124,7 +124,8 @@ def register(request):
 @login_required
 @require_http_methods(["GET"])
 def account(request):
-    return render(request, "registration/account.html")
+    api_access, _ = UserApiAccess.objects.get_or_create(user=request.user)
+    return render(request, "registration/account.html", {"api_access": api_access})
 
 
 @login_required
@@ -258,7 +259,12 @@ def _api_payload(request):
 
 def _mobile_user_or_error(request):
     user = authenticate_mobile_request(request)
-    return user if user is not None else json_error("Login is required.", 401)
+    if user is None:
+        return json_error("Login is required.", 401)
+    api_access, _ = UserApiAccess.objects.get_or_create(user=user)
+    if not api_access.ai_api_enabled:
+        return json_error("AI API access has not been approved.", 403)
+    return user
 
 
 @csrf_exempt
