@@ -122,7 +122,7 @@
         margin: 0;
     }
     .admin-theme-toggle {
-        width: 58px;
+        width: 42px;
         min-height: 36px;
         padding: 0 !important;
         gap: 4px;
@@ -139,9 +139,6 @@
     .admin-theme-icon:empty {
         display: none;
         min-width: 0;
-    }
-    .admin-theme-label {
-        line-height: 1;
     }
     .admin-welcome {
         display: inline-flex;
@@ -436,27 +433,21 @@
     window.addEventListener("DOMContentLoaded", () => {
         const button = document.querySelector("[data-admin-theme-toggle]");
         const icon = document.querySelector("[data-admin-theme-icon]");
-        const label = document.querySelector("[data-admin-theme-label]");
-        if (!button || !icon || !label) return;
+        if (!button || !icon) return;
 
-        const modes = ["dark", "light", "auto"];
-        const systemPrefersDark = () => window.matchMedia("(prefers-color-scheme: dark)").matches;
         const getSavedMode = () => {
             try {
                 const mode = localStorage.getItem("theme");
-                return modes.includes(mode) ? mode : "auto";
+                return mode === "light" ? "light" : "dark";
             } catch (error) {
-                return "auto";
+                return "dark";
             }
         };
         const applyTheme = (mode) => {
-            const isAuto = mode === "auto";
-            const appliedTheme = isAuto ? (systemPrefersDark() ? "dark" : "light") : mode;
             const name = mode[0].toUpperCase() + mode.slice(1);
-            document.documentElement.dataset.theme = appliedTheme;
+            document.documentElement.dataset.theme = mode;
             button.dataset.adminThemeMode = mode;
-            icon.textContent = isAuto ? "" : mode === "light" ? String.fromCharCode(9788) : String.fromCharCode(9790);
-            label.textContent = isAuto ? "Auto" : "";
+            icon.textContent = mode === "light" ? String.fromCharCode(9788) : String.fromCharCode(9790);
             button.setAttribute("aria-label", `Theme: ${name}. Click to switch.`);
             button.title = name;
             try {
@@ -468,10 +459,8 @@
 
         applyTheme(getSavedMode());
         button.addEventListener("click", () => {
-            const currentMode = button.dataset.adminThemeMode || "auto";
-            const nextMode = currentMode === "auto"
-                ? (systemPrefersDark() ? "light" : "dark")
-                : currentMode === "dark" ? "light" : "auto";
+            const currentMode = button.dataset.adminThemeMode || "dark";
+            const nextMode = currentMode === "dark" ? "light" : "dark";
             applyTheme(nextMode);
         });
     });
@@ -504,7 +493,6 @@
 </form>
 <button class="admin-theme-toggle" type="button" data-admin-theme-toggle aria-label="Switch theme">
     <span class="admin-theme-icon" data-admin-theme-icon aria-hidden="true">&#9790;</span>
-    <span class="admin-theme-label" data-admin-theme-label></span>
 </button>
 {% endblock %}
 

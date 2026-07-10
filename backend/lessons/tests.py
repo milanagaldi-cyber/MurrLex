@@ -223,6 +223,7 @@ class AdminThemeTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "data-admin-theme-toggle")
         self.assertContains(response, "data-admin-theme-icon")
+        self.assertContains(response, 'return mode === "light" ? "light" : "dark"')
         self.assertContains(response, "localStorage.setItem(\"theme\", mode)")
         self.assertContains(response, "admin/js/theme.js")
 
