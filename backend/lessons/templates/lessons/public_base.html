@@ -380,6 +380,7 @@
             align-items: center;
         }
         .theme-toggle {
+            width: 72px;
             min-height: 38px;
             border-color: var(--line);
             background: var(--panel);
@@ -387,6 +388,17 @@
             font-size: 13px;
             gap: 4px;
             white-space: nowrap;
+        }
+        .theme-icon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 20px;
+            font-size: 20px;
+            line-height: 1;
+        }
+        .theme-label {
+            line-height: 1;
         }
         .theme-toggle:hover {
             border-color: var(--accent);
@@ -422,14 +434,18 @@
     <script>
         (() => {
             const button = document.querySelector("[data-theme-toggle]");
+            const icon = document.querySelector("[data-theme-icon]");
             const label = document.querySelector("[data-theme-label]");
-            if (!button || !label) return;
+            if (!button || !icon || !label) return;
 
             const updateThemeLabel = (theme) => {
-                const name = theme === "light" ? "Light" : theme === "auto" ? "Auto" : "Dark";
-                label.textContent = name;
+                const isLight = theme === "light";
+                const isAuto = theme === "auto";
+                const name = isLight ? "Light" : isAuto ? "Auto" : "Dark";
+                icon.textContent = isAuto ? "" : isLight ? String.fromCharCode(9788) : String.fromCharCode(9790);
+                label.textContent = isAuto ? "Auto" : "";
                 button.setAttribute("aria-label", `Theme: ${name}. Click to switch.`);
-                button.title = `Theme: ${name}`;
+                button.title = name;
             };
 
             const currentTheme = document.documentElement.dataset.theme || "dark";
