@@ -46,6 +46,7 @@ def import_lesson_payload(payload: dict[str, Any], source: str) -> LessonImportR
 
     with transaction.atomic():
         lesson, _created = Lesson.objects.update_or_create(
+            owner=None,
             external_id=external_id,
             defaults={
                 "title": title,

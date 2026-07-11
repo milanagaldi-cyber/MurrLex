@@ -146,6 +146,8 @@ Expected response:
 
 Android online AI work is now served only through MurrLex. The app chooses the model and keeps an encrypted MurrLex login session. A server superuser enters OpenAI and ElevenLabs keys at `/account/provider-keys/`; keys are encrypted in the database and never returned to the browser or mobile client.
 
+Personal browser applications live under `/apps/`. Access requires authentication, a configured OpenAI key, and an enabled `AiAccessGrant` (superusers are allowed automatically). `/api/sync` provides owner-isolated all/lesson/card synchronization with Android.
+
 Add these production values to `.env` and never commit them:
 
 ```text

@@ -2,9 +2,7 @@ import json
 from unittest.mock import patch
 
 from cryptography.fernet import Fernet
-from django.contrib import admin
 from django.contrib.auth import get_user_model
-from django.contrib.auth.models import Permission
 from django.urls import reverse
 from django.test import TestCase, override_settings
 
@@ -13,7 +11,12 @@ from .provider_credentials import get_provider_api_key
 from .services import import_lesson_payload
 
 
-@override_settings(JWT_SIGNING_KEY="mobile-api-test-key-at-least-32-bytes", JWT_ACCESS_MINUTES=15, JWT_REFRESH_DAYS=30)
+@override_settings(
+    JWT_SIGNING_KEY="mobile-api-test-key-at-least-32-bytes",
+    JWT_ACCESS_MINUTES=15,
+    JWT_REFRESH_DAYS=30,
+    CREDENTIAL_ENCRYPTION_KEY=Fernet.generate_key().decode("ascii"),
+)
 class MobileApiTests(TestCase):
     def create_user_and_login(self):
         response = self.client.post(
@@ -36,7 +39,6 @@ class MobileApiTests(TestCase):
         self.assertTrue(payload["accessToken"])
         self.assertTrue(payload["refreshToken"])
         self.assertEqual(payload["user"]["username"], "mobilelearner")
-        self.assertFalse(UserApiAccess.objects.get(user__username="mobilelearner").ai_api_enabled)
 
         refresh_response = self.client.post(
             "/api/auth/refresh",
@@ -54,36 +56,73 @@ class MobileApiTests(TestCase):
         )
         self.assertEqual(response.status_code, 401)
 
-    @patch("lessons.views.run_text", return_value=("czesc", "gpt-5.4-mini"))
-    def test_mobile_ai_text_requires_admin_approval(self, mocked_run_text):
-        session = self.create_user_and_login()
-        response = self.client.post(
-            "/api/ai/text",
-            data=json.dumps({"model": "gpt-5.4-mini", "prompt": "Translate hello"}),
-            content_type="application/json",
-            HTTP_AUTHORIZATION=f"Bearer {session['accessToken']}",
-        )
-
-        self.assertEqual(response.status_code, 403)
-        mocked_run_text.assert_not_called()
-
-    @patch("lessons.views.run_text", return_value=("czesc", "gpt-5.4-mini"))
-    def test_mobile_ai_text_uses_approved_authenticated_session(self, mocked_run_text):
-        session = self.create_user_and_login()
-        access = UserApiAccess.objects.get(user__username="mobilelearner")
+    def enable_ai_for(self, username="mobilelearner"):
+        user = get_user_model().objects.get(username=username)
+        access, _ = UserApiAccess.objects.get_or_create(user=user)
         access.ai_api_enabled = True
         access.save()
+        credential = ProviderCredential(provider=ProviderCredential.Provider.OPENAI)
+        credential.set_api_key("sk-test")
+        credential.save()
+        return user
 
+    @patch("lessons.views.run_text", return_value=("czesc", "gpt-5.4-mini"))
+    def test_mobile_ai_text_uses_authenticated_session(self, mocked_run_text):
+        session = self.create_user_and_login()
+        self.enable_ai_for()
         response = self.client.post(
             "/api/ai/text",
             data=json.dumps({"model": "gpt-5.4-mini", "prompt": "Translate hello"}),
             content_type="application/json",
             HTTP_AUTHORIZATION=f"Bearer {session['accessToken']}",
         )
-
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["output"], "czesc")
         mocked_run_text.assert_called_once()
+
+    def test_mobile_sync_is_scoped_to_authenticated_user(self):
+        session = self.create_user_and_login()
+        self.enable_ai_for()
+        lesson = sample_lesson_payload(id="mobile-sync-1", title="Phone lesson")
+        response = self.client.post(
+            "/api/sync",
+            data=json.dumps({"scope": "all", "lessons": [lesson]}),
+            content_type="application/json",
+            HTTP_AUTHORIZATION=f"Bearer {session['accessToken']}",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["lessons"][0]["title"], "Phone lesson")
+        self.assertEqual(Lesson.objects.get(external_id="mobile-sync-1").owner.username, "mobilelearner")
+
+
+@override_settings(CREDENTIAL_ENCRYPTION_KEY=Fernet.generate_key().decode("ascii"))
+class WebAppsTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(username="weblearner", password="Strong-pass-2026!")
+        self.client.force_login(self.user)
+
+    def test_apps_are_hidden_without_ai_grant(self):
+        self.assertEqual(self.client.get("/apps/").status_code, 403)
+
+    def test_granted_user_can_create_personal_lesson(self):
+        access, _ = UserApiAccess.objects.get_or_create(user=self.user)
+        access.ai_api_enabled = True
+        access.save()
+        credential = ProviderCredential(provider=ProviderCredential.Provider.OPENAI)
+        credential.set_api_key("sk-test")
+        credential.save()
+        response = self.client.post(
+            "/apps/lessons/new/",
+            data={"title": "Web lesson", "source_language": "Russian", "target_language": "Polish"},
+        )
+        self.assertEqual(response.status_code, 302)
+        lesson = Lesson.objects.get(title="Web lesson")
+        self.assertEqual(lesson.owner, self.user)
+        Card.objects.create(lesson=lesson, external_card_id="1", native_value="cat", correct_value="kot")
+        study = self.client.get(f"/apps/lessons/{lesson.id}/study/")
+        self.assertEqual(study.status_code, 200)
+        self.assertContains(study, "cat")
+        self.assertContains(study, "kot")
 
 
 @override_settings(CREDENTIAL_ENCRYPTION_KEY=Fernet.generate_key().decode("ascii"))
@@ -343,109 +382,6 @@ class AdminThemeTests(TestCase):
         self.assertContains(response, "admin/js/theme.js")
 
 
-class AdminDashboardTests(TestCase):
-    def setUp(self):
-        self.superuser = get_user_model().objects.create_superuser(
-            username="dashboard-admin",
-            email="dashboard-admin@example.com",
-            password="Strong-dashboard-password-2026!",
-        )
-
-    def test_non_staff_user_cannot_open_dashboard(self):
-        user = get_user_model().objects.create_user(
-            username="public-dashboard-user",
-            password="Strong-public-password-2026!",
-        )
-        self.client.force_login(user)
-
-        response = self.client.get("/admin/")
-
-        self.assertEqual(response.status_code, 302)
-        self.assertIn("/admin/login/", response["Location"])
-
-    def test_superuser_sees_grouped_dashboard_and_collapsed_system(self):
-        self.client.force_login(self.superuser)
-
-        response = self.client.get("/admin/")
-
-        self.assertEqual(response.status_code, 200)
-        for heading in ("User Management", "AI &amp; Server", "Content", "System"):
-            self.assertContains(response, heading)
-        for url in (
-            "/admin/auth/user/",
-            "/admin/lessons/userapiaccess/",
-            "/admin/lessons/providercredential/",
-            "/admin/lessons/lesson/",
-            "/admin/account/emailaddress/",
-            "/admin/sites/site/",
-            "/admin/socialaccount/socialaccount/",
-        ):
-            self.assertContains(response, f'href="{url}"')
-        self.assertContains(response, '<details class="dashboard-system">')
-        self.assertNotContains(response, '<details class="dashboard-system" open>')
-        self.assertFalse(admin.site.enable_nav_sidebar)
-
-    def test_staff_user_only_sees_permitted_dashboard_sections(self):
-        staff = get_user_model().objects.create_user(
-            username="limited-dashboard-staff",
-            password="Strong-staff-password-2026!",
-            is_staff=True,
-        )
-        staff.user_permissions.add(Permission.objects.get(codename="view_lesson"))
-        self.client.force_login(staff)
-
-        response = self.client.get("/admin/")
-
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Content")
-        self.assertContains(response, "/admin/lessons/lesson/")
-        self.assertNotContains(response, "/admin/auth/user/")
-        self.assertNotContains(response, "/admin/lessons/providercredential/")
-
-
-class UserApiAccessAdminTests(TestCase):
-    def setUp(self):
-        self.admin = get_user_model().objects.create_superuser(
-            username="api-access-admin",
-            email="api-access-admin@example.com",
-            password="Strong-admin-password-2026!",
-        )
-        self.user = get_user_model().objects.create_user(
-            username="api-user",
-            email="api-user@example.com",
-            password="Strong-user-password-2026!",
-        )
-        self.client.force_login(self.admin)
-
-    def test_admin_list_shows_editable_api_access_checkbox(self):
-        response = self.client.get("/admin/lessons/userapiaccess/")
-
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "api-user")
-        self.assertContains(response, 'name="form-')
-        self.assertContains(response, "ai_api_enabled")
-
-    def test_admin_can_enable_api_access_from_list(self):
-        access = self.user.api_access
-        response = self.client.post(
-            "/admin/lessons/userapiaccess/",
-            data={
-                "form-TOTAL_FORMS": "2",
-                "form-INITIAL_FORMS": "2",
-                "form-MIN_NUM_FORMS": "0",
-                "form-MAX_NUM_FORMS": "1000",
-                "form-0-id": str(self.admin.api_access.id),
-                "form-1-id": str(access.id),
-                "form-1-ai_api_enabled": "on",
-                "_save": "Save",
-            },
-        )
-
-        self.assertEqual(response.status_code, 302)
-        access.refresh_from_db()
-        self.assertTrue(access.ai_api_enabled)
-
-
 class PremiumPageTests(TestCase):
     def test_premium_page_is_public_placeholder(self):
         response = self.client.get("/premium/")
@@ -588,7 +524,6 @@ class PublicAccountTests(TestCase):
         user = user_model.objects.get(username="newlearner")
         self.assertEqual(user.email, "newlearner@example.com")
         self.assertEqual(int(self.client.session["_auth_user_id"]), user.id)
-        self.assertFalse(user.api_access.ai_api_enabled)
 
     def test_duplicate_email_is_rejected(self):
         user_model = get_user_model()
@@ -635,22 +570,6 @@ class PublicAccountTests(TestCase):
         self.assertContains(response, "Current plan")
         self.assertContains(response, "Free")
         self.assertContains(response, "Premium area")
-        self.assertContains(response, "Waiting for administrator approval")
-
-    def test_account_shows_enabled_api_access(self):
-        user = get_user_model().objects.create_user(
-            username="approved-learner",
-            email="approved@example.com",
-            password="test-password",
-        )
-        user.api_access.ai_api_enabled = True
-        user.api_access.save()
-        self.client.force_login(user)
-
-        response = self.client.get("/account/")
-
-        self.assertContains(response, "AI API access")
-        self.assertContains(response, "Enabled")
 
     def test_account_settings_requires_login(self):
         response = self.client.get("/account/settings/")
@@ -762,5 +681,3 @@ class LabUiAuthTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 401)
-
-

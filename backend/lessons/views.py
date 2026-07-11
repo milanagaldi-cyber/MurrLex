@@ -1,4 +1,6 @@
+import base64
 import json
+import uuid
 
 from django.conf import settings
 from django.contrib import messages
@@ -9,8 +11,18 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
-from .forms import AccountSettingsForm, ProviderCredentialForm, PublicRegistrationForm
-from .models import ImportLog, Lesson, ProviderCredential, UserApiAccess
+from .forms import (
+    AccountSettingsForm,
+    CardForm,
+    ImageTextForm,
+    LessonForm,
+    ProviderCredentialForm,
+    PublicRegistrationForm,
+    SpeechForm,
+    TranscriptionForm,
+    TranslationForm,
+)
+from .models import Card, ImportLog, Lesson, ProviderCredential, UserApiAccess
 from .services import LessonImportError, import_lesson_payload, log_failed_import
 from .ai_gateway import ProviderError, recognize_image, run_text, synthesize_elevenlabs, synthesize_openai, transcribe
 from .api_auth import (
@@ -21,6 +33,13 @@ from .api_auth import (
     revoke_refresh_session,
     rotate_refresh_session,
     token_payload,
+)
+from .provider_credentials import user_has_ai_access
+from .sync_service import (
+    mark_card_updated,
+    mark_lesson_updated,
+    merge_mobile_lessons,
+    user_lessons_payload,
 )
 
 
@@ -125,7 +144,215 @@ def register(request):
 @require_http_methods(["GET"])
 def account(request):
     api_access, _ = UserApiAccess.objects.get_or_create(user=request.user)
-    return render(request, "registration/account.html", {"api_access": api_access})
+    return render(request, "registration/account.html", {
+        "api_access": api_access,
+        "ai_access": user_has_ai_access(request.user),
+    })
+
+
+def _web_ai_denied(request):
+    return None if user_has_ai_access(request.user) else HttpResponseForbidden("AI application access is required.")
+
+
+@login_required
+@require_http_methods(["GET"])
+def apps_dashboard(request):
+    denied = _web_ai_denied(request)
+    if denied:
+        return denied
+    return render(request, "apps/dashboard.html")
+
+
+@login_required
+@require_http_methods(["GET"])
+def web_lessons(request):
+    denied = _web_ai_denied(request)
+    if denied:
+        return denied
+    query = request.GET.get("q", "").strip()
+    lessons = Lesson.objects.filter(owner=request.user).prefetch_related("cards")
+    if query:
+        lessons = lessons.filter(title__icontains=query)
+    return render(request, "apps/lessons.html", {"lessons": lessons, "query": query})
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def web_lesson_edit(request, lesson_id=None):
+    denied = _web_ai_denied(request)
+    if denied:
+        return denied
+    lesson = get_object_or_404(Lesson, owner=request.user, id=lesson_id) if lesson_id else None
+    form = LessonForm(request.POST or None, instance=lesson)
+    if request.method == "POST" and form.is_valid():
+        saved = form.save(commit=False)
+        saved.owner = request.user
+        saved.external_id = saved.external_id or uuid.uuid4().hex
+        saved.save()
+        mark_lesson_updated(saved)
+        messages.success(request, "Lesson saved.")
+        return redirect("web_lesson_detail", lesson_id=saved.id)
+    return render(request, "apps/form.html", {"form": form, "title": "Edit lesson" if lesson else "Create lesson"})
+
+
+@login_required
+@require_http_methods(["GET"])
+def web_lesson_detail(request, lesson_id):
+    denied = _web_ai_denied(request)
+    if denied:
+        return denied
+    lesson = get_object_or_404(Lesson.objects.prefetch_related("cards"), owner=request.user, id=lesson_id)
+    return render(request, "apps/lesson_detail.html", {"lesson": lesson})
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def web_study(request, lesson_id):
+    denied = _web_ai_denied(request)
+    if denied:
+        return denied
+    lesson = get_object_or_404(Lesson.objects.prefetch_related("cards"), owner=request.user, id=lesson_id)
+    cards = list(lesson.cards.all())
+    if request.method == "POST":
+        card = get_object_or_404(Card, lesson=lesson, id=request.POST.get("card_id"))
+        rating = max(0, min(3, int(request.POST.get("rating", 0))))
+        card.stars = (0, 1, 3, 7)[rating]
+        mark_card_updated(card)
+        messages.success(request, "Progress saved.")
+    index = max(0, min(len(cards) - 1, int(request.GET.get("index", 0)))) if cards else 0
+    return render(
+        request,
+        "apps/study.html",
+        {"lesson": lesson, "card": cards[index] if cards else None, "index": index, "total": len(cards)},
+    )
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def web_card_edit(request, lesson_id, card_id=None):
+    denied = _web_ai_denied(request)
+    if denied:
+        return denied
+    lesson = get_object_or_404(Lesson, owner=request.user, id=lesson_id)
+    card = get_object_or_404(Card, lesson=lesson, id=card_id) if card_id else None
+    form = CardForm(request.POST or None, instance=card)
+    if request.method == "POST" and form.is_valid():
+        saved = form.save(commit=False)
+        saved.lesson = lesson
+        saved.external_card_id = saved.external_card_id or str((lesson.cards.count() or 0) + 1)
+        saved.save()
+        mark_card_updated(saved)
+        messages.success(request, "Card saved.")
+        return redirect("web_lesson_detail", lesson_id=lesson.id)
+    return render(request, "apps/form.html", {"form": form, "title": "Edit card" if card else "Create card"})
+
+
+@login_required
+@require_http_methods(["POST"])
+def web_delete(request, object_type, object_id):
+    denied = _web_ai_denied(request)
+    if denied:
+        return denied
+    if object_type == "lesson":
+        get_object_or_404(Lesson, owner=request.user, id=object_id).delete()
+        return redirect("web_lessons")
+    card = get_object_or_404(Card, lesson__owner=request.user, id=object_id)
+    lesson_id = card.lesson_id
+    card.delete()
+    return redirect("web_lesson_detail", lesson_id=lesson_id)
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def web_translate(request):
+    denied = _web_ai_denied(request)
+    if denied:
+        return denied
+    output = ""
+    form = TranslationForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        prompt = (
+            f"Translate from {form.cleaned_data['source_language']} to {form.cleaned_data['target_language']}. "
+            f"Return only the translation.\n\n{form.cleaned_data['text']}"
+        )
+        try:
+            output, _ = run_text(settings.OPENAI_TRANSLATION_MODEL, prompt)
+        except ProviderError as exc:
+            messages.error(request, str(exc))
+    return render(request, "apps/tool.html", {"form": form, "title": "Translator", "output": output})
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def web_speech(request):
+    denied = _web_ai_denied(request)
+    if denied:
+        return denied
+    audio_data = ""
+    form = SpeechForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        try:
+            audio, _, content_type = synthesize_openai(
+                form.cleaned_data["model"], form.cleaned_data["voice"], form.cleaned_data["text"], 1.0
+            )
+            audio_data = f"data:{content_type};base64,{base64.b64encode(audio).decode('ascii')}"
+        except ProviderError as exc:
+            messages.error(request, str(exc))
+    return render(request, "apps/tool.html", {"form": form, "title": "Text to speech", "audio_data": audio_data})
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def web_transcribe(request):
+    denied = _web_ai_denied(request)
+    if denied:
+        return denied
+    output = ""
+    form = TranscriptionForm(request.POST or None, request.FILES or None)
+    if request.method == "POST" and form.is_valid():
+        try:
+            output, _ = transcribe(form.cleaned_data["model"], form.cleaned_data["language"], form.cleaned_data["audio"])
+        except ProviderError as exc:
+            messages.error(request, str(exc))
+    return render(request, "apps/tool.html", {"form": form, "title": "Speech to text", "output": output, "multipart": True})
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def web_image_text(request):
+    denied = _web_ai_denied(request)
+    if denied:
+        return denied
+    output = ""
+    form = ImageTextForm(request.POST or None, request.FILES or None)
+    if request.method == "POST" and form.is_valid():
+        try:
+            output, _ = recognize_image(form.cleaned_data["model"], "Extract all readable text.", form.cleaned_data["image"])
+        except ProviderError as exc:
+            messages.error(request, str(exc))
+    return render(request, "apps/tool.html", {"form": form, "title": "Image text", "output": output, "multipart": True})
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
+def web_sync(request):
+    denied = _web_ai_denied(request)
+    if denied:
+        return denied
+    if request.method == "POST":
+        scope = request.POST.get("scope", "all")
+        lesson_id = request.POST.get("lesson_id", "")
+        card_id = request.POST.get("card_id", "")
+        if scope == "card" and card_id:
+            mark_card_updated(get_object_or_404(Card, id=card_id, lesson__owner=request.user))
+        elif scope == "lesson" and lesson_id:
+            mark_lesson_updated(get_object_or_404(Lesson, id=lesson_id, owner=request.user))
+        else:
+            for lesson in Lesson.objects.filter(owner=request.user):
+                mark_lesson_updated(lesson)
+        messages.success(request, "Sync checkpoint updated. The phone will receive it on the next synchronization.")
+        return redirect("web_sync")
+    return render(request, "apps/sync.html", {"lessons": Lesson.objects.filter(owner=request.user).prefetch_related("cards")})
 
 
 @login_required
@@ -257,13 +484,12 @@ def _api_payload(request):
     return payload if isinstance(payload, dict) else None
 
 
-def _mobile_user_or_error(request):
+def _mobile_user_or_error(request, require_ai=False):
     user = authenticate_mobile_request(request)
     if user is None:
         return json_error("Login is required.", 401)
-    api_access, _ = UserApiAccess.objects.get_or_create(user=user)
-    if not api_access.ai_api_enabled:
-        return json_error("AI API access has not been approved.", 403)
+    if require_ai and not user_has_ai_access(user):
+        return json_error("AI access is not enabled for this account.", 403)
     return user
 
 
@@ -329,7 +555,7 @@ def api_logout(request):
 @csrf_exempt
 @require_http_methods(["POST"])
 def api_text(request):
-    user_or_error = _mobile_user_or_error(request)
+    user_or_error = _mobile_user_or_error(request, require_ai=True)
     if isinstance(user_or_error, JsonResponse):
         return user_or_error
     payload = _api_payload(request)
@@ -345,7 +571,7 @@ def api_text(request):
 @csrf_exempt
 @require_http_methods(["POST"])
 def api_transcribe(request):
-    user_or_error = _mobile_user_or_error(request)
+    user_or_error = _mobile_user_or_error(request, require_ai=True)
     if isinstance(user_or_error, JsonResponse):
         return user_or_error
     audio = request.FILES.get("audio") or request.FILES.get("file")
@@ -361,7 +587,7 @@ def api_transcribe(request):
 @csrf_exempt
 @require_http_methods(["POST"])
 def api_speech(request):
-    user_or_error = _mobile_user_or_error(request)
+    user_or_error = _mobile_user_or_error(request, require_ai=True)
     if isinstance(user_or_error, JsonResponse):
         return user_or_error
     payload = _api_payload(request)
@@ -396,7 +622,7 @@ def api_speech(request):
 @csrf_exempt
 @require_http_methods(["POST"])
 def api_image_text(request):
-    user_or_error = _mobile_user_or_error(request)
+    user_or_error = _mobile_user_or_error(request, require_ai=True)
     if isinstance(user_or_error, JsonResponse):
         return user_or_error
     image = request.FILES.get("image") or request.FILES.get("file")
@@ -407,6 +633,36 @@ def api_image_text(request):
     except ProviderError as exc:
         return json_error(str(exc), 503)
     return JsonResponse({"status": "ok", "text": text, "provider": "openai", "model": model})
+
+
+@csrf_exempt
+@require_http_methods(["GET", "POST"])
+def api_sync(request):
+    user_or_error = _mobile_user_or_error(request, require_ai=True)
+    if isinstance(user_or_error, JsonResponse):
+        return user_or_error
+    scope = request.GET.get("scope", "all") if request.method == "GET" else "all"
+    lesson_id = request.GET.get("lessonId", "") if request.method == "GET" else ""
+    card_id = request.GET.get("cardId", "") if request.method == "GET" else ""
+    if request.method == "POST":
+        payload = _api_payload(request)
+        if payload is None:
+            return json_error("Invalid JSON.")
+        scope = str(payload.get("scope", "all"))
+        lesson_id = str(payload.get("lessonId", ""))
+        card_id = str(payload.get("cardId", ""))
+        lessons = payload.get("lessons", [])
+        if not isinstance(lessons, list):
+            return json_error("lessons must be a list.")
+        merge_mobile_lessons(user_or_error, lessons, scope, lesson_id, card_id)
+    if scope not in {"all", "lesson", "card"}:
+        return json_error("Unknown sync scope.")
+    response_lessons = user_lessons_payload(
+        user_or_error,
+        lesson_id=lesson_id if scope in {"lesson", "card"} else "",
+        card_id=card_id if scope == "card" else "",
+    )
+    return JsonResponse({"status": "ok", "scope": scope, "lessons": response_lessons})
 
 
 @csrf_exempt

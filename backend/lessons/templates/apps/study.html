@@ -1,0 +1,13 @@
+{% extends "apps/base.html" %}
+{% block title %}Study {{ lesson.title }}{% endblock %}
+{% block app_content %}
+<section class="panel" style="max-width:780px;margin:0 auto;text-align:center;">
+  <p>{{ lesson.title }} · {{ index|add:1 }} / {{ total }}</p>
+  {% if card %}
+    <h1 style="font-size:42px;overflow-wrap:anywhere;">{{ card.native_value }}</h1>
+    <details style="margin:28px 0;"><summary class="button">Show answer</summary><h2 style="font-size:34px;">{{ card.correct_value }}</h2><p>{{ card.hint }}</p></details>
+    <form method="post">{% csrf_token %}<input type="hidden" name="card_id" value="{{ card.id }}"><div style="display:flex;justify-content:center;gap:8px;flex-wrap:wrap;">{% for rating in "0123" %}<button class="secondary" name="rating" value="{{ rating }}" type="submit">{{ rating }} star{{ rating|pluralize }}</button>{% endfor %}</div></form>
+    <div style="display:flex;justify-content:space-between;margin-top:26px;"><a class="button secondary" href="?index={{ index|add:'-1' }}">Previous</a><a class="button" href="?index={{ index|add:'1' }}">Next</a></div>
+  {% else %}<p>This lesson has no cards.</p>{% endif %}
+</section>
+{% endblock %}

@@ -23,7 +23,14 @@ class UserApiAccess(models.Model):
 
 
 class Lesson(models.Model):
-    external_id = models.CharField(max_length=255, unique=True)
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="murrlex_lessons",
+        null=True,
+        blank=True,
+    )
+    external_id = models.CharField(max_length=255)
     title = models.CharField(max_length=255)
     card_kind = models.CharField(max_length=20, blank=True)
     source_language = models.CharField(max_length=100, blank=True)
@@ -35,6 +42,9 @@ class Lesson(models.Model):
 
     class Meta:
         ordering = ["title", "external_id"]
+        constraints = [
+            models.UniqueConstraint(fields=["owner", "external_id"], name="unique_lesson_external_id_per_owner")
+        ]
 
     def __str__(self) -> str:
         return self.title
@@ -147,3 +157,5 @@ class ProviderCredential(models.Model):
 
     def __str__(self) -> str:
         return self.get_provider_display()
+
+

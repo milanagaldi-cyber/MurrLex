@@ -78,6 +78,12 @@ The Android app never sends OpenAI or ElevenLabs API keys. It stores only its Mu
 
 A superuser configures provider keys at `/account/provider-keys/` (or through Django admin). The server encrypts every key using `CREDENTIAL_ENCRYPTION_KEY`; the saved key is never displayed again. Do not add provider keys to `.env`.
 
+## Personal Web Apps And Sync
+
+Users with an enabled `AiAccessGrant` can open `/apps/` after login. The dashboard provides personal lessons/cards, translation, TTS, STT, image-text recognition, and synchronization controls. User lessons are isolated by owner.
+
+Android synchronizes through authenticated `/api/sync` requests. Supported scopes are `all`, `lesson`, and `card`; the request sends local lesson JSON and the response returns the merged canonical server copy.
+
 Required server environment values:
 
 ```text

@@ -1,0 +1,6 @@
+{% extends "apps/base.html" %}
+{% block title %}{{ lesson.title }}{% endblock %}
+{% block app_content %}
+<section class="panel"><div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;"><div><h1>{{ lesson.title }}</h1><p>{{ lesson.source_language }} → {{ lesson.target_language }} · {{ lesson.cards.count }} cards</p></div><div><a class="button" href="{% url 'web_study' lesson.id %}">Study</a> <a class="button secondary" href="{% url 'web_lesson_edit' lesson.id %}">Edit lesson</a> <a class="button" href="{% url 'web_card_new' lesson.id %}">Add card</a></div></div></section>
+<section class="grid" style="margin-top:18px;">{% for card in lesson.cards.all %}<article class="card"><span class="badge">{{ card.card_kind|default:"CARD" }}</span><h2>{{ card.native_value|default:"Empty" }}</h2><p>{{ card.correct_value|default:"Empty" }}</p><p>{{ card.hint }}</p><a class="button secondary" href="{% url 'web_card_edit' lesson.id card.id %}">Edit</a><form method="post" action="{% url 'web_delete' 'card' card.id %}" style="display:inline;">{% csrf_token %}<button class="secondary" type="submit">Delete</button></form></article>{% empty %}<p>No cards yet.</p>{% endfor %}</section>
+{% endblock %}

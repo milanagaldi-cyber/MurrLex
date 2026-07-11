@@ -2,7 +2,7 @@ from django import forms
 from django.contrib.auth import authenticate, get_user_model
 from django.contrib.auth.forms import AuthenticationForm, UserCreationForm
 
-from .models import ProviderCredential
+from .models import Card, Lesson, ProviderCredential
 
 
 class UsernameOrEmailAuthenticationForm(AuthenticationForm):
@@ -104,3 +104,47 @@ class ProviderCredentialForm(forms.Form):
         if not cleaned.get("api_key") and not cleaned.get("clear_key"):
             raise forms.ValidationError("Enter a replacement key or select removal.")
         return cleaned
+
+
+class LessonForm(forms.ModelForm):
+    class Meta:
+        model = Lesson
+        fields = ("title", "source_language", "target_language", "card_kind", "lesson_info")
+
+
+class CardForm(forms.ModelForm):
+    class Meta:
+        model = Card
+        fields = (
+            "native_value",
+            "correct_value",
+            "hint",
+            "mistake",
+            "card_kind",
+            "source_language",
+            "target_language",
+            "stars",
+        )
+
+
+class TranslationForm(forms.Form):
+    source_language = forms.CharField(max_length=100)
+    target_language = forms.CharField(max_length=100)
+    text = forms.CharField(widget=forms.Textarea(attrs={"rows": 7}))
+
+
+class SpeechForm(forms.Form):
+    text = forms.CharField(widget=forms.Textarea(attrs={"rows": 6}))
+    model = forms.CharField(initial="gpt-4o-mini-tts")
+    voice = forms.CharField(initial="coral")
+
+
+class TranscriptionForm(forms.Form):
+    audio = forms.FileField()
+    model = forms.CharField(initial="gpt-4o-mini-transcribe")
+    language = forms.CharField(required=False, max_length=20)
+
+
+class ImageTextForm(forms.Form):
+    image = forms.ImageField()
+    model = forms.CharField(initial="gpt-4o-mini")

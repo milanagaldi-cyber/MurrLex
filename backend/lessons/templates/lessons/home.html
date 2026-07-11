@@ -12,6 +12,7 @@
         <nav class="nav" aria-label="Main navigation">
             {% if request.user.is_authenticated %}
                 <a href="{% url 'account' %}">Cabinet</a>
+                {% if murrlex_ai_access %}<a href="{% url 'apps_dashboard' %}">Apps</a>{% endif %}
                 <form method="post" action="{% url 'logout' %}" style="margin:0;">
                     {% csrf_token %}
                     <button class="secondary" type="submit">Log out</button>

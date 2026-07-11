@@ -1,0 +1,18 @@
+{% extends "lessons/public_base.html" %}
+{% block body %}
+<main class="site-shell">
+  <header class="topbar">
+    <a class="brand" href="{% url 'apps_dashboard' %}"><span class="brand-mark">ML</span><span>MurrLex Apps</span></a>
+    <nav class="nav">
+      <a href="{% url 'web_lessons' %}">Lessons</a>
+      <a href="{% url 'web_translate' %}">Translate</a>
+      <a href="{% url 'web_speech' %}">Speech</a>
+      <a href="{% url 'web_sync' %}">Sync</a>
+      <a href="{% url 'account' %}">Account</a>
+      {% include "lessons/theme_toggle.html" %}
+    </nav>
+  </header>
+  {% if messages %}{% for message in messages %}<p class="status">{{ message }}</p>{% endfor %}{% endif %}
+  {% block app_content %}{% endblock %}
+</main>
+{% endblock %}

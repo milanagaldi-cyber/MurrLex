@@ -1,0 +1,13 @@
+{% extends "apps/base.html" %}
+{% block title %}MurrLex Apps{% endblock %}
+{% block app_content %}
+<section class="panel"><h1>MurrLex Apps</h1><p>Learn, create, edit, translate, listen, recognize, and synchronize from the browser.</p></section>
+<section class="grid" style="margin-top:18px;">
+  <article class="card"><h2>Lessons and cards</h2><p>Browse lessons and manage every card.</p><a class="button" href="{% url 'web_lessons' %}">Open</a></article>
+  <article class="card"><h2>Translator</h2><p>Translate text through the configured server model.</p><a class="button" href="{% url 'web_translate' %}">Open</a></article>
+  <article class="card"><h2>Text to speech</h2><p>Generate and play speech without exposing provider keys.</p><a class="button" href="{% url 'web_speech' %}">Open</a></article>
+  <article class="card"><h2>Speech to text</h2><p>Upload voice recordings for transcription.</p><a class="button" href="{% url 'web_transcribe' %}">Open</a></article>
+  <article class="card"><h2>Image text</h2><p>Extract text from photos and screenshots.</p><a class="button" href="{% url 'web_image_text' %}">Open</a></article>
+  <article class="card"><h2>Synchronization</h2><p>Publish all data, a lesson, or a card to connected phones.</p><a class="button" href="{% url 'web_sync' %}">Open</a></article>
+</section>
+{% endblock %}

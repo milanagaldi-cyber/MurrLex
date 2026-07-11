@@ -38,3 +38,15 @@ def get_provider_api_key(provider: str) -> str:
 
     credential = ProviderCredential.objects.filter(provider=provider, encrypted_api_key__isnull=False).first()
     return decrypt_api_key(credential.encrypted_api_key) if credential else ""
+
+
+def user_has_ai_access(user) -> bool:
+    from .models import ProviderCredential
+
+    if not getattr(user, "is_authenticated", False):
+        return False
+    if not (user.is_superuser or getattr(getattr(user, "api_access", None), "ai_api_enabled", False)):
+        return False
+    return ProviderCredential.objects.filter(
+        provider=ProviderCredential.Provider.OPENAI,
+    ).exclude(encrypted_api_key="").exists()

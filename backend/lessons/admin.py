@@ -42,6 +42,7 @@ class CardInline(admin.TabularInline):
 class LessonAdmin(admin.ModelAdmin):
     list_display = (
         "title",
+        "owner",
         "external_id",
         "card_kind",
         "source_language",
@@ -50,8 +51,8 @@ class LessonAdmin(admin.ModelAdmin):
         "cards_total",
         "updated_at",
     )
-    search_fields = ("title", "external_id", "source_language", "target_language", "lesson_info")
-    list_filter = ("card_kind", "source_language", "target_language")
+    search_fields = ("title", "external_id", "owner__username", "source_language", "target_language", "lesson_info")
+    list_filter = ("owner", "card_kind", "source_language", "target_language")
     readonly_fields = ("created_at", "updated_at")
     inlines = [CardInline]
 
@@ -130,3 +131,5 @@ class ProviderCredentialAdmin(admin.ModelAdmin):
     def save_model(self, request, obj, form, change):
         obj.updated_by = request.user
         super().save_model(request, obj, form, change)
+
+

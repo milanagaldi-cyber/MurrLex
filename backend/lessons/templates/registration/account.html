@@ -19,6 +19,7 @@
         <aside class="sidebar" aria-label="Account navigation">
             <a class="active" href="{% url 'account' %}">Profile</a>
             <a href="{% url 'account_settings' %}">Security settings</a>
+            {% if ai_access %}<a href="{% url 'apps_dashboard' %}">MurrLex Apps</a>{% endif %}
             {% if request.user.is_superuser %}<a href="{% url 'provider_credentials' %}">AI provider keys</a>{% endif %}
             <a href="{% url 'premium' %}">Subscription/Premium</a>
             <form method="post" action="{% url 'logout' %}" style="margin:0;">

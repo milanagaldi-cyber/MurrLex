@@ -1,0 +1,9 @@
+{% extends "apps/base.html" %}
+{% block title %}Lessons{% endblock %}
+{% block app_content %}
+<section class="panel">
+  <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;"><div><h1>Lessons</h1><p>{{ lessons|length }} available</p></div><a class="button" href="{% url 'web_lesson_new' %}">Create lesson</a></div>
+  <form method="get" style="margin-top:16px;display:flex;gap:8px;"><input name="q" value="{{ query }}" placeholder="Search lessons" style="flex:1;"><button type="submit">Search</button></form>
+</section>
+<section class="grid" style="margin-top:18px;">{% for lesson in lessons %}<article class="card"><span class="badge">{{ lesson.source_language }} → {{ lesson.target_language }}</span><h2>{{ lesson.title }}</h2><p>{{ lesson.cards.count }} cards</p><a class="button" href="{% url 'web_lesson_detail' lesson.id %}">Open</a></article>{% empty %}<p>No lessons yet.</p>{% endfor %}</section>
+{% endblock %}
