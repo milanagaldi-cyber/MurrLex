@@ -1,0 +1,120 @@
+{% extends "admin/base_site.html" %}
+{% load admin_dashboard %}
+
+{% block bodyclass %}{{ block.super }} dashboard murrlex-dashboard{% endblock %}
+{% block breadcrumbs %}{% endblock %}
+{% block content_title %}{% endblock %}
+
+{% block content %}
+{% admin_dashboard_stats as stats %}
+<div class="dashboard-heading">
+    <div>
+        <p class="dashboard-eyebrow">MurrLex operations</p>
+        <h1>Server dashboard</h1>
+        <p class="dashboard-intro">Manage people, AI access, provider configuration, and learning content.</p>
+    </div>
+    <a class="dashboard-public-link" href="/">Open public site</a>
+</div>
+
+<div class="dashboard-sections">
+    {% if perms.auth.view_user or perms.lessons.view_userapiaccess %}
+    <section class="dashboard-section" aria-labelledby="users-heading">
+        <div class="dashboard-section-heading">
+            <div>
+                <p class="dashboard-section-kicker">Access control</p>
+                <h2 id="users-heading">User Management</h2>
+            </div>
+        </div>
+        <div class="dashboard-links">
+            {% if perms.auth.view_user %}
+            <a class="dashboard-link" href="{% url 'admin:auth_user_changelist' %}">
+                <span class="dashboard-link-copy"><strong>Users</strong><small>Accounts, passwords, staff status, and permissions.</small></span>
+                <span class="dashboard-count">{{ stats.users }}</span>
+            </a>
+            {% endif %}
+            {% if perms.lessons.view_userapiaccess %}
+            <a class="dashboard-link" href="{% url 'admin:lessons_userapiaccess_changelist' %}">
+                <span class="dashboard-link-copy"><strong>AI API Access</strong><small>Allow selected users to use server AI providers.</small></span>
+                <span class="dashboard-status"><b>{{ stats.api_access_enabled }}</b> enabled</span>
+            </a>
+            {% endif %}
+        </div>
+    </section>
+    {% endif %}
+
+    {% if perms.lessons.view_providercredential or perms.lessons.view_apisession %}
+    <section class="dashboard-section" aria-labelledby="server-heading">
+        <div class="dashboard-section-heading">
+            <div>
+                <p class="dashboard-section-kicker">Protected services</p>
+                <h2 id="server-heading">AI &amp; Server</h2>
+            </div>
+        </div>
+        <div class="dashboard-links">
+            {% if perms.lessons.view_providercredential %}
+            <a class="dashboard-link" href="{% url 'admin:lessons_providercredential_changelist' %}">
+                <span class="dashboard-link-copy"><strong>Provider Credentials</strong><small>Encrypted OpenAI and ElevenLabs server keys.</small></span>
+                <span class="dashboard-count">{{ stats.provider_credentials }}</span>
+            </a>
+            {% endif %}
+            {% if perms.lessons.view_apisession %}
+            <a class="dashboard-link" href="{% url 'admin:lessons_apisession_changelist' %}">
+                <span class="dashboard-link-copy"><strong>API Sessions</strong><small>Mobile sign-ins, expiry, and revoked sessions.</small></span>
+                <span class="dashboard-count">{{ stats.active_sessions }}</span>
+            </a>
+            {% endif %}
+        </div>
+    </section>
+    {% endif %}
+
+    {% if perms.lessons.view_lesson or perms.lessons.view_card or perms.lessons.view_importlog %}
+    <section class="dashboard-section" aria-labelledby="content-heading">
+        <div class="dashboard-section-heading">
+            <div>
+                <p class="dashboard-section-kicker">Learning data</p>
+                <h2 id="content-heading">Content</h2>
+            </div>
+        </div>
+        <div class="dashboard-links">
+            {% if perms.lessons.view_lesson %}
+            <a class="dashboard-link" href="{% url 'admin:lessons_lesson_changelist' %}">
+                <span class="dashboard-link-copy"><strong>Lessons</strong><small>Imported learning sets and lesson metadata.</small></span>
+                <span class="dashboard-count">{{ stats.lessons }}</span>
+            </a>
+            {% endif %}
+            {% if perms.lessons.view_card %}
+            <a class="dashboard-link" href="{% url 'admin:lessons_card_changelist' %}">
+                <span class="dashboard-link-copy"><strong>Cards</strong><small>Individual exercises attached to lessons.</small></span>
+                <span class="dashboard-count">{{ stats.cards }}</span>
+            </a>
+            {% endif %}
+            {% if perms.lessons.view_importlog %}
+            <a class="dashboard-link" href="{% url 'admin:lessons_importlog_changelist' %}">
+                <span class="dashboard-link-copy"><strong>Import Logs</strong><small>Successful and failed content imports.</small></span>
+                <span class="dashboard-count">{{ stats.import_logs }}</span>
+            </a>
+            {% endif %}
+        </div>
+    </section>
+    {% endif %}
+
+    {% if perms.auth.view_group or perms.account.view_emailaddress or perms.sites.view_site or perms.socialaccount.view_socialapp or perms.socialaccount.view_socialaccount or perms.socialaccount.view_socialtoken %}
+    <details class="dashboard-system">
+        <summary>
+            <span><strong>System</strong><small>Django, email, domain, and Google OAuth configuration.</small></span>
+            <span class="dashboard-system-action">Show technical settings</span>
+        </summary>
+        <div class="dashboard-system-links">
+            {% if perms.auth.view_group %}<a href="{% url 'admin:auth_group_changelist' %}"><strong>Groups</strong><small>Reusable permission sets.</small></a>{% endif %}
+            {% if perms.account.view_emailaddress %}<a href="{% url 'admin:account_emailaddress_changelist' %}"><strong>Email Addresses</strong><small>Verification records linked to users.</small></a>{% endif %}
+            {% if perms.sites.view_site %}<a href="{% url 'admin:sites_site_changelist' %}"><strong>Sites</strong><small>Domain identity used by authentication.</small></a>{% endif %}
+            {% if perms.socialaccount.view_socialapp %}<a href="{% url 'admin:socialaccount_socialapp_changelist' %}"><strong>Social Applications</strong><small>Google OAuth application configuration.</small></a>{% endif %}
+            {% if perms.socialaccount.view_socialaccount %}<a href="{% url 'admin:socialaccount_socialaccount_changelist' %}"><strong>Social Accounts</strong><small>Google identities linked to MurrLex users.</small></a>{% endif %}
+            {% if perms.socialaccount.view_socialtoken %}<a href="{% url 'admin:socialaccount_socialtoken_changelist' %}"><strong>Social Tokens</strong><small>Provider tokens managed by django-allauth.</small></a>{% endif %}
+        </div>
+    </details>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block sidebar %}{% endblock %}

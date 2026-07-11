@@ -184,6 +184,29 @@
         color: var(--link-fg) !important;
         font-weight: 800;
     }
+    .murrlex-admin-nav {
+        flex: 0 0 100%;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding-top: 10px;
+        border-top: 1px solid var(--hairline-color);
+    }
+    .murrlex-admin-nav a {
+        display: inline-flex;
+        align-items: center;
+        min-height: 34px;
+        padding: 0 10px;
+        border-radius: 6px;
+        color: var(--body-quiet-color) !important;
+        font-size: 13px;
+        font-weight: 800;
+    }
+    .murrlex-admin-nav a:hover,
+    .murrlex-admin-nav a:focus {
+        background: var(--secondary);
+        color: var(--link-fg) !important;
+    }
     div.breadcrumbs {
         padding: 12px clamp(18px, 4vw, 44px);
         background: var(--admin-input-bg);
@@ -316,21 +339,101 @@
         min-height: 40px;
         margin: 0 0 12px;
     }
-    .dashboard #content-main {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
+    .murrlex-dashboard #content { width: min(1120px, 100%); }
+    .dashboard-heading {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
         gap: 24px;
-        align-items: start;
+        margin-bottom: 22px;
     }
-    .dashboard #content-related {
-        margin: 0;
-        padding: 0;
-        width: auto;
+    .dashboard-heading h1 { margin-bottom: 8px !important; }
+    .dashboard-eyebrow,
+    .dashboard-section-kicker {
+        margin: 0 0 6px;
+        color: var(--link-fg);
+        font-size: 11px;
+        font-weight: 850;
+        text-transform: uppercase;
     }
-    .dashboard .app-list {
+    .dashboard-intro { margin: 0; color: var(--body-quiet-color); }
+    .dashboard-public-link {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 40px;
+        padding: 0 14px;
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        background: var(--admin-input-bg);
+        font-weight: 800;
+        white-space: nowrap;
+    }
+    .dashboard-sections {
         display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 16px;
     }
+    .dashboard-section,
+    .dashboard-system {
+        overflow: hidden;
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        background: var(--primary);
+    }
+    .dashboard-section-heading { padding: 16px 18px 14px; border-bottom: 1px solid var(--border-color); }
+    .dashboard-section-heading h2 { margin: 0; color: var(--primary-fg); font-size: 19px; }
+    .dashboard-links { display: grid; }
+    .dashboard-link {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        min-height: 72px;
+        padding: 12px 18px;
+        border-bottom: 1px solid var(--border-color);
+        color: var(--body-fg) !important;
+    }
+    .dashboard-link:last-child { border-bottom: 0; }
+    .dashboard-link:hover { background: var(--secondary); }
+    .dashboard-link-copy { display: grid; gap: 4px; min-width: 0; }
+    .dashboard-link-copy strong { color: var(--link-fg); font-size: 14px; }
+    .dashboard-link-copy small,
+    .dashboard-system small { color: var(--body-quiet-color); font-size: 12px; line-height: 1.4; }
+    .dashboard-count,
+    .dashboard-status {
+        flex: 0 0 auto;
+        padding: 5px 8px;
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        background: var(--admin-input-bg);
+        color: var(--body-quiet-color);
+        font-family: var(--font-family-monospace);
+        font-size: 12px;
+    }
+    .dashboard-status b { color: #42e68a; }
+    .dashboard-system { grid-column: 1 / -1; }
+    .dashboard-system summary {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 15px 18px;
+        cursor: pointer;
+        list-style: none;
+    }
+    .dashboard-system summary::-webkit-details-marker { display: none; }
+    .dashboard-system summary > span:first-child { display: grid; gap: 3px; }
+    .dashboard-system-action { color: var(--link-fg); font-size: 12px; font-weight: 800; }
+    .dashboard-system[open] .dashboard-system-action { font-size: 0; }
+    .dashboard-system[open] .dashboard-system-action::after { content: "Hide technical settings"; font-size: 12px; }
+    .dashboard-system-links {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        border-top: 1px solid var(--border-color);
+    }
+    .dashboard-system-links a { display: grid; gap: 4px; padding: 14px 18px; border-right: 1px solid var(--border-color); border-bottom: 1px solid var(--border-color); }
+    .dashboard-system-links a:nth-child(3n) { border-right: 0; }
     .login #container {
         border: 1px solid var(--border-color);
         border-radius: 8px;
@@ -347,40 +450,49 @@
     }
     @media (max-width: 900px) {
         #header {
-            display: flex;
-            align-items: stretch;
-            flex-direction: row !important;
-            flex-wrap: wrap !important;
-            height: auto !important;
-            min-height: 170px;
+            display: grid !important;
+            grid-template-columns: minmax(0, 1fr);
+            align-items: start;
+            height: max-content !important;
+            min-height: 170px !important;
+            box-sizing: border-box;
         }
         #branding {
-            flex: 0 0 100%;
-            width: 100%;
+            width: auto;
             min-width: 0;
         }
         #user-tools {
-            flex: 0 0 100%;
-            width: 100%;
+            width: auto;
             max-width: 100%;
             margin: 0;
             justify-content: flex-start;
         }
+        .murrlex-admin-nav {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            width: auto;
+            align-items: stretch;
+        }
+        .murrlex-admin-nav a { justify-content: center; text-align: center; }
         .main {
             padding-inline: 16px;
         }
-        .dashboard #content-main {
-            grid-template-columns: 1fr;
-        }
+        .dashboard-sections { grid-template-columns: 1fr; }
+        .dashboard-heading { align-items: flex-start; flex-direction: column; }
+        .dashboard-system { grid-column: auto; }
+        .dashboard-system-links { grid-template-columns: 1fr; }
+        .dashboard-system-links a { border-right: 0; }
         #nav-sidebar {
             width: 100%;
             margin-right: 0;
         }
     }
     @media (max-width: 360px) {
-        #header {
-            min-height: 220px;
-        }
+        #user-tools a, #user-tools button, #logout-form button { flex: 1 1 auto; }
+        .murrlex-admin-subtitle { display: none; }
+    }
+    @media (max-width: 480px) {
+        #header { min-height: 295px !important; }
     }
     html[data-theme="light"] {
         color-scheme: light;
@@ -483,7 +595,6 @@
 {% endblock %}
 
 {% block userlinks %}
-<a class="murrlex-admin-home" href="/">Public Home</a>
 {% if user.has_usable_password %}
     <a href="{% url 'admin:password_change' %}">{% translate 'Change password' %}</a>
 {% endif %}
@@ -497,4 +608,12 @@
 {% endblock %}
 
 {% block nav-global %}
+<nav class="murrlex-admin-nav" aria-label="Admin navigation">
+    <a href="{% url 'admin:index' %}">Dashboard</a>
+    {% if perms.auth.view_user %}<a href="{% url 'admin:auth_user_changelist' %}">Users</a>{% endif %}
+    {% if perms.lessons.view_userapiaccess %}<a href="{% url 'admin:lessons_userapiaccess_changelist' %}">AI Access</a>{% endif %}
+    {% if perms.lessons.view_providercredential %}<a href="{% url 'admin:lessons_providercredential_changelist' %}">Provider Keys</a>{% endif %}
+    {% if perms.lessons.view_lesson %}<a href="{% url 'admin:lessons_lesson_changelist' %}">Lessons</a>{% endif %}
+    <a href="/">Public Home</a>
+</nav>
 {% endblock %}

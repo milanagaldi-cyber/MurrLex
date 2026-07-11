@@ -2,7 +2,9 @@ import json
 from unittest.mock import patch
 
 from cryptography.fernet import Fernet
+from django.contrib import admin
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Permission
 from django.urls import reverse
 from django.test import TestCase, override_settings
 
@@ -339,6 +341,66 @@ class AdminThemeTests(TestCase):
         self.assertContains(response, 'return mode === "light" ? "light" : "dark"')
         self.assertContains(response, "localStorage.setItem(\"theme\", mode)")
         self.assertContains(response, "admin/js/theme.js")
+
+
+class AdminDashboardTests(TestCase):
+    def setUp(self):
+        self.superuser = get_user_model().objects.create_superuser(
+            username="dashboard-admin",
+            email="dashboard-admin@example.com",
+            password="Strong-dashboard-password-2026!",
+        )
+
+    def test_non_staff_user_cannot_open_dashboard(self):
+        user = get_user_model().objects.create_user(
+            username="public-dashboard-user",
+            password="Strong-public-password-2026!",
+        )
+        self.client.force_login(user)
+
+        response = self.client.get("/admin/")
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/admin/login/", response["Location"])
+
+    def test_superuser_sees_grouped_dashboard_and_collapsed_system(self):
+        self.client.force_login(self.superuser)
+
+        response = self.client.get("/admin/")
+
+        self.assertEqual(response.status_code, 200)
+        for heading in ("User Management", "AI &amp; Server", "Content", "System"):
+            self.assertContains(response, heading)
+        for url in (
+            "/admin/auth/user/",
+            "/admin/lessons/userapiaccess/",
+            "/admin/lessons/providercredential/",
+            "/admin/lessons/lesson/",
+            "/admin/account/emailaddress/",
+            "/admin/sites/site/",
+            "/admin/socialaccount/socialaccount/",
+        ):
+            self.assertContains(response, f'href="{url}"')
+        self.assertContains(response, '<details class="dashboard-system">')
+        self.assertNotContains(response, '<details class="dashboard-system" open>')
+        self.assertFalse(admin.site.enable_nav_sidebar)
+
+    def test_staff_user_only_sees_permitted_dashboard_sections(self):
+        staff = get_user_model().objects.create_user(
+            username="limited-dashboard-staff",
+            password="Strong-staff-password-2026!",
+            is_staff=True,
+        )
+        staff.user_permissions.add(Permission.objects.get(codename="view_lesson"))
+        self.client.force_login(staff)
+
+        response = self.client.get("/admin/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Content")
+        self.assertContains(response, "/admin/lessons/lesson/")
+        self.assertNotContains(response, "/admin/auth/user/")
+        self.assertNotContains(response, "/admin/lessons/providercredential/")
 
 
 class UserApiAccessAdminTests(TestCase):

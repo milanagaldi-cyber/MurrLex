@@ -4,6 +4,11 @@ from django.contrib import admin
 from .models import ApiSession, Card, ImportLog, Lesson, ProviderCredential, UserApiAccess
 
 
+admin.site.enable_nav_sidebar = False
+admin.site.index_template = "admin/index.html"
+admin.site.index_title = "Server dashboard"
+
+
 @admin.register(UserApiAccess)
 class UserApiAccessAdmin(admin.ModelAdmin):
     list_display = ("username", "email", "account_active", "ai_api_enabled", "updated_at")
