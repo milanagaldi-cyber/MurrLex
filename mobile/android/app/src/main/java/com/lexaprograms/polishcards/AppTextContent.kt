@@ -62,12 +62,9 @@ internal fun sampleLessonJson(): String {
 
 internal fun versionLogText(): String {
     return """
+        MurrLex v0.92 - Removed retired game engines, screens, native LibGDX libraries, and Lottie assets. Rive Runner Lab and Rive Letter Blocks remain available.
         MurrLex v0.89 - Online text, speech recognition, text-to-speech, ElevenLabs speech, and image text recognition now use the authenticated MurrLex server gateway. Provider keys remain on the server; the device keeps only an Android Keystore-encrypted renewable session. Offline Android and ML Kit paths remain local.
         Google Translate attribution - Translate mode can use on-device Google Translate via ML Kit. Google disclaims warranties related to translation accuracy and reliability. See https://cloud.google.com/translate and https://translate.google.com.
-        MurrLex v0.73 - Added 16-bit Ginger Spin Runner as a full-screen native Canvas speed-runner with parallax depth, textured terrain, jump/spin movement, opponents, three lives, and four-choice word recovery.
-        MurrLex v0.72 - Added 8-bit Ginger Platformer as a full-screen native Canvas retro platformer with pixel-art ginger cat movement, jumping, platforms, question blocks, and card-answer choices.
-        MurrLex v0.71 - Added Pseudo 3D Cat Walk as a separate full-screen native Canvas game experiment with three-lane movement, perspective gates, card answers, and a ginger fluffy cat.
-        MurrLex v0.70 - Added a ginger fluffy cat game lab with Compose UI, Compose Canvas, and local HTML5 Canvas/WebView prototypes for experimenting with language games.
         MurrLex v0.69 - Cat chat now shows recognized user text, cat replies, and later language checks as soon as each stage is available, keeps focus on the latest phrase, and lets taps toggle word selection for Feature/Create Card.
         MurrLex v0.68 - Back navigation now resets sticky Settings return state, the Study translate button shows the target language code, and manual card-side edits clear cached side audio for that side.
         MurrLex v0.67 - Search toggles by tapping the icon, lesson tiles show orange card-content match counts, searched lessons open at the first matching card, T translates into the card-side language, and quick Edit pre-fills the visible card text.
@@ -81,8 +78,6 @@ internal fun versionLogText(): String {
         MurrLex v0.59 - Cat chat now saves dialogs, keeps starred dialogs from auto-pruning, analyzes user replies separately from spoken cat answers, creates Mistake cards from analysis, creates featured cards from selected chat fragments, adds cat dialog cards on the main UI, and adds dialog retention plus reply-speed settings.
         MurrLex v0.58 - Cat chat voice input now sends automatically after recognition, lesson list/map navigation restores the previous position, lessons show their last modified date, and the catalog has search plus sorting by created time, modified time, title, card count, and language pair.
         MurrLex v0.57 - Cat chat now supports Basic-language voice input, speaker playback beside cat answers, automatic spoken cat replies, and an in-dialog Auto voice toggle.
-        MurrLex v0.56 - Cat chat messages now show an explicit Create card action, and the cat menu adds Feed the cat: an animated card game where correct answers fill the cat's bowl.
-        MurrLex v0.55 - The title cat button now opens a menu with Cat chat plus three card games: Quick quiz, Match pairs, and Spell check, using the current lesson or catalog cards.
         MurrLex v0.54 - Cat chat Create Card now distinguishes user text from cat answers: cat answers become Target-side language cards in the current Basic -> answer-language pair, with the Basic side translated automatically.
         MurrLex v0.53 - Added a Catalog lesson-island map opened from the main MurrLex title; tapping a lesson island opens that lesson directly into its card-island path.
         MurrLex v0.52 - Fixed MurrLex title clicks so the online/offline status refresh stays on the status dot, added an animated Cat chat button beside the title, and lets chat phrases create Basic -> Target cards.

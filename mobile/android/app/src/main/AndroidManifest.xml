@@ -22,13 +22,6 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.PolishCards">
         <activity
-            android:name=".LibGdxRunnerActivity"
-            android:configChanges="keyboard|keyboardHidden|orientation|screenSize"
-            android:exported="false"
-            android:screenOrientation="landscape"
-            android:theme="@style/Theme.PolishCards" />
-
-        <activity
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTop"
