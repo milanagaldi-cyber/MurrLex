@@ -3486,6 +3486,8 @@ var catDialogId by remember { mutableStateOf<String?>(null) }
                     openAiBaseUrl = state.openAiBaseUrl,
                     openAiApiKey = state.openAiApiKey,
                     serverUsername = state.serverUsername,
+                    hasCurrentLesson = state.selectedLesson != null,
+                    hasCurrentCard = state.currentCard != null,
                     openAiSpeechModel = state.openAiSpeechModel,
                     openAiTextModel = state.openAiTextModel,
                     openAiImageTextModel = state.openAiImageTextModel,
@@ -3537,6 +3539,9 @@ var catDialogId by remember { mutableStateOf<String?>(null) }
                     onOpenAiApiKeyChange = viewModel::setOpenAiApiKey,
                     onMurrLexServerLogin = viewModel::loginToMurrLexServer,
                     onMurrLexServerLogout = viewModel::logoutFromMurrLexServer,
+                    onSynchronizeAll = viewModel::synchronizeAll,
+                    onSynchronizeLesson = viewModel::synchronizeCurrentLesson,
+                    onSynchronizeCard = viewModel::synchronizeCurrentCard,
                     onOpenAiSpeechModelChange = viewModel::setOpenAiSpeechModel,
                     onOpenAiTextModelChange = viewModel::setOpenAiTextModel,
                     onOpenAiImageTextModelChange = viewModel::setOpenAiImageTextModel,
@@ -6274,6 +6279,8 @@ private fun SettingsScreen(
     openAiBaseUrl: String,
     openAiApiKey: String,
     serverUsername: String,
+    hasCurrentLesson: Boolean,
+    hasCurrentCard: Boolean,
     openAiSpeechModel: String,
     openAiTextModel: String,
     openAiImageTextModel: String,
@@ -6322,6 +6329,9 @@ private fun SettingsScreen(
     onOpenAiApiKeyChange: (String) -> Unit,
     onMurrLexServerLogin: (String, String, Boolean, String) -> Unit,
     onMurrLexServerLogout: () -> Unit,
+    onSynchronizeAll: () -> Unit,
+    onSynchronizeLesson: () -> Unit,
+    onSynchronizeCard: () -> Unit,
     onOpenAiSpeechModelChange: (String) -> Unit,
     onOpenAiTextModelChange: (String) -> Unit,
     onOpenAiImageTextModelChange: (String) -> Unit,
@@ -6494,6 +6504,23 @@ private fun SettingsScreen(
                         onClick = onMurrLexServerLogout,
                         modifier = Modifier.fillMaxWidth()
                     ) { Text("Log out") }
+                    Button(onClick = onSynchronizeAll, modifier = Modifier.fillMaxWidth()) {
+                        Icon(Icons.Default.Refresh, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Synchronize all")
+                    }
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = onSynchronizeLesson,
+                            enabled = hasCurrentLesson,
+                            modifier = Modifier.weight(1f)
+                        ) { Text("Lesson") }
+                        OutlinedButton(
+                            onClick = onSynchronizeCard,
+                            enabled = hasCurrentCard,
+                            modifier = Modifier.weight(1f)
+                        ) { Text("Card") }
+                    }
                 }
             }
         }

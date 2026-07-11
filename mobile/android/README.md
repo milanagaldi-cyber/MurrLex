@@ -2,7 +2,7 @@
 
 Android app built with Kotlin and Jetpack Compose for local-first language learning, voice input, translation, and universal flashcards.
 
-Current app version: `0.92`.
+Current app version: `0.93`.
 
 ## Project Location
 
@@ -58,6 +58,7 @@ C:\CodexProjects\murrlex\mobile\android
 - v0.50 tightens the top action row, removes the duplicate title URL icon, fixes Study display-menu dismissal from outside/root taps, and auto-fills URL import from clipboard URLs with Clear/Paste controls.
 - v0.89 adds MurrLex server login/registration with rotating persistent sessions and moves online text, STT, TTS, ElevenLabs TTS, and image OCR to protected server endpoints. Offline Android/ML Kit/device speech paths remain local.
 - v0.92 removes retired game engines, LibGDX native libraries, and Lottie assets; only Rive Runner Lab and Rive Letter Blocks remain.
+- v0.93 adds authenticated synchronization for all lessons, one lesson, or one card with the personal MurrLex web applications.
 - v0.88 improves `Rive Letter Blocks` with non-overlapping block placement, tap-to-place/tap-to-return controls, letters-only tokens, a second word-order sentence stage, and a light green summer meadow background.
 - v0.87 adds `Rive Letter Blocks`, a card-word game where the user drags letter cubes into word slots, can rearrange or return letters, checks OK/Not OK with TTS feedback, advances to the next card word on success, and sees the ginger cat react beside the board.
 - v0.86 replaces the visible Rive sample vehicle in `Rive Runner Lab` with an expressive ginger cat actor, adds Spin/Dance/Crawl/Meow/Scratch/Talk/Stand actions, and wires Meow/Talk to the app TTS so the cat can speak the current target-language word aloud.

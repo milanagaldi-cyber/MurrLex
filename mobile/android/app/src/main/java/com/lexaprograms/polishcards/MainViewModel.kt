@@ -911,6 +911,58 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
+    fun synchronizeAll() = synchronize("all")
+
+    fun synchronizeCurrentLesson() = synchronize("lesson")
+
+    fun synchronizeCurrentCard() = synchronize("card")
+
+    private fun synchronize(scope: String) {
+        val session = repository.loadMurrLexServerSession()
+        val state = _uiState.value
+        if (!session.isAuthenticated) {
+            _uiState.value = state.copy(message = "Sign in to MurrLex before synchronization")
+            return
+        }
+        val selectedLesson = state.selectedLesson
+        val currentCard = state.currentCard
+        val payloadLessons = when (scope) {
+            "lesson" -> listOfNotNull(selectedLesson)
+            "card" -> listOfNotNull(selectedLesson?.copy(cards = listOfNotNull(currentCard)))
+            else -> repository.loadSyncableLessons()
+        }
+        if (scope != "all" && payloadLessons.isEmpty()) {
+            _uiState.value = state.copy(message = "Open a lesson or card before synchronization")
+            return
+        }
+        _uiState.value = state.copy(message = "Synchronization started")
+        viewModelScope.launch {
+            val result = MurrLexServerClient.sync(
+                session = session,
+                scope = scope,
+                lessons = payloadLessons,
+                lessonId = selectedLesson?.id.orEmpty(),
+                cardId = currentCard?.id
+            )
+            if (result.error.isNotBlank()) {
+                _uiState.value = _uiState.value.copy(message = result.error)
+                return@launch
+            }
+            repository.applySyncedLessons(result.lessons, scope)
+            val lessons = repository.loadLessons(_uiState.value.showHiddenLessons)
+            val refreshedSelected = selectedLesson?.let { selected -> lessons.firstOrNull { it.id == selected.id } }
+            _uiState.value = _uiState.value.copy(
+                lessons = lessons,
+                selectedLesson = refreshedSelected ?: _uiState.value.selectedLesson,
+                currentPortion = refreshedSelected?.cards ?: _uiState.value.currentPortion,
+                currentIndex = _uiState.value.currentIndex.coerceAtMost(
+                    ((refreshedSelected?.cards?.size ?: _uiState.value.currentPortion.size) - 1).coerceAtLeast(0)
+                ),
+                message = "Synchronization complete: ${result.lessons.size} lesson(s)"
+            )
+        }
+    }
+
     fun setOpenAiSpeechModel(model: String) {
         val cleaned = model.takeIf { it in OpenAiSpeechModels } ?: CardRepository.DEFAULT_OPENAI_SPEECH_MODEL
         repository.saveOpenAiSpeechModel(cleaned)

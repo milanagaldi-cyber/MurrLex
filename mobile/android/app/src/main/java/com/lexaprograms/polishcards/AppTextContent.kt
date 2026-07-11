@@ -62,6 +62,7 @@ internal fun sampleLessonJson(): String {
 
 internal fun versionLogText(): String {
     return """
+        MurrLex v0.93 - Added authenticated two-way synchronization for all lessons, one lesson, or one card, backed by the personal MurrLex web applications.
         MurrLex v0.92 - Removed retired game engines, screens, native LibGDX libraries, and Lottie assets. Rive Runner Lab and Rive Letter Blocks remain available.
         MurrLex v0.89 - Online text, speech recognition, text-to-speech, ElevenLabs speech, and image text recognition now use the authenticated MurrLex server gateway. Provider keys remain on the server; the device keeps only an Android Keystore-encrypted renewable session. Offline Android and ML Kit paths remain local.
         Google Translate attribution - Translate mode can use on-device Google Translate via ML Kit. Google disclaims warranties related to translation accuracy and reliability. See https://cloud.google.com/translate and https://translate.google.com.

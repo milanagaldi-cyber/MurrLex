@@ -2,6 +2,9 @@ package com.lexaprograms.polishcards
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -23,7 +26,13 @@ data class MurrLexServerResult(
     val error: String = ""
 )
 
+data class MurrLexSyncResult(
+    val lessons: List<Lesson> = emptyList(),
+    val error: String = ""
+)
+
 object MurrLexServerClient {
+    private val json = Json { ignoreUnknownKeys = true }
     suspend fun login(serverUrl: String, login: String, password: String): MurrLexServerResult =
         authenticate(serverUrl, "/api/auth/login", JSONObject().put("login", login).put("password", password))
 
@@ -44,6 +53,32 @@ object MurrLexServerClient {
         if (session.isConfigured && session.refreshToken.isNotBlank()) {
             postJson(session.serverUrl, "/api/auth/logout", JSONObject().put("refreshToken", session.refreshToken), "")
         }
+    }
+
+    suspend fun sync(
+        session: MurrLexServerSession,
+        scope: String,
+        lessons: List<Lesson>,
+        lessonId: String = "",
+        cardId: Int? = null
+    ): MurrLexSyncResult = withContext(Dispatchers.IO) {
+        if (!session.isAuthenticated) return@withContext MurrLexSyncResult(error = "MurrLex server login is required")
+        val payload = JSONObject()
+            .put("scope", scope)
+            .put("lessonId", lessonId)
+            .put("cardId", cardId?.toString().orEmpty())
+            .put("lessons", JSONArray(json.encodeToString(lessons)))
+        val (status, body) = postJson(session.serverUrl, "/api/sync", payload, session.accessToken)
+        val response = runCatching { JSONObject(body) }.getOrNull()
+        if (status !in 200..299 || response == null) {
+            return@withContext MurrLexSyncResult(
+                error = response?.optString("error").orEmpty().ifBlank { "Synchronization failed" }
+            )
+        }
+        val synced = runCatching {
+            json.decodeFromString<List<Lesson>>(response.optJSONArray("lessons")?.toString().orEmpty())
+        }.getOrDefault(emptyList())
+        MurrLexSyncResult(lessons = synced)
     }
 
     private suspend fun authenticate(serverUrl: String, path: String, body: JSONObject): MurrLexServerResult = withContext(Dispatchers.IO) {

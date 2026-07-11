@@ -708,6 +708,38 @@ class CardRepository(private val context: Context) {
             .sortBySavedOrder(loadLessonOrder())
     }
 
+    fun loadSyncableLessons(): List<Lesson> = loadStoredLessons()
+
+    fun applySyncedLessons(incoming: List<Lesson>, scope: String) {
+        if (incoming.isEmpty()) return
+        val stored = loadStoredLessons().toMutableList()
+        incoming.forEach { synced ->
+            val index = stored.indexOfFirst { it.id == synced.id }
+            val merged = if (scope == "card" && index >= 0) {
+                val existing = stored[index]
+                val cards = (existing.cards + synced.cards).associateBy { it.id }.values.toList()
+                existing.copy(
+                    title = synced.title.ifBlank { existing.title },
+                    lessonInfo = synced.lessonInfo.ifBlank { existing.lessonInfo },
+                    sourceLanguage = synced.sourceLanguage.ifBlank { existing.sourceLanguage },
+                    targetLanguage = synced.targetLanguage.ifBlank { existing.targetLanguage },
+                    cards = cards,
+                    updatedAt = synced.updatedAt.ifBlank { existing.updatedAt }
+                )
+            } else {
+                synced.copy(editable = true)
+            }
+            if (index >= 0) stored[index] = merged else stored.add(merged)
+            syncLessonCardCache(merged.id, merged)
+        }
+        val order = (loadLessonOrder() + incoming.map { it.id }).distinct()
+        preferences.edit()
+            .putString(KEY_LESSONS, json.encodeToString(stored))
+            .putString(KEY_LESSON_ORDER, json.encodeToString(order))
+            .commit()
+        pruneOriginalVoiceCache(stored)
+    }
+
     fun saveLesson(lesson: Lesson) {
         val hiddenLessonIds = if (lesson.hidden) {
             (loadHiddenLessonIds() + lesson.id).distinct()

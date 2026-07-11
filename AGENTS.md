@@ -7,14 +7,15 @@ This repository is the MurrLex monorepo. Use this file as the first stop for any
 - Local path: `C:\CodexProjects\murrlex`
 - GitHub: `https://github.com/milanagaldi-cyber/MurrLex`
 - Working branch for the next phase: `Android_Main`
-- Android visible app version: `MurrLex v0.92`
-- Latest verified Android build command: `gradlew.bat :app:assembleDebug --no-daemon` completed for v0.92
-- Latest verified lint command: not rerun for v0.92
+- Android visible app version: `MurrLex v0.93`
+- Latest verified Android build command: `gradlew.bat :app:assembleDebug --no-daemon` completed for v0.93
+- Latest verified lint command: not rerun for v0.93
 - Debug APK: `C:\CodexProjects\murrlex\mobile\android\app\build\outputs\apk\debug\app-debug.apk`
 
 ## Current Android Translator Notes
 
 - v0.92 removes retired game engines, screens, LibGDX native libraries, and Lottie assets. Only `Rive Runner Lab` and `Rive Letter Blocks` remain available.
+- v0.93 adds authenticated two-way synchronization for all data, the current lesson, or the current card. The server provides personal web apps for lesson/card management, translation, TTS, STT, OCR, and sync checkpoints; access requires login plus an enabled AI grant.
 - v0.89 moves online AI traffic behind authenticated MurrLex server endpoints. The mobile app stores only its server session and selected models; OpenAI and ElevenLabs provider keys stay in the encrypted server-side admin cabinet. Online text, STT, TTS, and OCR use `/api/ai/*`; offline behavior remains Android/ML Kit/device TTS and cached audio.
 
 - Translate/Split defaults to online translation through the free Google Translate endpoint while backend/OpenAI translation is parked for later.
