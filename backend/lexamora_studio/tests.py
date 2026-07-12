@@ -149,3 +149,115 @@ class StudioSceneTests(TestCase):
             content_type="application/json",
         )
         self.assertEqual(response.status_code, 201)
+
+class StudioAssetTests(TestCase):
+    def setUp(self):
+        import tempfile
+        from lexamora_studio.models import Episode, Scene, private_storage
+
+        self.temp_media = tempfile.TemporaryDirectory()
+        self.private_storage = private_storage
+        self.previous_location = private_storage._location
+        private_storage._location = self.temp_media.name
+        private_storage.__dict__.pop("base_location", None)
+        private_storage.__dict__.pop("location", None)
+
+        users = get_user_model()
+        self.owner = users.objects.create_user("asset-owner", password="strong-pass")
+        self.outsider = users.objects.create_user("asset-outsider", password="strong-pass")
+        self.workspace = create_workspace(user=self.owner, name="Asset Studio", slug="asset-studio")
+        self.other_workspace = create_workspace(user=self.outsider, name="Other Studio", slug="other-studio")
+        self.project = Project.objects.create(
+            workspace=self.workspace, project_type=Project.Type.SERIES, title="Asset Project",
+            created_by=self.owner, updated_by=self.owner,
+        )
+        self.episode = Episode.objects.create(
+            project=self.project, number=1, title="Pilot", created_by=self.owner, updated_by=self.owner,
+        )
+        self.scene = Scene.objects.create(
+            episode=self.episode, number=1, title="Asset Scene", created_by=self.owner, updated_by=self.owner,
+        )
+
+    def tearDown(self):
+        self.private_storage._location = self.previous_location
+        self.private_storage.__dict__.pop("base_location", None)
+        self.private_storage.__dict__.pop("location", None)
+        self.temp_media.cleanup()
+
+    def image_upload(self, name="scene.png"):
+        import io
+        from PIL import Image
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        buffer = io.BytesIO()
+        Image.new("RGB", (32, 24), "#f08a43").save(buffer, "PNG")
+        return SimpleUploadedFile(name, buffer.getvalue(), content_type="image/png")
+
+    def upload_asset(self):
+        self.client.force_login(self.owner)
+        return self.client.post(
+            "/api/v1/studio/assets",
+            data={
+                "workspaceId": str(self.workspace.id),
+                "projectId": str(self.project.id),
+                "sceneId": str(self.scene.id),
+                "kind": "SCENE_IMAGE",
+                "file": self.image_upload(),
+            },
+        )
+
+    def test_image_upload_generates_private_thumbnail(self):
+        from .models import Asset
+
+        response = self.upload_asset()
+        self.assertEqual(response.status_code, 201, response.content)
+        asset = Asset.objects.get(id=response.json()["id"])
+        self.assertEqual((asset.width, asset.height), (32, 24))
+        self.assertTrue(asset.thumbnail.name)
+        self.assertTrue(asset.file.storage.exists(asset.file.name))
+        self.assertTrue(asset.thumbnail.storage.exists(asset.thumbnail.name))
+
+    def test_user_from_another_workspace_cannot_download_asset(self):
+        response = self.upload_asset()
+        self.client.force_login(self.outsider)
+        denied = self.client.get(f"/api/v1/studio/assets/{response.json()['id']}/download")
+        self.assertEqual(denied.status_code, 404)
+
+    def test_invalid_image_is_rejected(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        self.client.force_login(self.owner)
+        response = self.client.post(
+            "/api/v1/studio/assets",
+            data={
+                "workspaceId": str(self.workspace.id),
+                "kind": "SCENE_IMAGE",
+                "file": SimpleUploadedFile("bad.png", b"not an image", content_type="image/png"),
+            },
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_generation_can_select_one_final_output(self):
+        from .models import Asset, GenerationOutput
+
+        first_response = self.upload_asset()
+        second_response = self.upload_asset()
+        self.client.force_login(self.owner)
+        generation = self.client.post(
+            f"/api/v1/studio/scenes/{self.scene.id}/generations",
+            data=json.dumps({"reason": "Closer shot", "prompt": "Close-up of the glass"}),
+            content_type="application/json",
+        )
+        self.assertEqual(generation.status_code, 201)
+        output_ids = []
+        for asset_id in (first_response.json()["id"], second_response.json()["id"]):
+            output = self.client.post(
+                f"/api/v1/studio/generations/{generation.json()['id']}/outputs",
+                data=json.dumps({"assetId": asset_id, "modelMetadata": {"model": "Nano Banana 2"}}),
+                content_type="application/json",
+            )
+            self.assertEqual(output.status_code, 201)
+            output_ids.append(output.json()["id"])
+        self.client.post(f"/api/v1/studio/generation-outputs/{output_ids[0]}/final")
+        self.client.post(f"/api/v1/studio/generation-outputs/{output_ids[1]}/final")
+        self.assertEqual(GenerationOutput.objects.filter(generation_id=generation.json()["id"], is_final=True).count(), 1)

@@ -1,11 +1,12 @@
 {% extends "studio/base.html" %}
 {% block content %}
-<p class="muted"><a href="{% url 'studio:project_detail' scene.episode.project.id %}">{{ scene.episode.project.title }}</a> · Episode {{ scene.episode.number }}</p>
+<p class="muted"><a href="{% url 'studio:project_detail' scene.episode.project.id %}">{{ scene.episode.project.title }}</a> Â· Episode {{ scene.episode.number }}</p>
 <h1>Scene {{ scene.number }}. {{ scene.title }}</h1>
 <p class="muted">{{ scene.get_status_display }}</p>
 <h2>Hook</h2><p>{{ scene.hook|default:"No hook yet."|linebreaksbr }}</p>
 <h2>Description</h2><p>{{ scene.description|default:"No description yet."|linebreaksbr }}</p>
-<div class="row"><span><strong>Location</strong><br>{{ scene.location|default:"—" }}</span><span><strong>Actions</strong><br>{{ scene.actions|default:"—" }}</span><span><strong>Performance</strong><br>{{ scene.performance_notes|default:"—" }}</span></div>
+<div class="row"><span><strong>Location</strong><br>{{ scene.location|default:"â€”" }}</span><span><strong>Actions</strong><br>{{ scene.actions|default:"â€”" }}</span><span><strong>Performance</strong><br>{{ scene.performance_notes|default:"â€”" }}</span></div>
 <h2>Dialogue</h2><div class="list">{% for line in scene.dialogue_lines.all %}<div class="row"><strong>{{ line.speaker|default:"Narrator" }}</strong><span>{{ line.text }}</span><span class="muted">{{ line.get_status_display }}</span></div>{% empty %}<p class="empty">No dialogue lines yet.</p>{% endfor %}</div>
-<h2>Prompts</h2><div class="list">{% for prompt in scene.prompts.all %}<div class="row"><strong>{{ prompt.ai_model.name }}</strong><span>{{ prompt.get_prompt_type_display }} · {{ prompt.blocks.count }} blocks</span><span class="muted">{{ prompt.get_status_display }}</span></div>{% empty %}<p class="empty">No prompts yet.</p>{% endfor %}</div>
+<h2>Prompts</h2><div class="list">{% for prompt in scene.prompts.all %}<div class="row"><strong>{{ prompt.ai_model.name }}</strong><span>{{ prompt.get_prompt_type_display }} Â· {{ prompt.blocks.count }} blocks</span><span class="muted">{{ prompt.get_status_display }}</span></div>{% empty %}<p class="empty">No prompts yet.</p>{% endfor %}</div>
+<h2>Additional generations</h2><div class="list">{% for generation in scene.additional_generations.all %}<div class="row"><strong>{{ generation.reason|truncatechars:60 }}</strong><span>{{ generation.outputs.count }} outputs</span><span class="muted">{{ generation.get_status_display }}</span></div>{% empty %}<p class="empty">No additional generations yet.</p>{% endfor %}</div>
 {% endblock %}

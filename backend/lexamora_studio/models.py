@@ -4,6 +4,11 @@ from django.conf import settings
 from django.db import models
 
 
+from .storage_backend import PrivateStudioStorage
+
+private_storage = PrivateStudioStorage()
+
+
 class ActiveManager(models.Manager):
     def get_queryset(self):
         return super().get_queryset().filter(deleted_at__isnull=True)
@@ -222,3 +227,72 @@ class PromptBlock(SoftDeleteModel):
     class Meta:
         ordering = ["position", "id"]
         constraints = [models.UniqueConstraint(fields=["prompt", "position"], name="studio_unique_prompt_block_position")]
+
+def studio_asset_path(instance, filename):
+    suffix = filename.rsplit(".", 1)[-1].lower() if "." in filename else "bin"
+    return f"studio/{instance.workspace_id}/{instance.id}/original.{suffix}"
+
+
+def studio_thumbnail_path(instance, filename):
+    return f"studio/{instance.workspace_id}/{instance.id}/thumbnail.jpg"
+
+
+class Asset(SoftDeleteModel):
+    class Kind(models.TextChoices):
+        CHARACTER_REFERENCE = "CHARACTER_REFERENCE", "Character reference"
+        SCENE_IMAGE = "SCENE_IMAGE", "Scene image"
+        GENERATION_OUTPUT = "GENERATION_OUTPUT", "Generation output"
+        MONTAGE_SCREENSHOT = "MONTAGE_SCREENSHOT", "Montage screenshot"
+        SOURCE_DOCUMENT = "SOURCE_DOCUMENT", "Source document"
+        EXPORT = "EXPORT", "Export"
+        OTHER = "OTHER", "Other"
+
+    workspace = models.ForeignKey(Workspace, on_delete=models.PROTECT, related_name="assets")
+    project = models.ForeignKey(Project, on_delete=models.PROTECT, related_name="assets", null=True, blank=True)
+    scene = models.ForeignKey(Scene, on_delete=models.PROTECT, related_name="assets", null=True, blank=True)
+    character = models.ForeignKey(Character, on_delete=models.PROTECT, related_name="assets", null=True, blank=True)
+    kind = models.CharField(max_length=32, choices=Kind.choices)
+    file = models.FileField(storage=private_storage, upload_to=studio_asset_path, max_length=500)
+    thumbnail = models.FileField(storage=private_storage, upload_to=studio_thumbnail_path, max_length=500, blank=True)
+    original_filename = models.CharField(max_length=255)
+    content_type = models.CharField(max_length=120)
+    size_bytes = models.PositiveBigIntegerField()
+    checksum_sha256 = models.CharField(max_length=64)
+    width = models.PositiveIntegerField(null=True, blank=True)
+    height = models.PositiveIntegerField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at", "id"]
+
+
+class AdditionalGeneration(SoftDeleteModel):
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        IN_REVIEW = "IN_REVIEW", "In review"
+        APPROVED = "APPROVED", "Approved"
+        NEEDS_CHANGES = "NEEDS_CHANGES", "Needs changes"
+        FINAL = "FINAL", "Final"
+
+    scene = models.ForeignKey(Scene, on_delete=models.PROTECT, related_name="additional_generations")
+    reason = models.TextField()
+    source_asset = models.ForeignKey(Asset, on_delete=models.PROTECT, related_name="source_generations", null=True, blank=True)
+    prompt = models.TextField()
+    position = models.PositiveIntegerField(default=0)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
+
+    class Meta:
+        ordering = ["position", "id"]
+
+
+class GenerationOutput(SoftDeleteModel):
+    generation = models.ForeignKey(AdditionalGeneration, on_delete=models.PROTECT, related_name="outputs")
+    asset = models.ForeignKey(Asset, on_delete=models.PROTECT, related_name="generation_outputs")
+    model_metadata = models.JSONField(default=dict, blank=True)
+    position = models.PositiveIntegerField(default=0)
+    is_final = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ["position", "id"]
+        constraints = [
+            models.UniqueConstraint(fields=["generation"], condition=models.Q(is_final=True), name="studio_one_final_generation_output")
+        ]

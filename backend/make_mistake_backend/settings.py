@@ -214,3 +214,6 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+STUDIO_PRIVATE_MEDIA_ROOT = Path(os.environ.get("STUDIO_PRIVATE_MEDIA_ROOT", BASE_DIR / "private-media"))
+STUDIO_MAX_UPLOAD_BYTES = max(1024 * 1024, int(os.environ.get("STUDIO_MAX_UPLOAD_BYTES", str(50 * 1024 * 1024))))

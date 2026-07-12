@@ -1,12 +1,14 @@
 import json
 
-from django.http import JsonResponse
+from django.http import FileResponse, JsonResponse
 from django.shortcuts import get_object_or_404
+from django.core.exceptions import ValidationError
 from django.views.decorators.http import require_http_methods
 
-from .models import AiModelProfile, DialogueLine, Project, Prompt, PromptBlock, Scene
+from .models import AdditionalGeneration, AiModelProfile, Asset, DialogueLine, GenerationOutput, Project, Prompt, PromptBlock, Scene
 from .permissions import accessible_workspaces, has_capability
 from .services import create_workspace, update_dialogue_line
+from .storage import create_asset
 
 
 def error(code, message, status=400, fields=None):
@@ -254,3 +256,151 @@ def scene_prompts(request, scene_id):
                 position=position, created_by=user, updated_by=user,
             )
     return JsonResponse({"id": str(prompt.id), "model": model.name, "type": prompt.prompt_type}, status=201)
+
+def asset_json(item):
+    return {
+        "id": str(item.id), "workspaceId": str(item.workspace_id), "kind": item.kind,
+        "filename": item.original_filename, "contentType": item.content_type,
+        "sizeBytes": item.size_bytes, "checksumSha256": item.checksum_sha256,
+        "width": item.width, "height": item.height, "hasThumbnail": bool(item.thumbnail),
+    }
+
+
+@require_http_methods(["POST"])
+def assets(request):
+    user = require_user(request)
+    if user is None:
+        return error("authentication_required", "Login is required.", 401)
+    workspace = get_object_or_404(accessible_workspaces(user), id=request.POST.get("workspaceId"))
+    if not has_capability(user, workspace, "edit"):
+        return error("permission_denied", "Edit permission is required.", 403)
+    uploaded = request.FILES.get("file")
+    if uploaded is None:
+        return error("validation_error", "A file is required.", fields={"file": "Required"})
+    kind = request.POST.get("kind", "")
+    if kind not in Asset.Kind.values:
+        return error("validation_error", "A valid asset kind is required.")
+    project = None
+    scene = None
+    if request.POST.get("projectId"):
+        project = get_object_or_404(Project.objects.filter(workspace=workspace), id=request.POST["projectId"])
+    if request.POST.get("sceneId"):
+        scene = get_object_or_404(Scene.objects.filter(episode__project__workspace=workspace), id=request.POST["sceneId"])
+    try:
+        item = create_asset(user=user, workspace=workspace, uploaded=uploaded, kind=kind, project=project, scene=scene)
+    except ValidationError as exc:
+        return error("validation_error", "; ".join(exc.messages), fields={"file": exc.messages})
+    return JsonResponse(asset_json(item), status=201)
+
+
+def _accessible_asset(user, asset_id):
+    return get_object_or_404(
+        Asset.objects.filter(workspace__in=accessible_workspaces(user)),
+        id=asset_id,
+    )
+
+
+@require_http_methods(["GET"])
+def asset_detail(request, asset_id):
+    user = require_user(request)
+    if user is None:
+        return error("authentication_required", "Login is required.", 401)
+    return JsonResponse(asset_json(_accessible_asset(user, asset_id)))
+
+
+@require_http_methods(["GET"])
+def asset_download(request, asset_id):
+    user = require_user(request)
+    if user is None:
+        return error("authentication_required", "Login is required.", 401)
+    item = _accessible_asset(user, asset_id)
+    return FileResponse(item.file.open("rb"), as_attachment=True, filename=item.original_filename, content_type=item.content_type)
+
+
+@require_http_methods(["GET"])
+def asset_thumbnail(request, asset_id):
+    user = require_user(request)
+    if user is None:
+        return error("authentication_required", "Login is required.", 401)
+    item = _accessible_asset(user, asset_id)
+    if not item.thumbnail:
+        return error("thumbnail_unavailable", "This asset has no thumbnail.", 404)
+    return FileResponse(item.thumbnail.open("rb"), content_type="image/jpeg")
+
+
+@require_http_methods(["GET", "POST"])
+def scene_generations(request, scene_id):
+    user = require_user(request)
+    if user is None:
+        return error("authentication_required", "Login is required.", 401)
+    scene = get_object_or_404(
+        Scene.objects.select_related("episode__project__workspace").filter(
+            episode__project__workspace__in=accessible_workspaces(user)
+        ),
+        id=scene_id,
+    )
+    if request.method == "GET":
+        return JsonResponse({"results": [
+            {"id": str(item.id), "reason": item.reason, "prompt": item.prompt, "status": item.status, "outputs": item.outputs.count()}
+            for item in scene.additional_generations.prefetch_related("outputs")
+        ]})
+    if not has_capability(user, scene_workspace(scene), "edit"):
+        return error("permission_denied", "Edit permission is required.", 403)
+    data = payload(request)
+    if data is None or not str(data.get("reason", "")).strip() or not str(data.get("prompt", "")).strip():
+        return error("validation_error", "Reason and prompt are required.")
+    source_asset = None
+    if data.get("sourceAssetId"):
+        source_asset = get_object_or_404(Asset.objects.filter(workspace=scene_workspace(scene)), id=data["sourceAssetId"])
+    item = AdditionalGeneration.objects.create(
+        scene=scene, reason=str(data["reason"]).strip(), prompt=str(data["prompt"]).strip(),
+        source_asset=source_asset, position=scene.additional_generations.count(),
+        created_by=user, updated_by=user,
+    )
+    return JsonResponse({"id": str(item.id), "status": item.status}, status=201)
+
+
+@require_http_methods(["POST"])
+def generation_outputs(request, generation_id):
+    user = require_user(request)
+    if user is None:
+        return error("authentication_required", "Login is required.", 401)
+    generation = get_object_or_404(
+        AdditionalGeneration.objects.select_related("scene__episode__project__workspace").filter(
+            scene__episode__project__workspace__in=accessible_workspaces(user)
+        ),
+        id=generation_id,
+    )
+    workspace = generation.scene.episode.project.workspace
+    if not has_capability(user, workspace, "edit"):
+        return error("permission_denied", "Edit permission is required.", 403)
+    data = payload(request)
+    if data is None:
+        return error("invalid_json", "A JSON object is required.")
+    asset = get_object_or_404(Asset.objects.filter(workspace=workspace), id=data.get("assetId"))
+    item = GenerationOutput.objects.create(
+        generation=generation, asset=asset, model_metadata=data.get("modelMetadata", {}),
+        position=generation.outputs.count(), created_by=user, updated_by=user,
+    )
+    return JsonResponse({"id": str(item.id), "isFinal": item.is_final}, status=201)
+
+
+@require_http_methods(["POST"])
+def generation_output_final(request, output_id):
+    user = require_user(request)
+    if user is None:
+        return error("authentication_required", "Login is required.", 401)
+    item = get_object_or_404(
+        GenerationOutput.objects.select_related("generation__scene__episode__project__workspace").filter(
+            generation__scene__episode__project__workspace__in=accessible_workspaces(user)
+        ),
+        id=output_id,
+    )
+    workspace = item.generation.scene.episode.project.workspace
+    if not has_capability(user, workspace, "edit"):
+        return error("permission_denied", "Edit permission is required.", 403)
+    item.generation.outputs.update(is_final=False)
+    item.is_final = True
+    item.updated_by = user
+    item.save(update_fields=["is_final", "updated_by", "updated_at"])
+    return JsonResponse({"id": str(item.id), "isFinal": True})

@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import AiModelProfile, Character, DialogueLine, Episode, Project, Prompt, PromptBlock, Scene, Workspace, WorkspaceMembership
+from .models import AdditionalGeneration, AiModelProfile, Asset, Character, DialogueLine, Episode, GenerationOutput, Project, Prompt, PromptBlock, Scene, Workspace, WorkspaceMembership
 
 
 class MembershipInline(admin.TabularInline):
@@ -29,3 +29,6 @@ admin.site.register(AiModelProfile)
 admin.site.register(DialogueLine)
 admin.site.register(Prompt)
 admin.site.register(PromptBlock)
+admin.site.register(Asset)
+admin.site.register(AdditionalGeneration)
+admin.site.register(GenerationOutput)
