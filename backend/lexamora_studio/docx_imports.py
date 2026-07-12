@@ -9,12 +9,12 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import transaction
 from django.utils import timezone
 
-from .models import AiModelProfile, Asset, Character, DialogueLine, DocxImport, Episode, Project, Prompt, PromptBlock, Scene
+from .models import AdditionalGeneration, AiModelProfile, Asset, Character, DialogueLine, DocxImport, Episode, GenerationOutput, Project, Prompt, PromptBlock, Scene
 from .revisions import audit, record_revision
 from .storage import create_asset
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
-NS = {"w": W_NS}
+NS = {"w": W_NS, "a": "http://schemas.openxmlformats.org/drawingml/2006/main", "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships"}
 MAX_ARCHIVE_ENTRIES = 2000
 MAX_UNCOMPRESSED_BYTES = 300 * 1024 * 1024
 MAX_DOCUMENT_XML_BYTES = 20 * 1024 * 1024
@@ -52,6 +52,53 @@ def _safe_archive(uploaded):
     return archive
 
 
+def _body_media_assignments(root, archive):
+    rel_path = "word/_rels/document.xml.rels"
+    if rel_path not in archive.namelist():
+        return []
+    rel_root = ElementTree.fromstring(archive.read(rel_path))
+    relationships = {}
+    for rel in rel_root:
+        rel_id = rel.get("Id")
+        target = rel.get("Target", "")
+        if rel_id and "media/" in target:
+            relationships[rel_id] = "word/" + target.lstrip("/")
+    assignments = []
+    episode_number = None
+    scene_number = None
+    generation_title = None
+    body = root.find(".//w:body", NS)
+    if body is None:
+        return assignments
+    for child in body:
+        if child.tag.endswith("}p"):
+            style, text = _paragraph(child)
+            episode_match = re.match(r"^(?:\u0421\u0415\u0420\u0418\u042f|EPISODE)\s*(\d+)", text, re.IGNORECASE)
+            scene_match = re.match(r"^\u0421\u0446\u0435\u043d\u0430\s*(\d+)", text, re.IGNORECASE)
+            if style == "Heading1" and episode_match:
+                episode_number = int(episode_match.group(1))
+                scene_number = None
+                generation_title = None
+            elif style == "Heading1" and scene_match:
+                scene_number = int(scene_match.group(1))
+                generation_title = None
+            elif style == "Heading1":
+                scene_number = None
+                generation_title = text if re.match(r"^\u0414\u041e\u0413\u0415\u041d\u0415\u0420\u0410\u0426\u0418\u042f", text, re.IGNORECASE) else None
+            for blip in child.findall(".//a:blip", NS):
+                rel_id = blip.get(f"{{{NS['r']}}}embed")
+                media_name = relationships.get(rel_id)
+                if media_name:
+                    assignments.append({"media": media_name, "episode": episode_number, "scene": scene_number, "generation": generation_title})
+        if not child.tag.endswith("}p"):
+            for blip in child.findall(".//a:blip", NS):
+                rel_id = blip.get(f"{{{NS['r']}}}embed")
+                media_name = relationships.get(rel_id)
+                if media_name:
+                    assignments.append({"media": media_name, "episode": episode_number, "scene": scene_number, "generation": generation_title})
+    return assignments
+
+
 def parse_docx(uploaded):
     uploaded.seek(0)
     with _safe_archive(uploaded) as archive:
@@ -69,6 +116,7 @@ def parse_docx(uploaded):
                 table_rows.append(["\n".join("".join(node.text or "" for node in paragraph.findall(".//w:t", NS)).strip() for paragraph in cell.findall("./w:p", NS) if "".join(node.text or "" for node in paragraph.findall(".//w:t", NS)).strip()) for cell in row.findall("./w:tc", NS)])
             tables.append(table_rows)
         table_count = len(tables)
+        media_assignments = _body_media_assignments(root, archive)
     uploaded.seek(0)
 
     title = next((text.strip("\u201c\u201d\" ") for style, text in rows if not style and text.strip("\u201c\u201d\" ").upper() not in {"LEXAMORA SERIES", "MASTER DOCUMENT"}), Path(uploaded.name).stem)
@@ -139,6 +187,7 @@ def parse_docx(uploaded):
         "table_count": table_count,
         "image_count": len(media),
         "media_files": media,
+        "media_assignments": media_assignments,
         "characters": characters,
         "episodes": episodes,
     }, warnings
@@ -168,12 +217,15 @@ def accept_docx_import(*, draft, user):
     for position, character_data in enumerate(data.get("characters", [])):
         character = Character.objects.create(project=project, name=character_data["name"][:180], description=character_data.get("description", ""), position=position, created_by=user, updated_by=user)
         record_revision(instance=character, user=user, operation="IMPORT")
+    generation_lookup = {}
+    scene_lookup = {}
     for episode_data in data.get("episodes", []):
         episode = Episode.objects.create(project=project, number=episode_data["number"], title=(episode_data.get("title") or f"Episode {episode_data['number']}")[:240], summary=episode_data.get("summary", ""), position=project.episodes.count(), created_by=user, updated_by=user)
         record_revision(instance=episode, user=user, operation="IMPORT")
         for scene_data in episode_data.get("scenes", []):
             scene = Scene.objects.create(episode=episode, number=scene_data["number"], title=(scene_data.get("title") or f"Scene {scene_data['number']}")[:240], hook=scene_data.get("hook", ""), description=scene_data.get("description", ""), location=scene_data.get("location", ""), actions=scene_data.get("actions", ""), performance_notes=scene_data.get("performance_notes", ""), position=episode.scenes.count(), created_by=user, updated_by=user)
             record_revision(instance=scene, user=user, operation="IMPORT")
+            scene_lookup[(episode.number, scene.number)] = scene
             for prompt_position, prompt_data in enumerate(scene_data.get("prompts", [])):
                 model_name = prompt_data.get("model", "")
                 model = AiModelProfile.objects.filter(name__iexact=model_name, is_active=True).first()
@@ -194,7 +246,18 @@ def accept_docx_import(*, draft, user):
                 filename = Path(media_name).name
                 content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
                 uploaded = SimpleUploadedFile(filename, content, content_type=content_type)
-                create_asset(user=user, workspace=draft.workspace, uploaded=uploaded, kind=Asset.Kind.OTHER, project=project)
+                assignment = next((item for item in data.get("media_assignments", []) if item.get("media") == media_name), None)
+                scene = scene_lookup.get((assignment.get("episode"), assignment.get("scene"))) if assignment else None
+                asset = create_asset(user=user, workspace=draft.workspace, uploaded=uploaded, kind=Asset.Kind.SCENE_IMAGE if scene else Asset.Kind.OTHER, project=project, scene=scene)
+                generation_title = assignment.get("generation") if assignment else None
+                generation = generation_lookup.get(generation_title)
+                if generation_title and generation is None:
+                    first_scene = Scene.objects.filter(episode__project=project).first()
+                    if first_scene:
+                        generation = AdditionalGeneration.objects.create(scene=first_scene, reason=generation_title, prompt="Imported from DOCX", position=len(generation_lookup), created_by=user, updated_by=user)
+                        generation_lookup[generation_title] = generation
+                if generation:
+                    GenerationOutput.objects.create(generation=generation, asset=asset, position=generation.outputs.count(), created_by=user, updated_by=user)
     draft.project = project
     draft.status = DocxImport.Status.ACCEPTED
     draft.accepted_by = user
