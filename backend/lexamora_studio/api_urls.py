@@ -30,4 +30,7 @@ urlpatterns = [
     path("subtitle-tracks/<uuid:track_id>/lines/reorder", api.subtitle_lines_reorder, name="subtitle_lines_reorder"),
     path("projects/<uuid:project_id>/translations", api.project_translations, name="project_translations"),
     path("dialogue/<uuid:line_id>/translations/<str:target_language>", api.dialogue_translation, name="dialogue_translation"),
+    path("projects/<uuid:project_id>/export/pdf", api.project_export_pdf, name="project_export_pdf"),
+    path("exports/<uuid:export_id>", api.export_detail, name="export_detail"),
+    path("exports/<uuid:export_id>/download", api.export_download, name="export_download"),
 ]

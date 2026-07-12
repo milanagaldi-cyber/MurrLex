@@ -7,7 +7,8 @@ from lessons.ai_gateway import ProviderError
 from lessons.provider_credentials import user_has_ai_access
 
 from .ai import StudioAiError, accept_suggestion, improve_prompt, reject_suggestion
-from .models import AiSuggestion, DialogueLine, Episode, Project, Prompt, Scene, SubtitleTrack, TranslationUnit, Workspace
+from .exports import ALL_SECTIONS, ExportError, generate_export
+from .models import AiSuggestion, DialogueLine, Episode, ExportJob, Project, Prompt, Scene, SubtitleTrack, TranslationUnit, Workspace
 from .permissions import accessible_workspaces, has_capability
 from .services import bulk_replace_subtitle_lines, create_workspace, reorder_subtitle_lines, save_translation
 
@@ -201,3 +202,34 @@ def subtitle_track(request, track_id):
                     reorder_subtitle_lines(track=track, user=request.user, ordered_ids=[line.id for line in lines])
         return redirect("studio:subtitle_track", track_id=track.id)
     return render(request, "studio/subtitle_track.html", {"track": track, "can_translate": can_translate})
+
+@login_required
+def project_exports(request, project_id):
+    project = get_object_or_404(
+        Project.objects.prefetch_related(
+            "characters", "episodes__scenes__dialogue_lines", "episodes__scenes__prompts__blocks",
+            "episodes__scenes__additional_generations__outputs__asset", "episodes__subtitle_tracks__lines",
+        ).filter(workspace__in=accessible_workspaces(request.user)),
+        id=project_id,
+    )
+    can_export = has_capability(request.user, project.workspace, "export")
+    if request.method == "POST" and can_export:
+        episode = None
+        if request.POST.get("episode_id"):
+            episode = get_object_or_404(Episode.objects.filter(project=project), id=request.POST["episode_id"])
+        try:
+            generate_export(
+                project=project, episode=episode,
+                sections=request.POST.getlist("sections"), user=request.user,
+            )
+        except ExportError as exc:
+            messages.error(request, str(exc))
+        except Exception:
+            messages.error(request, "PDF generation failed.")
+        else:
+            messages.success(request, "PDF export is ready.")
+        return redirect("studio:project_exports", project_id=project.id)
+    return render(request, "studio/exports.html", {
+        "project": project, "jobs": project.export_jobs.select_related("episode", "output_asset")[:50],
+        "sections": ALL_SECTIONS, "can_export": can_export,
+    })

@@ -8,10 +8,11 @@ from django.views.decorators.http import require_http_methods
 from lessons.ai_gateway import ProviderError
 from lessons.provider_credentials import user_has_ai_access
 
-from .models import AccessEvent, AdditionalGeneration, AiModelProfile, AiSuggestion, Asset, DialogueLine, Episode, GenerationOutput, Project, Prompt, PromptBlock, Revision, Scene, SubtitleLine, SubtitleTrack, TranslationUnit
+from .models import AccessEvent, AdditionalGeneration, AiModelProfile, AiSuggestion, Asset, DialogueLine, Episode, ExportJob, GenerationOutput, Project, Prompt, PromptBlock, Revision, Scene, SubtitleLine, SubtitleTrack, TranslationUnit
 from .permissions import accessible_workspaces, has_capability
 from .services import bulk_replace_subtitle_lines, create_workspace, reorder_subtitle_lines, save_translation, update_dialogue_line
 from .storage import create_asset
+from .exports import ExportError, generate_export
 from .ai import StudioAiError, accept_suggestion, improve_prompt, reject_suggestion
 from .revisions import VERSIONED_MODELS, audit, record_revision, restore_revision, revision_diff
 
@@ -705,3 +706,78 @@ def dialogue_translation(request, line_id, target_language):
         translated_text=str(data.get("translation", "")).strip(), status=status,
     )
     return JsonResponse(translation_json(line, unit))
+
+
+def export_json(item):
+    return {
+        "id": str(item.id), "projectId": str(item.project_id),
+        "episodeId": str(item.episode_id) if item.episode_id else None,
+        "sections": item.sections, "status": item.status,
+        "assetId": str(item.output_asset_id) if item.output_asset_id else None,
+        "error": item.error_message if item.status == ExportJob.Status.ERROR else "",
+        "createdAt": item.created_at.isoformat(),
+        "completedAt": item.completed_at.isoformat() if item.completed_at else None,
+    }
+
+
+@require_http_methods(["POST"])
+def project_export_pdf(request, project_id):
+    user = require_user(request)
+    if user is None:
+        return error("authentication_required", "Login is required.", 401)
+    project = get_object_or_404(
+        Project.objects.prefetch_related(
+            "characters", "episodes__scenes__dialogue_lines", "episodes__scenes__prompts__blocks",
+            "episodes__scenes__additional_generations__outputs__asset", "episodes__subtitle_tracks__lines",
+        ).filter(workspace__in=accessible_workspaces(user)),
+        id=project_id,
+    )
+    if not has_capability(user, project.workspace, "export"):
+        return error("permission_denied", "Export capability is required.", 403)
+    data = payload(request)
+    if data is None:
+        return error("invalid_json", "A JSON object is required.")
+    episode = None
+    if data.get("episodeId"):
+        episode = get_object_or_404(Episode.objects.filter(project=project), id=data["episodeId"])
+    sections = data.get("sections", [])
+    if not isinstance(sections, list):
+        return error("validation_error", "sections must be a list.")
+    try:
+        job = generate_export(project=project, episode=episode, sections=sections, user=user)
+    except ExportError as exc:
+        return error("export_error", str(exc), 429 if "limit" in str(exc).lower() else 400)
+    except Exception:
+        return error("export_failed", "PDF generation failed.", 500)
+    return JsonResponse(export_json(job), status=201)
+
+
+def _export_for_user(user, export_id):
+    return get_object_or_404(
+        ExportJob.objects.select_related("workspace", "output_asset").filter(
+            workspace__in=accessible_workspaces(user)
+        ),
+        id=export_id,
+    )
+
+
+@require_http_methods(["GET"])
+def export_detail(request, export_id):
+    user = require_user(request)
+    if user is None:
+        return error("authentication_required", "Login is required.", 401)
+    return JsonResponse(export_json(_export_for_user(user, export_id)))
+
+
+@require_http_methods(["GET"])
+def export_download(request, export_id):
+    user = require_user(request)
+    if user is None:
+        return error("authentication_required", "Login is required.", 401)
+    job = _export_for_user(user, export_id)
+    if job.status != ExportJob.Status.SUCCESS or job.output_asset is None:
+        return error("export_unavailable", "Export is not ready for download.", 409)
+    asset = job.output_asset
+    AccessEvent.objects.create(workspace=job.workspace, actor=user, asset=asset, action="DOWNLOAD")
+    audit(workspace=job.workspace, actor=user, action="EXPORT_DOWNLOAD", instance=asset, metadata={"exportId": str(job.id)})
+    return FileResponse(asset.file.open("rb"), as_attachment=True, filename=asset.original_filename, content_type="application/pdf")

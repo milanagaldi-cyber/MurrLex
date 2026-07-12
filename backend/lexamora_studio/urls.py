@@ -16,4 +16,5 @@ urlpatterns = [
     path("projects/<uuid:project_id>/translations/", views.translation_workspace, name="translations"),
     path("episodes/<uuid:episode_id>/subtitles/", views.episode_subtitles, name="episode_subtitles"),
     path("subtitle-tracks/<uuid:track_id>/", views.subtitle_track, name="subtitle_track"),
+    path("projects/<uuid:project_id>/exports/", views.project_exports, name="project_exports"),
 ]

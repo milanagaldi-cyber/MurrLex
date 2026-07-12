@@ -452,3 +452,27 @@ class TranslationUnit(SoftDeleteModel):
     class Meta:
         ordering = ["dialogue_line__scene__position", "dialogue_line__position", "target_language"]
         constraints = [models.UniqueConstraint(fields=["dialogue_line", "target_language"], name="studio_unique_dialogue_translation")]
+
+
+class ExportJob(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        RUNNING = "RUNNING", "Running"
+        SUCCESS = "SUCCESS", "Success"
+        ERROR = "ERROR", "Error"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    workspace = models.ForeignKey(Workspace, on_delete=models.PROTECT, related_name="export_jobs")
+    project = models.ForeignKey(Project, on_delete=models.PROTECT, related_name="export_jobs")
+    episode = models.ForeignKey(Episode, on_delete=models.PROTECT, related_name="export_jobs", null=True, blank=True)
+    sections = models.JSONField(default=list)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING)
+    output_asset = models.ForeignKey(Asset, on_delete=models.PROTECT, related_name="export_jobs", null=True, blank=True)
+    error_message = models.TextField(blank=True)
+    requested_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="studio_export_jobs")
+    created_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at", "id"]

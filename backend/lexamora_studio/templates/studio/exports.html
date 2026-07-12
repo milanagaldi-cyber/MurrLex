@@ -1,0 +1,11 @@
+{% extends "studio/base.html" %}
+{% block content %}
+<p class="muted"><a href="{% url 'studio:project_detail' project.id %}">{{ project.title }}</a></p>
+<h1>PDF exports</h1>
+{% if messages %}{% for message in messages %}<p>{{ message }}</p>{% endfor %}{% endif %}
+{% if can_export %}<form method="post" class="list" style="padding:16px;margin-bottom:24px">{% csrf_token %}
+<label for="episode">Scope</label><select id="episode" name="episode_id"><option value="">Entire project</option>{% for episode in project.episodes.all %}<option value="{{ episode.id }}">Episode {{ episode.number }}: {{ episode.title }}</option>{% endfor %}</select>
+<h2>Sections</h2><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px">{% for section in sections %}<label><input type="checkbox" name="sections" value="{{ section }}" checked style="width:auto"> {{ section|title }}</label>{% endfor %}</div>
+<p><button class="button">Generate PDF</button></p></form>{% endif %}
+<h2>History</h2><div class="list">{% for job in jobs %}<div class="row"><div><strong>{{ job.created_at|date:"Y-m-d H:i" }}</strong><br><span class="muted">{% if job.episode %}Episode {{ job.episode.number }}{% else %}Entire project{% endif %}</span></div><span>{{ job.get_status_display }}</span><span>{% if job.status == "SUCCESS" %}<a href="/api/v1/studio/exports/{{ job.id }}/download">Download</a>{% elif job.status == "ERROR" %}<span title="{{ job.error_message }}">Error</span>{% endif %}</span></div>{% empty %}<p class="empty">No exports yet.</p>{% endfor %}</div>
+{% endblock %}

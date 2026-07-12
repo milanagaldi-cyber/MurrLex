@@ -596,3 +596,106 @@ class StudioSubtitleTranslationTests(TestCase):
             content_type="application/json",
         )
         self.assertEqual(response.status_code, 403)
+
+
+@override_settings(
+    STUDIO_PDF_FONT_PATH="C:/Windows/Fonts/arial.ttf",
+    STUDIO_EXPORT_RATE_PER_HOUR=10,
+)
+class StudioExportTests(TestCase):
+    def setUp(self):
+        import tempfile
+        from .models import DialogueLine, Episode, Scene, SubtitleLine, SubtitleTrack, private_storage
+
+        self.temp_media = tempfile.TemporaryDirectory()
+        self.private_storage = private_storage
+        self.previous_location = private_storage._location
+        private_storage._location = self.temp_media.name
+        private_storage.__dict__.pop("base_location", None)
+        private_storage.__dict__.pop("location", None)
+
+        users = get_user_model()
+        self.owner = users.objects.create_user("export-owner", password="strong-pass")
+        self.viewer = users.objects.create_user("export-viewer", password="strong-pass")
+        self.workspace = create_workspace(user=self.owner, name="Export Studio", slug="export-studio")
+        WorkspaceMembership.objects.create(workspace=self.workspace, user=self.viewer, role=WorkspaceMembership.Role.VIEWER)
+        self.project = Project.objects.create(
+            workspace=self.workspace, project_type=Project.Type.SERIES,
+            title="Dom serial", concept="Historia domu", original_language="pl",
+            translation_languages=["ru"], rights_holder="Leksa Programs",
+            created_by=self.owner, updated_by=self.owner,
+        )
+        self.episode = Episode.objects.create(
+            project=self.project, number=1, title="Ostatnie zadanie",
+            summary="Pilot episode", created_by=self.owner, updated_by=self.owner,
+        )
+        scene = Scene.objects.create(
+            episode=self.episode, number=1, title="Office",
+            description="A cinematic office scene", created_by=self.owner, updated_by=self.owner,
+        )
+        DialogueLine.objects.create(
+            scene=scene, speaker="Hero", text="Dzien dobry",
+            created_by=self.owner, updated_by=self.owner,
+        )
+        track = SubtitleTrack.objects.create(
+            episode=self.episode, language="pl", kind=SubtitleTrack.Kind.WORKING,
+            created_by=self.owner, updated_by=self.owner,
+        )
+        SubtitleLine.objects.create(
+            track=track, position=0, text="DZIEN DOBRY",
+            created_by=self.owner, updated_by=self.owner,
+        )
+
+    def tearDown(self):
+        self.private_storage._location = self.previous_location
+        self.private_storage.__dict__.pop("base_location", None)
+        self.private_storage.__dict__.pop("location", None)
+        self.temp_media.cleanup()
+
+    def test_pdf_export_creates_private_asset_and_audit_history(self):
+        from .models import AccessEvent, AuditEvent, ExportJob
+
+        self.client.force_login(self.owner)
+        response = self.client.post(
+            f"/api/v1/studio/projects/{self.project.id}/export/pdf",
+            data=json.dumps({"sections": ["metadata", "episodes", "scenes", "dialogue", "subtitles"]}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        job = ExportJob.objects.get(id=response.json()["id"])
+        self.assertEqual(job.status, ExportJob.Status.SUCCESS)
+        self.assertTrue(job.output_asset.file.storage.exists(job.output_asset.file.name))
+        with job.output_asset.file.open("rb") as stream:
+            self.assertEqual(stream.read(4), b"%PDF")
+        self.assertTrue(AuditEvent.objects.filter(action="EXPORT_GENERATED").exists())
+
+        download = self.client.get(f"/api/v1/studio/exports/{job.id}/download")
+        self.assertEqual(download.status_code, 200)
+        download.close()
+        self.assertTrue(AuditEvent.objects.filter(action="EXPORT_DOWNLOAD").exists())
+        self.assertTrue(AccessEvent.objects.filter(asset=job.output_asset, action="DOWNLOAD").exists())
+
+    def test_viewer_cannot_generate_export(self):
+        self.client.force_login(self.viewer)
+        response = self.client.post(
+            f"/api/v1/studio/projects/{self.project.id}/export/pdf",
+            data=json.dumps({"sections": []}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 403)
+
+    @override_settings(STUDIO_EXPORT_RATE_PER_HOUR=1)
+    def test_export_rate_limit(self):
+        self.client.force_login(self.owner)
+        first = self.client.post(
+            f"/api/v1/studio/projects/{self.project.id}/export/pdf",
+            data=json.dumps({"sections": ["metadata"]}),
+            content_type="application/json",
+        )
+        second = self.client.post(
+            f"/api/v1/studio/projects/{self.project.id}/export/pdf",
+            data=json.dumps({"sections": ["metadata"]}),
+            content_type="application/json",
+        )
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(second.status_code, 429)
