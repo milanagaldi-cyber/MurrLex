@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import AdditionalGeneration, AiModelProfile, Asset, Character, DialogueLine, Episode, GenerationOutput, Project, Prompt, PromptBlock, Scene, Workspace, WorkspaceMembership
+from .models import AccessEvent, AdditionalGeneration, AiModelProfile, Asset, AuditEvent, Character, DialogueLine, Episode, GenerationOutput, Project, Prompt, PromptBlock, Revision, Scene, Workspace, WorkspaceMembership
 
 
 class MembershipInline(admin.TabularInline):
@@ -32,3 +32,19 @@ admin.site.register(PromptBlock)
 admin.site.register(Asset)
 admin.site.register(AdditionalGeneration)
 admin.site.register(GenerationOutput)
+
+
+class AppendOnlyAdmin(admin.ModelAdmin):
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+admin.site.register(Revision, AppendOnlyAdmin)
+admin.site.register(AuditEvent, AppendOnlyAdmin)
+admin.site.register(AccessEvent, AppendOnlyAdmin)

@@ -1,6 +1,7 @@
 from django.db import transaction
 
 from .models import Prompt, Workspace, WorkspaceMembership
+from .revisions import record_revision
 
 
 @transaction.atomic
@@ -34,5 +35,6 @@ def update_dialogue_line(*, line, user, text, speaker=None, delivery=None):
     line.updated_by = user
     line.full_clean()
     line.save()
+    record_revision(instance=line, user=user, operation="UPDATE")
     Prompt.objects.filter(blocks__source_dialogue=line).update(needs_review=True)
     return line

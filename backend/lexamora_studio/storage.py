@@ -9,6 +9,7 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 
 from .models import Asset
+from .revisions import audit
 
 
 ALLOWED_UPLOADS = {
@@ -92,4 +93,5 @@ def create_asset(*, user, workspace, uploaded, kind, project=None, scene=None, c
         asset.thumbnail.save("thumbnail.jpg", ContentFile(thumbnail), save=False)
     asset.full_clean()
     asset.save()
+    audit(workspace=workspace, actor=user, action="ASSET_UPLOAD", instance=asset, metadata={"filename": filename, "sizeBytes": uploaded.size})
     return asset

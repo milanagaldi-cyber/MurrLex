@@ -19,4 +19,7 @@ urlpatterns = [
     path("scenes/<uuid:scene_id>/generations", api.scene_generations, name="scene_generations"),
     path("generations/<uuid:generation_id>/outputs", api.generation_outputs, name="generation_outputs"),
     path("generation-outputs/<uuid:output_id>/final", api.generation_output_final, name="generation_output_final"),
+    path("entities/<str:entity_type>/<uuid:entity_id>/revisions", api.entity_revisions, name="entity_revisions"),
+    path("entities/<str:entity_type>/<uuid:entity_id>/revisions/compare", api.revision_compare, name="revision_compare"),
+    path("entities/<str:entity_type>/<uuid:entity_id>/restore/<uuid:revision_id>", api.revision_restore, name="revision_restore"),
 ]

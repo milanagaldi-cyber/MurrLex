@@ -296,3 +296,64 @@ class GenerationOutput(SoftDeleteModel):
         constraints = [
             models.UniqueConstraint(fields=["generation"], condition=models.Q(is_final=True), name="studio_one_final_generation_output")
         ]
+
+
+class Revision(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    workspace = models.ForeignKey(Workspace, on_delete=models.PROTECT, related_name="revisions")
+    entity_type = models.CharField(max_length=120)
+    entity_id = models.UUIDField()
+    sequence = models.PositiveIntegerField()
+    operation = models.CharField(max_length=32)
+    snapshot = models.JSONField(default=dict)
+    changed_fields = models.JSONField(default=list)
+    author = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="studio_revisions")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "-sequence"]
+        constraints = [models.UniqueConstraint(fields=["entity_type", "entity_id", "sequence"], name="studio_unique_revision_sequence")]
+
+    def save(self, *args, **kwargs):
+        if self.pk and Revision.objects.filter(pk=self.pk).exists():
+            raise ValueError("Revisions are append-only.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValueError("Revisions are append-only.")
+
+
+class AuditEvent(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    workspace = models.ForeignKey(Workspace, on_delete=models.PROTECT, related_name="audit_events")
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="studio_audit_events")
+    action = models.CharField(max_length=80)
+    entity_type = models.CharField(max_length=120, blank=True)
+    entity_id = models.UUIDField(null=True, blank=True)
+    request_id = models.CharField(max_length=80, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "id"]
+
+    def save(self, *args, **kwargs):
+        if self.pk and AuditEvent.objects.filter(pk=self.pk).exists():
+            raise ValueError("Audit events are append-only.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValueError("Audit events are append-only.")
+
+
+class AccessEvent(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    workspace = models.ForeignKey(Workspace, on_delete=models.PROTECT, related_name="access_events")
+    actor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="studio_access_events")
+    asset = models.ForeignKey(Asset, on_delete=models.PROTECT, related_name="access_events")
+    action = models.CharField(max_length=24)
+    request_id = models.CharField(max_length=80, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "id"]

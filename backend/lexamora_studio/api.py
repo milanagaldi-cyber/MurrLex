@@ -5,10 +5,11 @@ from django.shortcuts import get_object_or_404
 from django.core.exceptions import ValidationError
 from django.views.decorators.http import require_http_methods
 
-from .models import AdditionalGeneration, AiModelProfile, Asset, DialogueLine, GenerationOutput, Project, Prompt, PromptBlock, Scene
+from .models import AccessEvent, AdditionalGeneration, AiModelProfile, Asset, DialogueLine, GenerationOutput, Project, Prompt, PromptBlock, Revision, Scene
 from .permissions import accessible_workspaces, has_capability
 from .services import create_workspace, update_dialogue_line
 from .storage import create_asset
+from .revisions import VERSIONED_MODELS, audit, record_revision, restore_revision, revision_diff
 
 
 def error(code, message, status=400, fields=None):
@@ -126,6 +127,7 @@ def project_detail(request, project_id):
     item.updated_by = user
     item.full_clean()
     item.save()
+    record_revision(instance=item, user=user, operation="UPDATE")
     return JsonResponse(project_json(item))
 
 
@@ -165,6 +167,7 @@ def scene_detail(request, scene_id):
     scene.updated_by = user
     scene.full_clean()
     scene.save()
+    record_revision(instance=scene, user=user, operation="UPDATE")
     return JsonResponse({"id": str(scene.id), "status": scene.status, "updatedAt": scene.updated_at.isoformat()})
 
 
@@ -255,6 +258,7 @@ def scene_prompts(request, scene_id):
                 prompt=prompt, block_type=block["type"], content=str(block["content"]).strip(),
                 position=position, created_by=user, updated_by=user,
             )
+    record_revision(instance=prompt, user=user, operation="CREATE")
     return JsonResponse({"id": str(prompt.id), "model": model.name, "type": prompt.prompt_type}, status=201)
 
 def asset_json(item):
@@ -314,6 +318,8 @@ def asset_download(request, asset_id):
     if user is None:
         return error("authentication_required", "Login is required.", 401)
     item = _accessible_asset(user, asset_id)
+    AccessEvent.objects.create(workspace=item.workspace, actor=user, asset=item, action="DOWNLOAD")
+    audit(workspace=item.workspace, actor=user, action="ASSET_DOWNLOAD", instance=item, metadata={"filename": item.original_filename})
     return FileResponse(item.file.open("rb"), as_attachment=True, filename=item.original_filename, content_type=item.content_type)
 
 
@@ -404,3 +410,63 @@ def generation_output_final(request, output_id):
     item.updated_by = user
     item.save(update_fields=["is_final", "updated_by", "updated_at"])
     return JsonResponse({"id": str(item.id), "isFinal": True})
+
+def _entity_key(entity_type):
+    key = f"lexamora_studio.{entity_type.lower()}"
+    return key if key in VERSIONED_MODELS else None
+
+
+@require_http_methods(["GET"])
+def entity_revisions(request, entity_type, entity_id):
+    user = require_user(request)
+    if user is None:
+        return error("authentication_required", "Login is required.", 401)
+    key = _entity_key(entity_type)
+    if key is None:
+        return error("unknown_entity_type", "Unknown versioned entity type.", 404)
+    revisions = Revision.objects.filter(
+        workspace__in=accessible_workspaces(user), entity_type=key, entity_id=entity_id
+    ).select_related("author").order_by("-sequence")
+    return JsonResponse({"results": [
+        {
+            "id": str(item.id), "sequence": item.sequence, "operation": item.operation,
+            "changedFields": item.changed_fields, "author": item.author.get_username(),
+            "createdAt": item.created_at.isoformat(),
+        }
+        for item in revisions
+    ]})
+
+
+@require_http_methods(["GET"])
+def revision_compare(request, entity_type, entity_id):
+    user = require_user(request)
+    if user is None:
+        return error("authentication_required", "Login is required.", 401)
+    key = _entity_key(entity_type)
+    if key is None:
+        return error("unknown_entity_type", "Unknown versioned entity type.", 404)
+    scoped = Revision.objects.filter(
+        workspace__in=accessible_workspaces(user), entity_type=key, entity_id=entity_id
+    )
+    older = get_object_or_404(scoped, id=request.GET.get("from"))
+    newer = get_object_or_404(scoped, id=request.GET.get("to"))
+    return JsonResponse({"from": older.sequence, "to": newer.sequence, "fields": revision_diff(older, newer)})
+
+
+@require_http_methods(["POST"])
+def revision_restore(request, entity_type, entity_id, revision_id):
+    user = require_user(request)
+    if user is None:
+        return error("authentication_required", "Login is required.", 401)
+    key = _entity_key(entity_type)
+    if key is None:
+        return error("unknown_entity_type", "Unknown versioned entity type.", 404)
+    revision = get_object_or_404(
+        Revision.objects.select_related("workspace").filter(workspace__in=accessible_workspaces(user)),
+        id=revision_id, entity_type=key, entity_id=entity_id,
+    )
+    if not has_capability(user, revision.workspace, "edit"):
+        return error("permission_denied", "Edit permission is required.", 403)
+    instance = restore_revision(revision=revision, user=user)
+    audit(workspace=revision.workspace, actor=user, action="REVISION_RESTORE", instance=instance, metadata={"revisionId": str(revision.id)})
+    return JsonResponse({"id": str(instance.pk), "restoredRevision": revision.sequence})

@@ -261,3 +261,73 @@ class StudioAssetTests(TestCase):
         self.client.post(f"/api/v1/studio/generation-outputs/{output_ids[0]}/final")
         self.client.post(f"/api/v1/studio/generation-outputs/{output_ids[1]}/final")
         self.assertEqual(GenerationOutput.objects.filter(generation_id=generation.json()["id"], is_final=True).count(), 1)
+
+    def test_upload_and_download_are_audited(self):
+        from .models import AccessEvent, AuditEvent
+
+        response = self.upload_asset()
+        asset_id = response.json()["id"]
+        self.assertTrue(AuditEvent.objects.filter(action="ASSET_UPLOAD", entity_id=asset_id).exists())
+        download = self.client.get(f"/api/v1/studio/assets/{asset_id}/download")
+        self.assertEqual(download.status_code, 200)
+        download.close()
+        self.assertTrue(AuditEvent.objects.filter(action="ASSET_DOWNLOAD", entity_id=asset_id).exists())
+        self.assertTrue(AccessEvent.objects.filter(asset_id=asset_id, action="DOWNLOAD").exists())
+
+class StudioRevisionTests(TestCase):
+    def setUp(self):
+        from .revisions import record_revision
+
+        users = get_user_model()
+        self.editor = users.objects.create_user("revision-editor", password="strong-pass")
+        self.viewer = users.objects.create_user("revision-viewer", password="strong-pass")
+        self.workspace = create_workspace(user=self.editor, name="Revision Studio", slug="revision-studio")
+        WorkspaceMembership.objects.create(workspace=self.workspace, user=self.viewer, role=WorkspaceMembership.Role.VIEWER)
+        self.project = Project.objects.create(
+            workspace=self.workspace, project_type=Project.Type.SERIES, title="Original title",
+            concept="First", created_by=self.editor, updated_by=self.editor,
+        )
+        self.initial = record_revision(instance=self.project, user=self.editor, operation="CREATE")
+
+    def test_history_shows_author_and_timestamp(self):
+        self.client.force_login(self.editor)
+        self.client.patch(
+            f"/api/v1/studio/projects/{self.project.id}",
+            data=json.dumps({"title": "Changed title"}),
+            content_type="application/json",
+        )
+        response = self.client.get(f"/api/v1/studio/entities/project/{self.project.id}/revisions")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.json()["results"]), 2)
+        self.assertEqual(response.json()["results"][0]["author"], self.editor.username)
+        self.assertTrue(response.json()["results"][0]["createdAt"])
+
+    def test_restore_creates_new_revision(self):
+        from .models import Revision
+
+        self.client.force_login(self.editor)
+        self.client.patch(
+            f"/api/v1/studio/projects/{self.project.id}",
+            data=json.dumps({"title": "Changed title"}),
+            content_type="application/json",
+        )
+        response = self.client.post(
+            f"/api/v1/studio/entities/project/{self.project.id}/restore/{self.initial.id}"
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.project.refresh_from_db()
+        self.assertEqual(self.project.title, "Original title")
+        self.assertEqual(Revision.objects.filter(entity_id=self.project.id).count(), 3)
+        self.assertEqual(Revision.objects.filter(entity_id=self.project.id).order_by("-sequence").first().operation, "RESTORE")
+
+    def test_viewer_cannot_restore_revision(self):
+        self.client.force_login(self.viewer)
+        response = self.client.post(
+            f"/api/v1/studio/entities/project/{self.project.id}/restore/{self.initial.id}"
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_revision_is_append_only(self):
+        self.initial.operation = "TAMPERED"
+        with self.assertRaises(ValueError):
+            self.initial.save()
