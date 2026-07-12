@@ -905,6 +905,25 @@ class StudioDocxImportTests(TestCase):
         self.assertIn("Edited opening", text)
         self.assertGreaterEqual(len(document.inline_shapes), 1)
         self.assertEqual(job.sections, ["DOCX"])
+    def test_owner_can_edit_preview_before_accepting(self):
+        from .models import AuditEvent, DocxImport
+
+        self.client.force_login(self.owner)
+        self.client.post(f"/studio/workspaces/{self.workspace.id}/imports/docx/new/", {"file": self.docx_file()})
+        draft = DocxImport.objects.get()
+        saved = self.client.post(
+            f"/studio/imports/{draft.id}/",
+            {"title": "Edited project", "episode_0_title": "Edited pilot", "episode_0_scene_0_title": "Edited scene"},
+        )
+        self.assertRedirects(saved, f"/studio/imports/{draft.id}/")
+        draft.refresh_from_db()
+        self.assertEqual(draft.parsed_data["title"], "Edited project")
+        self.assertEqual(draft.parsed_data["episodes"][0]["scenes"][0]["title"], "Edited scene")
+        self.assertTrue(AuditEvent.objects.filter(action="DOCX_IMPORT_PREVIEW_EDITED").exists())
+        self.client.post(f"/studio/imports/{draft.id}/accept/")
+        draft.refresh_from_db()
+        self.assertEqual(draft.project.title, "Edited project")
+        self.assertEqual(draft.project.episodes.first().scenes.first().title, "Edited scene")
     def test_viewer_cannot_upload_docx(self):
         self.client.force_login(self.viewer)
         response = self.client.get(f"/studio/workspaces/{self.workspace.id}/imports/docx/new/")

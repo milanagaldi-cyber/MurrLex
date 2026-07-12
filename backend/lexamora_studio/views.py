@@ -15,7 +15,7 @@ from .docx_exports import generate_docx_export
 from .forms import CharacterForm, DialogueLineForm, DocxImportUploadForm, EpisodeForm, ImageUploadForm, ProjectForm, PromptBlockForm, PromptForm, SceneForm
 from .models import AiSuggestion, Asset, Character, DialogueLine, DocxImport, Episode, ExportJob, Project, Prompt, PromptBlock, Scene, SubtitleTrack, TranslationUnit, Workspace
 from .permissions import accessible_workspaces, has_capability
-from .revisions import record_revision
+from .revisions import audit, record_revision
 from .services import bulk_replace_subtitle_lines, create_workspace, reorder_subtitle_lines, save_translation
 from .storage import create_asset
 
@@ -239,7 +239,32 @@ def docx_import_create(request, workspace_id):
 @login_required
 def docx_import_detail(request, import_id):
     draft = get_object_or_404(DocxImport.objects.select_related("workspace", "source_asset", "project").filter(workspace__in=accessible_workspaces(request.user)), id=import_id)
-    return render(request, "studio/docx_import_detail.html", {"draft": draft, "can_edit": has_capability(request.user, draft.workspace, "edit")})
+    can_edit = has_capability(request.user, draft.workspace, "edit")
+    if request.method == "POST":
+        if not can_edit:
+            return HttpResponseForbidden("Edit permission is required.")
+        if draft.status != DocxImport.Status.PREVIEW:
+            messages.error(request, "An accepted import preview cannot be changed.")
+            return redirect("studio:docx_import_detail", import_id=draft.id)
+        data = draft.parsed_data
+        data["title"] = request.POST.get("title", data.get("title", "")).strip()[:240]
+        for character_index, character in enumerate(data.get("characters", [])):
+            character["name"] = request.POST.get(f"character_{character_index}_name", character.get("name", "")).strip()[:180]
+            character["description"] = request.POST.get(f"character_{character_index}_description", character.get("description", "")).strip()
+        for episode_index, episode in enumerate(data.get("episodes", [])):
+            episode["title"] = request.POST.get(f"episode_{episode_index}_title", episode.get("title", "")).strip()[:240]
+            episode["summary"] = request.POST.get(f"episode_{episode_index}_summary", episode.get("summary", "")).strip()
+            for scene_index, scene in enumerate(episode.get("scenes", [])):
+                prefix = f"episode_{episode_index}_scene_{scene_index}"
+                for field, limit in (("title", 240), ("hook", None), ("description", None), ("location", None), ("actions", None), ("performance_notes", None), ("dialogue", None)):
+                    value = request.POST.get(f"{prefix}_{field}", scene.get(field, "")).strip()
+                    scene[field] = value[:limit] if limit else value
+        draft.parsed_data = data
+        draft.save(update_fields=["parsed_data"])
+        audit(workspace=draft.workspace, actor=request.user, action="DOCX_IMPORT_PREVIEW_EDITED", instance=draft.source_asset, metadata={"importId": str(draft.id)})
+        messages.success(request, "Import preview saved.")
+        return redirect("studio:docx_import_detail", import_id=draft.id)
+    return render(request, "studio/docx_import_detail.html", {"draft": draft, "can_edit": can_edit})
 
 
 @login_required
