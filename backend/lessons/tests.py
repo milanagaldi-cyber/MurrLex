@@ -681,3 +681,31 @@ class LabUiAuthTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 401)
+
+class OperationalEndpointTests(TestCase):
+    def test_health_response_has_generated_request_id(self):
+        response = self.client.get("/api/health")
+        self.assertEqual(response.status_code, 200)
+        self.assertRegex(response["X-Request-ID"], r"^[a-f0-9]{32}$")
+
+    def test_valid_caller_request_id_is_preserved(self):
+        response = self.client.get("/api/health", HTTP_X_REQUEST_ID="smoke-test-1234")
+        self.assertEqual(response["X-Request-ID"], "smoke-test-1234")
+
+    def test_readiness_checks_database_and_private_storage(self):
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as directory:
+            with self.settings(STUDIO_PRIVATE_MEDIA_ROOT=Path(directory)):
+                response = self.client.get("/api/ready")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "ready")
+        self.assertEqual(response.json()["checks"], {"database": True, "private_storage": True})
+
+    @patch("django.db.backends.utils.CursorWrapper.execute", side_effect=RuntimeError("database unavailable"))
+    def test_readiness_returns_503_without_leaking_exception(self, _execute):
+        response = self.client.get("/api/ready")
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["status"], "unavailable")
+        self.assertNotContains(response, "database unavailable", status_code=503)

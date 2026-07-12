@@ -5,6 +5,8 @@ from django.shortcuts import get_object_or_404
 from django.core.exceptions import ValidationError
 from django.views.decorators.http import require_http_methods
 
+from make_mistake_backend.observability import current_request_id
+
 from lessons.ai_gateway import ProviderError
 from lessons.provider_credentials import user_has_ai_access
 
@@ -323,7 +325,7 @@ def asset_download(request, asset_id):
     if user is None:
         return error("authentication_required", "Login is required.", 401)
     item = _accessible_asset(user, asset_id)
-    AccessEvent.objects.create(workspace=item.workspace, actor=user, asset=item, action="DOWNLOAD")
+    AccessEvent.objects.create(workspace=item.workspace, actor=user, asset=item, action="DOWNLOAD", request_id=current_request_id())
     audit(workspace=item.workspace, actor=user, action="ASSET_DOWNLOAD", instance=item, metadata={"filename": item.original_filename})
     return FileResponse(item.file.open("rb"), as_attachment=True, filename=item.original_filename, content_type=item.content_type)
 
@@ -778,6 +780,6 @@ def export_download(request, export_id):
     if job.status != ExportJob.Status.SUCCESS or job.output_asset is None:
         return error("export_unavailable", "Export is not ready for download.", 409)
     asset = job.output_asset
-    AccessEvent.objects.create(workspace=job.workspace, actor=user, asset=asset, action="DOWNLOAD")
+    AccessEvent.objects.create(workspace=job.workspace, actor=user, asset=asset, action="DOWNLOAD", request_id=current_request_id())
     audit(workspace=job.workspace, actor=user, action="EXPORT_DOWNLOAD", instance=asset, metadata={"exportId": str(job.id)})
     return FileResponse(asset.file.open("rb"), as_attachment=True, filename=asset.original_filename, content_type="application/pdf")

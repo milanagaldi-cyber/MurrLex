@@ -2,7 +2,7 @@
 
 ## Status
 
-Phase 0 architecture baseline. This plan is based on the current `Server_Main`
+Phases 0-8 implemented on staging. This plan is based on the current `Server_Main`
 code and the supplied `Master Document - Serial Dom (12.07.2026).docx`.
 
 ## Repository Audit
@@ -123,6 +123,8 @@ Acceptance: export is permission checked, reproducible and downloadable privatel
 - Apply migrations, collect static assets and deploy with the existing service.
 
 Acceptance: required test matrix passes and staging smoke tests are recorded.
+
+Status: implemented with readiness dependency checks, request IDs, structured safe logs, production security defaults and an operations runbook.
 
 ## Commit Strategy
 

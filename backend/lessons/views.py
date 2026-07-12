@@ -1,5 +1,6 @@
 import base64
 import json
+import os
 import uuid
 
 from django.conf import settings
@@ -475,6 +476,28 @@ def import_log_list(request):
 def api_health(request):
     return JsonResponse({"status": "ok", "service": "murrlex-ai-gateway"})
 
+@require_http_methods(["GET"])
+def api_ready(request):
+    from django.db import connection
+
+    checks = {"database": False, "private_storage": False}
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1")
+            checks["database"] = cursor.fetchone()[0] == 1
+    except Exception:
+        pass
+    try:
+        root = settings.STUDIO_PRIVATE_MEDIA_ROOT
+        root.mkdir(parents=True, exist_ok=True)
+        checks["private_storage"] = root.is_dir() and os.access(root, os.R_OK | os.W_OK)
+    except OSError:
+        pass
+    ready = all(checks.values())
+    return JsonResponse(
+        {"status": "ready" if ready else "unavailable", "checks": checks},
+        status=200 if ready else 503,
+    )
 
 def _api_payload(request):
     try:

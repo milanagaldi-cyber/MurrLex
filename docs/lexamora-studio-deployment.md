@@ -46,3 +46,6 @@ backup when schema rollback is required. Uploaded originals are retained.
 - structured logs without prompts, secrets or provider keys.
 - dependency audit, tests and permission smoke checks.
 
+
+
+Operational probes and the post-deploy smoke matrix are documented in lexamora-studio-operations.md.

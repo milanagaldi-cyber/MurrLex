@@ -4,6 +4,8 @@ import uuid
 from django.db import transaction
 from django.forms.models import model_to_dict
 
+from make_mistake_backend.observability import current_request_id
+
 from .models import (
     AdditionalGeneration,
     AuditEvent,
@@ -129,6 +131,6 @@ def audit(*, workspace, actor, action, instance=None, metadata=None, request_id=
         action=action,
         entity_type=instance._meta.label_lower if instance is not None else "",
         entity_id=instance.pk if instance is not None else None,
-        request_id=request_id,
+        request_id=request_id or current_request_id(),
         metadata=metadata or {},
     )

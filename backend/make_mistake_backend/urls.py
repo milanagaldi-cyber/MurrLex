@@ -71,6 +71,7 @@ urlpatterns = [
     path("logout/", auth_views.LogoutView.as_view(), name="logout"),
     path("lab/", include("lessons.urls")),
     path("api/health", lesson_views.api_health, name="api_health"),
+    path("api/ready", lesson_views.api_ready, name="api_ready"),
     path("api/auth/register", lesson_views.api_register, name="api_register"),
     path("api/auth/login", lesson_views.api_login, name="api_login"),
     path("api/auth/refresh", lesson_views.api_refresh, name="api_refresh"),

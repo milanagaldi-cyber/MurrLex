@@ -122,6 +122,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "make_mistake_backend.observability.RequestIdMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -220,3 +221,25 @@ STUDIO_MAX_UPLOAD_BYTES = max(1024 * 1024, int(os.environ.get("STUDIO_MAX_UPLOAD
 STUDIO_AI_RATE_PER_MINUTE = max(1, int(os.environ.get("STUDIO_AI_RATE_PER_MINUTE", "10")))
 STUDIO_EXPORT_RATE_PER_HOUR = max(1, int(os.environ.get("STUDIO_EXPORT_RATE_PER_HOUR", "10")))
 STUDIO_PDF_FONT_PATH = os.environ.get("STUDIO_PDF_FONT_PATH", "")
+
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+SECURE_SSL_REDIRECT = env_bool("SECURE_SSL_REDIRECT", not DEBUG)
+SECURE_HSTS_SECONDS = max(0, int(os.environ.get("SECURE_HSTS_SECONDS", "31536000" if not DEBUG else "0")))
+SECURE_HSTS_INCLUDE_SUBDOMAINS = env_bool("SECURE_HSTS_INCLUDE_SUBDOMAINS", False)
+SESSION_COOKIE_SECURE = env_bool("SESSION_COOKIE_SECURE", not DEBUG)
+CSRF_COOKIE_SECURE = env_bool("CSRF_COOKIE_SECURE", not DEBUG)
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_REFERRER_POLICY = "same-origin"
+X_FRAME_OPTIONS = "DENY"
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {"json": {"()": "make_mistake_backend.observability.JsonFormatter"}},
+    "handlers": {"console": {"class": "logging.StreamHandler", "formatter": "json"}},
+    "loggers": {
+        "django.request": {"handlers": ["console"], "level": "WARNING", "propagate": False},
+        "murrlex.request": {"handlers": ["console"], "level": "INFO", "propagate": False},
+        "lexamora_studio": {"handlers": ["console"], "level": "INFO", "propagate": False},
+    },
+}
