@@ -1,8 +1,10 @@
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ValidationError
-from django.http import HttpResponseForbidden
+from django.db import transaction
+from django.http import HttpResponseForbidden, HttpResponseRedirect
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils.text import slugify
 
 from lessons.ai_gateway import ProviderError
@@ -284,6 +286,59 @@ def docx_import_accept(request, import_id):
     project = accept_docx_import(draft=draft, user=request.user)
     messages.success(request, "DOCX accepted. Review and edit the imported project.")
     return redirect("studio:project_detail", project_id=project.id)
+@login_required
+def project_master(request, project_id):
+    project = get_object_or_404(
+        Project.objects.select_related("workspace").prefetch_related(
+            "assets", "characters__assets", "episodes__subtitle_tracks__lines",
+            "episodes__scenes__assets", "episodes__scenes__dialogue_lines",
+            "episodes__scenes__prompts__ai_model", "episodes__scenes__prompts__blocks",
+            "episodes__scenes__additional_generations__outputs__asset",
+        ).filter(workspace__in=accessible_workspaces(request.user)), id=project_id,
+    )
+    return render(request, "studio/project_master.html", {"project": project, "can_edit": has_capability(request.user, project.workspace, "edit")})
+
+
+@login_required
+def entity_move(request, entity_type, entity_id, direction):
+    if request.method != "POST" or direction not in {"up", "down"}:
+        return HttpResponseForbidden("POST with a valid direction is required.")
+    if entity_type == "character":
+        item = get_object_or_404(Character.objects.select_related("project__workspace").filter(project__workspace__in=accessible_workspaces(request.user)), id=entity_id)
+        siblings, project, workspace = Character.objects.filter(project=item.project), item.project, item.project.workspace
+    elif entity_type == "episode":
+        item = get_object_or_404(Episode.objects.select_related("project__workspace").filter(project__workspace__in=accessible_workspaces(request.user)), id=entity_id)
+        siblings, project, workspace = Episode.objects.filter(project=item.project), item.project, item.project.workspace
+    elif entity_type == "scene":
+        item = get_object_or_404(Scene.objects.select_related("episode__project__workspace").filter(episode__project__workspace__in=accessible_workspaces(request.user)), id=entity_id)
+        siblings, project, workspace = Scene.objects.filter(episode=item.episode), item.episode.project, item.episode.project.workspace
+    elif entity_type == "dialogue":
+        item = get_object_or_404(DialogueLine.objects.select_related("scene__episode__project__workspace").filter(scene__episode__project__workspace__in=accessible_workspaces(request.user)), id=entity_id)
+        siblings, project, workspace = DialogueLine.objects.filter(scene=item.scene), item.scene.episode.project, item.scene.episode.project.workspace
+    elif entity_type == "prompt":
+        item = get_object_or_404(Prompt.objects.select_related("scene__episode__project__workspace").filter(scene__episode__project__workspace__in=accessible_workspaces(request.user)), id=entity_id)
+        siblings, project, workspace = Prompt.objects.filter(scene=item.scene), item.scene.episode.project, item.scene.episode.project.workspace
+    else:
+        return HttpResponseForbidden("Unsupported entity type.")
+    if not has_capability(request.user, workspace, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    ordered = list(siblings.order_by("position", "id"))
+    index = next((value for value, sibling in enumerate(ordered) if sibling.id == item.id), None)
+    other = None if index is None else index - 1 if direction == "up" else index + 1
+    if other is not None and 0 <= other < len(ordered):
+        ordered[index], ordered[other] = ordered[other], ordered[index]
+        with transaction.atomic():
+            temporary = max((sibling.position for sibling in ordered), default=0) + len(ordered) + 100
+            for position, sibling in enumerate(ordered):
+                sibling.position = temporary + position
+                sibling.updated_by = request.user
+                sibling.save(update_fields=["position", "updated_by", "updated_at"])
+            for position, sibling in enumerate(ordered):
+                sibling.position = position
+                sibling.save(update_fields=["position", "updated_at"])
+            record_revision(instance=item, user=request.user, operation="REORDER")
+            audit(workspace=workspace, actor=request.user, action="ENTITY_REORDERED", instance=item, metadata={"direction": direction})
+    return HttpResponseRedirect(reverse("studio:project_master", kwargs={"project_id": project.id}) + f"#item-{item.id}")
 
 @login_required
 def project_detail(request, project_id):

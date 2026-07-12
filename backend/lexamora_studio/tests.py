@@ -928,3 +928,86 @@ class StudioDocxImportTests(TestCase):
         self.client.force_login(self.viewer)
         response = self.client.get(f"/studio/workspaces/{self.workspace.id}/imports/docx/new/")
         self.assertEqual(response.status_code, 403)
+
+class StudioMasterDocumentTests(TestCase):
+    def setUp(self):
+        from .models import DialogueLine, Episode, Scene
+
+        users = get_user_model()
+        self.owner = users.objects.create_user("master-owner", password="strong-pass")
+        self.viewer = users.objects.create_user("master-viewer", password="strong-pass")
+        self.workspace = create_workspace(user=self.owner, name="Master Studio", slug="master-studio")
+        WorkspaceMembership.objects.create(workspace=self.workspace, user=self.viewer, role=WorkspaceMembership.Role.VIEWER)
+        self.project = Project.objects.create(
+            workspace=self.workspace,
+            project_type=Project.Type.SERIES,
+            title="Master Project",
+            concept="A complete document",
+            original_language="ru",
+            created_by=self.owner,
+            updated_by=self.owner,
+        )
+        self.episode = Episode.objects.create(
+            project=self.project, number=1, title="Pilot", position=0,
+            created_by=self.owner, updated_by=self.owner,
+        )
+        self.first_scene = Scene.objects.create(
+            episode=self.episode, number=1, title="First scene", position=0,
+            created_by=self.owner, updated_by=self.owner,
+        )
+        self.second_scene = Scene.objects.create(
+            episode=self.episode, number=2, title="Second scene", position=1,
+            created_by=self.owner, updated_by=self.owner,
+        )
+        self.first_line = DialogueLine.objects.create(
+            scene=self.first_scene, speaker="One", text="First line", position=0,
+            created_by=self.owner, updated_by=self.owner,
+        )
+        self.second_line = DialogueLine.objects.create(
+            scene=self.first_scene, speaker="Two", text="Second line", position=1,
+            created_by=self.owner, updated_by=self.owner,
+        )
+
+    def test_member_can_open_master_document(self):
+        self.client.force_login(self.viewer)
+        response = self.client.get(f"/studio/projects/{self.project.id}/master/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Master Project")
+        self.assertContains(response, "First scene")
+        self.assertContains(response, "Second line")
+        self.assertNotContains(response, f"/studio/move/scene/{self.first_scene.id}/up/")
+
+    def test_owner_can_reorder_scenes_and_records_history(self):
+        from .models import AuditEvent, Revision, Scene
+
+        self.client.force_login(self.owner)
+        response = self.client.post(f"/studio/move/scene/{self.second_scene.id}/up/")
+        self.assertRedirects(
+            response,
+            f"/studio/projects/{self.project.id}/master/#item-{self.second_scene.id}",
+        )
+        self.assertEqual(
+            list(Scene.objects.filter(episode=self.episode).order_by("position").values_list("id", flat=True)),
+            [self.second_scene.id, self.first_scene.id],
+        )
+        self.assertTrue(Revision.objects.filter(entity_id=self.second_scene.id, operation="REORDER").exists())
+        self.assertTrue(AuditEvent.objects.filter(entity_id=self.second_scene.id, action="ENTITY_REORDERED").exists())
+
+    def test_dialogue_reorder_respects_unique_positions(self):
+        from .models import DialogueLine
+
+        self.client.force_login(self.owner)
+        response = self.client.post(f"/studio/move/dialogue/{self.second_line.id}/up/")
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            list(DialogueLine.objects.filter(scene=self.first_scene).order_by("position").values_list("id", flat=True)),
+            [self.second_line.id, self.first_line.id],
+        )
+
+    def test_viewer_cannot_reorder(self):
+        self.client.force_login(self.viewer)
+        response = self.client.post(f"/studio/move/scene/{self.second_scene.id}/up/")
+        self.assertEqual(response.status_code, 403)
+        self.first_scene.refresh_from_db()
+        self.second_scene.refresh_from_db()
+        self.assertEqual((self.first_scene.position, self.second_scene.position), (0, 1))
