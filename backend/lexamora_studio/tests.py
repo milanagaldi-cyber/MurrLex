@@ -924,6 +924,64 @@ class StudioDocxImportTests(TestCase):
         draft.refresh_from_db()
         self.assertEqual(draft.project.title, "Edited project")
         self.assertEqual(draft.project.episodes.first().scenes.first().title, "Edited scene")
+    def test_docx_export_redirects_to_roundtrip_report_before_download(self):
+        import io
+        from PIL import Image
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from docx import Document
+        from docx.shared import Inches
+        from .models import AuditEvent, DocxImport, ExportJob
+
+        image = io.BytesIO()
+        Image.new("RGB", (40, 30), "#557799").save(image, "PNG")
+        image.seek(0)
+        document = Document()
+        document.add_heading("Round trip source", 0)
+        document.add_heading("EPISODE 1: Pilot", 1)
+        document.add_heading("\u0421\u0446\u0435\u043d\u0430 1. Opening", 1)
+        document.add_heading("\u041e\u0431\u0449\u0435\u0435 \u043e\u043f\u0438\u0441\u0430\u043d\u0438\u0435 \u0441\u0446\u0435\u043d\u044b", 3)
+        document.add_paragraph("A room with a window.")
+        table = document.add_table(rows=2, cols=2)
+        table.cell(0, 0).text = "Field"
+        table.cell(0, 1).text = "Value"
+        table.cell(1, 0).text = "Mood"
+        table.cell(1, 1).text = "Quiet"
+        document.add_picture(image, width=Inches(1))
+        payload = io.BytesIO()
+        document.save(payload)
+
+        self.client.force_login(self.owner)
+        self.client.post(
+            f"/studio/workspaces/{self.workspace.id}/imports/docx/new/",
+            {"file": SimpleUploadedFile(
+                "round-trip.docx",
+                payload.getvalue(),
+                content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )},
+        )
+        draft = DocxImport.objects.get()
+        self.client.post(f"/studio/imports/{draft.id}/accept/")
+        draft.refresh_from_db()
+
+        generated = self.client.post(
+            f"/studio/projects/{draft.project_id}/exports/",
+            {"format": "docx", "sections": ["metadata"]},
+        )
+        job = ExportJob.objects.get(project=draft.project, sections=["DOCX"])
+        self.assertRedirects(generated, f"/studio/exports/{job.id}/round-trip/")
+        report = self.client.get(f"/studio/exports/{job.id}/round-trip/")
+        self.assertEqual(report.status_code, 200)
+        self.assertContains(report, "DOCX round-trip report")
+        self.assertContains(report, "Structure")
+        self.assertContains(report, "Texts")
+        self.assertContains(report, "Tables")
+        self.assertContains(report, "Images")
+        self.assertContains(report, "Section order")
+        self.assertContains(report, f"/api/v1/studio/exports/{job.id}/download")
+        self.assertTrue(AuditEvent.objects.filter(action="DOCX_ROUNDTRIP_REVIEWED").exists())
+
+        history = self.client.get(f"/studio/projects/{draft.project_id}/exports/")
+        self.assertContains(history, "Review &amp; download", html=True)
     def test_viewer_cannot_upload_docx(self):
         self.client.force_login(self.viewer)
         response = self.client.get(f"/studio/workspaces/{self.workspace.id}/imports/docx/new/")

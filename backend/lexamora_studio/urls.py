@@ -45,4 +45,5 @@ urlpatterns = [
     path("episodes/<uuid:episode_id>/subtitles/", views.episode_subtitles, name="episode_subtitles"),
     path("subtitle-tracks/<uuid:track_id>/", views.subtitle_track, name="subtitle_track"),
     path("projects/<uuid:project_id>/exports/", views.project_exports, name="project_exports"),
+    path("exports/<uuid:job_id>/round-trip/", views.docx_roundtrip, name="docx_roundtrip"),
 ]

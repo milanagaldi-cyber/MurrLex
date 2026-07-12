@@ -2,7 +2,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.http import HttpResponseForbidden, HttpResponseRedirect
+from django.http import Http404, HttpResponseForbidden, HttpResponseRedirect
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils.text import slugify
@@ -14,6 +14,7 @@ from .ai import StudioAiError, accept_suggestion, improve_prompt, reject_suggest
 from .exports import ALL_SECTIONS, ExportError, generate_export
 from .docx_imports import accept_docx_import, parse_docx
 from .docx_exports import generate_docx_export
+from .docx_roundtrip import compare_docx_export
 from .forms import AdditionalGenerationForm, AssetEditForm, CharacterForm, DialogueLineForm, DocxImportUploadForm, EpisodeForm, GenerationOutputUploadForm, ImageUploadForm, ProjectForm, PromptBlockForm, PromptForm, SceneForm
 from .models import AdditionalGeneration, AiSuggestion, Asset, Character, DialogueLine, DocxImport, Episode, ExportJob, GenerationOutput, Project, Prompt, PromptBlock, Scene, SubtitleTrack, TranslationUnit, Workspace
 from .permissions import accessible_workspaces, has_capability
@@ -520,7 +521,7 @@ def project_exports(request, project_id):
         export_format = request.POST.get("format", "pdf")
         try:
             if export_format == "docx":
-                generate_docx_export(project=project, user=request.user)
+                job = generate_docx_export(project=project, user=request.user)
             else:
                 generate_export(
                     project=project, episode=episode,
@@ -532,6 +533,8 @@ def project_exports(request, project_id):
             messages.error(request, f"{export_format.upper()} generation failed.")
         else:
             messages.success(request, f"{export_format.upper()} export is ready.")
+            if export_format == "docx":
+                return redirect("studio:docx_roundtrip", job_id=job.id)
         return redirect("studio:project_exports", project_id=project.id)
     return render(request, "studio/exports.html", {
         "project": project, "jobs": project.export_jobs.select_related("episode", "output_asset")[:50],
@@ -729,4 +732,34 @@ def asset_edit(request, asset_id):
         return redirect("studio:dashboard")
     return render(request, "studio/entity_form.html", {
         "form": form, "title": "Edit image details", "submit_label": "Save changes",
+    })
+
+@login_required
+def docx_roundtrip(request, job_id):
+    job = get_object_or_404(
+        ExportJob.objects.select_related("project__workspace", "output_asset").filter(
+            project__workspace__in=accessible_workspaces(request.user),
+            output_asset__isnull=False,
+        ),
+        id=job_id,
+    )
+    if "DOCX" not in job.sections:
+        raise Http404("DOCX export not found.")
+    report = compare_docx_export(job)
+    audit(
+        workspace=job.workspace,
+        actor=request.user,
+        action="DOCX_ROUNDTRIP_REVIEWED",
+        instance=job.output_asset,
+        metadata={
+            "exportId": str(job.id),
+            "available": report["available"],
+            "changedCategories": report.get("changed_categories"),
+        },
+    )
+    return render(request, "studio/docx_roundtrip.html", {
+        "job": job,
+        "project": job.project,
+        "report": report,
+        "can_export": has_capability(request.user, job.workspace, "export"),
     })

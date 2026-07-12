@@ -1,0 +1,51 @@
+{% extends "studio/base.html" %}
+{% block title %}DOCX round-trip / {{ project.title }}{% endblock %}
+{% block content %}
+<p class="muted"><a href="{% url 'studio:project_detail' project.id %}">{{ project.title }}</a> / <a href="{% url 'studio:project_exports' project.id %}">Exports</a></p>
+<div class="toolbar">
+  <div><h1>DOCX round-trip report</h1><p class="muted">Original versus generated master document</p></div>
+  {% if can_export and job.output_asset %}<a class="button" href="/api/v1/studio/exports/{{ job.id }}/download">Download generated DOCX</a>{% endif %}
+</div>
+
+{% if not report.available %}
+<div class="roundtrip-summary changed"><strong>Comparison unavailable</strong><p>{{ report.error }}</p></div>
+{% if can_export and job.output_asset %}<p><a class="button" href="/api/v1/studio/exports/{{ job.id }}/download">Download without comparison</a></p>{% endif %}
+{% else %}
+<div class="roundtrip-summary {% if report.exact_match %}same{% else %}changed{% endif %}">
+  <strong>{% if report.exact_match %}Exact structural and content match{% else %}Differences found in {{ report.changed_categories }} of 5 categories{% endif %}</strong>
+  <p>This report compares the accepted source DOCX with export {{ job.created_at|date:"Y-m-d H:i" }}.</p>
+  <a href="{% url 'studio_api:asset_download' report.source_import.source_asset.id %}">Download original DOCX</a>
+</div>
+
+<div class="comparison-grid">
+  <section class="comparison-card"><h2>Structure <span class="comparison-status {% if report.categories.structure.same %}same{% else %}changed{% endif %}">{% if report.categories.structure.same %}Match{% else %}Changed{% endif %}</span></h2>
+    <table class="comparison-table"><thead><tr><th>Element</th><th>Original</th><th>Generated</th></tr></thead><tbody>
+      <tr><td>Paragraphs</td><td>{{ report.categories.structure.original.paragraphs }}</td><td>{{ report.categories.structure.generated.paragraphs }}</td></tr>
+      <tr><td>Headings</td><td>{{ report.categories.structure.original.headings }}</td><td>{{ report.categories.structure.generated.headings }}</td></tr>
+      <tr><td>Tables</td><td>{{ report.categories.structure.original.tables }}</td><td>{{ report.categories.structure.generated.tables }}</td></tr>
+      <tr><td>Images</td><td>{{ report.categories.structure.original.images }}</td><td>{{ report.categories.structure.generated.images }}</td></tr>
+    </tbody></table>
+  </section>
+
+  <section class="comparison-card"><h2>Texts <span class="comparison-status {% if report.categories.texts.same %}same{% else %}changed{% endif %}">{% if report.categories.texts.same %}Match{% else %}{{ report.categories.texts.similarity }}% similar{% endif %}</span></h2>
+    {% if report.categories.texts.diff %}<pre class="diff">{% for line in report.categories.texts.diff %}{{ line }}
+{% endfor %}</pre>{% else %}<p class="muted">No text differences.</p>{% endif %}
+  </section>
+
+  <section class="comparison-card"><h2>Tables <span class="comparison-status {% if report.categories.tables.same %}same{% else %}changed{% endif %}">{% if report.categories.tables.same %}Match{% else %}{{ report.categories.tables.similarity }}% similar{% endif %}</span></h2>
+    <p>Original: {{ report.categories.tables.original_count }} / Generated: {{ report.categories.tables.generated_count }}</p>
+    {% if report.categories.tables.diff %}<pre class="diff">{% for line in report.categories.tables.diff %}{{ line }}
+{% endfor %}</pre>{% endif %}
+  </section>
+
+  <section class="comparison-card"><h2>Images <span class="comparison-status {% if report.categories.images.same %}same{% else %}changed{% endif %}">{% if report.categories.images.same %}Match{% else %}Changed{% endif %}</span></h2>
+    <p>Original: {{ report.categories.images.original_count }} / Generated: {{ report.categories.images.generated_count }} / Same position and hash: {{ report.categories.images.matching_hashes }}</p>
+    <div class="split-list"><div><strong>Original</strong>{% for image in report.categories.images.original %}<code>{{ image.name }} / {{ image.sha256|slice:":12" }} / {{ image.bytes }} bytes</code>{% empty %}<span class="muted">No images</span>{% endfor %}</div><div><strong>Generated</strong>{% for image in report.categories.images.generated %}<code>{{ image.name }} / {{ image.sha256|slice:":12" }} / {{ image.bytes }} bytes</code>{% empty %}<span class="muted">No images</span>{% endfor %}</div></div>
+  </section>
+
+  <section class="comparison-card wide"><h2>Section order <span class="comparison-status {% if report.categories.order.same %}same{% else %}changed{% endif %}">{% if report.categories.order.same %}Match{% else %}{{ report.categories.order.similarity }}% similar{% endif %}</span></h2>
+    <div class="split-list"><div><strong>Original order</strong><ol>{% for heading in report.categories.order.original %}<li>{{ heading }}</li>{% empty %}<li class="muted">No headings</li>{% endfor %}</ol></div><div><strong>Generated order</strong><ol>{% for heading in report.categories.order.generated %}<li>{{ heading }}</li>{% empty %}<li class="muted">No headings</li>{% endfor %}</ol></div></div>
+  </section>
+</div>
+{% endif %}
+{% endblock %}
