@@ -10,7 +10,7 @@
     <input type="hidden" name="text_model" value="gpt-5.4-mini"><button class="button">Improve</button>
   </form>{% endif %}
 </div>
-<h2>Current blocks</h2>
+<div class="toolbar"><h2>Current blocks</h2>{% if can_edit %}<a class="button" href="{% url 'studio:prompt_block_create' prompt.id %}">New block</a>{% endif %}</div>
 <div class="list">{% for block in prompt.blocks.all %}<div class="row"><strong>{{ block.get_block_type_display }}</strong><span>{{ block.content }}</span><span class="muted">{% if block.block_type == "DIALOGUE_REFERENCE" %}Protected{% endif %}</span></div>{% endfor %}</div>
 <h2>Suggestions</h2>
 {% for suggestion in prompt.ai_suggestions.all %}

@@ -1,5 +1,6 @@
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.http import HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.text import slugify
 
@@ -8,8 +9,10 @@ from lessons.provider_credentials import user_has_ai_access
 
 from .ai import StudioAiError, accept_suggestion, improve_prompt, reject_suggestion
 from .exports import ALL_SECTIONS, ExportError, generate_export
+from .forms import CharacterForm, DialogueLineForm, EpisodeForm, ProjectForm, PromptBlockForm, PromptForm, SceneForm
 from .models import AiSuggestion, DialogueLine, Episode, ExportJob, Project, Prompt, Scene, SubtitleTrack, TranslationUnit, Workspace
 from .permissions import accessible_workspaces, has_capability
+from .revisions import record_revision
 from .services import bulk_replace_subtitle_lines, create_workspace, reorder_subtitle_lines, save_translation
 
 
@@ -38,6 +41,67 @@ def workspace_create(request):
 def workspace_detail(request, workspace_id):
     workspace = get_object_or_404(accessible_workspaces(request.user), id=workspace_id)
     return render(request, "studio/workspace_detail.html", {"workspace": workspace, "can_edit": has_capability(request.user, workspace, "edit")})
+
+
+def _create_entity(request, *, form_class, parent, parent_field, workspace, title, success_url, position_manager=None):
+    if not has_capability(request.user, workspace, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    form = form_class(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        item = form.save(commit=False)
+        setattr(item, parent_field, parent)
+        item.created_by = request.user
+        item.updated_by = request.user
+        if position_manager is not None:
+            item.position = position_manager.count()
+        item.full_clean()
+        item.save()
+        record_revision(instance=item, user=request.user, operation="CREATE")
+        messages.success(request, f"{title} created.")
+        return redirect(*success_url(item))
+    return render(request, "studio/entity_form.html", {"form": form, "title": title})
+
+
+@login_required
+def project_create(request, workspace_id):
+    workspace = get_object_or_404(accessible_workspaces(request.user), id=workspace_id)
+    return _create_entity(request, form_class=ProjectForm, parent=workspace, parent_field="workspace", workspace=workspace, title="New project", success_url=lambda item: ("studio:project_detail", item.id))
+
+
+@login_required
+def character_create(request, project_id):
+    project = get_object_or_404(Project.objects.filter(workspace__in=accessible_workspaces(request.user)), id=project_id)
+    return _create_entity(request, form_class=CharacterForm, parent=project, parent_field="project", workspace=project.workspace, title="New character", success_url=lambda item: ("studio:project_detail", item.project_id), position_manager=project.characters)
+
+
+@login_required
+def episode_create(request, project_id):
+    project = get_object_or_404(Project.objects.filter(workspace__in=accessible_workspaces(request.user)), id=project_id)
+    return _create_entity(request, form_class=EpisodeForm, parent=project, parent_field="project", workspace=project.workspace, title="New episode", success_url=lambda item: ("studio:project_detail", item.project_id), position_manager=project.episodes)
+
+
+@login_required
+def scene_create(request, episode_id):
+    episode = get_object_or_404(Episode.objects.filter(project__workspace__in=accessible_workspaces(request.user)), id=episode_id)
+    return _create_entity(request, form_class=SceneForm, parent=episode, parent_field="episode", workspace=episode.project.workspace, title="New scene", success_url=lambda item: ("studio:scene_detail", item.id), position_manager=episode.scenes)
+
+
+@login_required
+def dialogue_create(request, scene_id):
+    scene = get_object_or_404(Scene.objects.filter(episode__project__workspace__in=accessible_workspaces(request.user)), id=scene_id)
+    return _create_entity(request, form_class=DialogueLineForm, parent=scene, parent_field="scene", workspace=scene.episode.project.workspace, title="New dialogue line", success_url=lambda item: ("studio:scene_detail", item.scene_id), position_manager=scene.dialogue_lines)
+
+
+@login_required
+def prompt_create(request, scene_id):
+    scene = get_object_or_404(Scene.objects.filter(episode__project__workspace__in=accessible_workspaces(request.user)), id=scene_id)
+    return _create_entity(request, form_class=PromptForm, parent=scene, parent_field="scene", workspace=scene.episode.project.workspace, title="New prompt", success_url=lambda item: ("studio:prompt_detail", item.id), position_manager=scene.prompts)
+
+
+@login_required
+def prompt_block_create(request, prompt_id):
+    prompt = get_object_or_404(Prompt.objects.filter(scene__episode__project__workspace__in=accessible_workspaces(request.user)), id=prompt_id)
+    return _create_entity(request, form_class=PromptBlockForm, parent=prompt, parent_field="prompt", workspace=prompt.scene.episode.project.workspace, title="New prompt block", success_url=lambda item: ("studio:prompt_detail", item.prompt_id), position_manager=prompt.blocks)
 
 
 @login_required

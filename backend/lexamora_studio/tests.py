@@ -699,3 +699,42 @@ class StudioExportTests(TestCase):
         )
         self.assertEqual(first.status_code, 201)
         self.assertEqual(second.status_code, 429)
+
+class StudioWebCreationTests(TestCase):
+    def setUp(self):
+        users = get_user_model()
+        self.owner = users.objects.create_user("web-owner", password="strong-pass")
+        self.viewer = users.objects.create_user("web-viewer", password="strong-pass")
+        self.workspace = create_workspace(user=self.owner, name="Web Studio", slug="web-studio")
+        WorkspaceMembership.objects.create(workspace=self.workspace, user=self.viewer, role=WorkspaceMembership.Role.VIEWER)
+
+    def test_owner_can_create_project_episode_and_scene_in_web_ui(self):
+        from .models import Episode, Scene
+
+        self.client.force_login(self.owner)
+        response = self.client.post(
+            f"/studio/workspaces/{self.workspace.id}/projects/new/",
+            {"project_type": "SERIES", "title": "Browser Project", "original_language": "ru", "translation_languages": "en, pl", "status": "DRAFT"},
+        )
+        project = Project.objects.get(title="Browser Project")
+        self.assertRedirects(response, f"/studio/projects/{project.id}/")
+        self.assertEqual(project.translation_languages, ["en", "pl"])
+
+        response = self.client.post(
+            f"/studio/projects/{project.id}/episodes/new/",
+            {"number": 1, "title": "Pilot"},
+        )
+        episode = Episode.objects.get(project=project)
+        self.assertRedirects(response, f"/studio/projects/{project.id}/")
+
+        response = self.client.post(
+            f"/studio/episodes/{episode.id}/scenes/new/",
+            {"number": 1, "title": "Opening", "status": "DRAFT"},
+        )
+        scene = Scene.objects.get(episode=episode)
+        self.assertRedirects(response, f"/studio/scenes/{scene.id}/")
+
+    def test_viewer_cannot_open_project_creation_form(self):
+        self.client.force_login(self.viewer)
+        response = self.client.get(f"/studio/workspaces/{self.workspace.id}/projects/new/")
+        self.assertEqual(response.status_code, 403)
