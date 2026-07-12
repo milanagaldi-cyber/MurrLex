@@ -3,6 +3,8 @@
 {% block app_content %}
 <section class="panel"><h1>MurrLex Apps</h1><p>Learn, create, edit, translate, listen, recognize, and synchronize from the browser.</p></section>
 <section class="grid" style="margin-top:18px;">
+  <article class="card"><h2>Lexamora Studio</h2><p>Create and edit production projects, scenes, characters, images, prompts, and Master Documents.</p><a class="button" href="{% url 'studio:dashboard' %}">Open Studio</a></article>
+
   <article class="card"><h2>Lessons and cards</h2><p>Browse lessons and manage every card.</p><a class="button" href="{% url 'web_lessons' %}">Open</a></article>
   <article class="card"><h2>Translator</h2><p>Translate text through the configured server model.</p><a class="button" href="{% url 'web_translate' %}">Open</a></article>
   <article class="card"><h2>Text to speech</h2><p>Generate and play speech without exposing provider keys.</p><a class="button" href="{% url 'web_speech' %}">Open</a></article>

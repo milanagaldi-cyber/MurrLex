@@ -709,3 +709,31 @@ class OperationalEndpointTests(TestCase):
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json()["status"], "unavailable")
         self.assertNotContains(response, "database unavailable", status_code=503)
+
+class AccountAppNavigationTests(TestCase):
+    def setUp(self):
+        from .models import UserApiAccess
+
+        users = get_user_model()
+        self.user = users.objects.create_user("studio-app-user", password="strong-pass")
+        access, _ = UserApiAccess.objects.get_or_create(user=self.user)
+        access.ai_api_enabled = True
+        access.save(update_fields=["ai_api_enabled"])
+        ProviderCredential.objects.create(
+            provider=ProviderCredential.Provider.OPENAI,
+            encrypted_api_key="test-encrypted-key",
+        )
+        self.client.force_login(self.user)
+
+    def test_account_lists_lexamora_studio_as_separate_app(self):
+        response = self.client.get("/account/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "MurrLex Apps")
+        self.assertContains(response, "Lexamora Studio")
+        self.assertContains(response, "/studio/")
+
+    def test_apps_dashboard_has_studio_card(self):
+        response = self.client.get("/apps/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Lexamora Studio")
+        self.assertContains(response, "Open Studio")
