@@ -249,13 +249,20 @@ def docx_import_detail(request, import_id):
         data = draft.parsed_data
         data["title"] = request.POST.get("title", data.get("title", "")).strip()[:240]
         for character_index, character in enumerate(data.get("characters", [])):
+            character["include"] = request.POST.get(f"character_{character_index}_include") == "on"
             character["name"] = request.POST.get(f"character_{character_index}_name", character.get("name", "")).strip()[:180]
             character["description"] = request.POST.get(f"character_{character_index}_description", character.get("description", "")).strip()
         for episode_index, episode in enumerate(data.get("episodes", [])):
+            episode["include"] = request.POST.get(f"episode_{episode_index}_include") == "on"
             episode["title"] = request.POST.get(f"episode_{episode_index}_title", episode.get("title", "")).strip()[:240]
             episode["summary"] = request.POST.get(f"episode_{episode_index}_summary", episode.get("summary", "")).strip()
             for scene_index, scene in enumerate(episode.get("scenes", [])):
                 prefix = f"episode_{episode_index}_scene_{scene_index}"
+                scene["include"] = request.POST.get(f"{prefix}_include") == "on"
+                for prompt_index, prompt in enumerate(scene.get("prompts", [])):
+                    prompt["include"] = request.POST.get(f"{prefix}_prompt_{prompt_index}_include") == "on"
+                    prompt["model"] = request.POST.get(f"{prefix}_prompt_{prompt_index}_model", prompt.get("model", "")).strip()[:120]
+                    prompt["content"] = request.POST.get(f"{prefix}_prompt_{prompt_index}_content", prompt.get("content", "")).strip()
                 for field, limit in (("title", 240), ("hook", None), ("description", None), ("location", None), ("actions", None), ("performance_notes", None), ("dialogue", None)):
                     value = request.POST.get(f"{prefix}_{field}", scene.get(field, "")).strip()
                     scene[field] = value[:limit] if limit else value
@@ -291,7 +298,7 @@ def project_detail(request, project_id):
 def scene_detail(request, scene_id):
     scene = get_object_or_404(
         Scene.objects.select_related("episode__project__workspace").prefetch_related(
-            "dialogue_lines", "prompts__ai_model", "prompts__blocks", "assets", "assets"
+            "dialogue_lines", "prompts__ai_model", "prompts__blocks", "assets"
         ).filter(episode__project__workspace__in=accessible_workspaces(request.user)),
         id=scene_id,
     )

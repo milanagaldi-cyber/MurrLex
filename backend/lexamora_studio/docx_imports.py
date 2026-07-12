@@ -128,16 +128,16 @@ def parse_docx(uploaded):
         episode_match = re.match(r"^(?:\u0421\u0415\u0420\u0418\u042f|EPISODE)\s*(\d+)\s*[:.\-]?\s*(.*)$", text, re.IGNORECASE)
         scene_match = re.match(r"^\u0421\u0446\u0435\u043d\u0430\s*(\d+)\s*[.:\-]?\s*(.*)$", text, re.IGNORECASE)
         if style == "Heading1" and episode_match:
-            current_episode = {"number": int(episode_match.group(1)), "title": episode_match.group(2).strip(" \u201c\u201d.\""), "summary": "", "scenes": []}
+            current_episode = {"number": int(episode_match.group(1)), "title": episode_match.group(2).strip(" \u201c\u201d.\""), "summary": "", "include": True, "scenes": []}
             episodes.append(current_episode)
             current_scene = None
             current_field = None
             continue
         if style == "Heading1" and scene_match:
             if current_episode is None:
-                current_episode = {"number": 1, "title": "Imported episode", "summary": "", "scenes": []}
+                current_episode = {"number": 1, "title": "Imported episode", "summary": "", "include": True, "scenes": []}
                 episodes.append(current_episode)
-            current_scene = {"number": int(scene_match.group(1)), "title": scene_match.group(2).strip(" \u201c\u201d.\""), "hook": "", "description": "", "location": "", "actions": "", "performance_notes": "", "dialogue": ""}
+            current_scene = {"number": int(scene_match.group(1)), "title": scene_match.group(2).strip(" \u201c\u201d.\""), "hook": "", "description": "", "location": "", "actions": "", "performance_notes": "", "dialogue": "", "include": True}
             current_episode["scenes"].append(current_scene)
             current_field = None
             continue
@@ -164,7 +164,7 @@ def parse_docx(uploaded):
                 values.append(next_text)
             for offset in range(0, len(values) - 1, 2):
                 if values[offset] and not any(item["name"] == values[offset] for item in characters):
-                    characters.append({"name": values[offset], "description": values[offset + 1]})
+                    characters.append({"name": values[offset], "description": values[offset + 1], "include": True})
     all_scenes = [scene for episode in episodes for scene in episode["scenes"]]
     candidate_tables = tables[2:2 + len(all_scenes)]
     for scene, table in zip(all_scenes, candidate_tables):
@@ -175,7 +175,7 @@ def parse_docx(uploaded):
                 continue
             parts = value.splitlines()
             if len(parts) > 1 and parts[0].strip():
-                scene["prompts"].append({"model": parts[0].strip(), "content": "\n".join(parts[1:]).strip()})
+                scene["prompts"].append({"model": parts[0].strip(), "content": "\n".join(parts[1:]).strip(), "include": True})
     warnings = []
     if not episodes:
         warnings.append("No episode headings were recognized.")
@@ -215,18 +215,26 @@ def accept_docx_import(*, draft, user):
     project = Project.objects.create(workspace=draft.workspace, project_type=Project.Type.SERIES, title=title, concept="Imported from DOCX. Review all detected fields before production use.", status=Project.Status.DRAFT, created_by=user, updated_by=user)
     record_revision(instance=project, user=user, operation="IMPORT")
     for position, character_data in enumerate(data.get("characters", [])):
+        if not character_data.get("include", True):
+            continue
         character = Character.objects.create(project=project, name=character_data["name"][:180], description=character_data.get("description", ""), position=position, created_by=user, updated_by=user)
         record_revision(instance=character, user=user, operation="IMPORT")
     generation_lookup = {}
     scene_lookup = {}
     for episode_data in data.get("episodes", []):
+        if not episode_data.get("include", True):
+            continue
         episode = Episode.objects.create(project=project, number=episode_data["number"], title=(episode_data.get("title") or f"Episode {episode_data['number']}")[:240], summary=episode_data.get("summary", ""), position=project.episodes.count(), created_by=user, updated_by=user)
         record_revision(instance=episode, user=user, operation="IMPORT")
         for scene_data in episode_data.get("scenes", []):
+            if not scene_data.get("include", True):
+                continue
             scene = Scene.objects.create(episode=episode, number=scene_data["number"], title=(scene_data.get("title") or f"Scene {scene_data['number']}")[:240], hook=scene_data.get("hook", ""), description=scene_data.get("description", ""), location=scene_data.get("location", ""), actions=scene_data.get("actions", ""), performance_notes=scene_data.get("performance_notes", ""), position=episode.scenes.count(), created_by=user, updated_by=user)
             record_revision(instance=scene, user=user, operation="IMPORT")
             scene_lookup[(episode.number, scene.number)] = scene
             for prompt_position, prompt_data in enumerate(scene_data.get("prompts", [])):
+                if not prompt_data.get("include", True):
+                    continue
                 model_name = prompt_data.get("model", "")
                 model = AiModelProfile.objects.filter(name__iexact=model_name, is_active=True).first()
                 if model is None:

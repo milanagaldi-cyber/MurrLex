@@ -913,7 +913,7 @@ class StudioDocxImportTests(TestCase):
         draft = DocxImport.objects.get()
         saved = self.client.post(
             f"/studio/imports/{draft.id}/",
-            {"title": "Edited project", "episode_0_title": "Edited pilot", "episode_0_scene_0_title": "Edited scene"},
+            {"title": "Edited project", "episode_0_include": "on", "episode_0_title": "Edited pilot", "episode_0_scene_0_include": "on", "episode_0_scene_0_title": "Edited scene"},
         )
         self.assertRedirects(saved, f"/studio/imports/{draft.id}/")
         draft.refresh_from_db()
