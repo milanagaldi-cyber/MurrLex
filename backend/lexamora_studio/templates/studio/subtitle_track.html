@@ -1,0 +1,8 @@
+{% extends "studio/base.html" %}
+{% block content %}
+<p class="muted"><a href="{% url 'studio:episode_subtitles' track.episode.id %}">Episode {{ track.episode.number }}</a></p>
+<h1>{{ track.language|upper }} / {{ track.get_kind_display }} subtitles</h1>
+{% if can_translate %}<form method="post">{% csrf_token %}<input type="hidden" name="action" value="bulk"><label for="lines">Paste one subtitle per line</label><textarea id="lines" name="lines" rows="10">{% for line in track.lines.all %}{{ line.text }}{% if not forloop.last %}
+{% endif %}{% endfor %}</textarea><p><button class="button">Replace lines</button></p></form>{% endif %}
+<h2>Lines</h2><div class="list">{% for line in track.lines.all %}<div class="row"><strong>{{ forloop.counter }}</strong><span>{{ line.text }}</span>{% if can_translate %}<span><form method="post" style="display:inline">{% csrf_token %}<input type="hidden" name="line_id" value="{{ line.id }}"><button name="action" value="up" title="Move up">Up</button><button name="action" value="down" title="Move down">Down</button></form></span>{% endif %}</div>{% empty %}<p class="empty">No subtitle lines yet.</p>{% endfor %}</div>
+{% endblock %}

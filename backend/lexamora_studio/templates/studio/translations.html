@@ -1,0 +1,11 @@
+{% extends "studio/base.html" %}
+{% block content %}
+<p class="muted"><a href="{% url 'studio:project_detail' project.id %}">{{ project.title }}</a></p>
+<div class="toolbar"><h1>Translations</h1><form method="get"><label for="target">Target language</label><input id="target" name="target_language" value="{{ target_language }}" maxlength="16"><button>Open</button></form></div>
+{% if messages %}{% for message in messages %}<p>{{ message }}</p>{% endfor %}{% endif %}
+{% for row in rows %}
+<form method="post" class="list" style="margin-bottom:14px">{% csrf_token %}<input type="hidden" name="line_id" value="{{ row.line.id }}"><input type="hidden" name="target_language" value="{{ target_language }}">
+<div class="row"><div><strong>{{ row.line.speaker|default:"Narrator" }}</strong><br>{{ row.line.text }}</div><textarea name="translation" rows="3" {% if not can_translate %}disabled{% endif %}>{{ row.unit.translated_text }}</textarea><div><select name="status" {% if not can_translate %}disabled{% endif %}><option value="DRAFT">Draft</option><option value="IN_REVIEW" {% if row.unit.status == "IN_REVIEW" %}selected{% endif %}>In review</option><option value="APPROVED" {% if row.unit.status == "APPROVED" %}selected{% endif %}>Approved</option><option value="STALE" {% if row.unit.status == "STALE" %}selected{% endif %} disabled>Stale</option></select>{% if can_translate %}<button>Save</button>{% endif %}</div></div>
+</form>
+{% empty %}<p class="empty">No dialogue lines yet.</p>{% endfor %}
+{% endblock %}

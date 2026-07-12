@@ -13,4 +13,7 @@ urlpatterns = [
     path("prompts/<uuid:prompt_id>/", views.prompt_detail, name="prompt_detail"),
     path("prompts/<uuid:prompt_id>/improve/", views.prompt_improve, name="prompt_improve"),
     path("suggestions/<uuid:suggestion_id>/<str:decision>/", views.suggestion_decide, name="suggestion_decide"),
+    path("projects/<uuid:project_id>/translations/", views.translation_workspace, name="translations"),
+    path("episodes/<uuid:episode_id>/subtitles/", views.episode_subtitles, name="episode_subtitles"),
+    path("subtitle-tracks/<uuid:track_id>/", views.subtitle_track, name="subtitle_track"),
 ]

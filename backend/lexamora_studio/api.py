@@ -8,9 +8,9 @@ from django.views.decorators.http import require_http_methods
 from lessons.ai_gateway import ProviderError
 from lessons.provider_credentials import user_has_ai_access
 
-from .models import AccessEvent, AdditionalGeneration, AiModelProfile, AiSuggestion, Asset, DialogueLine, GenerationOutput, Project, Prompt, PromptBlock, Revision, Scene
+from .models import AccessEvent, AdditionalGeneration, AiModelProfile, AiSuggestion, Asset, DialogueLine, Episode, GenerationOutput, Project, Prompt, PromptBlock, Revision, Scene, SubtitleLine, SubtitleTrack, TranslationUnit
 from .permissions import accessible_workspaces, has_capability
-from .services import create_workspace, update_dialogue_line
+from .services import bulk_replace_subtitle_lines, create_workspace, reorder_subtitle_lines, save_translation, update_dialogue_line
 from .storage import create_asset
 from .ai import StudioAiError, accept_suggestion, improve_prompt, reject_suggestion
 from .revisions import VERSIONED_MODELS, audit, record_revision, restore_revision, revision_diff
@@ -565,3 +565,143 @@ def suggestion_reject(request, suggestion_id):
     except StudioAiError as exc:
         return _ai_error_response(exc)
     return JsonResponse(suggestion_json(suggestion))
+
+def subtitle_track_json(track):
+    return {
+        "id": str(track.id), "episodeId": str(track.episode_id), "language": track.language,
+        "kind": track.kind, "status": track.status, "lineCount": track.lines.count(),
+    }
+
+
+@require_http_methods(["GET", "POST"])
+def episode_subtitle_tracks(request, episode_id):
+    user = require_user(request)
+    if user is None:
+        return error("authentication_required", "Login is required.", 401)
+    episode = get_object_or_404(
+        Episode.objects.select_related("project__workspace").filter(project__workspace__in=accessible_workspaces(user)),
+        id=episode_id,
+    )
+    workspace = episode.project.workspace
+    if request.method == "GET":
+        return JsonResponse({"results": [subtitle_track_json(track) for track in episode.subtitle_tracks.all()]})
+    if not has_capability(user, workspace, "translate"):
+        return error("permission_denied", "Translation permission is required.", 403)
+    data = payload(request)
+    if data is None:
+        return error("invalid_json", "A JSON object is required.")
+    language = str(data.get("language", "")).strip().lower()[:16]
+    kind = str(data.get("kind", SubtitleTrack.Kind.WORKING))
+    if not language or kind not in SubtitleTrack.Kind.values:
+        return error("validation_error", "Valid language and track kind are required.")
+    track, created = SubtitleTrack.objects.get_or_create(
+        episode=episode, language=language, kind=kind,
+        defaults={"status": SubtitleTrack.Status.DRAFT, "created_by": user, "updated_by": user},
+    )
+    return JsonResponse(subtitle_track_json(track), status=201 if created else 200)
+
+
+def _subtitle_track_for_user(user, track_id):
+    return get_object_or_404(
+        SubtitleTrack.objects.select_related("episode__project__workspace").filter(
+            episode__project__workspace__in=accessible_workspaces(user)
+        ),
+        id=track_id,
+    )
+
+
+@require_http_methods(["GET", "POST"])
+def subtitle_lines(request, track_id):
+    user = require_user(request)
+    if user is None:
+        return error("authentication_required", "Login is required.", 401)
+    track = _subtitle_track_for_user(user, track_id)
+    if request.method == "GET":
+        return JsonResponse({"results": [
+            {"id": str(line.id), "position": line.position, "text": line.text, "startMs": line.start_ms, "endMs": line.end_ms}
+            for line in track.lines.all()
+        ]})
+    if not has_capability(user, track.episode.project.workspace, "translate"):
+        return error("permission_denied", "Translation permission is required.", 403)
+    data = payload(request)
+    if data is None:
+        return error("invalid_json", "A JSON object is required.")
+    lines = data.get("lines")
+    if isinstance(lines, str):
+        lines = lines.splitlines()
+    if not isinstance(lines, list):
+        return error("validation_error", "Lines must be a list or multiline string.")
+    result = bulk_replace_subtitle_lines(track=track, user=user, texts=lines)
+    return JsonResponse({"results": [{"id": str(line.id), "position": line.position, "text": line.text} for line in result]})
+
+
+@require_http_methods(["POST"])
+def subtitle_lines_reorder(request, track_id):
+    user = require_user(request)
+    if user is None:
+        return error("authentication_required", "Login is required.", 401)
+    track = _subtitle_track_for_user(user, track_id)
+    if not has_capability(user, track.episode.project.workspace, "translate"):
+        return error("permission_denied", "Translation permission is required.", 403)
+    data = payload(request)
+    if data is None or not isinstance(data.get("lineIds"), list):
+        return error("validation_error", "lineIds must be a list.")
+    try:
+        lines = reorder_subtitle_lines(track=track, user=user, ordered_ids=data["lineIds"])
+    except ValueError as exc:
+        return error("validation_error", str(exc))
+    return JsonResponse({"results": [{"id": str(line.id), "position": line.position} for line in lines]})
+
+
+def translation_json(line, unit):
+    return {
+        "dialogueLineId": str(line.id), "speaker": line.speaker, "source": line.text,
+        "targetLanguage": unit.target_language if unit else "",
+        "translation": unit.translated_text if unit else "",
+        "status": unit.status if unit else TranslationUnit.Status.DRAFT,
+        "translationId": str(unit.id) if unit else None,
+    }
+
+
+@require_http_methods(["GET"])
+def project_translations(request, project_id):
+    user = require_user(request)
+    if user is None:
+        return error("authentication_required", "Login is required.", 401)
+    project = get_object_or_404(Project.objects.filter(workspace__in=accessible_workspaces(user)), id=project_id)
+    language = request.GET.get("targetLanguage", "").strip().lower()[:16]
+    if not language:
+        return error("validation_error", "targetLanguage is required.")
+    lines = DialogueLine.objects.filter(scene__episode__project=project).select_related("scene").prefetch_related("translations")
+    results = []
+    for line in lines:
+        unit = next((item for item in line.translations.all() if item.target_language == language), None)
+        results.append(translation_json(line, unit))
+    return JsonResponse({"projectId": str(project.id), "targetLanguage": language, "results": results})
+
+
+@require_http_methods(["PUT", "PATCH"])
+def dialogue_translation(request, line_id, target_language):
+    user = require_user(request)
+    if user is None:
+        return error("authentication_required", "Login is required.", 401)
+    line = get_object_or_404(
+        DialogueLine.objects.select_related("scene__episode__project__workspace").filter(
+            scene__episode__project__workspace__in=accessible_workspaces(user)
+        ),
+        id=line_id,
+    )
+    workspace = line.scene.episode.project.workspace
+    if not has_capability(user, workspace, "translate"):
+        return error("permission_denied", "Translation permission is required.", 403)
+    data = payload(request)
+    if data is None:
+        return error("invalid_json", "A JSON object is required.")
+    status = str(data.get("status", TranslationUnit.Status.DRAFT))
+    if status not in TranslationUnit.Status.values or status == TranslationUnit.Status.STALE:
+        return error("validation_error", "A valid editable translation status is required.")
+    unit = save_translation(
+        dialogue_line=line, user=user, target_language=target_language.lower()[:16],
+        translated_text=str(data.get("translation", "")).strip(), status=status,
+    )
+    return JsonResponse(translation_json(line, unit))

@@ -25,4 +25,9 @@ urlpatterns = [
     path("prompts/<uuid:prompt_id>/improve", api.prompt_improve, name="prompt_improve"),
     path("suggestions/<uuid:suggestion_id>/accept", api.suggestion_accept, name="suggestion_accept"),
     path("suggestions/<uuid:suggestion_id>/reject", api.suggestion_reject, name="suggestion_reject"),
+    path("episodes/<uuid:episode_id>/subtitle-tracks", api.episode_subtitle_tracks, name="episode_subtitle_tracks"),
+    path("subtitle-tracks/<uuid:track_id>/lines", api.subtitle_lines, name="subtitle_lines"),
+    path("subtitle-tracks/<uuid:track_id>/lines/reorder", api.subtitle_lines_reorder, name="subtitle_lines_reorder"),
+    path("projects/<uuid:project_id>/translations", api.project_translations, name="project_translations"),
+    path("dialogue/<uuid:line_id>/translations/<str:target_language>", api.dialogue_translation, name="dialogue_translation"),
 ]

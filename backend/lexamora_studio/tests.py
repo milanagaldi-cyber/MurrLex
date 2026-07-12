@@ -481,3 +481,118 @@ class StudioAiSuggestionTests(TestCase):
         self.assertEqual(accepted.status_code, 409)
         self.narrative.refresh_from_db()
         self.assertEqual(self.narrative.content, "Plain room")
+
+
+class StudioSubtitleTranslationTests(TestCase):
+    def setUp(self):
+        from .models import AiModelProfile, DialogueLine, Episode, Prompt, PromptBlock, Scene
+
+        users = get_user_model()
+        self.editor = users.objects.create_user("subtitle-editor", password="strong-pass")
+        self.translator = users.objects.create_user("subtitle-translator", password="strong-pass")
+        self.viewer = users.objects.create_user("subtitle-viewer", password="strong-pass")
+        self.workspace = create_workspace(user=self.editor, name="Subtitle Studio", slug="subtitle-studio")
+        WorkspaceMembership.objects.create(workspace=self.workspace, user=self.translator, role=WorkspaceMembership.Role.TRANSLATOR)
+        WorkspaceMembership.objects.create(workspace=self.workspace, user=self.viewer, role=WorkspaceMembership.Role.VIEWER)
+        self.project = Project.objects.create(
+            workspace=self.workspace, project_type=Project.Type.SERIES, title="Subtitle Project",
+            created_by=self.editor, updated_by=self.editor,
+        )
+        self.episode = Episode.objects.create(
+            project=self.project, number=1, title="Pilot", created_by=self.editor, updated_by=self.editor,
+        )
+        self.scene = Scene.objects.create(
+            episode=self.episode, number=1, title="Opening", created_by=self.editor, updated_by=self.editor,
+        )
+        self.line = DialogueLine.objects.create(
+            scene=self.scene, speaker="Hero", text="Original source", status=DialogueLine.Status.APPROVED,
+            created_by=self.editor, updated_by=self.editor,
+        )
+        model = AiModelProfile.objects.create(name="Subtitle Test", provider="Test", model_id="test", media_type="VIDEO")
+        self.prompt = Prompt.objects.create(
+            scene=self.scene, ai_model=model, prompt_type=Prompt.Type.VIDEO,
+            created_by=self.editor, updated_by=self.editor,
+        )
+        PromptBlock.objects.create(
+            prompt=self.prompt, block_type=PromptBlock.Type.DIALOGUE_REFERENCE,
+            content="Original source", source_dialogue=self.line, created_by=self.editor, updated_by=self.editor,
+        )
+
+    def test_translator_can_translate_but_cannot_edit_source(self):
+        from .models import TranslationUnit
+
+        self.client.force_login(self.translator)
+        translated = self.client.patch(
+            f"/api/v1/studio/dialogue/{self.line.id}/translations/pl",
+            data=json.dumps({"translation": "Tekst docelowy", "status": "APPROVED"}),
+            content_type="application/json",
+        )
+        self.assertEqual(translated.status_code, 200, translated.content)
+        self.assertEqual(TranslationUnit.objects.get().status, TranslationUnit.Status.APPROVED)
+        source_edit = self.client.patch(
+            f"/api/v1/studio/dialogue/{self.line.id}",
+            data=json.dumps({"text": "Forbidden"}),
+            content_type="application/json",
+        )
+        self.assertEqual(source_edit.status_code, 403)
+
+    def test_source_change_marks_translation_stale_and_prompt_for_review(self):
+        from .models import TranslationUnit
+        from .services import save_translation
+
+        save_translation(
+            dialogue_line=self.line, user=self.translator, target_language="pl",
+            translated_text="Tekst docelowy", status=TranslationUnit.Status.APPROVED,
+        )
+        self.client.force_login(self.editor)
+        changed = self.client.patch(
+            f"/api/v1/studio/dialogue/{self.line.id}",
+            data=json.dumps({"text": "Updated source"}),
+            content_type="application/json",
+        )
+        self.assertEqual(changed.status_code, 200)
+        self.assertEqual(TranslationUnit.objects.get().status, TranslationUnit.Status.STALE)
+        self.prompt.refresh_from_db()
+        self.assertTrue(self.prompt.needs_review)
+
+    def test_bulk_subtitles_and_reorder(self):
+        from .models import SubtitleLine
+
+        self.client.force_login(self.translator)
+        created = self.client.post(
+            f"/api/v1/studio/episodes/{self.episode.id}/subtitle-tracks",
+            data=json.dumps({"language": "pl", "kind": "WORKING"}),
+            content_type="application/json",
+        )
+        self.assertEqual(created.status_code, 201)
+        track_id = created.json()["id"]
+        pasted = self.client.post(
+            f"/api/v1/studio/subtitle-tracks/{track_id}/lines",
+            data=json.dumps({"lines": ["FIRST", "SECOND", "THIRD"]}),
+            content_type="application/json",
+        )
+        self.assertEqual(pasted.status_code, 200, pasted.content)
+        ids = [row["id"] for row in pasted.json()["results"]]
+        reordered = self.client.post(
+            f"/api/v1/studio/subtitle-tracks/{track_id}/lines/reorder",
+            data=json.dumps({"lineIds": list(reversed(ids))}),
+            content_type="application/json",
+        )
+        self.assertEqual(reordered.status_code, 200)
+        values = list(SubtitleLine.objects.filter(track_id=track_id).values_list("text", flat=True))
+        self.assertEqual(values, ["THIRD", "SECOND", "FIRST"])
+
+    def test_viewer_cannot_replace_subtitles(self):
+        from .models import SubtitleTrack
+
+        track = SubtitleTrack.objects.create(
+            episode=self.episode, language="pl", kind=SubtitleTrack.Kind.WORKING,
+            created_by=self.editor, updated_by=self.editor,
+        )
+        self.client.force_login(self.viewer)
+        response = self.client.post(
+            f"/api/v1/studio/subtitle-tracks/{track.id}/lines",
+            data=json.dumps({"lines": ["Denied"]}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 403)

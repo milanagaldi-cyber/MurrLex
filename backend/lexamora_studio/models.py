@@ -400,3 +400,55 @@ class AiUsageLog(models.Model):
 
     class Meta:
         ordering = ["-created_at", "id"]
+
+
+class SubtitleTrack(SoftDeleteModel):
+    class Kind(models.TextChoices):
+        WORKING = "WORKING", "Working"
+        FINAL = "FINAL", "Final"
+
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        IN_REVIEW = "IN_REVIEW", "In review"
+        APPROVED = "APPROVED", "Approved"
+        FINAL = "FINAL", "Final"
+
+    episode = models.ForeignKey(Episode, on_delete=models.PROTECT, related_name="subtitle_tracks")
+    language = models.CharField(max_length=16)
+    kind = models.CharField(max_length=16, choices=Kind.choices, default=Kind.WORKING)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.DRAFT)
+
+    class Meta:
+        ordering = ["episode", "language", "kind"]
+        constraints = [models.UniqueConstraint(fields=["episode", "language", "kind"], name="studio_unique_subtitle_track")]
+
+
+class SubtitleLine(SoftDeleteModel):
+    track = models.ForeignKey(SubtitleTrack, on_delete=models.PROTECT, related_name="lines")
+    position = models.PositiveIntegerField(default=0)
+    text = models.TextField()
+    start_ms = models.PositiveIntegerField(null=True, blank=True)
+    end_ms = models.PositiveIntegerField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["position", "id"]
+        constraints = [models.UniqueConstraint(fields=["track", "position"], name="studio_unique_subtitle_position")]
+
+
+class TranslationUnit(SoftDeleteModel):
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        IN_REVIEW = "IN_REVIEW", "In review"
+        APPROVED = "APPROVED", "Approved"
+        STALE = "STALE", "Stale"
+
+    dialogue_line = models.ForeignKey(DialogueLine, on_delete=models.PROTECT, related_name="translations")
+    source_revision = models.ForeignKey(Revision, on_delete=models.PROTECT, related_name="translations", null=True, blank=True)
+    target_language = models.CharField(max_length=16)
+    source_text = models.TextField()
+    translated_text = models.TextField(blank=True)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.DRAFT)
+
+    class Meta:
+        ordering = ["dialogue_line__scene__position", "dialogue_line__position", "target_language"]
+        constraints = [models.UniqueConstraint(fields=["dialogue_line", "target_language"], name="studio_unique_dialogue_translation")]

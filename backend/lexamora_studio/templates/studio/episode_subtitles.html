@@ -1,0 +1,7 @@
+{% extends "studio/base.html" %}
+{% block content %}
+<p class="muted"><a href="{% url 'studio:project_detail' episode.project.id %}">{{ episode.project.title }}</a></p>
+<h1>Episode {{ episode.number }} subtitles</h1>
+{% if can_translate %}<form method="post" class="toolbar">{% csrf_token %}<input name="language" placeholder="Language code" maxlength="16" required><select name="kind"><option value="WORKING">Working</option><option value="FINAL">Final</option></select><button class="button">Create track</button></form>{% endif %}
+<div class="list">{% for track in episode.subtitle_tracks.all %}<div class="row"><a href="{% url 'studio:subtitle_track' track.id %}">{{ track.language|upper }} / {{ track.get_kind_display }}</a><span>{{ track.lines.count }} lines</span><span class="muted">{{ track.get_status_display }}</span></div>{% empty %}<p class="empty">No subtitle tracks yet.</p>{% endfor %}</div>
+{% endblock %}
