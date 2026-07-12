@@ -220,6 +220,21 @@ class StudioAssetTests(TestCase):
         self.assertTrue(asset.file.storage.exists(asset.file.name))
         self.assertTrue(asset.thumbnail.storage.exists(asset.thumbnail.name))
 
+    def test_owner_can_view_original_inline_and_download_attachment(self):
+        from .models import AccessEvent, AuditEvent
+
+        response = self.upload_asset()
+        asset_id = response.json()["id"]
+        viewed = self.client.get(f"/api/v1/studio/assets/{asset_id}/view")
+        self.assertEqual(viewed.status_code, 200)
+        self.assertTrue(viewed["Content-Disposition"].startswith("inline;"))
+        viewed.close()
+        downloaded = self.client.get(f"/api/v1/studio/assets/{asset_id}/download")
+        self.assertEqual(downloaded.status_code, 200)
+        self.assertTrue(downloaded["Content-Disposition"].startswith("attachment;"))
+        downloaded.close()
+        self.assertTrue(AuditEvent.objects.filter(action="ASSET_VIEW", entity_id=asset_id).exists())
+        self.assertTrue(AccessEvent.objects.filter(asset_id=asset_id, action="VIEW").exists())
     def test_user_from_another_workspace_cannot_download_asset(self):
         response = self.upload_asset()
         self.client.force_login(self.outsider)

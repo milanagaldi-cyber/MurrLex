@@ -14,6 +14,7 @@ urlpatterns = [
     path("scenes/<uuid:scene_id>/prompts", api.scene_prompts, name="scene_prompts"),
     path("assets", api.assets, name="assets"),
     path("assets/<uuid:asset_id>", api.asset_detail, name="asset_detail"),
+    path("assets/<uuid:asset_id>/view", api.asset_view, name="asset_view"),
     path("assets/<uuid:asset_id>/download", api.asset_download, name="asset_download"),
     path("assets/<uuid:asset_id>/thumbnail", api.asset_thumbnail, name="asset_thumbnail"),
     path("scenes/<uuid:scene_id>/generations", api.scene_generations, name="scene_generations"),

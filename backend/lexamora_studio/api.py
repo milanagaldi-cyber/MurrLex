@@ -320,6 +320,17 @@ def asset_detail(request, asset_id):
 
 
 @require_http_methods(["GET"])
+def asset_view(request, asset_id):
+    user = require_user(request)
+    if user is None:
+        return error("authentication_required", "Login is required.", 401)
+    item = _accessible_asset(user, asset_id)
+    AccessEvent.objects.create(workspace=item.workspace, actor=user, asset=item, action="VIEW", request_id=current_request_id())
+    audit(workspace=item.workspace, actor=user, action="ASSET_VIEW", instance=item, metadata={"filename": item.original_filename})
+    return FileResponse(item.file.open("rb"), as_attachment=False, filename=item.original_filename, content_type=item.content_type)
+
+
+@require_http_methods(["GET"])
 def asset_download(request, asset_id):
     user = require_user(request)
     if user is None:
