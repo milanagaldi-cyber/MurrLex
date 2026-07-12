@@ -65,3 +65,13 @@ class ImageUploadForm(forms.Form):
         if (getattr(uploaded, "content_type", "") or "").lower() not in {"image/jpeg", "image/png", "image/webp"}:
             raise forms.ValidationError("Choose a JPG, PNG or WEBP image.")
         return uploaded
+
+
+class DocxImportUploadForm(forms.Form):
+    file = forms.FileField(help_text="DOCX up to the configured Studio upload limit.")
+
+    def clean_file(self):
+        uploaded = self.cleaned_data["file"]
+        if not uploaded.name.lower().endswith(".docx"):
+            raise forms.ValidationError("Choose a DOCX document.")
+        return uploaded

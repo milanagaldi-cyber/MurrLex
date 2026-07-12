@@ -10,11 +10,12 @@ from make_mistake_backend.observability import current_request_id
 from lessons.ai_gateway import ProviderError
 from lessons.provider_credentials import user_has_ai_access
 
-from .models import AccessEvent, AdditionalGeneration, AiModelProfile, AiSuggestion, Asset, DialogueLine, Episode, ExportJob, GenerationOutput, Project, Prompt, PromptBlock, Revision, Scene, SubtitleLine, SubtitleTrack, TranslationUnit
+from .models import AccessEvent, AdditionalGeneration, AiModelProfile, AiSuggestion, Asset, DialogueLine, DocxImport, Episode, ExportJob, GenerationOutput, Project, Prompt, PromptBlock, Revision, Scene, SubtitleLine, SubtitleTrack, TranslationUnit
 from .permissions import accessible_workspaces, has_capability
 from .services import bulk_replace_subtitle_lines, create_workspace, reorder_subtitle_lines, save_translation, update_dialogue_line
 from .storage import create_asset
 from .exports import ExportError, generate_export
+from .docx_imports import accept_docx_import, parse_docx
 from .ai import StudioAiError, accept_suggestion, improve_prompt, reject_suggestion
 from .revisions import VERSIONED_MODELS, audit, record_revision, restore_revision, revision_diff
 
@@ -267,6 +268,56 @@ def scene_prompts(request, scene_id):
             )
     record_revision(instance=prompt, user=user, operation="CREATE")
     return JsonResponse({"id": str(prompt.id), "model": model.name, "type": prompt.prompt_type}, status=201)
+def docx_import_json(item):
+    return {
+        "id": str(item.id), "workspaceId": str(item.workspace_id), "status": item.status,
+        "sourceAssetId": str(item.source_asset_id), "projectId": str(item.project_id) if item.project_id else None,
+        "parsedData": item.parsed_data, "warnings": item.warnings, "createdAt": item.created_at.isoformat(),
+    }
+
+
+@require_http_methods(["POST"])
+def docx_imports(request):
+    user = require_user(request)
+    if user is None:
+        return error("authentication_required", "Login is required.", 401)
+    workspace = get_object_or_404(accessible_workspaces(user), id=request.POST.get("workspaceId"))
+    if not has_capability(user, workspace, "edit"):
+        return error("permission_denied", "Edit permission is required.", 403)
+    uploaded = request.FILES.get("file")
+    if uploaded is None:
+        return error("validation_error", "A DOCX file is required.", fields={"file": "Required"})
+    try:
+        parsed_data, warnings = parse_docx(uploaded)
+        source_asset = create_asset(user=user, workspace=workspace, uploaded=uploaded, kind=Asset.Kind.SOURCE_DOCUMENT)
+    except ValidationError as exc:
+        return error("validation_error", "; ".join(exc.messages), fields={"file": exc.messages})
+    item = DocxImport.objects.create(workspace=workspace, source_asset=source_asset, parsed_data=parsed_data, warnings=warnings, requested_by=user)
+    return JsonResponse(docx_import_json(item), status=201)
+
+
+@require_http_methods(["GET"])
+def docx_import_detail(request, import_id):
+    user = require_user(request)
+    if user is None:
+        return error("authentication_required", "Login is required.", 401)
+    item = get_object_or_404(DocxImport.objects.filter(workspace__in=accessible_workspaces(user)), id=import_id)
+    return JsonResponse(docx_import_json(item))
+
+
+@require_http_methods(["POST"])
+def docx_import_accept(request, import_id):
+    user = require_user(request)
+    if user is None:
+        return error("authentication_required", "Login is required.", 401)
+    item = get_object_or_404(DocxImport.objects.select_related("workspace").filter(workspace__in=accessible_workspaces(user)), id=import_id)
+    if not has_capability(user, item.workspace, "edit"):
+        return error("permission_denied", "Edit permission is required.", 403)
+    project = accept_docx_import(draft=item, user=user)
+    item.refresh_from_db()
+    result = docx_import_json(item)
+    result["project"] = project_json(project)
+    return JsonResponse(result)
 
 def asset_json(item):
     return {

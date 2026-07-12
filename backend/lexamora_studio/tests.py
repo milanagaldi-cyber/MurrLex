@@ -816,3 +816,75 @@ class StudioWebEditingAndImagesTests(TestCase):
     def test_outsider_cannot_open_scene_image_form(self):
         self.client.force_login(self.outsider)
         self.assertEqual(self.client.get(f"/studio/scenes/{self.scene.id}/images/new/").status_code, 404)
+
+class StudioDocxImportTests(TestCase):
+    def setUp(self):
+        import tempfile
+        from .models import private_storage
+
+        self.temp_media = tempfile.TemporaryDirectory()
+        self.private_storage = private_storage
+        self.previous_location = private_storage._location
+        private_storage._location = self.temp_media.name
+        private_storage.__dict__.pop("base_location", None)
+        private_storage.__dict__.pop("location", None)
+        users = get_user_model()
+        self.owner = users.objects.create_user("docx-owner", password="strong-pass")
+        self.viewer = users.objects.create_user("docx-viewer", password="strong-pass")
+        self.workspace = create_workspace(user=self.owner, name="Import Studio", slug="import-studio")
+        WorkspaceMembership.objects.create(workspace=self.workspace, user=self.viewer, role=WorkspaceMembership.Role.VIEWER)
+
+    def tearDown(self):
+        self.private_storage._location = self.previous_location
+        self.private_storage.__dict__.pop("base_location", None)
+        self.private_storage.__dict__.pop("location", None)
+        self.temp_media.cleanup()
+
+    @staticmethod
+    def docx_file():
+        import io
+        import zipfile
+        from PIL import Image
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        namespace = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        paragraphs = [
+            ("", "DOM TEST"), ("Heading1", "СЕРИЯ 1: Pilot"), ("Heading3", "Краткое описание серии"), ("", "Summary"),
+            ("Heading1", "Сцена 1. Opening"), ("Heading3", "Общее описание сцены"), ("", "A room"),
+            ("Heading3", "Диалоги"), ("", 'Hero: “Hello!”'),
+        ]
+        body = []
+        for style, text in paragraphs:
+            ppr = f'<w:pPr><w:pStyle w:val="{style}"/></w:pPr>' if style else ""
+            body.append(f'<w:p>{ppr}<w:r><w:t>{text}</w:t></w:r></w:p>')
+        xml = f'<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="{namespace}"><w:body>{"".join(body)}</w:body></w:document>'
+        image = io.BytesIO()
+        Image.new("RGB", (20, 12), "#227755").save(image, "PNG")
+        output = io.BytesIO()
+        with zipfile.ZipFile(output, "w") as archive:
+            archive.writestr("[Content_Types].xml", "<Types/>")
+            archive.writestr("word/document.xml", xml)
+            archive.writestr("word/media/image1.png", image.getvalue())
+        return SimpleUploadedFile("master.docx", output.getvalue(), content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+
+    def test_owner_can_preview_and_accept_docx_with_embedded_image(self):
+        from .models import Asset, DialogueLine, DocxImport, Episode, Scene
+
+        self.client.force_login(self.owner)
+        response = self.client.post(f"/studio/workspaces/{self.workspace.id}/imports/docx/new/", {"file": self.docx_file()})
+        draft = DocxImport.objects.get()
+        self.assertRedirects(response, f"/studio/imports/{draft.id}/")
+        self.assertEqual(draft.parsed_data["image_count"], 1)
+        self.assertEqual(len(draft.parsed_data["episodes"]), 1)
+        accepted = self.client.post(f"/studio/imports/{draft.id}/accept/")
+        draft.refresh_from_db()
+        self.assertRedirects(accepted, f"/studio/projects/{draft.project_id}/")
+        self.assertEqual(Episode.objects.filter(project=draft.project).count(), 1)
+        self.assertEqual(Scene.objects.filter(episode__project=draft.project).count(), 1)
+        self.assertEqual(DialogueLine.objects.filter(scene__episode__project=draft.project).count(), 1)
+        self.assertEqual(Asset.objects.filter(project=draft.project, content_type="image/png").count(), 1)
+
+    def test_viewer_cannot_upload_docx(self):
+        self.client.force_login(self.viewer)
+        response = self.client.get(f"/studio/workspaces/{self.workspace.id}/imports/docx/new/")
+        self.assertEqual(response.status_code, 403)

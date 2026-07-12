@@ -10,8 +10,9 @@ from lessons.provider_credentials import user_has_ai_access
 
 from .ai import StudioAiError, accept_suggestion, improve_prompt, reject_suggestion
 from .exports import ALL_SECTIONS, ExportError, generate_export
-from .forms import CharacterForm, DialogueLineForm, EpisodeForm, ImageUploadForm, ProjectForm, PromptBlockForm, PromptForm, SceneForm
-from .models import AiSuggestion, Asset, Character, DialogueLine, Episode, ExportJob, Project, Prompt, PromptBlock, Scene, SubtitleTrack, TranslationUnit, Workspace
+from .docx_imports import accept_docx_import, parse_docx
+from .forms import CharacterForm, DialogueLineForm, DocxImportUploadForm, EpisodeForm, ImageUploadForm, ProjectForm, PromptBlockForm, PromptForm, SceneForm
+from .models import AiSuggestion, Asset, Character, DialogueLine, DocxImport, Episode, ExportJob, Project, Prompt, PromptBlock, Scene, SubtitleTrack, TranslationUnit, Workspace
 from .permissions import accessible_workspaces, has_capability
 from .revisions import record_revision
 from .services import bulk_replace_subtitle_lines, create_workspace, reorder_subtitle_lines, save_translation
@@ -42,7 +43,7 @@ def workspace_create(request):
 @login_required
 def workspace_detail(request, workspace_id):
     workspace = get_object_or_404(accessible_workspaces(request.user), id=workspace_id)
-    return render(request, "studio/workspace_detail.html", {"workspace": workspace, "can_edit": has_capability(request.user, workspace, "edit")})
+    return render(request, "studio/workspace_detail.html", {"workspace": workspace, "can_edit": has_capability(request.user, workspace, "edit"), "imports": workspace.docx_imports.select_related("project")[:10]})
 
 
 def _create_entity(request, *, form_class, parent, parent_field, workspace, title, success_url, position_manager=None):
@@ -214,6 +215,42 @@ def character_image_upload(request, character_id):
 def scene_image_upload(request, scene_id):
     scene = get_object_or_404(Scene.objects.select_related("episode__project__workspace").filter(episode__project__workspace__in=accessible_workspaces(request.user)), id=scene_id)
     return _image_upload(request, target=scene, workspace=scene.episode.project.workspace, title="Upload scene image", success_url=lambda value: ("studio:scene_detail", value.id), kind=Asset.Kind.SCENE_IMAGE, project=scene.episode.project, scene=scene)
+@login_required
+def docx_import_create(request, workspace_id):
+    workspace = get_object_or_404(accessible_workspaces(request.user), id=workspace_id)
+    if not has_capability(request.user, workspace, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    form = DocxImportUploadForm(request.POST or None, request.FILES or None)
+    if request.method == "POST" and form.is_valid():
+        uploaded = form.cleaned_data["file"]
+        try:
+            parsed_data, warnings = parse_docx(uploaded)
+            source_asset = create_asset(user=request.user, workspace=workspace, uploaded=uploaded, kind=Asset.Kind.SOURCE_DOCUMENT)
+        except ValidationError as exc:
+            form.add_error("file", exc)
+        else:
+            draft = DocxImport.objects.create(workspace=workspace, source_asset=source_asset, parsed_data=parsed_data, warnings=warnings, requested_by=request.user)
+            messages.success(request, "DOCX parsed. Review the preview before accepting it.")
+            return redirect("studio:docx_import_detail", import_id=draft.id)
+    return render(request, "studio/entity_form.html", {"form": form, "title": "Import DOCX", "submit_label": "Parse document", "multipart": True})
+
+
+@login_required
+def docx_import_detail(request, import_id):
+    draft = get_object_or_404(DocxImport.objects.select_related("workspace", "source_asset", "project").filter(workspace__in=accessible_workspaces(request.user)), id=import_id)
+    return render(request, "studio/docx_import_detail.html", {"draft": draft, "can_edit": has_capability(request.user, draft.workspace, "edit")})
+
+
+@login_required
+def docx_import_accept(request, import_id):
+    draft = get_object_or_404(DocxImport.objects.select_related("workspace").filter(workspace__in=accessible_workspaces(request.user)), id=import_id)
+    if request.method != "POST":
+        return redirect("studio:docx_import_detail", import_id=draft.id)
+    if not has_capability(request.user, draft.workspace, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    project = accept_docx_import(draft=draft, user=request.user)
+    messages.success(request, "DOCX accepted. Review and edit the imported project.")
+    return redirect("studio:project_detail", project_id=project.id)
 
 @login_required
 def project_detail(request, project_id):
