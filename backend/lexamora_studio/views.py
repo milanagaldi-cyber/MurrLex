@@ -11,6 +11,7 @@ from lessons.provider_credentials import user_has_ai_access
 from .ai import StudioAiError, accept_suggestion, improve_prompt, reject_suggestion
 from .exports import ALL_SECTIONS, ExportError, generate_export
 from .docx_imports import accept_docx_import, parse_docx
+from .docx_exports import generate_docx_export
 from .forms import CharacterForm, DialogueLineForm, DocxImportUploadForm, EpisodeForm, ImageUploadForm, ProjectForm, PromptBlockForm, PromptForm, SceneForm
 from .models import AiSuggestion, Asset, Character, DialogueLine, DocxImport, Episode, ExportJob, Project, Prompt, PromptBlock, Scene, SubtitleTrack, TranslationUnit, Workspace
 from .permissions import accessible_workspaces, has_capability
@@ -429,17 +430,21 @@ def project_exports(request, project_id):
         episode = None
         if request.POST.get("episode_id"):
             episode = get_object_or_404(Episode.objects.filter(project=project), id=request.POST["episode_id"])
+        export_format = request.POST.get("format", "pdf")
         try:
-            generate_export(
-                project=project, episode=episode,
-                sections=request.POST.getlist("sections"), user=request.user,
-            )
+            if export_format == "docx":
+                generate_docx_export(project=project, user=request.user)
+            else:
+                generate_export(
+                    project=project, episode=episode,
+                    sections=request.POST.getlist("sections"), user=request.user,
+                )
         except ExportError as exc:
             messages.error(request, str(exc))
         except Exception:
-            messages.error(request, "PDF generation failed.")
+            messages.error(request, f"{export_format.upper()} generation failed.")
         else:
-            messages.success(request, "PDF export is ready.")
+            messages.success(request, f"{export_format.upper()} export is ready.")
         return redirect("studio:project_exports", project_id=project.id)
     return render(request, "studio/exports.html", {
         "project": project, "jobs": project.export_jobs.select_related("episode", "output_asset")[:50],

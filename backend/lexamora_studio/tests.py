@@ -884,6 +884,27 @@ class StudioDocxImportTests(TestCase):
         self.assertEqual(DialogueLine.objects.filter(scene__episode__project=draft.project).count(), 1)
         self.assertEqual(Asset.objects.filter(project=draft.project, content_type="image/png").count(), 1)
 
+    def test_import_edit_export_docx_round_trip_uses_current_project_data(self):
+        from docx import Document
+        from .docx_exports import generate_docx_export
+        from .models import DocxImport
+
+        self.client.force_login(self.owner)
+        self.client.post(f"/studio/workspaces/{self.workspace.id}/imports/docx/new/", {"file": self.docx_file()})
+        draft = DocxImport.objects.get()
+        self.client.post(f"/studio/imports/{draft.id}/accept/")
+        draft.refresh_from_db()
+        scene = draft.project.episodes.first().scenes.first()
+        scene.title = "Edited opening"
+        scene.updated_by = self.owner
+        scene.save()
+        job = generate_docx_export(project=draft.project, user=self.owner)
+        with job.output_asset.file.open("rb") as stream:
+            document = Document(stream)
+        text = "\n".join(paragraph.text for paragraph in document.paragraphs)
+        self.assertIn("Edited opening", text)
+        self.assertGreaterEqual(len(document.inline_shapes), 1)
+        self.assertEqual(job.sections, ["DOCX"])
     def test_viewer_cannot_upload_docx(self):
         self.client.force_login(self.viewer)
         response = self.client.get(f"/studio/workspaces/{self.workspace.id}/imports/docx/new/")
