@@ -27,12 +27,16 @@ def create_workspace(*, user, name, slug, description=""):
     return workspace
 
 @transaction.atomic
-def update_dialogue_line(*, line, user, text, speaker=None, delivery=None):
+def update_dialogue_line(*, line, user, text, speaker=None, delivery=None, language=None, status=None):
     line.text = text
     if speaker is not None:
         line.speaker = speaker
     if delivery is not None:
         line.delivery = delivery
+    if language is not None:
+        line.language = language
+    if status is not None:
+        line.status = status
     line.updated_by = user
     line.full_clean()
     line.save()

@@ -738,3 +738,66 @@ class StudioWebCreationTests(TestCase):
         self.client.force_login(self.viewer)
         response = self.client.get(f"/studio/workspaces/{self.workspace.id}/projects/new/")
         self.assertEqual(response.status_code, 403)
+
+class StudioWebEditingAndImagesTests(TestCase):
+    def setUp(self):
+        from .models import Episode, Scene
+
+        users = get_user_model()
+        self.owner = users.objects.create_user("web-edit-owner", password="strong-pass")
+        self.viewer = users.objects.create_user("web-edit-viewer", password="strong-pass")
+        self.outsider = users.objects.create_user("web-edit-outsider", password="strong-pass")
+        self.workspace = create_workspace(user=self.owner, name="Editable Studio", slug="editable-studio")
+        WorkspaceMembership.objects.create(workspace=self.workspace, user=self.viewer, role=WorkspaceMembership.Role.VIEWER)
+        self.project = Project.objects.create(workspace=self.workspace, project_type=Project.Type.SERIES, title="Before", original_language="ru", translation_languages=["en"], created_by=self.owner, updated_by=self.owner)
+        self.episode = Episode.objects.create(project=self.project, number=1, title="Pilot", created_by=self.owner, updated_by=self.owner)
+        self.scene = Scene.objects.create(episode=self.episode, number=1, title="Opening", created_by=self.owner, updated_by=self.owner)
+
+    @staticmethod
+    def image_file():
+        import io
+        from PIL import Image
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        buffer = io.BytesIO()
+        Image.new("RGB", (48, 36), "#36a889").save(buffer, "PNG")
+        return SimpleUploadedFile("reference.png", buffer.getvalue(), content_type="image/png")
+
+    def test_owner_can_edit_project_and_revision_is_recorded(self):
+        from .models import Revision
+
+        self.client.force_login(self.owner)
+        response = self.client.post(
+            f"/studio/projects/{self.project.id}/edit/",
+            {"project_type": "SERIES", "title": "After", "concept": "Updated", "original_language": "ru", "translation_languages": "en, pl", "status": "DRAFT"},
+        )
+        self.assertRedirects(response, f"/studio/projects/{self.project.id}/")
+        self.project.refresh_from_db()
+        self.assertEqual(self.project.title, "After")
+        self.assertEqual(self.project.translation_languages, ["en", "pl"])
+        self.assertTrue(Revision.objects.filter(entity_id=self.project.id, operation="UPDATE").exists())
+
+    def test_viewer_cannot_edit_project(self):
+        self.client.force_login(self.viewer)
+        response = self.client.get(f"/studio/projects/{self.project.id}/edit/")
+        self.assertEqual(response.status_code, 403)
+
+    def test_owner_can_upload_private_scene_image_and_open_thumbnail(self):
+        import tempfile
+        from pathlib import Path
+        from .models import Asset
+
+        self.client.force_login(self.owner)
+        with tempfile.TemporaryDirectory() as directory:
+            with self.settings(STUDIO_PRIVATE_MEDIA_ROOT=Path(directory)):
+                response = self.client.post(f"/studio/scenes/{self.scene.id}/images/new/", {"file": self.image_file()})
+                asset = Asset.objects.get(scene=self.scene)
+                self.assertRedirects(response, f"/studio/scenes/{self.scene.id}/")
+                self.assertEqual(asset.kind, Asset.Kind.SCENE_IMAGE)
+                self.assertEqual((asset.width, asset.height), (48, 36))
+                thumbnail = self.client.get(f"/api/v1/studio/assets/{asset.id}/thumbnail")
+                self.assertEqual(thumbnail.status_code, 200)
+
+    def test_outsider_cannot_open_scene_image_form(self):
+        self.client.force_login(self.outsider)
+        self.assertEqual(self.client.get(f"/studio/scenes/{self.scene.id}/images/new/").status_code, 404)

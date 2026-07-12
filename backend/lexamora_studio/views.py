@@ -1,5 +1,6 @@
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.core.exceptions import ValidationError
 from django.http import HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.text import slugify
@@ -9,11 +10,12 @@ from lessons.provider_credentials import user_has_ai_access
 
 from .ai import StudioAiError, accept_suggestion, improve_prompt, reject_suggestion
 from .exports import ALL_SECTIONS, ExportError, generate_export
-from .forms import CharacterForm, DialogueLineForm, EpisodeForm, ProjectForm, PromptBlockForm, PromptForm, SceneForm
-from .models import AiSuggestion, DialogueLine, Episode, ExportJob, Project, Prompt, Scene, SubtitleTrack, TranslationUnit, Workspace
+from .forms import CharacterForm, DialogueLineForm, EpisodeForm, ImageUploadForm, ProjectForm, PromptBlockForm, PromptForm, SceneForm
+from .models import AiSuggestion, Asset, Character, DialogueLine, Episode, ExportJob, Project, Prompt, PromptBlock, Scene, SubtitleTrack, TranslationUnit, Workspace
 from .permissions import accessible_workspaces, has_capability
 from .revisions import record_revision
 from .services import bulk_replace_subtitle_lines, create_workspace, reorder_subtitle_lines, save_translation
+from .storage import create_asset
 
 
 @login_required
@@ -54,11 +56,15 @@ def _create_entity(request, *, form_class, parent, parent_field, workspace, titl
         item.updated_by = request.user
         if position_manager is not None:
             item.position = position_manager.count()
-        item.full_clean()
-        item.save()
-        record_revision(instance=item, user=request.user, operation="CREATE")
-        messages.success(request, f"{title} created.")
-        return redirect(*success_url(item))
+        try:
+            item.full_clean()
+        except ValidationError as exc:
+            form.add_error(None, exc)
+        else:
+            item.save()
+            record_revision(instance=item, user=request.user, operation="CREATE")
+            messages.success(request, f"{title} created.")
+            return redirect(*success_url(item))
     return render(request, "studio/entity_form.html", {"form": form, "title": title})
 
 
@@ -104,10 +110,115 @@ def prompt_block_create(request, prompt_id):
     return _create_entity(request, form_class=PromptBlockForm, parent=prompt, parent_field="prompt", workspace=prompt.scene.episode.project.workspace, title="New prompt block", success_url=lambda item: ("studio:prompt_detail", item.prompt_id), position_manager=prompt.blocks)
 
 
+def _edit_entity(request, *, item, form_class, workspace, title, success_url):
+    if not has_capability(request.user, workspace, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    form = form_class(request.POST or None, instance=item)
+    if request.method == "POST" and form.is_valid():
+        item = form.save(commit=False)
+        item.updated_by = request.user
+        try:
+            item.full_clean()
+        except ValidationError as exc:
+            form.add_error(None, exc)
+        else:
+            item.save()
+            record_revision(instance=item, user=request.user, operation="UPDATE")
+            messages.success(request, f"{title} saved.")
+            return redirect(*success_url(item))
+    return render(request, "studio/entity_form.html", {"form": form, "title": title, "submit_label": "Save changes"})
+
+
+def _image_upload(request, *, target, workspace, title, success_url, kind, project=None, scene=None, character=None):
+    if not has_capability(request.user, workspace, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    form = ImageUploadForm(request.POST or None, request.FILES or None)
+    if request.method == "POST" and form.is_valid():
+        try:
+            create_asset(user=request.user, workspace=workspace, uploaded=form.cleaned_data["file"], kind=kind, project=project, scene=scene, character=character)
+        except ValidationError as exc:
+            form.add_error("file", exc)
+        else:
+            messages.success(request, "Image uploaded.")
+            return redirect(*success_url(target))
+    return render(request, "studio/entity_form.html", {"form": form, "title": title, "submit_label": "Upload image", "multipart": True})
+
+
+@login_required
+def project_edit(request, project_id):
+    item = get_object_or_404(Project.objects.filter(workspace__in=accessible_workspaces(request.user)), id=project_id)
+    return _edit_entity(request, item=item, form_class=ProjectForm, workspace=item.workspace, title="Edit project", success_url=lambda value: ("studio:project_detail", value.id))
+
+
+@login_required
+def character_edit(request, character_id):
+    item = get_object_or_404(Character.objects.select_related("project__workspace").filter(project__workspace__in=accessible_workspaces(request.user)), id=character_id)
+    return _edit_entity(request, item=item, form_class=CharacterForm, workspace=item.project.workspace, title="Edit character", success_url=lambda value: ("studio:project_detail", value.project_id))
+
+
+@login_required
+def episode_edit(request, episode_id):
+    item = get_object_or_404(Episode.objects.select_related("project__workspace").filter(project__workspace__in=accessible_workspaces(request.user)), id=episode_id)
+    return _edit_entity(request, item=item, form_class=EpisodeForm, workspace=item.project.workspace, title="Edit episode", success_url=lambda value: ("studio:project_detail", value.project_id))
+
+
+@login_required
+def scene_edit(request, scene_id):
+    item = get_object_or_404(Scene.objects.select_related("episode__project__workspace").filter(episode__project__workspace__in=accessible_workspaces(request.user)), id=scene_id)
+    return _edit_entity(request, item=item, form_class=SceneForm, workspace=item.episode.project.workspace, title="Edit scene", success_url=lambda value: ("studio:scene_detail", value.id))
+
+
+@login_required
+def dialogue_edit(request, line_id):
+    item = get_object_or_404(DialogueLine.objects.select_related("scene__episode__project__workspace").filter(scene__episode__project__workspace__in=accessible_workspaces(request.user)), id=line_id)
+    workspace = item.scene.episode.project.workspace
+    if not has_capability(request.user, workspace, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    form = DialogueLineForm(request.POST or None, instance=item)
+    if request.method == "POST" and form.is_valid():
+        update_dialogue_line(
+            line=item, user=request.user, text=form.cleaned_data["text"],
+            speaker=form.cleaned_data["speaker"], delivery=form.cleaned_data["delivery"],
+            language=form.cleaned_data["language"], status=form.cleaned_data["status"],
+        )
+        messages.success(request, "Dialogue line saved.")
+        return redirect("studio:scene_detail", scene_id=item.scene_id)
+    return render(request, "studio/entity_form.html", {"form": form, "title": "Edit dialogue line", "submit_label": "Save changes"})
+
+
+@login_required
+def prompt_edit(request, prompt_id):
+    item = get_object_or_404(Prompt.objects.select_related("scene__episode__project__workspace").filter(scene__episode__project__workspace__in=accessible_workspaces(request.user)), id=prompt_id)
+    return _edit_entity(request, item=item, form_class=PromptForm, workspace=item.scene.episode.project.workspace, title="Edit prompt", success_url=lambda value: ("studio:prompt_detail", value.id))
+
+
+@login_required
+def prompt_block_edit(request, block_id):
+    item = get_object_or_404(PromptBlock.objects.select_related("prompt__scene__episode__project__workspace").filter(prompt__scene__episode__project__workspace__in=accessible_workspaces(request.user)), id=block_id)
+    return _edit_entity(request, item=item, form_class=PromptBlockForm, workspace=item.prompt.scene.episode.project.workspace, title="Edit prompt block", success_url=lambda value: ("studio:prompt_detail", value.prompt_id))
+
+
+@login_required
+def project_image_upload(request, project_id):
+    project = get_object_or_404(Project.objects.select_related("workspace").prefetch_related("assets", "characters__assets", "episodes__scenes").filter(workspace__in=accessible_workspaces(request.user)), id=project_id)
+    return _image_upload(request, target=project, workspace=project.workspace, title="Upload project image", success_url=lambda value: ("studio:project_detail", value.id), kind=Asset.Kind.OTHER, project=project)
+
+
+@login_required
+def character_image_upload(request, character_id):
+    character = get_object_or_404(Character.objects.select_related("project__workspace").filter(project__workspace__in=accessible_workspaces(request.user)), id=character_id)
+    return _image_upload(request, target=character, workspace=character.project.workspace, title="Upload character reference", success_url=lambda value: ("studio:project_detail", value.project_id), kind=Asset.Kind.CHARACTER_REFERENCE, project=character.project, character=character)
+
+
+@login_required
+def scene_image_upload(request, scene_id):
+    scene = get_object_or_404(Scene.objects.select_related("episode__project__workspace").filter(episode__project__workspace__in=accessible_workspaces(request.user)), id=scene_id)
+    return _image_upload(request, target=scene, workspace=scene.episode.project.workspace, title="Upload scene image", success_url=lambda value: ("studio:scene_detail", value.id), kind=Asset.Kind.SCENE_IMAGE, project=scene.episode.project, scene=scene)
+
 @login_required
 def project_detail(request, project_id):
     project = get_object_or_404(
-        Project.objects.select_related("workspace").filter(workspace__in=accessible_workspaces(request.user)),
+        Project.objects.select_related("workspace").prefetch_related("assets", "characters__assets", "episodes__scenes").filter(workspace__in=accessible_workspaces(request.user)),
         id=project_id,
     )
     return render(request, "studio/project_detail.html", {"project": project, "can_edit": has_capability(request.user, project.workspace, "edit")})
@@ -117,7 +228,7 @@ def project_detail(request, project_id):
 def scene_detail(request, scene_id):
     scene = get_object_or_404(
         Scene.objects.select_related("episode__project__workspace").prefetch_related(
-            "dialogue_lines", "prompts__ai_model", "prompts__blocks"
+            "dialogue_lines", "prompts__ai_model", "prompts__blocks", "assets", "assets"
         ).filter(episode__project__workspace__in=accessible_workspaces(request.user)),
         id=scene_id,
     )

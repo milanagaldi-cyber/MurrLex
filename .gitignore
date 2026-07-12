@@ -44,3 +44,4 @@ backend/staticfiles/
 backend/media/
 connector/.cache/
 runlogs/
+backend/private-media/

@@ -1,7 +1,7 @@
 {% extends "studio/base.html" %}
 {% block content %}
 <p class="muted"><a href="{% url 'studio:scene_detail' prompt.scene.id %}">Scene {{ prompt.scene.number }}</a> · {{ prompt.ai_model.name }}</p>
-<h1>{{ prompt.title|default:prompt.get_prompt_type_display }}</h1>
+<div class="toolbar"><h1>{{ prompt.title|default:prompt.get_prompt_type_display }}</h1>{% if can_edit %}<a class="button secondary" href="{% url 'studio:prompt_edit' prompt.id %}">Edit prompt</a>{% endif %}</div>
 {% if messages %}{% for message in messages %}<p>{{ message }}</p>{% endfor %}{% endif %}
 <div class="toolbar">
   <span class="muted">{{ prompt.get_status_display }}{% if prompt.needs_review %} · Needs review{% endif %}</span>
@@ -11,7 +11,7 @@
   </form>{% endif %}
 </div>
 <div class="toolbar"><h2>Current blocks</h2>{% if can_edit %}<a class="button" href="{% url 'studio:prompt_block_create' prompt.id %}">New block</a>{% endif %}</div>
-<div class="list">{% for block in prompt.blocks.all %}<div class="row"><strong>{{ block.get_block_type_display }}</strong><span>{{ block.content }}</span><span class="muted">{% if block.block_type == "DIALOGUE_REFERENCE" %}Protected{% endif %}</span></div>{% endfor %}</div>
+<div class="list">{% for block in prompt.blocks.all %}<div class="row"><strong>{{ block.get_block_type_display }}</strong><span>{{ block.content }}</span><span>{% if block.block_type == "DIALOGUE_REFERENCE" %}<span class="muted">Protected</span>{% elif can_edit %}<a href="{% url 'studio:prompt_block_edit' block.id %}">Edit</a>{% endif %}</span></div>{% endfor %}</div>
 <h2>Suggestions</h2>
 {% for suggestion in prompt.ai_suggestions.all %}
 <section class="list" style="margin-bottom:18px"><div class="row"><strong>{{ suggestion.mode }}</strong><span>{{ suggestion.model }}</span><span class="muted">{{ suggestion.get_status_display }}</span></div>
