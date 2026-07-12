@@ -1,6 +1,6 @@
 from django.db import transaction
 
-from .models import Workspace, WorkspaceMembership
+from .models import Prompt, Workspace, WorkspaceMembership
 
 
 @transaction.atomic
@@ -23,3 +23,16 @@ def create_workspace(*, user, name, slug, description=""):
         can_manage_members=True,
     )
     return workspace
+
+@transaction.atomic
+def update_dialogue_line(*, line, user, text, speaker=None, delivery=None):
+    line.text = text
+    if speaker is not None:
+        line.speaker = speaker
+    if delivery is not None:
+        line.delivery = delivery
+    line.updated_by = user
+    line.full_clean()
+    line.save()
+    Prompt.objects.filter(blocks__source_dialogue=line).update(needs_review=True)
+    return line

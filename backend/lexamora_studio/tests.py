@@ -82,3 +82,70 @@ class StudioApiTests(TestCase):
             content_type="application/json",
         )
         self.assertEqual(response.status_code, 403)
+
+class StudioSceneTests(TestCase):
+    def setUp(self):
+        from .models import AiModelProfile, DialogueLine, Episode, Prompt, PromptBlock, Scene
+        users = get_user_model()
+        self.editor = users.objects.create_user("scene-editor", password="strong-pass")
+        self.translator = users.objects.create_user("scene-translator", password="strong-pass")
+        self.workspace = create_workspace(user=self.editor, name="Scene Studio", slug="scene-studio")
+        WorkspaceMembership.objects.create(workspace=self.workspace, user=self.translator, role=WorkspaceMembership.Role.TRANSLATOR)
+        self.project = Project.objects.create(
+            workspace=self.workspace, project_type=Project.Type.SERIES, title="Scene Project",
+            created_by=self.editor, updated_by=self.editor,
+        )
+        self.episode = Episode.objects.create(
+            project=self.project, number=1, title="Pilot", created_by=self.editor, updated_by=self.editor,
+        )
+        self.scene = Scene.objects.create(
+            episode=self.episode, number=1, title="Opening", created_by=self.editor, updated_by=self.editor,
+        )
+        self.line = DialogueLine.objects.create(
+            scene=self.scene, speaker="Hero", text="Original", status=DialogueLine.Status.APPROVED,
+            created_by=self.editor, updated_by=self.editor,
+        )
+        self.model = AiModelProfile.objects.create(name="Test Video", provider="Test", model_id="test-video", media_type="VIDEO")
+        self.prompt = Prompt.objects.create(
+            scene=self.scene, ai_model=self.model, prompt_type=Prompt.Type.VIDEO,
+            created_by=self.editor, updated_by=self.editor,
+        )
+        PromptBlock.objects.create(
+            prompt=self.prompt, block_type=PromptBlock.Type.DIALOGUE_REFERENCE,
+            content="Original", source_dialogue=self.line, created_by=self.editor, updated_by=self.editor,
+        )
+
+    def test_translator_cannot_change_approved_source_dialogue(self):
+        self.client.force_login(self.translator)
+        response = self.client.patch(
+            f"/api/v1/studio/dialogue/{self.line.id}",
+            data=json.dumps({"text": "Changed"}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 403)
+        self.line.refresh_from_db()
+        self.assertEqual(self.line.text, "Original")
+
+    def test_editor_changes_dialogue_and_marks_prompt_for_review(self):
+        self.client.force_login(self.editor)
+        response = self.client.patch(
+            f"/api/v1/studio/dialogue/{self.line.id}",
+            data=json.dumps({"text": "Changed"}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.prompt.refresh_from_db()
+        self.assertTrue(self.prompt.needs_review)
+
+    def test_editor_can_create_structured_prompt(self):
+        self.client.force_login(self.editor)
+        response = self.client.post(
+            f"/api/v1/studio/scenes/{self.scene.id}/prompts",
+            data=json.dumps({
+                "aiModelId": str(self.model.id),
+                "type": "IMAGE",
+                "blocks": [{"type": "NARRATIVE", "content": "Cinematic office"}, {"type": "NEGATIVE", "content": "No text"}],
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 201)

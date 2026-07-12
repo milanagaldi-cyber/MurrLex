@@ -157,3 +157,68 @@ class AiModelProfile(models.Model):
 
     class Meta:
         ordering = ["media_type", "name"]
+
+
+class DialogueLine(SoftDeleteModel):
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        IN_REVIEW = "IN_REVIEW", "In review"
+        APPROVED = "APPROVED", "Approved"
+        NEEDS_CHANGES = "NEEDS_CHANGES", "Needs changes"
+        FINAL = "FINAL", "Final"
+
+    scene = models.ForeignKey(Scene, on_delete=models.PROTECT, related_name="dialogue_lines")
+    character = models.ForeignKey(Character, on_delete=models.SET_NULL, related_name="dialogue_lines", null=True, blank=True)
+    speaker = models.CharField(max_length=180, blank=True)
+    text = models.TextField()
+    language = models.CharField(max_length=16, blank=True)
+    delivery = models.TextField(blank=True)
+    position = models.PositiveIntegerField(default=0)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
+
+    class Meta:
+        ordering = ["position", "id"]
+        constraints = [models.UniqueConstraint(fields=["scene", "position"], name="studio_unique_dialogue_position")]
+
+
+class Prompt(SoftDeleteModel):
+    class Type(models.TextChoices):
+        IMAGE = "IMAGE", "Image"
+        VIDEO = "VIDEO", "Video"
+
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        IN_REVIEW = "IN_REVIEW", "In review"
+        APPROVED = "APPROVED", "Approved"
+        NEEDS_CHANGES = "NEEDS_CHANGES", "Needs changes"
+        FINAL = "FINAL", "Final"
+
+    scene = models.ForeignKey(Scene, on_delete=models.PROTECT, related_name="prompts")
+    ai_model = models.ForeignKey(AiModelProfile, on_delete=models.PROTECT, related_name="prompts")
+    prompt_type = models.CharField(max_length=16, choices=Type.choices)
+    title = models.CharField(max_length=180, blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
+    position = models.PositiveIntegerField(default=0)
+    needs_review = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ["position", "id"]
+        constraints = [models.UniqueConstraint(fields=["scene", "ai_model", "prompt_type", "position"], name="studio_unique_prompt_position")]
+
+
+class PromptBlock(SoftDeleteModel):
+    class Type(models.TextChoices):
+        NARRATIVE = "NARRATIVE", "Narrative"
+        DIALOGUE_REFERENCE = "DIALOGUE_REFERENCE", "Dialogue reference"
+        NEGATIVE = "NEGATIVE", "Negative"
+        AUDIO = "AUDIO", "Audio"
+
+    prompt = models.ForeignKey(Prompt, on_delete=models.PROTECT, related_name="blocks")
+    block_type = models.CharField(max_length=24, choices=Type.choices)
+    content = models.TextField()
+    source_dialogue = models.ForeignKey(DialogueLine, on_delete=models.SET_NULL, related_name="prompt_blocks", null=True, blank=True)
+    position = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["position", "id"]
+        constraints = [models.UniqueConstraint(fields=["prompt", "position"], name="studio_unique_prompt_block_position")]
