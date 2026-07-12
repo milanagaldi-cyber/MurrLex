@@ -27,6 +27,8 @@ admin.site.index_title = "Server control panel"
 
 urlpatterns = [
     path("", lesson_views.home, name="home"),
+    path("studio/", include("lexamora_studio.urls")),
+    path("api/v1/studio/", include("lexamora_studio.api_urls")),
     path("accounts/", include("allauth.urls")),
     path("admin/", admin.site.urls),
     path("register/", lesson_views.register, name="register"),

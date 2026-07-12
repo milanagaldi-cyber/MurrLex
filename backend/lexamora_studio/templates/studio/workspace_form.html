@@ -1,0 +1,1 @@
+{% extends "studio/base.html" %}{% block content %}<h1>New workspace</h1><form method="post">{% csrf_token %}<p><label for="name">Name</label><input id="name" name="name" required maxlength="180"></p><button class="button">Create</button></form>{% endblock %}
