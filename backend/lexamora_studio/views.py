@@ -14,8 +14,8 @@ from .ai import StudioAiError, accept_suggestion, improve_prompt, reject_suggest
 from .exports import ALL_SECTIONS, ExportError, generate_export
 from .docx_imports import accept_docx_import, parse_docx
 from .docx_exports import generate_docx_export
-from .forms import CharacterForm, DialogueLineForm, DocxImportUploadForm, EpisodeForm, ImageUploadForm, ProjectForm, PromptBlockForm, PromptForm, SceneForm
-from .models import AiSuggestion, Asset, Character, DialogueLine, DocxImport, Episode, ExportJob, Project, Prompt, PromptBlock, Scene, SubtitleTrack, TranslationUnit, Workspace
+from .forms import AdditionalGenerationForm, AssetEditForm, CharacterForm, DialogueLineForm, DocxImportUploadForm, EpisodeForm, GenerationOutputUploadForm, ImageUploadForm, ProjectForm, PromptBlockForm, PromptForm, SceneForm
+from .models import AdditionalGeneration, AiSuggestion, Asset, Character, DialogueLine, DocxImport, Episode, ExportJob, GenerationOutput, Project, Prompt, PromptBlock, Scene, SubtitleTrack, TranslationUnit, Workspace
 from .permissions import accessible_workspaces, has_capability
 from .revisions import audit, record_revision
 from .services import bulk_replace_subtitle_lines, create_workspace, reorder_subtitle_lines, save_translation
@@ -536,4 +536,197 @@ def project_exports(request, project_id):
     return render(request, "studio/exports.html", {
         "project": project, "jobs": project.export_jobs.select_related("episode", "output_asset")[:50],
         "sections": ALL_SECTIONS, "can_export": can_export,
+    })
+
+
+@login_required
+def scene_media(request, scene_id):
+    scene = get_object_or_404(
+        Scene.objects.select_related("episode__project__workspace").prefetch_related(
+            "assets", "additional_generations__source_asset", "additional_generations__outputs__asset"
+        ).filter(episode__project__workspace__in=accessible_workspaces(request.user)),
+        id=scene_id,
+    )
+    workspace = scene.episode.project.workspace
+    return render(request, "studio/scene_media.html", {
+        "scene": scene,
+        "can_edit": has_capability(request.user, workspace, "edit"),
+    })
+
+
+@login_required
+def generation_create(request, scene_id):
+    scene = get_object_or_404(
+        Scene.objects.select_related("episode__project__workspace").filter(
+            episode__project__workspace__in=accessible_workspaces(request.user)
+        ),
+        id=scene_id,
+    )
+    workspace = scene.episode.project.workspace
+    if not has_capability(request.user, workspace, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    form = AdditionalGenerationForm(request.POST or None, project=scene.episode.project)
+    if request.method == "POST" and form.is_valid():
+        item = form.save(commit=False)
+        item.scene = scene
+        item.position = scene.additional_generations.count()
+        item.created_by = request.user
+        item.updated_by = request.user
+        item.save()
+        record_revision(instance=item, user=request.user, operation="CREATE")
+        audit(workspace=workspace, actor=request.user, action="GENERATION_CREATED", instance=item)
+        messages.success(request, "Additional generation created. Upload one or more results.")
+        return redirect("studio:scene_media", scene_id=scene.id)
+    return render(request, "studio/entity_form.html", {
+        "form": form, "title": "New additional generation", "submit_label": "Create generation",
+    })
+
+
+@login_required
+def generation_edit(request, generation_id):
+    item = get_object_or_404(
+        AdditionalGeneration.objects.select_related("scene__episode__project__workspace").filter(
+            scene__episode__project__workspace__in=accessible_workspaces(request.user)
+        ),
+        id=generation_id,
+    )
+    workspace = item.scene.episode.project.workspace
+    if not has_capability(request.user, workspace, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    form = AdditionalGenerationForm(
+        request.POST or None, instance=item, project=item.scene.episode.project
+    )
+    if request.method == "POST" and form.is_valid():
+        item = form.save(commit=False)
+        item.updated_by = request.user
+        item.save()
+        record_revision(instance=item, user=request.user, operation="UPDATE")
+        audit(workspace=workspace, actor=request.user, action="GENERATION_UPDATED", instance=item)
+        messages.success(request, "Additional generation saved.")
+        return redirect("studio:scene_media", scene_id=item.scene_id)
+    return render(request, "studio/entity_form.html", {
+        "form": form, "title": "Edit additional generation", "submit_label": "Save changes",
+    })
+
+
+@login_required
+def generation_output_upload(request, generation_id):
+    generation = get_object_or_404(
+        AdditionalGeneration.objects.select_related("scene__episode__project__workspace").filter(
+            scene__episode__project__workspace__in=accessible_workspaces(request.user)
+        ),
+        id=generation_id,
+    )
+    scene = generation.scene
+    workspace = scene.episode.project.workspace
+    if not has_capability(request.user, workspace, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    form = GenerationOutputUploadForm(request.POST or None, request.FILES or None)
+    if request.method == "POST" and form.is_valid():
+        try:
+            asset = create_asset(
+                user=request.user,
+                workspace=workspace,
+                uploaded=form.cleaned_data["file"],
+                kind=Asset.Kind.GENERATION_OUTPUT,
+                project=scene.episode.project,
+                scene=scene,
+            )
+        except ValidationError as exc:
+            form.add_error("file", exc)
+        else:
+            output = GenerationOutput.objects.create(
+                generation=generation,
+                asset=asset,
+                model_metadata={"model": form.cleaned_data["model_name"]} if form.cleaned_data["model_name"] else {},
+                position=generation.outputs.count(),
+                created_by=request.user,
+                updated_by=request.user,
+            )
+            generation.status = AdditionalGeneration.Status.IN_REVIEW
+            generation.updated_by = request.user
+            generation.save(update_fields=["status", "updated_by", "updated_at"])
+            audit(
+                workspace=workspace,
+                actor=request.user,
+                action="GENERATION_OUTPUT_UPLOADED",
+                instance=generation,
+                metadata={"outputId": str(output.id), "assetId": str(asset.id)},
+            )
+            messages.success(request, "Generation result uploaded.")
+            return redirect("studio:scene_media", scene_id=scene.id)
+    return render(request, "studio/entity_form.html", {
+        "form": form,
+        "title": "Upload generation result",
+        "submit_label": "Upload result",
+        "multipart": True,
+    })
+
+
+@login_required
+def generation_output_final_web(request, output_id):
+    if request.method != "POST":
+        return HttpResponseForbidden("POST is required.")
+    output = get_object_or_404(
+        GenerationOutput.objects.select_related(
+            "generation__scene__episode__project__workspace", "asset"
+        ).filter(generation__scene__episode__project__workspace__in=accessible_workspaces(request.user)),
+        id=output_id,
+    )
+    generation = output.generation
+    workspace = generation.scene.episode.project.workspace
+    if not has_capability(request.user, workspace, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    with transaction.atomic():
+        generation.outputs.update(is_final=False)
+        output.is_final = True
+        output.updated_by = request.user
+        output.save(update_fields=["is_final", "updated_by", "updated_at"])
+        generation.status = AdditionalGeneration.Status.FINAL
+        generation.updated_by = request.user
+        generation.save(update_fields=["status", "updated_by", "updated_at"])
+        record_revision(instance=generation, user=request.user, operation="FINAL_OUTPUT")
+        audit(
+            workspace=workspace,
+            actor=request.user,
+            action="GENERATION_OUTPUT_SELECTED",
+            instance=generation,
+            metadata={"outputId": str(output.id), "assetId": str(output.asset_id)},
+        )
+    messages.success(request, "Final generation result selected.")
+    return HttpResponseRedirect(
+        reverse("studio:scene_media", kwargs={"scene_id": generation.scene_id})
+        + f"#generation-{generation.id}"
+    )
+
+@login_required
+def asset_edit(request, asset_id):
+    asset = get_object_or_404(
+        Asset.objects.select_related("workspace", "project", "scene").filter(
+            workspace__in=accessible_workspaces(request.user)
+        ),
+        id=asset_id,
+    )
+    if not has_capability(request.user, asset.workspace, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    form = AssetEditForm(request.POST or None, instance=asset)
+    if request.method == "POST" and form.is_valid():
+        asset = form.save(commit=False)
+        asset.updated_by = request.user
+        asset.save(update_fields=["original_filename", "kind", "updated_by", "updated_at"])
+        audit(
+            workspace=asset.workspace,
+            actor=request.user,
+            action="ASSET_METADATA_UPDATED",
+            instance=asset,
+            metadata={"filename": asset.original_filename, "kind": asset.kind},
+        )
+        messages.success(request, "Image details saved.")
+        if asset.scene_id:
+            return redirect("studio:scene_media", scene_id=asset.scene_id)
+        if asset.project_id:
+            return redirect("studio:project_detail", project_id=asset.project_id)
+        return redirect("studio:dashboard")
+    return render(request, "studio/entity_form.html", {
+        "form": form, "title": "Edit image details", "submit_label": "Save changes",
     })

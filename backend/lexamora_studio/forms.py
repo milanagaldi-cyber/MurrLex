@@ -1,6 +1,6 @@
 from django import forms
 
-from .models import Character, DialogueLine, Episode, Project, Prompt, PromptBlock, Scene
+from .models import AdditionalGeneration, Asset, Character, DialogueLine, Episode, Project, Prompt, PromptBlock, Scene
 
 
 class ProjectForm(forms.ModelForm):
@@ -75,3 +75,33 @@ class DocxImportUploadForm(forms.Form):
         if not uploaded.name.lower().endswith(".docx"):
             raise forms.ValidationError("Choose a DOCX document.")
         return uploaded
+
+class AdditionalGenerationForm(forms.ModelForm):
+    class Meta:
+        model = AdditionalGeneration
+        fields = ["reason", "source_asset", "prompt", "status"]
+        widgets = {
+            "reason": forms.Textarea(attrs={"rows": 2}),
+            "prompt": forms.Textarea(attrs={"rows": 5}),
+        }
+
+    def __init__(self, *args, project=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["source_asset"].required = False
+        self.fields["source_asset"].queryset = (
+            Asset.objects.filter(project=project, content_type__startswith="image/")
+            if project is not None else Asset.objects.none()
+        )
+
+
+class GenerationOutputUploadForm(ImageUploadForm):
+    model_name = forms.CharField(
+        required=False,
+        max_length=160,
+        help_text="Optional model or tool name used to create this result.",
+    )
+
+class AssetEditForm(forms.ModelForm):
+    class Meta:
+        model = Asset
+        fields = ["original_filename", "kind"]

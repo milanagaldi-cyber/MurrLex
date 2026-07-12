@@ -1011,3 +1011,95 @@ class StudioMasterDocumentTests(TestCase):
         self.first_scene.refresh_from_db()
         self.second_scene.refresh_from_db()
         self.assertEqual((self.first_scene.position, self.second_scene.position), (0, 1))
+
+class StudioImageGenerationWorkflowTests(TestCase):
+    def setUp(self):
+        from .models import Episode, Scene
+
+        users = get_user_model()
+        self.owner = users.objects.create_user("generation-owner", password="strong-pass")
+        self.viewer = users.objects.create_user("generation-viewer", password="strong-pass")
+        self.workspace = create_workspace(user=self.owner, name="Generation Studio", slug="generation-studio")
+        WorkspaceMembership.objects.create(
+            workspace=self.workspace, user=self.viewer, role=WorkspaceMembership.Role.VIEWER
+        )
+        self.project = Project.objects.create(
+            workspace=self.workspace,
+            project_type=Project.Type.SERIES,
+            title="Visual Project",
+            created_by=self.owner,
+            updated_by=self.owner,
+        )
+        self.episode = Episode.objects.create(
+            project=self.project, number=1, title="Pilot",
+            created_by=self.owner, updated_by=self.owner,
+        )
+        self.scene = Scene.objects.create(
+            episode=self.episode, number=1, title="Visual scene",
+            created_by=self.owner, updated_by=self.owner,
+        )
+
+    @staticmethod
+    def image_file(name="result.png"):
+        import io
+        from PIL import Image
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        buffer = io.BytesIO()
+        Image.new("RGB", (64, 48), "#54a778").save(buffer, "PNG")
+        return SimpleUploadedFile(name, buffer.getvalue(), content_type="image/png")
+
+    def test_owner_can_create_generation_upload_result_and_select_final(self):
+        import tempfile
+        from pathlib import Path
+        from .models import AdditionalGeneration, AuditEvent, GenerationOutput, Revision
+
+        self.client.force_login(self.owner)
+        created = self.client.post(
+            f"/studio/scenes/{self.scene.id}/generations/new/",
+            {"reason": "Closer composition", "prompt": "A close-up with softer light", "status": "DRAFT"},
+        )
+        generation = AdditionalGeneration.objects.get(scene=self.scene)
+        self.assertRedirects(created, f"/studio/scenes/{self.scene.id}/media/")
+        self.assertTrue(Revision.objects.filter(entity_id=generation.id, operation="CREATE").exists())
+
+        with tempfile.TemporaryDirectory() as directory:
+            with self.settings(STUDIO_PRIVATE_MEDIA_ROOT=Path(directory)):
+                uploaded = self.client.post(
+                    f"/studio/generations/{generation.id}/outputs/new/",
+                    {"file": self.image_file(), "model_name": "Test image model"},
+                )
+                output = GenerationOutput.objects.get(generation=generation)
+                self.assertRedirects(uploaded, f"/studio/scenes/{self.scene.id}/media/")
+                self.assertEqual(output.model_metadata["model"], "Test image model")
+                edited = self.client.post(
+                    f"/studio/assets/{output.asset_id}/edit/",
+                    {"original_filename": "approved-result.png", "kind": "GENERATION_OUTPUT"},
+                )
+                self.assertRedirects(edited, f"/studio/scenes/{self.scene.id}/media/")
+                output.asset.refresh_from_db()
+                self.assertEqual(output.asset.original_filename, "approved-result.png")
+                selected = self.client.post(f"/studio/generation-outputs/{output.id}/final/")
+                self.assertRedirects(
+                    selected,
+                    f"/studio/scenes/{self.scene.id}/media/#generation-{generation.id}",
+                )
+
+        output.refresh_from_db()
+        generation.refresh_from_db()
+        self.assertTrue(output.is_final)
+        self.assertEqual(generation.status, AdditionalGeneration.Status.FINAL)
+        self.assertTrue(Revision.objects.filter(entity_id=generation.id, operation="FINAL_OUTPUT").exists())
+        self.assertTrue(AuditEvent.objects.filter(action="GENERATION_OUTPUT_SELECTED").exists())
+
+    def test_viewer_can_browse_but_cannot_create_generation(self):
+        self.client.force_login(self.viewer)
+        page = self.client.get(f"/studio/scenes/{self.scene.id}/media/")
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, "Images &amp; additional generations", html=True)
+        self.assertNotContains(page, "New generation")
+        denied = self.client.post(
+            f"/studio/scenes/{self.scene.id}/generations/new/",
+            {"reason": "Change", "prompt": "Change it", "status": "DRAFT"},
+        )
+        self.assertEqual(denied.status_code, 403)

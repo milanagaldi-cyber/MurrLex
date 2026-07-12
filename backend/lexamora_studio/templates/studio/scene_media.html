@@ -1,0 +1,50 @@
+{% extends "studio/base.html" %}
+{% block title %}{{ scene.title }} / Images{% endblock %}
+{% block content %}
+<p class="muted"><a href="{% url 'studio:project_detail' scene.episode.project.id %}">{{ scene.episode.project.title }}</a> / <a href="{% url 'studio:scene_detail' scene.id %}">Scene {{ scene.number }}</a></p>
+<div class="toolbar">
+  <div><h1>Images &amp; additional generations</h1><p class="muted">{{ scene.title }}</p></div>
+  {% if can_edit %}<div><a class="button secondary" href="{% url 'studio:scene_image_upload' scene.id %}">Upload source image</a> <a class="button" href="{% url 'studio:generation_create' scene.id %}">New generation</a></div>{% endif %}
+</div>
+
+<h2>Scene image library</h2>
+<div class="asset-grid">
+{% for asset in scene.assets.all %}
+  {% if asset.thumbnail %}
+  <figure class="asset">
+    <a href="{% url 'studio_api:asset_view' asset.id %}" target="_blank" rel="noopener"><img src="{% url 'studio_api:asset_thumbnail' asset.id %}" alt="{{ asset.original_filename }}"></a>
+    <figcaption><strong>{{ asset.original_filename }}</strong><br><span class="muted">{{ asset.get_kind_display }} / {{ asset.width }}x{{ asset.height }}</span><br><a href="{% url 'studio_api:asset_view' asset.id %}" target="_blank" rel="noopener">View</a> / <a href="{% url 'studio_api:asset_download' asset.id %}">Download</a>{% if can_edit %} / <a href="{% url 'studio:asset_edit' asset.id %}">Edit</a>{% endif %}</figcaption>
+  </figure>
+  {% endif %}
+{% empty %}<p class="empty">No scene images yet.</p>{% endfor %}
+</div>
+
+<div class="toolbar"><h2>Additional generations</h2>{% if can_edit %}<a class="button" href="{% url 'studio:generation_create' scene.id %}">New generation</a>{% endif %}</div>
+{% for generation in scene.additional_generations.all %}
+<section id="generation-{{ generation.id }}" class="generation-card">
+  <div class="toolbar">
+    <div><h3>Generation {{ forloop.counter }}</h3><span class="badge-status">{{ generation.get_status_display }}</span></div>
+    {% if can_edit %}<div><a class="button secondary" href="{% url 'studio:generation_edit' generation.id %}">Edit</a> <a class="button" href="{% url 'studio:generation_output_upload' generation.id %}">Upload result</a></div>{% endif %}
+  </div>
+  <dl class="metadata">
+    <dt>Reason</dt><dd>{{ generation.reason|linebreaksbr }}</dd>
+    <dt>Prompt</dt><dd>{{ generation.prompt|linebreaksbr }}</dd>
+    <dt>Source</dt><dd>{% if generation.source_asset %}<a href="{% url 'studio_api:asset_view' generation.source_asset.id %}" target="_blank" rel="noopener">{{ generation.source_asset.original_filename }}</a>{% else %}<span class="muted">No source image</span>{% endif %}</dd>
+  </dl>
+  <div class="asset-grid generation-results">
+  {% for output in generation.outputs.all %}
+    <figure class="asset{% if output.is_final %} final-output{% endif %}">
+      {% if output.asset.thumbnail %}<a href="{% url 'studio_api:asset_view' output.asset.id %}" target="_blank" rel="noopener"><img src="{% url 'studio_api:asset_thumbnail' output.asset.id %}" alt="{{ output.asset.original_filename }}"></a>{% endif %}
+      <figcaption>
+        {% if output.is_final %}<strong>Final result</strong><br>{% endif %}
+        {{ output.asset.original_filename }}<br>
+        {% if output.model_metadata.model %}<span class="muted">{{ output.model_metadata.model }}</span><br>{% endif %}
+        <a href="{% url 'studio_api:asset_view' output.asset.id %}" target="_blank" rel="noopener">View</a> / <a href="{% url 'studio_api:asset_download' output.asset.id %}">Download</a>{% if can_edit %} / <a href="{% url 'studio:asset_edit' output.asset.id %}">Edit</a>{% endif %}
+        {% if can_edit and not output.is_final %}<form method="post" action="{% url 'studio:generation_output_final' output.id %}" style="margin-top:8px">{% csrf_token %}<button class="button secondary" type="submit">Set as final</button></form>{% endif %}
+      </figcaption>
+    </figure>
+  {% empty %}<p class="empty">No results uploaded yet.</p>{% endfor %}
+  </div>
+</section>
+{% empty %}<p class="empty">No additional generations yet. Create one when a scene image needs another version.</p>{% endfor %}
+{% endblock %}
