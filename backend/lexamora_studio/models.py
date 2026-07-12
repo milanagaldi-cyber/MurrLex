@@ -357,3 +357,46 @@ class AccessEvent(models.Model):
 
     class Meta:
         ordering = ["-created_at", "id"]
+
+
+class AiSuggestion(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        ACCEPTED = "ACCEPTED", "Accepted"
+        REJECTED = "REJECTED", "Rejected"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    workspace = models.ForeignKey(Workspace, on_delete=models.PROTECT, related_name="ai_suggestions")
+    prompt = models.ForeignKey(Prompt, on_delete=models.PROTECT, related_name="ai_suggestions")
+    source_revision = models.ForeignKey(Revision, on_delete=models.PROTECT, related_name="ai_suggestions")
+    mode = models.CharField(max_length=40)
+    selected_block_ids = models.JSONField(default=list)
+    suggested_blocks = models.JSONField(default=list)
+    raw_response = models.TextField(blank=True)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING)
+    provider = models.CharField(max_length=40, default="openai")
+    model = models.CharField(max_length=80)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="studio_ai_suggestions")
+    created_at = models.DateTimeField(auto_now_add=True)
+    decided_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="studio_ai_decisions", null=True, blank=True)
+    decided_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at", "id"]
+
+
+class AiUsageLog(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    workspace = models.ForeignKey(Workspace, on_delete=models.PROTECT, related_name="ai_usage")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="studio_ai_usage")
+    prompt = models.ForeignKey(Prompt, on_delete=models.PROTECT, related_name="ai_usage")
+    action = models.CharField(max_length=40)
+    model = models.CharField(max_length=80)
+    status = models.CharField(max_length=20)
+    input_chars = models.PositiveIntegerField(default=0)
+    output_chars = models.PositiveIntegerField(default=0)
+    error_code = models.CharField(max_length=80, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "id"]

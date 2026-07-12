@@ -1,6 +1,9 @@
 import json
+from unittest.mock import patch
+
+from cryptography.fernet import Fernet
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
 
 from .models import Project, WorkspaceMembership
 from .permissions import accessible_workspaces, has_capability
@@ -331,3 +334,150 @@ class StudioRevisionTests(TestCase):
         self.initial.operation = "TAMPERED"
         with self.assertRaises(ValueError):
             self.initial.save()
+
+
+@override_settings(
+    CREDENTIAL_ENCRYPTION_KEY=Fernet.generate_key().decode("ascii"),
+    STUDIO_AI_RATE_PER_MINUTE=10,
+)
+class StudioAiSuggestionTests(TestCase):
+    def setUp(self):
+        from lessons.models import ProviderCredential, UserApiAccess
+        from .models import AiModelProfile, DialogueLine, Episode, Prompt, PromptBlock, Scene
+
+        users = get_user_model()
+        self.editor = users.objects.create_user("ai-editor", password="strong-pass")
+        self.viewer = users.objects.create_user("ai-viewer", password="strong-pass")
+        access = UserApiAccess.objects.get(user=self.editor)
+        access.ai_api_enabled = True
+        access.save()
+        credential = ProviderCredential(provider=ProviderCredential.Provider.OPENAI)
+        credential.set_api_key("sk-test")
+        credential.save()
+
+        self.workspace = create_workspace(user=self.editor, name="AI Studio", slug="ai-studio")
+        WorkspaceMembership.objects.create(workspace=self.workspace, user=self.viewer, role=WorkspaceMembership.Role.VIEWER)
+        project = Project.objects.create(
+            workspace=self.workspace, project_type=Project.Type.SERIES, title="AI Project",
+            created_by=self.editor, updated_by=self.editor,
+        )
+        episode = Episode.objects.create(project=project, number=1, title="Pilot", created_by=self.editor, updated_by=self.editor)
+        scene = Scene.objects.create(episode=episode, number=1, title="Opening", created_by=self.editor, updated_by=self.editor)
+        model = AiModelProfile.objects.create(name="AI Test Video", provider="Test", model_id="video-test", media_type="VIDEO")
+        self.prompt = Prompt.objects.create(
+            scene=scene, ai_model=model, prompt_type=Prompt.Type.VIDEO,
+            created_by=self.editor, updated_by=self.editor,
+        )
+        self.narrative = PromptBlock.objects.create(
+            prompt=self.prompt, block_type=PromptBlock.Type.NARRATIVE, content="Plain room",
+            position=0, created_by=self.editor, updated_by=self.editor,
+        )
+        self.dialogue = PromptBlock.objects.create(
+            prompt=self.prompt, block_type=PromptBlock.Type.DIALOGUE_REFERENCE, content="Secret dialogue",
+            position=1, created_by=self.editor, updated_by=self.editor,
+        )
+
+    def provider_response(self):
+        return json.dumps({"blocks": [
+            {"id": str(self.narrative.id), "content": "Cinematic room with precise lighting"},
+            {"id": str(self.dialogue.id), "content": "Rewritten dialogue"},
+        ]})
+
+    @patch("lexamora_studio.ai.run_text")
+    def test_improve_creates_suggestion_without_overwriting_or_sending_dialogue(self, mocked_run_text):
+        from .models import AiSuggestion, AiUsageLog
+
+        mocked_run_text.return_value = (self.provider_response(), "gpt-5.4-mini")
+        self.client.force_login(self.editor)
+        response = self.client.post(
+            f"/api/v1/studio/prompts/{self.prompt.id}/improve",
+            data=json.dumps({"mode": "cinematic", "textModel": "gpt-5.4-mini"}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        self.narrative.refresh_from_db()
+        self.assertEqual(self.narrative.content, "Plain room")
+        self.assertEqual(AiSuggestion.objects.get().status, AiSuggestion.Status.PENDING)
+        self.assertEqual(AiUsageLog.objects.get().status, "SUCCESS")
+        provider_prompt = mocked_run_text.call_args.args[1]
+        self.assertNotIn("Secret dialogue", provider_prompt)
+
+    @patch("lexamora_studio.ai.run_text")
+    def test_accept_updates_non_dialogue_and_preserves_dialogue(self, mocked_run_text):
+        from .models import AiSuggestion, Revision
+
+        mocked_run_text.return_value = (self.provider_response(), "gpt-5.4-mini")
+        self.client.force_login(self.editor)
+        created = self.client.post(
+            f"/api/v1/studio/prompts/{self.prompt.id}/improve",
+            data=json.dumps({"mode": "non_dialogue"}),
+            content_type="application/json",
+        )
+        accepted = self.client.post(f"/api/v1/studio/suggestions/{created.json()['id']}/accept")
+        self.assertEqual(accepted.status_code, 200, accepted.content)
+        self.narrative.refresh_from_db()
+        self.dialogue.refresh_from_db()
+        self.assertEqual(self.narrative.content, "Cinematic room with precise lighting")
+        self.assertEqual(self.dialogue.content, "Secret dialogue")
+        self.assertEqual(AiSuggestion.objects.get().status, AiSuggestion.Status.ACCEPTED)
+        self.assertTrue(Revision.objects.filter(entity_id=self.prompt.id, operation="AI_ACCEPT").exists())
+
+    @patch("lexamora_studio.ai.run_text")
+    def test_reject_keeps_prompt_unchanged(self, mocked_run_text):
+        mocked_run_text.return_value = (self.provider_response(), "gpt-5.4-mini")
+        self.client.force_login(self.editor)
+        created = self.client.post(
+            f"/api/v1/studio/prompts/{self.prompt.id}/improve",
+            data=json.dumps({"mode": "shorter"}),
+            content_type="application/json",
+        )
+        rejected = self.client.post(f"/api/v1/studio/suggestions/{created.json()['id']}/reject")
+        self.assertEqual(rejected.status_code, 200)
+        self.narrative.refresh_from_db()
+        self.assertEqual(self.narrative.content, "Plain room")
+
+    def test_user_without_ai_capability_cannot_improve(self):
+        self.client.force_login(self.viewer)
+        response = self.client.post(
+            f"/api/v1/studio/prompts/{self.prompt.id}/improve",
+            data=json.dumps({"mode": "non_dialogue"}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 403)
+    @override_settings(STUDIO_AI_RATE_PER_MINUTE=1)
+    @patch("lexamora_studio.ai.run_text")
+    def test_ai_rate_limit_returns_429(self, mocked_run_text):
+        mocked_run_text.return_value = (self.provider_response(), "gpt-5.4-mini")
+        self.client.force_login(self.editor)
+        first = self.client.post(
+            f"/api/v1/studio/prompts/{self.prompt.id}/improve",
+            data=json.dumps({"mode": "non_dialogue"}),
+            content_type="application/json",
+        )
+        second = self.client.post(
+            f"/api/v1/studio/prompts/{self.prompt.id}/improve",
+            data=json.dumps({"mode": "non_dialogue"}),
+            content_type="application/json",
+        )
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(second.status_code, 429)
+
+    @patch("lexamora_studio.ai.run_text")
+    def test_stale_suggestion_cannot_be_accepted(self, mocked_run_text):
+        from .revisions import record_revision
+
+        mocked_run_text.return_value = (self.provider_response(), "gpt-5.4-mini")
+        self.client.force_login(self.editor)
+        created = self.client.post(
+            f"/api/v1/studio/prompts/{self.prompt.id}/improve",
+            data=json.dumps({"mode": "non_dialogue"}),
+            content_type="application/json",
+        )
+        self.prompt.title = "Changed after suggestion"
+        self.prompt.updated_by = self.editor
+        self.prompt.save()
+        record_revision(instance=self.prompt, user=self.editor, operation="UPDATE")
+        accepted = self.client.post(f"/api/v1/studio/suggestions/{created.json()['id']}/accept")
+        self.assertEqual(accepted.status_code, 409)
+        self.narrative.refresh_from_db()
+        self.assertEqual(self.narrative.content, "Plain room")

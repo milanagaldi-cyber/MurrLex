@@ -1,8 +1,13 @@
+from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils.text import slugify
 
-from .models import Project, Scene, Workspace
+from lessons.ai_gateway import ProviderError
+from lessons.provider_credentials import user_has_ai_access
+
+from .ai import StudioAiError, accept_suggestion, improve_prompt, reject_suggestion
+from .models import AiSuggestion, Project, Prompt, Scene, Workspace
 from .permissions import accessible_workspaces, has_capability
 from .services import create_workspace
 
@@ -55,3 +60,68 @@ def scene_detail(request, scene_id):
         "scene": scene,
         "can_edit": has_capability(request.user, scene.episode.project.workspace, "edit"),
     })
+
+@login_required
+def prompt_detail(request, prompt_id):
+    prompt = get_object_or_404(
+        Prompt.objects.select_related("scene__episode__project__workspace", "ai_model")
+        .prefetch_related("blocks", "ai_suggestions")
+        .filter(scene__episode__project__workspace__in=accessible_workspaces(request.user)),
+        id=prompt_id,
+    )
+    workspace = prompt.scene.episode.project.workspace
+    return render(request, "studio/prompt_detail.html", {
+        "prompt": prompt,
+        "can_edit": has_capability(request.user, workspace, "edit"),
+        "can_use_ai": has_capability(request.user, workspace, "use_ai") and user_has_ai_access(request.user),
+    })
+
+
+@login_required
+def prompt_improve(request, prompt_id):
+    if request.method != "POST":
+        return redirect("studio:prompt_detail", prompt_id=prompt_id)
+    prompt = get_object_or_404(
+        Prompt.objects.select_related("scene__episode__project__workspace", "ai_model")
+        .prefetch_related("blocks")
+        .filter(scene__episode__project__workspace__in=accessible_workspaces(request.user)),
+        id=prompt_id,
+    )
+    workspace = prompt.scene.episode.project.workspace
+    if not has_capability(request.user, workspace, "use_ai") or not user_has_ai_access(request.user):
+        messages.error(request, "AI access is not enabled for this account and workspace.")
+        return redirect("studio:prompt_detail", prompt_id=prompt.id)
+    try:
+        improve_prompt(
+            prompt=prompt, user=request.user, mode=request.POST.get("mode", "non_dialogue"),
+            selected_block_ids=request.POST.getlist("selected_blocks"),
+            text_model=request.POST.get("text_model", "gpt-5.4-mini"),
+        )
+    except (StudioAiError, ProviderError) as exc:
+        messages.error(request, str(exc))
+    else:
+        messages.success(request, "AI suggestion is ready for review.")
+    return redirect("studio:prompt_detail", prompt_id=prompt.id)
+
+
+@login_required
+def suggestion_decide(request, suggestion_id, decision):
+    suggestion = get_object_or_404(
+        AiSuggestion.objects.select_related("workspace", "prompt").filter(
+            workspace__in=accessible_workspaces(request.user)
+        ),
+        id=suggestion_id,
+    )
+    if request.method != "POST" or not has_capability(request.user, suggestion.workspace, "edit"):
+        messages.error(request, "Edit permission is required.")
+        return redirect("studio:prompt_detail", prompt_id=suggestion.prompt_id)
+    try:
+        if decision == "accept":
+            accept_suggestion(suggestion=suggestion, user=request.user)
+        else:
+            reject_suggestion(suggestion=suggestion, user=request.user)
+    except StudioAiError as exc:
+        messages.error(request, str(exc))
+    else:
+        messages.success(request, f"Suggestion {decision}ed.")
+    return redirect("studio:prompt_detail", prompt_id=suggestion.prompt_id)

@@ -5,10 +5,14 @@ from django.shortcuts import get_object_or_404
 from django.core.exceptions import ValidationError
 from django.views.decorators.http import require_http_methods
 
-from .models import AccessEvent, AdditionalGeneration, AiModelProfile, Asset, DialogueLine, GenerationOutput, Project, Prompt, PromptBlock, Revision, Scene
+from lessons.ai_gateway import ProviderError
+from lessons.provider_credentials import user_has_ai_access
+
+from .models import AccessEvent, AdditionalGeneration, AiModelProfile, AiSuggestion, Asset, DialogueLine, GenerationOutput, Project, Prompt, PromptBlock, Revision, Scene
 from .permissions import accessible_workspaces, has_capability
 from .services import create_workspace, update_dialogue_line
 from .storage import create_asset
+from .ai import StudioAiError, accept_suggestion, improve_prompt, reject_suggestion
 from .revisions import VERSIONED_MODELS, audit, record_revision, restore_revision, revision_diff
 
 
@@ -470,3 +474,94 @@ def revision_restore(request, entity_type, entity_id, revision_id):
     instance = restore_revision(revision=revision, user=user)
     audit(workspace=revision.workspace, actor=user, action="REVISION_RESTORE", instance=instance, metadata={"revisionId": str(revision.id)})
     return JsonResponse({"id": str(instance.pk), "restoredRevision": revision.sequence})
+
+def suggestion_json(item):
+    current = {str(block.id): block.content for block in item.prompt.blocks.all()}
+    return {
+        "id": str(item.id), "promptId": str(item.prompt_id), "status": item.status,
+        "mode": item.mode, "model": item.model, "sourceRevisionId": str(item.source_revision_id),
+        "blocks": [
+            {"id": row["id"], "before": current.get(str(row["id"]), ""), "suggested": row["content"]}
+            for row in item.suggested_blocks
+        ],
+        "createdAt": item.created_at.isoformat(),
+    }
+
+
+def _ai_error_response(exc):
+    if isinstance(exc, ProviderError):
+        return error("provider_error", str(exc), 502)
+    status = 429 if exc.code == "rate_limited" else 409 if exc.code in {"stale_suggestion", "already_decided"} else 400
+    return error(exc.code, str(exc), status)
+
+
+@require_http_methods(["GET", "POST"])
+def prompt_improve(request, prompt_id):
+    user = require_user(request)
+    if user is None:
+        return error("authentication_required", "Login is required.", 401)
+    prompt = get_object_or_404(
+        Prompt.objects.select_related("scene__episode__project__workspace", "ai_model").prefetch_related("blocks").filter(
+            scene__episode__project__workspace__in=accessible_workspaces(user)
+        ),
+        id=prompt_id,
+    )
+    workspace = prompt.scene.episode.project.workspace
+    if request.method == "GET":
+        items = prompt.ai_suggestions.select_related("source_revision").prefetch_related("prompt__blocks")[:30]
+        return JsonResponse({"results": [suggestion_json(item) for item in items]})
+    if not has_capability(user, workspace, "use_ai"):
+        return error("permission_denied", "AI capability is required.", 403)
+    if not user_has_ai_access(user):
+        return error("ai_access_required", "Server AI access is not enabled for this account.", 403)
+    data = payload(request)
+    if data is None:
+        return error("invalid_json", "A JSON object is required.")
+    try:
+        suggestion = improve_prompt(
+            prompt=prompt, user=user, mode=str(data.get("mode", "non_dialogue")),
+            selected_block_ids=data.get("selectedBlockIds", []),
+            text_model=str(data.get("textModel", "gpt-5.4-mini")),
+        )
+    except (StudioAiError, ProviderError) as exc:
+        return _ai_error_response(exc)
+    return JsonResponse(suggestion_json(suggestion), status=201)
+
+
+def _suggestion_for_user(user, suggestion_id):
+    return get_object_or_404(
+        AiSuggestion.objects.select_related("workspace", "prompt").prefetch_related("prompt__blocks").filter(
+            workspace__in=accessible_workspaces(user)
+        ),
+        id=suggestion_id,
+    )
+
+
+@require_http_methods(["POST"])
+def suggestion_accept(request, suggestion_id):
+    user = require_user(request)
+    if user is None:
+        return error("authentication_required", "Login is required.", 401)
+    suggestion = _suggestion_for_user(user, suggestion_id)
+    if not has_capability(user, suggestion.workspace, "edit"):
+        return error("permission_denied", "Edit permission is required.", 403)
+    try:
+        suggestion = accept_suggestion(suggestion=suggestion, user=user)
+    except StudioAiError as exc:
+        return _ai_error_response(exc)
+    return JsonResponse(suggestion_json(suggestion))
+
+
+@require_http_methods(["POST"])
+def suggestion_reject(request, suggestion_id):
+    user = require_user(request)
+    if user is None:
+        return error("authentication_required", "Login is required.", 401)
+    suggestion = _suggestion_for_user(user, suggestion_id)
+    if not has_capability(user, suggestion.workspace, "edit"):
+        return error("permission_denied", "Edit permission is required.", 403)
+    try:
+        suggestion = reject_suggestion(suggestion=suggestion, user=user)
+    except StudioAiError as exc:
+        return _ai_error_response(exc)
+    return JsonResponse(suggestion_json(suggestion))

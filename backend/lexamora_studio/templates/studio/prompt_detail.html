@@ -1,0 +1,22 @@
+{% extends "studio/base.html" %}
+{% block content %}
+<p class="muted"><a href="{% url 'studio:scene_detail' prompt.scene.id %}">Scene {{ prompt.scene.number }}</a> · {{ prompt.ai_model.name }}</p>
+<h1>{{ prompt.title|default:prompt.get_prompt_type_display }}</h1>
+{% if messages %}{% for message in messages %}<p>{{ message }}</p>{% endfor %}{% endif %}
+<div class="toolbar">
+  <span class="muted">{{ prompt.get_status_display }}{% if prompt.needs_review %} · Needs review{% endif %}</span>
+  {% if can_use_ai %}<form method="post" action="{% url 'studio:prompt_improve' prompt.id %}">{% csrf_token %}
+    <select name="mode"><option value="non_dialogue">Improve non-dialogue</option><option value="cinematic">More cinematic</option><option value="precise">More precise</option><option value="shorter">Make shorter</option><option value="adapt_model">Adapt to model</option><option value="fix_contradictions">Fix contradictions</option><option value="preserve_consistency">Preserve consistency</option></select>
+    <input type="hidden" name="text_model" value="gpt-5.4-mini"><button class="button">Improve</button>
+  </form>{% endif %}
+</div>
+<h2>Current blocks</h2>
+<div class="list">{% for block in prompt.blocks.all %}<div class="row"><strong>{{ block.get_block_type_display }}</strong><span>{{ block.content }}</span><span class="muted">{% if block.block_type == "DIALOGUE_REFERENCE" %}Protected{% endif %}</span></div>{% endfor %}</div>
+<h2>Suggestions</h2>
+{% for suggestion in prompt.ai_suggestions.all %}
+<section class="list" style="margin-bottom:18px"><div class="row"><strong>{{ suggestion.mode }}</strong><span>{{ suggestion.model }}</span><span class="muted">{{ suggestion.get_status_display }}</span></div>
+{% for row in suggestion.suggested_blocks %}<div class="row"><span class="muted">Block {{ row.id|slice:":8" }}</span><span>{{ row.content }}</span><span></span></div>{% endfor %}
+{% if suggestion.status == "PENDING" and can_edit %}<div class="toolbar" style="padding:12px"><form method="post" action="{% url 'studio:suggestion_decide' suggestion.id 'accept' %}">{% csrf_token %}<button class="button">Accept</button></form><form method="post" action="{% url 'studio:suggestion_decide' suggestion.id 'reject' %}">{% csrf_token %}<button>Reject</button></form></div>{% endif %}
+</section>
+{% empty %}<p class="empty">No AI suggestions yet.</p>{% endfor %}
+{% endblock %}
