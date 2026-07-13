@@ -29,20 +29,24 @@ GET/POST  scenes/{scene_id}/prompts
 
 ```text
 POST prompts/{prompt_id}/improve
+POST prompts/{prompt_id}/translate
 POST prompts/{prompt_id}/translate-dialogue
 POST suggestions/{suggestion_id}/accept
 POST suggestions/{suggestion_id}/reject
+POST suggestions/{suggestion_id}/undo
 ```
 
-Improve accepts mode, selected block IDs and target model. It returns a suggestion,
-never an overwritten prompt. HTTP 403 is returned without `can_use_ai`; HTTP 429
-is returned when rate limited; HTTP 409 indicates a stale source revision.
-`improve_translate_en` converts editable non-dialogue blocks to production English.
-Dialogue translation accepts `targetLanguage` and `textModel`, writes only the
-protected dialogue translation layer and leaves narrative prompt blocks unchanged.
+The browser Improve action improves editable non-dialogue blocks and converts
+non-English input to production English. It returns a review suggestion, never an
+overwritten prompt. Apply accepts it, Cancel rejects it, and Undo restores the exact
+pre-improvement blocks when no later edit has made the operation stale. HTTP 403 is
+returned without `can_use_ai`; HTTP 429 is returned when rate limited.
+`translate` accepts `targetLanguage`, `textModel`, and scope `FULL` or `DIALOGUE`.
+It creates a separate prompt with source linkage, language and translation scope.
+The compatibility `translate-dialogue` endpoint always uses `DIALOGUE` scope.
 
-The browser Studio settings page manages active OpenAI text models and mandatory
-prompt templates. Provider keys remain in the encrypted MurrLex credential cabinet.
+The browser Studio settings page manages active OpenAI text models and one global
+prompt addition. Provider keys remain in the encrypted MurrLex credential cabinet.
 
 ## Assets, history and exports
 

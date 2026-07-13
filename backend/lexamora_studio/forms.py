@@ -2,8 +2,8 @@ from django import forms
 
 from lessons.ai_gateway import TEXT_MODELS
 
-from .ai_catalog import active_prompt_templates, default_prompt_template
-from .models import AdditionalGeneration, Asset, Character, DialogueLine, Episode, Project, Prompt, PromptBlock, PromptTemplate, Scene, StudioTextModel
+from .ai_catalog import default_prompt_template
+from .models import AdditionalGeneration, Asset, Character, DialogueLine, Episode, Project, Prompt, PromptBlock, Scene, StudioTextModel
 
 
 class ProjectForm(forms.ModelForm):
@@ -51,13 +51,15 @@ class DialogueLineForm(forms.ModelForm):
 class PromptForm(forms.ModelForm):
     class Meta:
         model = Prompt
-        fields = ["ai_model", "template", "prompt_type", "title", "status"]
+        fields = ["ai_model", "prompt_type", "title", "status"]
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.fields["template"].queryset = active_prompt_templates()
-        if not self.instance.pk:
-            self.initial["template"] = default_prompt_template()
+    def save(self, commit=True):
+        instance = super().save(commit=False)
+        instance.template = default_prompt_template(instance.prompt_type)
+        if commit:
+            instance.save()
+            self.save_m2m()
+        return instance
 
 
 class PromptBlockForm(forms.ModelForm):
@@ -122,10 +124,3 @@ class StudioTextModelForm(forms.ModelForm):
     class Meta:
         model = StudioTextModel
         fields = ["name", "model_id", "is_active", "is_default"]
-
-
-class PromptTemplateForm(forms.ModelForm):
-    class Meta:
-        model = PromptTemplate
-        fields = ["name", "scope", "content", "is_active", "is_default"]
-        widgets = {"content": forms.Textarea(attrs={"rows": 7})}

@@ -6,6 +6,28 @@ from lessons.ai_gateway import TEXT_MODELS
 from .models import PromptTemplate, StudioTextModel
 
 
+PROMPT_LANGUAGES = (
+    ("BL", "BL"),
+    ("DE", "DE"),
+    ("EN", "EN"),
+    ("ES", "ES"),
+    ("PL", "PL"),
+    ("PT", "PT"),
+    ("RU", "RU"),
+    ("UA", "UA"),
+)
+PROMPT_LANGUAGE_NAMES = {
+    "BL": "Belarusian",
+    "DE": "German",
+    "EN": "English",
+    "ES": "Spanish",
+    "PL": "Polish",
+    "PT": "Portuguese",
+    "RU": "Russian",
+    "UA": "Ukrainian",
+}
+
+
 def active_text_models():
     return StudioTextModel.objects.filter(
         provider=StudioTextModel.Provider.OPENAI,

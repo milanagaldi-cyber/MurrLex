@@ -16,8 +16,8 @@ from .services import bulk_replace_subtitle_lines, create_workspace, reorder_sub
 from .storage import create_asset
 from .exports import ExportError, generate_export
 from .docx_imports import accept_docx_import, parse_docx
-from .ai import StudioAiError, accept_suggestion, improve_prompt, reject_suggestion, translate_prompt_dialogue
-from .ai_catalog import selected_prompt_template, selected_text_model
+from .ai import StudioAiError, accept_suggestion, improve_prompt, reject_suggestion, translate_prompt, translate_prompt_dialogue, undo_suggestion
+from .ai_catalog import default_prompt_template, selected_text_model
 from .revisions import VERSIONED_MODELS, audit, record_revision, restore_revision, revision_diff
 
 
@@ -245,7 +245,10 @@ def scene_prompts(request, scene_id):
     )
     if request.method == "GET":
         return JsonResponse({"results": [
-            {"id": str(item.id), "model": item.ai_model.name, "templateId": str(item.template_id), "template": item.template.name, "type": item.prompt_type, "status": item.status, "needsReview": item.needs_review}
+            {"id": str(item.id), "model": item.ai_model.name, "type": item.prompt_type, "status": item.status,
+             "language": item.language, "translationScope": item.translation_scope,
+             "sourcePromptId": str(item.source_prompt_id) if item.source_prompt_id else None,
+             "needsReview": item.needs_review}
             for item in scene.prompts.select_related("ai_model", "template")
         ]})
     if not has_capability(user, scene_workspace(scene), "edit"):
@@ -257,10 +260,7 @@ def scene_prompts(request, scene_id):
     prompt_type = str(data.get("type", ""))
     if prompt_type not in Prompt.Type.values:
         return error("validation_error", "A valid prompt type is required.")
-    try:
-        template = selected_prompt_template(data.get("templateId"), prompt_type)
-    except ValidationError as exc:
-        return error("validation_error", "; ".join(exc.messages))
+    template = default_prompt_template(prompt_type)
     prompt = Prompt.objects.create(
         scene=scene, ai_model=model,
         template=template,
@@ -274,7 +274,7 @@ def scene_prompts(request, scene_id):
                 position=position, created_by=user, updated_by=user,
             )
     record_revision(instance=prompt, user=user, operation="CREATE")
-    return JsonResponse({"id": str(prompt.id), "model": model.name, "type": prompt.prompt_type}, status=201)
+    return JsonResponse({"id": str(prompt.id), "model": model.name, "type": prompt.prompt_type, "language": prompt.language}, status=201)
 def docx_import_json(item):
     return {
         "id": str(item.id), "workspaceId": str(item.workspace_id), "status": item.status,
@@ -571,7 +571,7 @@ def _ai_error_response(exc):
         return error("provider_error", str(exc), 502)
     if isinstance(exc, ValidationError):
         return error("validation_error", "; ".join(exc.messages), 400)
-    status = 429 if exc.code == "rate_limited" else 409 if exc.code in {"stale_suggestion", "already_decided"} else 400
+    status = 429 if exc.code == "rate_limited" else 409 if exc.code in {"stale_suggestion", "stale_undo", "already_decided", "not_undoable"} else 400
     return error(exc.code, str(exc), status)
 
 
@@ -630,7 +630,7 @@ def prompt_translate_dialogue(request, prompt_id):
         return error("invalid_json", "A JSON object is required.")
     try:
         model_id = selected_text_model(str(data.get("textModel", "")))
-        count, selected_model = translate_prompt_dialogue(
+        translated_prompt, count, selected_model = translate_prompt_dialogue(
             prompt=prompt,
             user=user,
             target_language=str(data.get("targetLanguage", "")),
@@ -638,7 +638,46 @@ def prompt_translate_dialogue(request, prompt_id):
         )
     except (StudioAiError, ProviderError, ValidationError) as exc:
         return _ai_error_response(exc)
-    return JsonResponse({"promptId": str(prompt.id), "translatedBlocks": count, "model": selected_model})
+    return JsonResponse({
+        "promptId": str(translated_prompt.id), "sourcePromptId": str(prompt.id),
+        "language": translated_prompt.language, "translationScope": translated_prompt.translation_scope,
+        "translatedBlocks": count, "model": selected_model,
+    }, status=201)
+
+
+@require_http_methods(["POST"])
+def prompt_translate(request, prompt_id):
+    user = require_user(request)
+    if user is None:
+        return error("authentication_required", "Login is required.", 401)
+    prompt = get_object_or_404(
+        Prompt.objects.select_related("scene__episode__project__workspace", "ai_model", "template")
+        .prefetch_related("blocks__source_dialogue")
+        .filter(scene__episode__project__workspace__in=accessible_workspaces(user)),
+        id=prompt_id,
+    )
+    workspace = prompt.scene.episode.project.workspace
+    if not has_capability(user, workspace, "use_ai"):
+        return error("permission_denied", "AI capability is required.", 403)
+    if not user_has_ai_access(user):
+        return error("ai_access_required", "Server AI access is not enabled for this account.", 403)
+    data = payload(request)
+    if data is None:
+        return error("invalid_json", "A JSON object is required.")
+    scope = str(data.get("scope", "")).upper()
+    try:
+        model_id = selected_text_model(str(data.get("textModel", "")))
+        translated_prompt, count, selected_model = translate_prompt(
+            prompt=prompt, user=user, target_language=str(data.get("targetLanguage", "")),
+            text_model=model_id, scope=scope,
+        )
+    except (StudioAiError, ProviderError, ValidationError) as exc:
+        return _ai_error_response(exc)
+    return JsonResponse({
+        "promptId": str(translated_prompt.id), "sourcePromptId": str(prompt.id),
+        "language": translated_prompt.language, "translationScope": translated_prompt.translation_scope,
+        "translatedBlocks": count, "model": selected_model,
+    }, status=201)
 
 
 def _suggestion_for_user(user, suggestion_id):
@@ -675,6 +714,21 @@ def suggestion_reject(request, suggestion_id):
         return error("permission_denied", "Edit permission is required.", 403)
     try:
         suggestion = reject_suggestion(suggestion=suggestion, user=user)
+    except StudioAiError as exc:
+        return _ai_error_response(exc)
+    return JsonResponse(suggestion_json(suggestion))
+
+
+@require_http_methods(["POST"])
+def suggestion_undo(request, suggestion_id):
+    user = require_user(request)
+    if user is None:
+        return error("authentication_required", "Login is required.", 401)
+    suggestion = _suggestion_for_user(user, suggestion_id)
+    if not has_capability(user, suggestion.workspace, "edit"):
+        return error("permission_denied", "Edit permission is required.", 403)
+    try:
+        suggestion = undo_suggestion(suggestion=suggestion, user=user)
     except StudioAiError as exc:
         return _ai_error_response(exc)
     return JsonResponse(suggestion_json(suggestion))

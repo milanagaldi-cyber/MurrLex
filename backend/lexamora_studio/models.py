@@ -199,7 +199,7 @@ class PromptTemplate(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=160, unique=True)
-    content = models.TextField()
+    content = models.TextField(blank=True)
     scope = models.CharField(max_length=16, choices=Scope.choices, default=Scope.ALL)
     is_active = models.BooleanField(default=True)
     is_default = models.BooleanField(default=False)
@@ -243,6 +243,21 @@ class DialogueLine(SoftDeleteModel):
 
 
 class Prompt(SoftDeleteModel):
+    class Language(models.TextChoices):
+        BL = "BL", "BL"
+        DE = "DE", "DE"
+        EN = "EN", "EN"
+        ES = "ES", "ES"
+        PL = "PL", "PL"
+        PT = "PT", "PT"
+        RU = "RU", "RU"
+        UA = "UA", "UA"
+
+    class TranslationScope(models.TextChoices):
+        ORIGINAL = "ORIGINAL", "Original"
+        FULL = "FULL", "Full text"
+        DIALOGUE = "DIALOGUE", "Dialogue only"
+
     class Type(models.TextChoices):
         IMAGE = "IMAGE", "Image"
         VIDEO = "VIDEO", "Video"
@@ -257,6 +272,13 @@ class Prompt(SoftDeleteModel):
     scene = models.ForeignKey(Scene, on_delete=models.PROTECT, related_name="prompts")
     ai_model = models.ForeignKey(AiModelProfile, on_delete=models.PROTECT, related_name="prompts")
     template = models.ForeignKey(PromptTemplate, on_delete=models.PROTECT, related_name="prompts")
+    source_prompt = models.ForeignKey(
+        "self", on_delete=models.PROTECT, related_name="translations", null=True, blank=True,
+    )
+    language = models.CharField(max_length=2, choices=Language.choices, default=Language.EN)
+    translation_scope = models.CharField(
+        max_length=16, choices=TranslationScope.choices, default=TranslationScope.ORIGINAL,
+    )
     prompt_type = models.CharField(max_length=16, choices=Type.choices)
     title = models.CharField(max_length=180, blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
@@ -440,6 +462,7 @@ class AiSuggestion(models.Model):
         PENDING = "PENDING", "Pending"
         ACCEPTED = "ACCEPTED", "Accepted"
         REJECTED = "REJECTED", "Rejected"
+        UNDONE = "UNDONE", "Undone"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     workspace = models.ForeignKey(Workspace, on_delete=models.PROTECT, related_name="ai_suggestions")
@@ -447,6 +470,7 @@ class AiSuggestion(models.Model):
     source_revision = models.ForeignKey(Revision, on_delete=models.PROTECT, related_name="ai_suggestions")
     mode = models.CharField(max_length=40)
     selected_block_ids = models.JSONField(default=list)
+    original_blocks = models.JSONField(default=list)
     suggested_blocks = models.JSONField(default=list)
     raw_response = models.TextField(blank=True)
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING)

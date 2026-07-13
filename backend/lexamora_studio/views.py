@@ -14,14 +14,14 @@ from django.utils.text import slugify
 from lessons.ai_gateway import ProviderError
 from lessons.provider_credentials import user_has_ai_access
 
-from .ai import MODES, StudioAiError, accept_suggestion, improve_prompt, reject_suggestion, translate_prompt_dialogue
-from .ai_catalog import active_prompt_templates, active_text_models, default_text_model_id, selected_prompt_template, selected_text_model
+from .ai import StudioAiError, accept_suggestion, improve_prompt, reject_suggestion, translate_prompt, translate_prompt_dialogue, undo_suggestion
+from .ai_catalog import PROMPT_LANGUAGES, active_text_models, default_prompt_template, default_text_model_id, selected_text_model
 from .exports import ALL_SECTIONS, ExportError, generate_export
 from .docx_imports import accept_docx_import, parse_docx
 from .docx_exports import generate_docx_export
 from .docx_roundtrip import compare_docx_export
-from .forms import AdditionalGenerationForm, AssetEditForm, CharacterForm, DialogueLineForm, DocxImportUploadForm, EpisodeForm, GenerationOutputUploadForm, ImageUploadForm, ProjectForm, PromptBlockForm, PromptForm, PromptTemplateForm, SceneForm, StudioTextModelForm
-from .models import AdditionalGeneration, AiModelProfile, AiSuggestion, Asset, Character, DialogueLine, DocxImport, Episode, ExportJob, GenerationOutput, Project, Prompt, PromptBlock, PromptTemplate, Scene, StudioTextModel, SubtitleTrack, TranslationUnit, Workspace
+from .forms import AdditionalGenerationForm, AssetEditForm, CharacterForm, DialogueLineForm, DocxImportUploadForm, EpisodeForm, GenerationOutputUploadForm, ImageUploadForm, ProjectForm, PromptBlockForm, PromptForm, SceneForm, StudioTextModelForm
+from .models import AdditionalGeneration, AiModelProfile, AiSuggestion, Asset, Character, DialogueLine, DocxImport, Episode, ExportJob, GenerationOutput, Project, Prompt, PromptBlock, Scene, StudioTextModel, SubtitleTrack, TranslationUnit, Workspace
 from .permissions import accessible_workspaces, has_capability
 from .revisions import audit, record_revision
 from .services import bulk_replace_subtitle_lines, create_workspace, reorder_subtitle_lines, save_translation
@@ -43,7 +43,7 @@ def studio_settings(request):
     if not request.user.is_superuser:
         return HttpResponseForbidden("Studio settings require a server administrator.")
     model_form = StudioTextModelForm(prefix="model")
-    template_form = PromptTemplateForm(prefix="template")
+    prompt_addition = default_prompt_template()
     if request.method == "POST":
         action = request.POST.get("action")
         if action in {"create_model", "update_model"}:
@@ -59,23 +59,20 @@ def studio_settings(request):
                 _set_single_default(StudioTextModel, item)
                 messages.success(request, "OpenAI text model saved.")
                 return redirect("studio:settings")
-        elif action in {"create_template", "update_template"}:
-            instance = None
-            if action == "update_template":
-                instance = get_object_or_404(PromptTemplate, id=request.POST.get("id"))
-            template_form = PromptTemplateForm(request.POST, instance=instance, prefix="template")
-            if template_form.is_valid():
-                item = template_form.save(commit=False)
-                item.updated_by = request.user
-                item.save()
-                _set_single_default(PromptTemplate, item)
-                messages.success(request, "Prompt template saved.")
-                return redirect("studio:settings")
+        elif action == "update_prompt_addition":
+            prompt_addition.content = request.POST.get("prompt_addition", "").strip()
+            prompt_addition.scope = prompt_addition.Scope.ALL
+            prompt_addition.is_active = True
+            prompt_addition.is_default = True
+            prompt_addition.updated_by = request.user
+            prompt_addition.save(update_fields=["content", "scope", "is_active", "is_default", "updated_by", "updated_at"])
+            _set_single_default(prompt_addition.__class__, prompt_addition)
+            messages.success(request, "Default prompt addition saved.")
+            return redirect("studio:settings")
     return render(request, "studio/settings.html", {
         "model_form": model_form,
-        "template_form": template_form,
         "text_models": StudioTextModel.objects.all(),
-        "templates": PromptTemplate.objects.all(),
+        "prompt_addition": prompt_addition,
         "murrlex_default_model": default_text_model_id(),
     })
 
@@ -413,6 +410,7 @@ def scene_detail(request, scene_id):
         id=scene_id,
     )
     workspace = scene.episode.project.workspace
+    _attach_prompt_ai_state(scene.prompts.all())
     return render(request, "studio/scene_detail.html", {
         "scene": scene,
         "can_edit": has_capability(request.user, workspace, "edit"),
@@ -430,6 +428,7 @@ def prompt_detail(request, prompt_id):
         id=prompt_id,
     )
     workspace = prompt.scene.episode.project.workspace
+    _attach_prompt_ai_state([prompt])
     return render(request, "studio/prompt_detail.html", {
         "prompt": prompt,
         "can_edit": has_capability(request.user, workspace, "edit"),
@@ -455,7 +454,7 @@ def prompt_improve(request, prompt_id):
     try:
         model_id = selected_text_model(request.POST.get("text_model"))
         improve_prompt(
-            prompt=prompt, user=request.user, mode=request.POST.get("mode", "non_dialogue"),
+            prompt=prompt, user=request.user, mode="improve_translate_en",
             selected_block_ids=request.POST.getlist("selected_blocks"),
             text_model=model_id,
         )
@@ -480,7 +479,7 @@ def prompt_translate_dialogue(request, prompt_id):
         return _prompt_action_redirect(request, prompt)
     try:
         model_id = selected_text_model(request.POST.get("text_model"))
-        count, _ = translate_prompt_dialogue(
+        translated_prompt, count, _ = translate_prompt_dialogue(
             prompt=prompt,
             user=request.user,
             target_language=request.POST.get("target_language"),
@@ -489,8 +488,48 @@ def prompt_translate_dialogue(request, prompt_id):
     except (StudioAiError, ProviderError, ValidationError) as exc:
         messages.error(request, str(exc))
     else:
-        messages.success(request, f"Translated {count} dialogue reference(s). Narrative prompt content stayed unchanged.")
+        messages.success(request, f"Created {translated_prompt.language} prompt with {count} translated dialogue block(s).")
+        return _prompt_action_redirect(request, translated_prompt)
     return _prompt_action_redirect(request, prompt)
+
+
+@login_required
+def prompt_ai_action(request, prompt_id):
+    prompt = get_object_or_404(
+        Prompt.objects.select_related("scene__episode__project__workspace", "ai_model", "template")
+        .prefetch_related("blocks__source_dialogue")
+        .filter(scene__episode__project__workspace__in=accessible_workspaces(request.user)),
+        id=prompt_id,
+    )
+    workspace = prompt.scene.episode.project.workspace
+    if request.method != "POST" or not has_capability(request.user, workspace, "use_ai") or not user_has_ai_access(request.user):
+        messages.error(request, "AI access is not enabled for this account and workspace.")
+        return _prompt_action_redirect(request, prompt)
+    action = request.POST.get("action")
+    try:
+        model_id = selected_text_model(request.POST.get("text_model"))
+        if action == "improve":
+            improve_prompt(
+                prompt=prompt, user=request.user, mode="improve_translate_en",
+                selected_block_ids=[], text_model=model_id,
+            )
+            messages.success(request, "Improved version is ready. Apply it or cancel without changing the prompt.")
+            return _prompt_action_redirect(request, prompt)
+        scope = {
+            "translate_all": Prompt.TranslationScope.FULL,
+            "translate_dialogue": Prompt.TranslationScope.DIALOGUE,
+        }.get(action)
+        if scope is None:
+            raise ValidationError("Choose an AI action.")
+        translated_prompt, count, _ = translate_prompt(
+            prompt=prompt, user=request.user, target_language=request.POST.get("target_language"),
+            text_model=model_id, scope=scope,
+        )
+    except (StudioAiError, ProviderError, ValidationError) as exc:
+        messages.error(request, str(exc))
+        return _prompt_action_redirect(request, prompt)
+    messages.success(request, f"Created a new {translated_prompt.language} prompt. Translated blocks: {count}.")
+    return _prompt_action_redirect(request, translated_prompt)
 
 
 def _prompt_action_redirect(request, prompt):
@@ -519,12 +558,14 @@ def suggestion_decide(request, suggestion_id, decision):
     try:
         if decision == "accept":
             accept_suggestion(suggestion=suggestion, user=request.user)
+        elif decision == "undo":
+            undo_suggestion(suggestion=suggestion, user=request.user)
         else:
             reject_suggestion(suggestion=suggestion, user=request.user)
     except StudioAiError as exc:
         messages.error(request, str(exc))
     else:
-        messages.success(request, f"Suggestion {decision}ed.")
+        messages.success(request, {"accept": "Improvement applied.", "undo": "Previous prompt restored."}.get(decision, "Improvement cancelled."))
     return _prompt_action_redirect(request, suggestion.prompt)
 
 @login_required
@@ -969,14 +1010,24 @@ def docx_roundtrip(request, job_id):
 def _prompt_editor_context():
     return {
         "ai_models": AiModelProfile.objects.filter(is_active=True),
-        "prompt_templates": active_prompt_templates(),
         "text_models": active_text_models(),
         "default_text_model": default_text_model_id(),
-        "improve_modes": MODES.items(),
+        "prompt_languages": PROMPT_LANGUAGES,
+        "prompt_addition": default_prompt_template(),
         "prompt_types": Prompt.Type.choices,
         "prompt_statuses": Prompt.Status.choices,
         "block_types": PromptBlock.Type.choices,
     }
+
+
+def _attach_prompt_ai_state(prompts):
+    for prompt in prompts:
+        suggestions = list(prompt.ai_suggestions.all())
+        prompt.pending_suggestions = [item for item in suggestions if item.status == AiSuggestion.Status.PENDING]
+        prompt.undo_suggestion = next(
+            (item for item in suggestions if item.status == AiSuggestion.Status.ACCEPTED and item.original_blocks),
+            None,
+        )
 
 
 @login_required
@@ -999,7 +1050,7 @@ def scene_prompt_quick_create(request, scene_id):
     prompt = Prompt.objects.create(
         scene=scene,
         ai_model=ai_model,
-        template=selected_prompt_template(request.POST.get("template"), prompt_type),
+        template=default_prompt_template(prompt_type),
         prompt_type=prompt_type,
         title=request.POST.get("title", "").strip(),
         status=status,
@@ -1043,7 +1094,7 @@ def prompt_quick_save(request, prompt_id):
         return redirect("studio:scene_detail", scene_id=prompt.scene_id)
     with transaction.atomic():
         prompt.ai_model = ai_model
-        prompt.template = selected_prompt_template(request.POST.get("template"), prompt_type)
+        prompt.template = default_prompt_template(prompt_type)
         prompt.prompt_type = prompt_type
         prompt.title = request.POST.get("title", "").strip()
         prompt.status = status
@@ -1144,6 +1195,9 @@ def project_scene_chain(request, project_id):
         ).filter(workspace__in=accessible_workspaces(request.user)),
         id=project_id,
     )
+    for episode in project.episodes.all():
+        for scene in episode.scenes.all():
+            _attach_prompt_ai_state(scene.prompts.all())
     context = {
         "project": project,
         "can_edit": has_capability(request.user, project.workspace, "edit"),

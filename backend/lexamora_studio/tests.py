@@ -402,14 +402,18 @@ class StudioAiSuggestionTests(TestCase):
             {"id": str(self.dialogue.id), "content": "Rewritten dialogue"},
         ]})
 
-    def test_inline_prompt_ui_exposes_template_models_and_ai_actions(self):
+    def test_inline_prompt_ui_is_compact_and_exposes_clear_ai_actions(self):
         self.client.force_login(self.editor)
         response = self.client.get(f"/studio/scenes/{self.prompt.scene_id}/")
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, self.prompt.template.name)
-        self.assertContains(response, "improve_translate_en")
-        self.assertContains(response, "Translate dialogue")
+        self.assertContains(response, "Added automatically")
+        self.assertContains(response, "Improve")
+        self.assertContains(response, "Translate all")
+        self.assertContains(response, "Dialogue only")
+        self.assertContains(response, '<option value="BL">BL</option>', html=True)
         self.assertContains(response, "gpt-5.4-mini")
+        self.assertNotContains(response, "Mandatory template")
+        self.assertNotContains(response, "Improve action")
 
     @patch("lexamora_studio.ai.run_text")
     def test_improve_creates_suggestion_without_overwriting_or_sending_dialogue(self, mocked_run_text):
@@ -451,32 +455,59 @@ class StudioAiSuggestionTests(TestCase):
         self.assertIn("Return every editable block in English", provider_prompt)
 
     @patch("lexamora_studio.ai.run_text")
-    def test_dialogue_translation_does_not_change_narrative_prompt(self, mocked_run_text):
-        from .models import AiUsageLog, TranslationUnit
+    def test_dialogue_translation_creates_new_prompt_and_preserves_source(self, mocked_run_text):
+        from .models import AiUsageLog, Prompt, TranslationUnit
 
         mocked_run_text.return_value = (
-            json.dumps({"dialogue": [{"id": str(self.dialogue.id), "translation": "Tajny dialog"}]}),
+            json.dumps({"blocks": [{"id": str(self.dialogue.id), "content": "Tajny dialog"}]}),
             "gpt-5.4-mini",
         )
         self.client.force_login(self.editor)
         response = self.client.post(
             f"/api/v1/studio/prompts/{self.prompt.id}/translate-dialogue",
-            data=json.dumps({"targetLanguage": "pl", "textModel": "gpt-5.4-mini"}),
+            data=json.dumps({"targetLanguage": "PL", "textModel": "gpt-5.4-mini"}),
             content_type="application/json",
         )
-        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.status_code, 201, response.content)
         self.narrative.refresh_from_db()
         self.dialogue.refresh_from_db()
         self.assertEqual(self.narrative.content, "Plain room")
         self.assertEqual(self.dialogue.content, "Secret dialogue")
-        self.assertEqual(self.dialogue.translated_content, "Tajny dialog")
-        self.assertEqual(self.dialogue.translation_language, "pl")
+        translated_prompt = Prompt.objects.get(id=response.json()["promptId"])
+        translated_blocks = list(translated_prompt.blocks.order_by("position"))
+        self.assertEqual(translated_prompt.source_prompt, self.prompt)
+        self.assertEqual(translated_prompt.language, "PL")
+        self.assertEqual(translated_prompt.translation_scope, Prompt.TranslationScope.DIALOGUE)
+        self.assertEqual(translated_blocks[0].content, "Plain room")
+        self.assertEqual(translated_blocks[1].content, "Tajny dialog")
         self.assertTrue(TranslationUnit.objects.filter(
-            dialogue_line=self.source_dialogue, target_language="pl", translated_text="Tajny dialog"
+            dialogue_line=self.source_dialogue, target_language="PL", translated_text="Tajny dialog"
         ).exists())
         self.assertTrue(AiUsageLog.objects.filter(action="TRANSLATE_DIALOGUE", status="SUCCESS").exists())
         provider_prompt = mocked_run_text.call_args.args[1]
         self.assertNotIn("Plain room", provider_prompt)
+
+    @patch("lexamora_studio.ai.run_text")
+    def test_full_translation_creates_new_prompt_with_every_block_translated(self, mocked_run_text):
+        from .models import Prompt
+
+        mocked_run_text.return_value = (
+            json.dumps({"blocks": [
+                {"id": str(self.narrative.id), "content": "Pokoj"},
+                {"id": str(self.dialogue.id), "content": "Tajny dialog"},
+            ]}),
+            "gpt-5.4-mini",
+        )
+        self.client.force_login(self.editor)
+        response = self.client.post(
+            f"/api/v1/studio/prompts/{self.prompt.id}/translate",
+            data=json.dumps({"targetLanguage": "PL", "scope": "FULL", "textModel": "gpt-5.4-mini"}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        translated_prompt = Prompt.objects.get(id=response.json()["promptId"])
+        self.assertEqual(translated_prompt.translation_scope, Prompt.TranslationScope.FULL)
+        self.assertEqual(list(translated_prompt.blocks.values_list("content", flat=True)), ["Pokoj", "Tajny dialog"])
 
     @patch("lexamora_studio.ai.run_text")
     def test_accept_updates_non_dialogue_and_preserves_dialogue(self, mocked_run_text):
@@ -497,6 +528,13 @@ class StudioAiSuggestionTests(TestCase):
         self.assertEqual(self.dialogue.content, "Secret dialogue")
         self.assertEqual(AiSuggestion.objects.get().status, AiSuggestion.Status.ACCEPTED)
         self.assertTrue(Revision.objects.filter(entity_id=self.prompt.id, operation="AI_ACCEPT").exists())
+
+        undone = self.client.post(f"/api/v1/studio/suggestions/{created.json()['id']}/undo")
+        self.assertEqual(undone.status_code, 200, undone.content)
+        self.narrative.refresh_from_db()
+        self.assertEqual(self.narrative.content, "Plain room")
+        self.assertEqual(AiSuggestion.objects.get().status, AiSuggestion.Status.UNDONE)
+        self.assertTrue(Revision.objects.filter(entity_id=self.prompt.id, operation="AI_UNDO").exists())
 
     @patch("lexamora_studio.ai.run_text")
     def test_reject_keeps_prompt_unchanged(self, mocked_run_text):
@@ -1530,19 +1568,17 @@ class StudioGeneralSettingsTests(TestCase):
         self.assertTrue(model.is_default)
         self.assertFalse(StudioTextModel.objects.exclude(id=model.id).filter(is_default=True).exists())
 
-    def test_admin_can_create_mandatory_prompt_template(self):
+    def test_admin_can_update_default_prompt_addition(self):
         from .models import PromptTemplate
 
         self.client.force_login(self.admin)
         response = self.client.post("/studio/settings/", {
-            "action": "create_template",
-            "template-name": "Vertical video template",
-            "template-scope": "VIDEO",
-            "template-content": "Use a vertical frame and preserve character continuity.",
-            "template-is_active": "on",
-            "template-is_default": "on",
+            "action": "update_prompt_addition",
+            "prompt_addition": "Negative Prompt: No Music",
         })
         self.assertRedirects(response, "/studio/settings/")
-        template = PromptTemplate.objects.get(name="Vertical video template")
-        self.assertTrue(template.is_default)
-        self.assertFalse(PromptTemplate.objects.exclude(id=template.id).filter(is_default=True).exists())
+        template = PromptTemplate.objects.get(is_default=True)
+        self.assertEqual(template.content, "Negative Prompt: No Music")
+        page = self.client.get("/studio/settings/")
+        self.assertContains(page, "Default prompt addition")
+        self.assertNotContains(page, "Create template")

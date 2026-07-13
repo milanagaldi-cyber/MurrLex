@@ -27,13 +27,13 @@ All production identifiers are UUIDs. All mutable production entities include
   status.
 - `AiModelProfile`: provider, name, model identifier, media type, active, defaults.
 - `StudioTextModel`: shared OpenAI text model catalog, active/default flags.
-- `PromptTemplate`: named mandatory generation template, IMAGE/VIDEO/ALL scope,
-  active/default flags.
-- `Prompt`: scene, AI model profile, mandatory template, prompt type IMAGE/VIDEO,
-  status, position, needs_review.
+- `PromptTemplate`: internal storage for the one active global prompt addition.
+- `Prompt`: scene, AI model profile, language, optional source prompt, translation
+  scope ORIGINAL/FULL/DIALOGUE, prompt type IMAGE/VIDEO, status, position and
+  needs_review.
 - `PromptBlock`: prompt, type NARRATIVE/DIALOGUE_REFERENCE/NEGATIVE/AUDIO,
-  position, content, source dialogue reference, optional translated dialogue text,
-  target language and OpenAI model provenance.
+  position, content and optional source dialogue reference. New translations are
+  represented by new Prompt and PromptBlock records.
 
 ## Media and generation
 
@@ -57,8 +57,9 @@ All production identifiers are UUIDs. All mutable production entities include
 - `AuditEvent`: workspace, actor, action, entity type/id, request ID, IP hash,
   metadata, timestamp. Append-only.
 - `AccessEvent`: workspace, actor, asset/export, action VIEW/DOWNLOAD, request ID.
-- `AiSuggestion`: prompt/block, mode, source revision, suggestion, status,
-  provider/model, usage and timestamps.
+- `AiSuggestion`: prompt/block, source revision, original block snapshot,
+  suggestion, PENDING/ACCEPTED/REJECTED/UNDONE status, provider/model, usage and
+  timestamps.
 - `ExportJob`: project/episode, requested sections, status, output asset, error,
   requester and timestamps.
 - `DocxImportJob`: source asset, parse status, parser version, report JSON and

@@ -53,6 +53,7 @@ urlpatterns = [
     path("prompts/<uuid:prompt_id>/blocks/new/", views.prompt_block_create, name="prompt_block_create"),
     path("prompt-blocks/<uuid:block_id>/edit/", views.prompt_block_edit, name="prompt_block_edit"),
     path("prompts/<uuid:prompt_id>/improve/", views.prompt_improve, name="prompt_improve"),
+    path("prompts/<uuid:prompt_id>/ai-action/", views.prompt_ai_action, name="prompt_ai_action"),
     path("prompts/<uuid:prompt_id>/translate-dialogue/", views.prompt_translate_dialogue, name="prompt_translate_dialogue"),
     path("suggestions/<uuid:suggestion_id>/<str:decision>/", views.suggestion_decide, name="suggestion_decide"),
     path("projects/<uuid:project_id>/translations/", views.translation_workspace, name="translations"),

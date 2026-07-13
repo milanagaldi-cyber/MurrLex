@@ -78,14 +78,15 @@ responses in MVP; the storage interface may later issue short-lived signed URLs.
 ## AI
 
 AI calls reuse encrypted server provider credentials. A request requires active
-membership, `can_use_ai`, a configured provider and rate-limit capacity. The
-provider output is stored as an immutable suggestion with model, prompt version,
-usage and response metadata. Accepting a suggestion is a separate user action.
-Dialogue blocks are excluded from generic improvement. The explicit dialogue
-translation action sends only direct speech, stores a separate translated layer and
-never sends or rewrites the English narrative prompt. Prompt improvement can also
-convert simple non-English source blocks to reviewed production English. Both
-actions use an active OpenAI text model selected from shared Studio settings.
+membership, `can_use_ai`, a configured provider and rate-limit capacity. Improve
+stores a review suggestion and exact original block snapshot. Apply is explicit,
+Cancel leaves the prompt unchanged, and Undo safely restores the snapshot when the
+accepted text has not since changed. Dialogue blocks remain excluded from Improve.
+Full-text and dialogue-only translation each create a new language-specific Prompt
+linked to the source instead of storing a hidden translation layer. Both actions use
+an active OpenAI text model selected from shared Studio settings. A single global
+prompt addition, such as `Negative Prompt: No Music`, is appended automatically and
+is never rewritten by Improve or Translate.
 
 ## Observability and Security
 

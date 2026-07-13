@@ -1,7 +1,7 @@
-<div class="asset-actions">
-  <a href="{% url 'studio_api:asset_download' asset.id %}">Download</a>
+<div class="asset-actions" aria-label="Image actions">
+  <a class="icon-button" href="{% url 'studio_api:asset_download' asset.id %}" title="Download" aria-label="Download"><span aria-hidden="true">&darr;</span></a>
   {% if can_edit %}
-  <form method="post" action="{% url 'studio:asset_trash' asset.id %}" onsubmit="return confirm('Move this image to trash?')">{% csrf_token %}<input type="hidden" name="next" value="{{ request.get_full_path }}"><button class="link-button" type="submit">Trash</button></form>
-  <form method="post" action="{% url 'studio:asset_purge' asset.id %}" onsubmit="return confirm('Permanently delete this image file? This cannot be undone.')">{% csrf_token %}<input type="hidden" name="next" value="{{ request.get_full_path }}"><button class="link-button danger" type="submit">Delete permanently</button></form>
+  <form method="post" action="{% url 'studio:asset_trash' asset.id %}" onsubmit="return confirm('Move this image to trash?')">{% csrf_token %}<input type="hidden" name="next" value="{{ request.get_full_path }}"><button class="icon-button" type="submit" title="Move to trash" aria-label="Move to trash"><span aria-hidden="true">&#9003;</span></button></form>
+  <form method="post" action="{% url 'studio:asset_purge' asset.id %}" onsubmit="return confirm('Permanently delete this image file? This cannot be undone.')">{% csrf_token %}<input type="hidden" name="next" value="{{ request.get_full_path }}"><button class="icon-button danger" type="submit" title="Delete permanently" aria-label="Delete permanently"><span aria-hidden="true">&times;</span></button></form>
   {% endif %}
 </div>
