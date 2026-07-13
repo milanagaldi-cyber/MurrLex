@@ -90,6 +90,8 @@ class Project(SoftDeleteModel):
     rights_holder = models.TextField(blank=True)
     publication_info = models.TextField(blank=True)
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.DRAFT)
+    purged_at = models.DateTimeField(null=True, blank=True)
+    purged_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="purged_studio_projects", null=True, blank=True)
 
     class Meta:
         ordering = ["title", "id"]
@@ -312,6 +314,7 @@ class Prompt(SoftDeleteModel):
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
     position = models.PositiveIntegerField(default=0)
     needs_review = models.BooleanField(default=False)
+    reference_assets = models.ManyToManyField("Asset", related_name="referenced_by_prompts", blank=True)
 
     class Meta:
         ordering = ["position", "id"]

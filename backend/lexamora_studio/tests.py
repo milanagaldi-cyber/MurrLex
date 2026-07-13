@@ -1413,8 +1413,11 @@ class StudioImageGenerationWorkflowTests(TestCase):
             f"/studio/scenes/{self.scene.id}/generations/new/",
             {"reason": "Closer composition", "prompt": "A close-up with softer light", "status": "DRAFT"},
         )
-        generation = AdditionalGeneration.objects.get(scene=self.scene)
-        self.assertRedirects(created, f"/studio/scenes/{self.scene.id}/media/")
+        generation = AdditionalGeneration.objects.exclude(scene=self.scene).get()
+        generated_scene = generation.scene
+        self.assertEqual(generated_scene.title, "Догенерация 1")
+        self.assertGreater(generated_scene.position, self.scene.position)
+        self.assertRedirects(created, f"/studio/scenes/{generated_scene.id}/media/")
         self.assertTrue(Revision.objects.filter(entity_id=generation.id, operation="CREATE").exists())
 
         with tempfile.TemporaryDirectory() as directory:
@@ -1424,19 +1427,19 @@ class StudioImageGenerationWorkflowTests(TestCase):
                     {"file": self.image_file(), "model_name": "Test image model"},
                 )
                 output = GenerationOutput.objects.get(generation=generation)
-                self.assertRedirects(uploaded, f"/studio/scenes/{self.scene.id}/media/")
+                self.assertRedirects(uploaded, f"/studio/scenes/{generated_scene.id}/media/")
                 self.assertEqual(output.model_metadata["model"], "Test image model")
                 edited = self.client.post(
                     f"/studio/assets/{output.asset_id}/edit/",
                     {"original_filename": "approved-result.png", "kind": "GENERATION_OUTPUT"},
                 )
-                self.assertRedirects(edited, f"/studio/scenes/{self.scene.id}/media/")
+                self.assertRedirects(edited, f"/studio/scenes/{generated_scene.id}/media/")
                 output.asset.refresh_from_db()
                 self.assertEqual(output.asset.original_filename, "approved-result.png")
                 selected = self.client.post(f"/studio/generation-outputs/{output.id}/final/")
                 self.assertRedirects(
                     selected,
-                    f"/studio/scenes/{self.scene.id}/media/#generation-{generation.id}",
+                    f"/studio/scenes/{generated_scene.id}/media/#generation-{generation.id}",
                 )
 
         output.refresh_from_db()
@@ -1675,6 +1678,54 @@ class StudioInlineEditingWorkflowTests(TestCase):
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.json()["promptId"], str(prompt.id))
         self.assertTrue(Asset.objects.filter(prompt=prompt, scene=self.first_scene).exists())
+
+    def test_scene_detail_is_inline_editor_with_two_way_navigation(self):
+        self.client.force_login(self.owner)
+        page = self.client.get(f"/studio/scenes/{self.first_scene.id}/")
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, 'id="scene-editor-form"')
+        self.assertContains(page, "Create scene")
+        self.assertContains(page, f'/studio/scenes/{self.second_scene.id}/')
+        self.assertContains(page, "data-scene-cancel disabled", count=2)
+
+    def test_prompt_can_attach_existing_project_image(self):
+        import tempfile
+        from pathlib import Path
+        from .models import Asset, Prompt
+        from .storage import create_asset
+
+        prompt = Prompt.objects.create(scene=self.first_scene, ai_model=self.ai_model, prompt_type="IMAGE", title="References", created_by=self.owner, updated_by=self.owner)
+        self.client.force_login(self.owner)
+        with tempfile.TemporaryDirectory() as directory:
+            with self.settings(STUDIO_PRIVATE_MEDIA_ROOT=Path(directory)):
+                asset = create_asset(user=self.owner, workspace=self.workspace, project=self.project, uploaded=self.image_file("library.png"), kind=Asset.Kind.OTHER)
+                response = self.client.post(f"/studio/prompts/{prompt.id}/images/attach/", {"asset_id": str(asset.id)})
+                self.assertRedirects(response, f"/studio/scenes/{self.first_scene.id}/#prompt-{prompt.id}")
+                self.assertTrue(prompt.reference_assets.filter(id=asset.id).exists())
+
+    def test_project_copy_and_soft_delete_restore(self):
+        import tempfile
+        from pathlib import Path
+        from .models import Asset
+        from .storage import create_asset
+
+        self.client.force_login(self.owner)
+        with tempfile.TemporaryDirectory() as directory:
+            with self.settings(STUDIO_PRIVATE_MEDIA_ROOT=Path(directory)):
+                create_asset(user=self.owner, workspace=self.workspace, project=self.project, uploaded=self.image_file("cover.png"), kind=Asset.Kind.OTHER)
+                copied_response = self.client.post(f"/studio/projects/{self.project.id}/copy/")
+                copied = Project.objects.exclude(id=self.project.id).get()
+                self.assertRedirects(copied_response, f"/studio/projects/{copied.id}/")
+                self.assertEqual(copied.episodes.count(), 1)
+                self.assertEqual(copied.episodes.get().scenes.count(), 2)
+                self.assertEqual(copied.assets.count(), 1)
+                deleted = self.client.post(f"/studio/projects/{copied.id}/trash/")
+                self.assertRedirects(deleted, f"/studio/workspaces/{self.workspace.id}/")
+                self.assertFalse(Project.objects.filter(id=copied.id).exists())
+                restored = self.client.post(f"/studio/projects/{copied.id}/restore/")
+                self.assertRedirects(restored, f"/studio/projects/{copied.id}/")
+                self.assertTrue(Project.objects.filter(id=copied.id).exists())
+
     def test_viewer_sees_inline_prompts_but_cannot_change_them(self):
         from .models import Prompt
 

@@ -1,10 +1,12 @@
 import json
+from datetime import timedelta
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ValidationError
+from django.core.files.base import ContentFile
 from django.db import transaction
-from django.db.models import Prefetch
+from django.db.models import Prefetch, Q
 from django.http import FileResponse, Http404, HttpResponseForbidden, HttpResponseRedirect, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -12,7 +14,7 @@ from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils.text import slugify
 
-from lessons.ai_gateway import ProviderError
+from lessons.ai_gateway import ProviderError, run_text
 from lessons.provider_credentials import user_has_ai_access
 
 from .ai import StudioAiError, accept_suggestion, improve_prompt, preview_prompt_translation, reject_suggestion, translate_prompt, translate_prompt_dialogue, undo_suggestion
@@ -21,7 +23,7 @@ from .exports import ALL_SECTIONS, ExportError, generate_export
 from .docx_imports import accept_docx_import, parse_docx
 from .docx_exports import generate_docx_export
 from .docx_roundtrip import compare_docx_export
-from .forms import AdditionalGenerationForm, AssetEditForm, CharacterForm, DialogueLineForm, DocxImportUploadForm, EpisodeForm, GenerationOutputUploadForm, ImageUploadForm, ProjectForm, ProjectMembershipForm, PromptBlockForm, PromptForm, SceneForm, StudioTextModelForm
+from .forms import AdditionalGenerationForm, AssetEditForm, CharacterForm, DialogueLineForm, DocxImportUploadForm, EpisodeForm, GenerationOutputUploadForm, ImageUploadForm, ProjectForm, ProjectMembershipForm, PromptBlockForm, PromptForm, SceneForm, StudioTextModelForm, WorkspaceForm
 from .models import AdditionalGeneration, AiModelProfile, AiSuggestion, Asset, Character, DialogueLine, DocxImport, Episode, ExportJob, GenerationOutput, Project, ProjectMembership, Prompt, PromptBlock, Scene, StudioTextModel, SubtitleTrack, TranslationUnit, Workspace
 from .permissions import accessible_assets, accessible_projects, accessible_suggestions, accessible_workspaces, has_capability, has_object_capability, has_project_capability
 from .revisions import audit, record_revision
@@ -31,9 +33,11 @@ from .storage import create_asset, purge_asset, restore_asset, trash_asset
 
 @login_required
 def dashboard(request):
-    workspaces = accessible_workspaces(request.user).prefetch_related("projects")
+    sort = request.GET.get("sort", "updated")
+    orderings = {"name": "name", "created": "-created_at", "updated": "-updated_at", "projects": "name"}
+    workspaces = accessible_workspaces(request.user).select_related("owner", "created_by", "updated_by").prefetch_related("projects").order_by(orderings.get(sort, "-updated_at"), "name")
     shared_projects = accessible_projects(request.user).exclude(workspace__in=workspaces).select_related("workspace")
-    return render(request, "studio/dashboard.html", {"workspaces": workspaces, "shared_projects": shared_projects})
+    return render(request, "studio/dashboard.html", {"workspaces": workspaces, "shared_projects": shared_projects, "sort": sort})
 
 
 def _set_single_default(model, instance):
@@ -99,7 +103,18 @@ def workspace_create(request):
 @login_required
 def workspace_detail(request, workspace_id):
     workspace = get_object_or_404(accessible_workspaces(request.user), id=workspace_id)
-    return render(request, "studio/workspace_detail.html", {"workspace": workspace, "can_edit": has_capability(request.user, workspace, "edit"), "imports": workspace.docx_imports.select_related("project")[:10]})
+    sort = request.GET.get("sort", "updated")
+    orderings = {"title": "title", "created": "-created_at", "updated": "-updated_at", "type": "project_type"}
+    projects = list(workspace.projects.select_related("created_by", "updated_by").prefetch_related("assets", "memberships__user").order_by(orderings.get(sort, "-updated_at"), "title"))
+    for project in projects:
+        project.cover_asset = min((asset for asset in project.assets.all() if asset.thumbnail), key=lambda asset: asset.created_at, default=None)
+    return render(request, "studio/workspace_detail.html", {"workspace": workspace, "projects": projects, "sort": sort, "can_edit": has_capability(request.user, workspace, "edit"), "imports": workspace.docx_imports.select_related("project")[:10]})
+
+
+@login_required
+def workspace_edit(request, workspace_id):
+    workspace = get_object_or_404(accessible_workspaces(request.user), id=workspace_id)
+    return _edit_entity(request, item=workspace, form_class=WorkspaceForm, workspace=workspace, title="Edit workspace", success_url=lambda item: ("studio:workspace_detail", item.id))
 
 
 def _create_entity(request, *, form_class, parent, parent_field, workspace, title, success_url, position_manager=None):
@@ -433,7 +448,7 @@ def entity_move(request, entity_type, entity_id, direction):
 @login_required
 def project_detail(request, project_id):
     project = get_object_or_404(
-        accessible_projects(request.user).select_related("workspace").prefetch_related("assets", "characters__assets", "episodes__scenes"),
+        accessible_projects(request.user).select_related("workspace", "created_by", "updated_by").prefetch_related("assets", "characters__assets", "episodes__scenes", "memberships__user"),
         id=project_id,
     )
     return render(request, "studio/project_detail.html", {
@@ -476,19 +491,39 @@ def scene_detail(request, scene_id):
     scene = get_object_or_404(
         Scene.objects.select_related("episode__project__workspace").prefetch_related(
             "dialogue_lines", "prompts__ai_model", "prompts__template", "prompts__blocks__source_dialogue",
-            "prompts__assets", "prompts__ai_suggestions", "assets"
+            "prompts__assets", "prompts__reference_assets", "prompts__ai_suggestions", "assets"
         ).filter(episode__project__in=accessible_projects(request.user)),
         id=scene_id,
     )
     workspace = scene.episode.project.workspace
+    can_edit = has_object_capability(request.user, scene, "edit")
+    form = SceneForm(request.POST or None, instance=scene)
+    if request.method == "POST":
+        if not can_edit:
+            return HttpResponseForbidden("Edit permission is required.")
+        if form.is_valid():
+            scene = form.save(commit=False)
+            scene.updated_by = request.user
+            scene.save()
+            record_revision(instance=scene, user=request.user, operation="INLINE_UPDATE")
+            audit(workspace=workspace, actor=request.user, action="SCENE_INLINE_UPDATED", instance=scene)
+            messages.success(request, f"Scene {scene.number} saved.")
+            return redirect("studio:scene_detail", scene_id=scene.id)
+    episode_scenes = list(scene.episode.scenes.order_by("position", "number", "id"))
+    scene_index = next(index for index, item in enumerate(episode_scenes) if item.id == scene.id)
     editor_prompts = [prompt for prompt in scene.prompts.all() if not prompt.source_prompt_id]
     _attach_prompt_ai_state(editor_prompts)
     return render(request, "studio/scene_detail.html", {
         "scene": scene,
+        "scene_form": form,
+        "episode_scenes": episode_scenes,
+        "previous_scene": episode_scenes[scene_index - 1] if scene_index else None,
+        "next_scene": episode_scenes[scene_index + 1] if scene_index + 1 < len(episode_scenes) else None,
         "editor_prompts": editor_prompts,
-        "can_edit": has_object_capability(request.user, scene, "edit"),
+        "can_edit": can_edit,
         "can_use_ai": has_object_capability(request.user, scene, "use_ai") and user_has_ai_access(request.user),
         "scene_images": scene.assets.filter(prompt__isnull=True),
+        "project_assets": scene.episode.project.assets.filter(content_type__startswith="image/").order_by("-created_at"),
         **_prompt_editor_context(),
     })
 
@@ -618,11 +653,11 @@ def prompt_editor_data(request, prompt_id):
 
 @login_required
 def prompt_ai_preview(request, prompt_id):
-    prompt = get_object_or_404(
-        Prompt.objects.select_related("scene__episode__project__workspace", "ai_model")
-        .filter(scene__episode__project__in=accessible_projects(request.user)),
-        id=prompt_id,
-    )
+    prompt = Prompt.objects.select_related("scene__episode__project__workspace", "ai_model").filter(id=prompt_id).first()
+    if prompt is None:
+        return JsonResponse({"error": "Prompt no longer exists. Refresh the scene."}, status=404)
+    if not has_project_capability(request.user, prompt.scene.episode.project, "view"):
+        return JsonResponse({"error": "You no longer have access to this project."}, status=403)
     if request.method != "POST" or not has_object_capability(request.user, prompt, "use_ai") or not user_has_ai_access(request.user):
         return JsonResponse({"error": "AI access is not enabled for this account."}, status=403)
     try:
@@ -642,6 +677,8 @@ def prompt_ai_preview(request, prompt_id):
         )
     except (json.JSONDecodeError, StudioAiError, ProviderError, ValidationError) as exc:
         return JsonResponse({"error": str(exc)}, status=400)
+    except Exception:
+        return JsonResponse({"error": "The translation service returned an unexpected error. Please retry."}, status=500)
     return JsonResponse({
         "content": content,
         "language": str(data.get("targetLanguage", "")).upper(),
@@ -760,7 +797,7 @@ def translation_workspace(request, project_id):
             )
             messages.success(request, "Translation saved.")
         return redirect(f"{request.path}?target_language={target_language}")
-    lines = DialogueLine.objects.filter(scene__episode__project=project).prefetch_related("translations")
+    lines = DialogueLine.objects.filter(scene__episode__project=project).select_related("scene__episode").prefetch_related("translations")
     rows = []
     for line in lines:
         unit = next((item for item in line.translations.all() if item.target_language == target_language), None)
@@ -768,6 +805,10 @@ def translation_workspace(request, project_id):
     return render(request, "studio/translations.html", {
         "project": project, "rows": rows, "target_language": target_language,
         "can_translate": has_project_capability(request.user, project, "translate"),
+        "can_use_ai": has_project_capability(request.user, project, "use_ai") and user_has_ai_access(request.user),
+        "prompt_languages": PROMPT_LANGUAGES,
+        "text_models": active_text_models(),
+        "default_text_model": default_text_model_id(),
         "translation_statuses": [TranslationUnit.Status.DRAFT, TranslationUnit.Status.IN_REVIEW, TranslationUnit.Status.APPROVED],
     })
 
@@ -884,16 +925,26 @@ def generation_create(request, scene_id):
         return HttpResponseForbidden("Edit permission is required.")
     form = AdditionalGenerationForm(request.POST or None, project=scene.episode.project)
     if request.method == "POST" and form.is_valid():
-        item = form.save(commit=False)
-        item.scene = scene
-        item.position = scene.additional_generations.count()
-        item.created_by = request.user
-        item.updated_by = request.user
-        item.save()
+        with transaction.atomic():
+            episode = scene.episode
+            sequence = Scene.objects.filter(episode=episode, title__startswith="Догенерация ").count() + 1
+            last_number = max(episode.scenes.values_list("number", flat=True), default=0)
+            generated_scene = Scene.objects.create(
+                episode=episode, number=last_number + 1, title=f"Догенерация {sequence}",
+                hook=f"Additional generation based on scene {scene.number}", description=form.cleaned_data["reason"],
+                position=episode.scenes.count(), status=Scene.Status.DRAFT,
+                created_by=request.user, updated_by=request.user,
+            )
+            item = form.save(commit=False)
+            item.scene = generated_scene
+            item.position = 0
+            item.created_by = request.user
+            item.updated_by = request.user
+            item.save()
         record_revision(instance=item, user=request.user, operation="CREATE")
         audit(workspace=workspace, actor=request.user, action="GENERATION_CREATED", instance=item)
-        messages.success(request, "Additional generation created. Upload one or more results.")
-        return redirect("studio:scene_media", scene_id=scene.id)
+        messages.success(request, f"{generated_scene.title} appended to the end of the episode.")
+        return redirect("studio:scene_media", scene_id=generated_scene.id)
     return render(request, "studio/entity_form.html", {
         "form": form, "title": "New additional generation", "submit_label": "Create generation",
     })
@@ -908,7 +959,7 @@ def generation_edit(request, generation_id):
         id=generation_id,
     )
     workspace = item.scene.episode.project.workspace
-    if not has_object_capability(request.user, generation, "edit"):
+    if not has_object_capability(request.user, item, "edit"):
         return HttpResponseForbidden("Edit permission is required.")
     form = AdditionalGenerationForm(
         request.POST or None, instance=item, project=item.scene.episode.project
@@ -1117,6 +1168,9 @@ def project_image_trash(request, project_id):
         accessible_projects(request.user).select_related("workspace"),
         id=project_id,
     )
+    if has_project_capability(request.user, project, "edit"):
+        for asset in Asset.all_objects.filter(project=project, content_type__startswith="image/", deleted_at__lt=timezone.now() - timedelta(days=30), purged_at__isnull=True):
+            purge_asset(asset=asset, user=request.user)
     return render(request, "studio/image_trash.html", {
         "project": project,
         "assets": Asset.all_objects.filter(
@@ -1127,6 +1181,175 @@ def project_image_trash(request, project_id):
         ),
         "can_edit": has_project_capability(request.user, project, "edit"),
     })
+
+
+@login_required
+def dialogue_translation_preview(request, line_id):
+    line = DialogueLine.objects.select_related("scene__episode__project__workspace").filter(id=line_id).first()
+    if line is None:
+        return JsonResponse({"error": "Dialogue line no longer exists."}, status=404)
+    project = line.scene.episode.project
+    if request.method != "POST" or not has_project_capability(request.user, project, "use_ai") or not user_has_ai_access(request.user):
+        return JsonResponse({"error": "AI access is not enabled for this account."}, status=403)
+    try:
+        data = json.loads(request.body or b"{}")
+        target = str(data.get("targetLanguage", "")).strip().upper()
+        if target not in Prompt.Language.values:
+            raise ValidationError("Choose a supported target language.")
+        model = selected_text_model(data.get("textModel"))
+        instruction = json.dumps({
+            "task": f"Translate this dialogue into {target}.",
+            "rules": ["Return JSON only with shape {\"content\": \"...\"}.", "Preserve meaning, names, tone, punctuation and speaker intent.", "Do not add explanations."],
+            "source_language": (line.language or project.original_language or "").upper(),
+            "content": line.text,
+        }, ensure_ascii=False)
+        raw, used_model = run_text(model, instruction)
+        clean = raw.strip()
+        if clean.startswith("```"):
+            clean = clean.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+        parsed = json.loads(clean)
+        content = str(parsed.get("content", "")).strip()
+        if not content:
+            raise ValidationError("AI returned an empty translation.")
+    except (json.JSONDecodeError, ProviderError, ValidationError) as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except Exception:
+        return JsonResponse({"error": "The translation service returned an unexpected error."}, status=500)
+    return JsonResponse({"content": content, "language": target, "model": used_model})
+
+
+def _unique_project_title(workspace, title):
+    base = f"{title} copy"[:220]
+    candidate, counter = base, 2
+    while Project.all_objects.filter(workspace=workspace, title=candidate).exists():
+        candidate = f"{base} {counter}"[:240]
+        counter += 1
+    return candidate
+
+
+@login_required
+@transaction.atomic
+def project_copy(request, project_id):
+    source = get_object_or_404(accessible_projects(request.user).select_related("workspace"), id=project_id)
+    if request.method != "POST" or not has_project_capability(request.user, source, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    copied = Project.objects.create(
+        workspace=source.workspace, project_type=source.project_type, title=_unique_project_title(source.workspace, source.title),
+        concept=source.concept, original_language=source.original_language, translation_languages=source.translation_languages,
+        rights_holder=source.rights_holder, publication_info=source.publication_info, status=Project.Status.DRAFT,
+        created_by=request.user, updated_by=request.user,
+    )
+    character_map = {}
+    for character in source.characters.all():
+        character_map[character.id] = Character.objects.create(project=copied, name=character.name, description=character.description, visual_description=character.visual_description, position=character.position, created_by=request.user, updated_by=request.user)
+    scene_map, prompt_map = {}, {}
+    for episode in source.episodes.prefetch_related("scenes__dialogue_lines", "scenes__prompts__blocks").all():
+        new_episode = Episode.objects.create(project=copied, number=episode.number, title=episode.title, summary=episode.summary, position=episode.position, created_by=request.user, updated_by=request.user)
+        for scene in episode.scenes.all():
+            new_scene = Scene.objects.create(episode=new_episode, number=scene.number, title=scene.title, hook=scene.hook, description=scene.description, location=scene.location, actions=scene.actions, performance_notes=scene.performance_notes, status=scene.status, position=scene.position, created_by=request.user, updated_by=request.user)
+            scene_map[scene.id] = new_scene
+            line_map = {}
+            for line in scene.dialogue_lines.all():
+                new_line = DialogueLine.objects.create(scene=new_scene, speaker=line.speaker, text=line.text, language=line.language, delivery=line.delivery, position=line.position, status=line.status, created_by=request.user, updated_by=request.user)
+                line_map[line.id] = new_line
+                for translated in line.translations.all():
+                    TranslationUnit.objects.create(dialogue_line=new_line, source_text=translated.source_text, translated_text=translated.translated_text, target_language=translated.target_language, status=translated.status, created_by=request.user, updated_by=request.user)
+            ordered_prompts = list(scene.prompts.select_related("source_prompt").prefetch_related("blocks").all())
+            for prompt in sorted(ordered_prompts, key=lambda item: bool(item.source_prompt_id)):
+                new_prompt = Prompt.objects.create(scene=new_scene, ai_model=prompt.ai_model, template=prompt.template, source_prompt=prompt_map.get(prompt.source_prompt_id), original_language=prompt.original_language, language=prompt.language, translation_scope=prompt.translation_scope, content=prompt.content, prompt_type=prompt.prompt_type, title=prompt.title, status=prompt.status, position=prompt.position, created_by=request.user, updated_by=request.user)
+                prompt_map[prompt.id] = new_prompt
+                for block in prompt.blocks.all():
+                    PromptBlock.objects.create(prompt=new_prompt, block_type=block.block_type, content=block.content, source_dialogue=line_map.get(block.source_dialogue_id), translated_content=block.translated_content, translation_language=block.translation_language, translation_model=block.translation_model, position=block.position, created_by=request.user, updated_by=request.user)
+    asset_map = {}
+    for asset in source.assets.filter(purged_at__isnull=True).select_related("scene", "character", "prompt"):
+        if not asset.file.name:
+            continue
+        asset.file.open("rb")
+        uploaded = ContentFile(asset.file.read(), name=asset.original_filename)
+        uploaded.content_type = asset.content_type
+        asset_map[asset.id] = create_asset(user=request.user, workspace=copied.workspace, uploaded=uploaded, kind=asset.kind, project=copied, scene=scene_map.get(asset.scene_id), character=character_map.get(asset.character_id), prompt=prompt_map.get(asset.prompt_id))
+        asset.file.close()
+    for old_prompt_id, new_prompt in prompt_map.items():
+        references = [asset_map[asset.id] for asset in Prompt.all_objects.get(id=old_prompt_id).reference_assets.all() if asset.id in asset_map]
+        if references:
+            new_prompt.reference_assets.add(*references)
+    audit(workspace=source.workspace, actor=request.user, action="PROJECT_COPIED", instance=copied, metadata={"sourceProjectId": str(source.id)})
+    messages.success(request, "Project copied with its scenes, prompts, translations, characters and files.")
+    return redirect("studio:project_detail", project_id=copied.id)
+
+
+@login_required
+def project_trash(request, project_id):
+    project = get_object_or_404(accessible_projects(request.user), id=project_id)
+    if request.method != "POST" or not has_project_capability(request.user, project, "manage_project"):
+        return HttpResponseForbidden("Full control permission is required.")
+    project.deleted_at = timezone.now(); project.deleted_by = request.user; project.updated_by = request.user
+    project.save(update_fields=["deleted_at", "deleted_by", "updated_by", "updated_at"])
+    messages.success(request, "Project moved to trash for 30 days.")
+    return redirect("studio:workspace_detail", workspace_id=project.workspace_id)
+
+
+@login_required
+def project_trash_view(request, workspace_id):
+    workspace = get_object_or_404(accessible_workspaces(request.user), id=workspace_id)
+    if has_capability(request.user, workspace, "manage_project"):
+        for project in Project.all_objects.filter(workspace=workspace, deleted_at__lt=timezone.now() - timedelta(days=30), purged_at__isnull=True):
+            for asset in Asset.all_objects.filter(project=project, purged_at__isnull=True, content_type__startswith="image/"):
+                purge_asset(asset=asset, user=request.user)
+            project.purged_at = timezone.now(); project.purged_by = request.user; project.updated_by = request.user
+            project.save(update_fields=["purged_at", "purged_by", "updated_by", "updated_at"])
+    return render(request, "studio/project_trash.html", {"workspace": workspace, "projects": Project.all_objects.filter(workspace=workspace, deleted_at__isnull=False, purged_at__isnull=True), "can_edit": has_capability(request.user, workspace, "manage_project")})
+
+
+@login_required
+def project_restore(request, project_id):
+    project = get_object_or_404(Project.all_objects.select_related("workspace"), id=project_id, deleted_at__isnull=False, purged_at__isnull=True)
+    if request.method != "POST" or not has_capability(request.user, project.workspace, "manage_project"):
+        return HttpResponseForbidden("Full control permission is required.")
+    project.deleted_at = None; project.deleted_by = None; project.updated_by = request.user
+    project.save(update_fields=["deleted_at", "deleted_by", "updated_by", "updated_at"])
+    messages.success(request, "Project restored.")
+    return redirect("studio:project_detail", project_id=project.id)
+
+
+@login_required
+def project_purge(request, project_id):
+    project = get_object_or_404(Project.all_objects.select_related("workspace"), id=project_id, deleted_at__isnull=False, purged_at__isnull=True)
+    if request.method != "POST" or not has_capability(request.user, project.workspace, "manage_project"):
+        return HttpResponseForbidden("Full control permission is required.")
+    for asset in Asset.all_objects.filter(project=project, purged_at__isnull=True, content_type__startswith="image/"):
+        purge_asset(asset=asset, user=request.user)
+    project.purged_at = timezone.now(); project.purged_by = request.user; project.updated_by = request.user
+    project.save(update_fields=["purged_at", "purged_by", "updated_by", "updated_at"])
+    messages.success(request, "Project permanently removed.")
+    return redirect("studio:project_trash_view", workspace_id=project.workspace_id)
+
+
+@login_required
+def project_trash_clear(request, workspace_id):
+    workspace = get_object_or_404(accessible_workspaces(request.user), id=workspace_id)
+    if request.method != "POST" or not has_capability(request.user, workspace, "manage_project"):
+        return HttpResponseForbidden("Full control permission is required.")
+    projects = list(Project.all_objects.filter(workspace=workspace, deleted_at__isnull=False, purged_at__isnull=True))
+    for project in projects:
+        for asset in Asset.all_objects.filter(project=project, purged_at__isnull=True, content_type__startswith="image/"):
+            purge_asset(asset=asset, user=request.user)
+        project.purged_at = timezone.now(); project.purged_by = request.user; project.updated_by = request.user
+        project.save(update_fields=["purged_at", "purged_by", "updated_by", "updated_at"])
+    messages.success(request, f"Permanently removed {len(projects)} project(s).")
+    return redirect("studio:project_trash_view", workspace_id=workspace.id)
+
+
+@login_required
+def project_image_trash_clear(request, project_id):
+    project = get_object_or_404(accessible_projects(request.user).select_related("workspace"), id=project_id)
+    if request.method != "POST" or not has_project_capability(request.user, project, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    assets = list(Asset.all_objects.filter(project=project, content_type__startswith="image/", deleted_at__isnull=False, purged_at__isnull=True))
+    for asset in assets:
+        purge_asset(asset=asset, user=request.user)
+    messages.success(request, f"Permanently deleted {len(assets)} image(s).")
+    return redirect("studio:project_image_trash", project_id=project.id)
 
 
 @login_required
@@ -1256,6 +1479,8 @@ def _attach_prompt_ai_state(prompts):
             (item for item in suggestions if item.status == AiSuggestion.Status.ACCEPTED and item.original_blocks),
             None,
         )
+        direct = list(prompt.assets.all())
+        prompt.display_assets = direct + [asset for asset in prompt.reference_assets.all() if asset.id not in {item.id for item in direct}]
 
 
 @login_required
@@ -1394,6 +1619,28 @@ def prompt_image_upload(request, prompt_id):
         messages.error(request, "Choose a valid JPG, PNG or WEBP image.")
     if request.POST.get("return_to") == "chain":
         return HttpResponseRedirect(reverse("studio:project_scene_chain", kwargs={"project_id": prompt.scene.episode.project_id}) + f"#prompt-{prompt.id}")
+    return HttpResponseRedirect(reverse("studio:scene_detail", kwargs={"scene_id": prompt.scene_id}) + f"#prompt-{prompt.id}")
+
+
+@login_required
+def prompt_asset_attach(request, prompt_id):
+    prompt = get_object_or_404(
+        Prompt.objects.select_related("scene__episode__project__workspace").filter(
+            scene__episode__project__in=accessible_projects(request.user)
+        ),
+        id=prompt_id,
+    )
+    if request.method != "POST" or not has_object_capability(request.user, prompt, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    asset = get_object_or_404(
+        Asset.objects.filter(project=prompt.scene.episode.project, content_type__startswith="image/"),
+        id=request.POST.get("asset_id"),
+    )
+    prompt.reference_assets.add(asset)
+    prompt.updated_by = request.user
+    prompt.save(update_fields=["updated_by", "updated_at"])
+    audit(workspace=prompt.scene.episode.project.workspace, actor=request.user, action="PROMPT_ASSET_ATTACHED", instance=prompt, metadata={"assetId": str(asset.id)})
+    messages.success(request, "Project image attached to prompt.")
     return HttpResponseRedirect(reverse("studio:scene_detail", kwargs={"scene_id": prompt.scene_id}) + f"#prompt-{prompt.id}")
 
 

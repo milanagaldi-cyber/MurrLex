@@ -13,7 +13,7 @@ ROLE_CAPABILITIES = {
 
 PROJECT_ROLE_CAPABILITIES = {
     ProjectMembership.Role.VIEWER: {"view"},
-    ProjectMembership.Role.EDITOR: {"view", "edit", "translate"},
+    ProjectMembership.Role.EDITOR: {"view", "edit", "translate", "use_ai"},
     ProjectMembership.Role.CONTROLLER: {"view", "edit", "translate", "manage_project", "use_ai", "export"},
 }
 

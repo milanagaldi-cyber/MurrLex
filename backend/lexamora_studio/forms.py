@@ -3,7 +3,14 @@ from django import forms
 from lessons.ai_gateway import TEXT_MODELS
 
 from .ai_catalog import PROMPT_LANGUAGES, default_prompt_template
-from .models import AdditionalGeneration, Asset, Character, DialogueLine, Episode, Project, ProjectMembership, Prompt, PromptBlock, Scene, StudioTextModel
+from .models import AdditionalGeneration, Asset, Character, DialogueLine, Episode, Project, ProjectMembership, Prompt, PromptBlock, Scene, StudioTextModel, Workspace
+
+
+class WorkspaceForm(forms.ModelForm):
+    class Meta:
+        model = Workspace
+        fields = ["name", "description"]
+        widgets = {"description": forms.Textarea(attrs={"rows": 4})}
 
 
 class ProjectForm(forms.ModelForm):

@@ -1,7 +1,7 @@
 {% extends "studio/base.html" %}
 {% block title %}{{ project.title }} / Image trash{% endblock %}
 {% block content %}
-<div class="toolbar"><div><p class="muted"><a href="{% url 'studio:project_detail' project.id %}">{{ project.title }}</a></p><h1>Image trash</h1><p class="muted">Restore an image or permanently remove its stored original and thumbnail.</p></div></div>
+<div class="toolbar"><div><p class="muted"><a href="{% url 'studio:project_detail' project.id %}">{{ project.title }}</a></p><h1>Image trash</h1><p class="muted">Images remain restorable for 30 days.</p></div>{% if can_edit and assets %}<form method="post" action="{% url 'studio:project_image_trash_clear' project.id %}" onsubmit="return confirm('Permanently delete every image in this trash?')">{% csrf_token %}<button class="danger">Empty trash</button></form>{% endif %}</div>
 <div class="asset-grid">
 {% for asset in assets %}
   <figure class="asset"><a href="{% url 'studio:trashed_asset_view' asset.id %}"><img src="{% url 'studio:trashed_asset_thumbnail' asset.id %}" alt="{{ asset.original_filename }}"></a><figcaption><strong>{{ asset.original_filename }}</strong><br><span class="muted">Deleted {{ asset.deleted_at|date:"Y-m-d H:i" }}</span>
