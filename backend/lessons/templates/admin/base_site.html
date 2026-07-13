@@ -673,6 +673,7 @@
 <nav class="murrlex-admin-nav" aria-label="Admin navigation">
     <a href="{% url 'admin:index' %}">Dashboard</a>
     {% if perms.auth.view_user %}<a href="{% url 'admin:auth_user_changelist' %}">Users</a>{% endif %}
+    {% if perms.auth.view_group %}<a href="{% url 'admin:auth_group_changelist' %}">Groups</a>{% endif %}
     {% if perms.lessons.view_userapiaccess %}<a href="{% url 'admin:lessons_userapiaccess_changelist' %}">AI Access</a>{% endif %}
     {% if perms.lessons.view_providercredential %}<a href="{% url 'admin:lessons_providercredential_changelist' %}">Provider Keys</a>{% endif %}
     {% if perms.lessons.view_lesson %}<a href="{% url 'admin:lessons_lesson_changelist' %}">Lessons</a>{% endif %}

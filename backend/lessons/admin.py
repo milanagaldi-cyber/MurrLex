@@ -1,7 +1,8 @@
 from django import forms
 from django.contrib import admin
 from django.contrib.auth import get_user_model
-from django.contrib.auth.admin import UserAdmin
+from django.contrib.auth.admin import GroupAdmin, UserAdmin
+from django.contrib.auth.models import Group
 from django.shortcuts import redirect
 from django.urls import reverse
 from django.utils import timezone
@@ -16,6 +17,7 @@ admin.site.index_title = "Server dashboard"
 
 User = get_user_model()
 admin.site.unregister(User)
+admin.site.unregister(Group)
 
 
 @admin.register(User)
@@ -38,6 +40,20 @@ class MurrLexUserAdmin(UserAdmin):
         if not request.user.is_superuser:
             return False
         return super().has_delete_permission(request, obj)
+
+
+@admin.register(Group)
+class MurrLexGroupAdmin(GroupAdmin):
+    list_display = ("name", "members_total", "permissions_total")
+    search_fields = ("name",)
+
+    @admin.display(description="Members")
+    def members_total(self, group):
+        return group.user_set.count()
+
+    @admin.display(description="Permissions")
+    def permissions_total(self, group):
+        return group.permissions.count()
 
 
 @admin.register(GoogleOAuthAllowedUser)

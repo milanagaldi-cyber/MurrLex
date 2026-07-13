@@ -17,7 +17,7 @@
 </div>
 
 <div class="dashboard-sections">
-    {% if perms.auth.view_user or perms.lessons.view_userapiaccess %}
+    {% if perms.auth.view_user or perms.auth.view_group or perms.lessons.view_userapiaccess %}
     <section class="dashboard-section" aria-labelledby="users-heading">
         <div class="dashboard-section-heading">
             <div>
@@ -36,6 +36,12 @@
             <a class="dashboard-link" href="{% url 'admin:lessons_userapiaccess_changelist' %}">
                 <span class="dashboard-link-copy"><strong>AI API Access</strong><small>Allow selected users to use server AI providers.</small></span>
                 <span class="dashboard-status"><b>{{ stats.api_access_enabled }}</b> enabled</span>
+            </a>
+            {% endif %}
+            {% if perms.auth.view_group %}
+            <a class="dashboard-link" href="{% url 'admin:auth_group_changelist' %}">
+                <span class="dashboard-link-copy"><strong>Groups &amp; Roles</strong><small>Create permission groups or use Support, Billing, Content, ReadOnly, Developer, and Superadmin.</small></span>
+                <span class="dashboard-status">Manage roles</span>
             </a>
             {% endif %}
         </div>
@@ -98,14 +104,13 @@
     </section>
     {% endif %}
 
-    {% if perms.auth.view_group or perms.lessons.view_googleoauthalloweduser or perms.account.view_emailaddress or perms.sites.view_site or perms.socialaccount.view_socialapp or perms.socialaccount.view_socialaccount or perms.socialaccount.view_socialtoken %}
+    {% if perms.lessons.view_googleoauthalloweduser or perms.account.view_emailaddress or perms.sites.view_site or perms.socialaccount.view_socialapp or perms.socialaccount.view_socialaccount or perms.socialaccount.view_socialtoken %}
     <details class="dashboard-system">
         <summary>
             <span><strong>System</strong><small>Django, email, domain, and Google OAuth configuration.</small></span>
             <span class="dashboard-system-action">Show technical settings</span>
         </summary>
         <div class="dashboard-system-links">
-            {% if perms.auth.view_group %}<a href="{% url 'admin:auth_group_changelist' %}"><strong>Groups</strong><small>Reusable permission sets.</small></a>{% endif %}
             {% if perms.lessons.view_googleoauthalloweduser %}<a href="{% url 'admin:lessons_googleoauthalloweduser_changelist' %}"><strong>Google staging allowlist</strong><small>Test accounts permitted to use Google Sign-In.</small></a>{% endif %}
             {% if perms.account.view_emailaddress %}<a href="{% url 'admin:account_emailaddress_changelist' %}"><strong>Email Addresses</strong><small>Verification records linked to users.</small></a>{% endif %}
             {% if perms.sites.view_site %}<a href="{% url 'admin:sites_site_changelist' %}"><strong>Sites</strong><small>Domain identity used by authentication.</small></a>{% endif %}

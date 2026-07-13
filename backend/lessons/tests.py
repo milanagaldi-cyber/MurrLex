@@ -3,13 +3,13 @@ from unittest.mock import patch
 
 from cryptography.fernet import Fernet
 from django.contrib.auth import get_user_model
-from django.contrib.auth.models import Group
+from django.contrib.auth.models import Group, Permission
 from django.urls import reverse
 from django.test import TestCase, override_settings
 
 from allauth.socialaccount.models import SocialAccount
 
-from .admin_roles import DAILY_ADMIN_GROUP, sync_daily_admin_group
+from .admin_roles import DAILY_ADMIN_GROUP, ROLE_NAMES, sync_admin_groups, sync_daily_admin_group
 from .models import Card, GoogleOAuthAllowedUser, ImportLog, Lesson, ProviderCredential, UserApiAccess
 from .provider_credentials import get_provider_api_key
 from .services import import_lesson_payload
@@ -988,3 +988,61 @@ class DailyAdminRoleTests(TestCase):
         self.assertFalse(owner_response.context["has_change_permission"])
         self.assertEqual(provider_response.status_code, 403)
         self.assertNotContains(regular_response, 'name="is_superuser"')
+
+
+class StandardAdminGroupTests(TestCase):
+    def setUp(self):
+        self.groups = sync_admin_groups()
+
+    def permission_names(self, role_name):
+        return set(
+            self.groups[role_name].permissions.values_list(
+                "content_type__app_label", "codename"
+            )
+        )
+
+    def test_standard_groups_are_created_with_distinct_permission_sets(self):
+        self.assertEqual(set(self.groups), set(ROLE_NAMES))
+
+        support = self.permission_names("Support")
+        billing = self.permission_names("Billing")
+        content = self.permission_names("Content")
+        readonly = self.permission_names("ReadOnly")
+        developer = self.permission_names("Developer")
+
+        self.assertIn(("auth", "change_user"), support)
+        self.assertNotIn(("lessons", "change_providercredential"), support)
+        self.assertIn(("lessons", "change_userapiaccess"), billing)
+        self.assertNotIn(("auth", "change_user"), billing)
+        self.assertIn(("lessons", "change_lesson"), content)
+        self.assertIn(("lexamora_studio", "change_workspace"), content)
+        self.assertIn(("auth", "view_user"), readonly)
+        self.assertNotIn(("auth", "change_user"), readonly)
+        self.assertNotIn(("lessons", "view_providercredential"), readonly)
+        self.assertIn(("lessons", "view_providercredential"), developer)
+        self.assertNotIn(("lessons", "change_providercredential"), developer)
+        self.assertEqual(
+            self.groups["Superadmin"].permissions.count(),
+            Permission.objects.count(),
+        )
+
+    def test_superuser_can_open_group_dashboard_and_create_custom_group(self):
+        user = get_user_model().objects.create_superuser(
+            "group-owner", "group-owner@example.com", "strong-pass"
+        )
+        self.client.force_login(user)
+
+        dashboard = self.client.get("/admin/")
+        group_list = self.client.get("/admin/auth/group/")
+        created = self.client.post(
+            "/admin/auth/group/add/",
+            {"name": "Custom Operations", "permissions": []},
+        )
+
+        self.assertEqual(dashboard.status_code, 200)
+        self.assertContains(dashboard, "Groups &amp; Roles", html=True)
+        self.assertContains(dashboard, "Support, Billing, Content, ReadOnly, Developer, and Superadmin")
+        self.assertEqual(group_list.status_code, 200)
+        self.assertContains(group_list, "Permissions")
+        self.assertRedirects(created, "/admin/auth/group/")
+        self.assertTrue(Group.objects.filter(name="Custom Operations").exists())
