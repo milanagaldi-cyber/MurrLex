@@ -425,7 +425,7 @@ def project_access(request, project_id):
                 user=form.user,
                 defaults={"role": form.cleaned_data["role"], "is_active": True, "invited_by": request.user},
             )
-            messages.success(request, "Project access saved.")
+            messages.success(request, "Project access and server AI access enabled.")
             return redirect("studio:project_access", project_id=project.id)
     return render(request, "studio/project_access.html", {
         "project": project,

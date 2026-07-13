@@ -6,7 +6,7 @@ Project owners and users with **Full control** can open **Share** on a project a
 - **Edit**: view, edit, and translate this project.
 - **Full control**: edit, translate, use permitted AI features, export, and manage project sharing.
 
-AI operations still require the user's separate server AI grant. A project membership never grants access to its workspace or sibling projects. Shared projects appear under **Shared with me** on the Studio dashboard.
+An active project invitation automatically enables the user's server AI grant, so Lexamora Studio and its AI operations are immediately available. Removing one project membership does not automatically revoke that global grant because the user may still need it for another shared project; an administrator can revoke it separately. A project membership never grants access to its workspace or sibling projects. Shared projects appear under **Shared with me** on the Studio dashboard.
 
 Authenticated API clients with Full control can use:
 

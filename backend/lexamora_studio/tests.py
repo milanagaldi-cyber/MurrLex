@@ -102,6 +102,8 @@ class ProjectSharingTests(TestCase):
         )
         self.assertEqual(response.status_code, 302)
         self.assertTrue(ProjectMembership.objects.filter(project=self.project, user=self.outsider).exists())
+        self.outsider.api_access.refresh_from_db()
+        self.assertTrue(self.outsider.api_access.ai_api_enabled)
 
     def test_editor_cannot_manage_project_members(self):
         self.client.force_login(self.editor)
@@ -115,9 +117,13 @@ class ProjectSharingTests(TestCase):
             content_type="application/json",
         )
         self.assertEqual(response.status_code, 201)
+        self.outsider.api_access.refresh_from_db()
+        self.assertTrue(self.outsider.api_access.ai_api_enabled)
         membership_id = response.json()["id"]
         self.assertEqual(self.client.get(f"/api/v1/studio/projects/{self.project.id}/members").status_code, 200)
         self.assertEqual(self.client.delete(f"/api/v1/studio/projects/{self.project.id}/members/{membership_id}").status_code, 200)
+        self.outsider.api_access.refresh_from_db()
+        self.assertTrue(self.outsider.api_access.ai_api_enabled)
 
     def test_viewer_cannot_manage_members_through_api(self):
         self.client.force_login(self.viewer)

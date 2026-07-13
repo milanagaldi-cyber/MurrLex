@@ -1,6 +1,6 @@
 {% extends "studio/base.html" %}
 {% block content %}
-<div class="toolbar"><div><p class="muted"><a href="{% url 'studio:project_detail' project.id %}">{{ project.title }}</a></p><h1>Project access</h1><p class="muted">Share only this project. Other projects in {{ project.workspace.name }} remain private.</p></div></div>
+<div class="toolbar"><div><p class="muted"><a href="{% url 'studio:project_detail' project.id %}">{{ project.title }}</a></p><h1>Project access</h1><p class="muted">Share only this project. Other projects in {{ project.workspace.name }} remain private.</p><p class="muted">Invited users automatically receive access to Lexamora Studio and its server AI functions.</p></div></div>
 <section class="panel" style="padding:20px;max-width:760px">
   <h2>Add or update access</h2>
   <form method="post">{% csrf_token %}{{ form.as_p }}<button type="submit">Save access</button></form>
