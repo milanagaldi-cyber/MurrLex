@@ -11,9 +11,9 @@
 <div class="asset-grid">
 {% for asset in scene.assets.all %}
   {% if asset.thumbnail %}
-  <figure class="asset">
+  <figure class="asset" data-crop-url="{% url 'studio:asset_crop' asset.id %}">
     <a href="{% url 'studio_api:asset_view' asset.id %}" target="_blank" rel="noopener"><img src="{% url 'studio_api:asset_thumbnail' asset.id %}" alt="{{ asset.original_filename }}"></a>
-    <figcaption><strong>{{ asset.original_filename }}</strong><br><span class="muted">{{ asset.get_kind_display }} / {{ asset.width }}x{{ asset.height }}</span>{% if can_edit %}<br><a href="{% url 'studio:asset_edit' asset.id %}">Edit details</a>{% endif %}{% include "studio/_asset_actions.html" with asset=asset %}</figcaption>
+    <figcaption><strong>{{ asset.original_filename }}</strong><br><span class="muted">{{ asset.get_kind_display }} / {{ asset.width }}x{{ asset.height }}</span>{% if can_edit %}<br><a href="{% url 'studio:asset_edit' asset.id %}">Edit details</a>{% endif %}{% include "studio/_asset_actions.html" with asset=asset attachment_scope='scene' attachment_id=scene.id %}</figcaption>
   </figure>
   {% endif %}
 {% empty %}<p class="empty">No scene images yet.</p>{% endfor %}
@@ -33,7 +33,7 @@
   </dl>
   <div class="asset-grid generation-results">
   {% for output in generation.outputs.all %}
-    <figure class="asset{% if output.is_final %} final-output{% endif %}">
+    <figure class="asset{% if output.is_final %} final-output{% endif %}" data-crop-url="{% url 'studio:asset_crop' output.asset.id %}">
       {% if output.asset.thumbnail %}<a href="{% url 'studio_api:asset_view' output.asset.id %}" target="_blank" rel="noopener"><img src="{% url 'studio_api:asset_thumbnail' output.asset.id %}" alt="{{ output.asset.original_filename }}"></a>{% endif %}
       <figcaption>
         {% if output.is_final %}<strong>Final result</strong><br>{% endif %}

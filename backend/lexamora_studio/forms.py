@@ -104,7 +104,8 @@ class EpisodeForm(forms.ModelForm):
 class SceneForm(forms.ModelForm):
     class Meta:
         model = Scene
-        fields = ["number", "title", "hook", "description", "location", "actions", "performance_notes", "status"]
+        fields = ["title", "hook", "description", "location", "actions", "performance_notes", "status"]
+        widgets = {field: forms.Textarea(attrs={"rows": 2}) for field in ("hook", "description", "location", "actions", "performance_notes")}
 
 
 class DialogueLineForm(forms.ModelForm):

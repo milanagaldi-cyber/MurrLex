@@ -57,7 +57,7 @@
     {% endif %}
 
     <div class="prompt-assets asset-grid">
-      {% for asset in prompt.display_assets %}{% if asset.thumbnail %}<figure class="asset"><a href="{% url 'studio_api:asset_view' asset.id %}"><img src="{% url 'studio_api:asset_thumbnail' asset.id %}" alt="{{ asset.original_filename }}"></a><figcaption><span class="asset-name">{{ asset.original_filename }}</span>{% include "studio/_asset_actions.html" with asset=asset %}</figcaption></figure>{% endif %}{% endfor %}
+      {% for asset in prompt.display_assets %}{% if asset.thumbnail %}<figure class="asset" data-crop-url="{% url 'studio:asset_crop' asset.id %}"><a href="{% url 'studio_api:asset_view' asset.id %}"><img src="{% url 'studio_api:asset_thumbnail' asset.id %}" alt="{{ asset.original_filename }}"></a><figcaption><span class="asset-name">{{ asset.original_filename }}</span>{% include "studio/_asset_actions.html" with asset=asset attachment_scope='prompt' attachment_id=prompt.id return_anchor=prompt.id %}</figcaption></figure>{% endif %}{% endfor %}
     </div>
     {% if can_edit %}<button class="icon-button prompt-asset-add" type="button" data-dialog-open="prompt-assets-{{ prompt.id }}" title="Attach image" aria-label="Attach image">+</button>
     <dialog id="prompt-assets-{{ prompt.id }}" class="asset-picker"><div class="toolbar"><div><h2>Attach image</h2><p class="muted">Choose an existing project image or upload a new one.</p></div><button class="secondary" type="button" data-dialog-close>Close</button></div>

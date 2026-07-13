@@ -1720,6 +1720,70 @@ class StudioInlineEditingWorkflowTests(TestCase):
         self.assertContains(page, "Create scene")
         self.assertContains(page, f'/studio/scenes/{self.second_scene.id}/')
         self.assertContains(page, "data-scene-cancel disabled", count=2)
+        self.assertNotContains(page, 'name="number"')
+        self.assertContains(page, 'id="scene-navigation-bottom"')
+
+    def test_scene_reorder_recomputes_display_numbers(self):
+        from .models import Scene
+
+        self.client.force_login(self.owner)
+        response = self.client.post(
+            f"/studio/episodes/{self.episode.id}/scenes/reorder/",
+            data=json.dumps({"sceneIds": [str(self.second_scene.id), str(self.first_scene.id)]}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        ordered = list(Scene.objects.filter(episode=self.episode).order_by("position"))
+        self.assertEqual([(item.id, item.number) for item in ordered], [(self.second_scene.id, 1), (self.first_scene.id, 2)])
+
+    def test_crop_creates_second_project_image_and_detach_keeps_file(self):
+        import tempfile
+        from pathlib import Path
+        from .models import Asset
+        from .storage import create_asset
+
+        self.client.force_login(self.owner)
+        with tempfile.TemporaryDirectory() as directory:
+            with self.settings(STUDIO_PRIVATE_MEDIA_ROOT=Path(directory)):
+                source = create_asset(
+                    user=self.owner, workspace=self.workspace, project=self.project,
+                    scene=self.first_scene, uploaded=self.image_file("source.png"), kind=Asset.Kind.SCENE_IMAGE,
+                )
+                cropped = self.client.post(
+                    f"/studio/assets/{source.id}/crop/",
+                    data=json.dumps({"x": 4, "y": 3, "width": 40, "height": 30}),
+                    content_type="application/json",
+                )
+                self.assertEqual(cropped.status_code, 201, cropped.content)
+                crop = Asset.objects.get(id=cropped.json()["id"])
+                self.assertEqual((crop.width, crop.height), (40, 30))
+                self.assertEqual(crop.project, self.project)
+                self.assertIsNone(crop.scene)
+                self.assertTrue(Asset.objects.filter(id=source.id).exists())
+
+                detached = self.client.post(
+                    f"/studio/assets/{source.id}/detach/scene/{self.first_scene.id}/",
+                    {"next": f"/studio/scenes/{self.first_scene.id}/#images"},
+                )
+                self.assertRedirects(detached, f"/studio/scenes/{self.first_scene.id}/#images")
+                source.refresh_from_db()
+                self.assertIsNone(source.scene)
+                self.assertTrue(Asset.objects.filter(id=source.id, deleted_at__isnull=True).exists())
+
+    def test_workspace_tiles_copy_trash_and_restore(self):
+        self.client.force_login(self.owner)
+        dashboard = self.client.get("/studio/")
+        self.assertContains(dashboard, f"/studio/workspaces/{self.workspace.id}/copy/")
+        self.assertContains(dashboard, f"/studio/workspaces/{self.workspace.id}/trash/")
+        copied_response = self.client.post(f"/studio/workspaces/{self.workspace.id}/copy/")
+        copied = accessible_workspaces(self.owner).exclude(id=self.workspace.id).get()
+        self.assertRedirects(copied_response, f"/studio/workspaces/{copied.id}/")
+        trashed = self.client.post(f"/studio/workspaces/{copied.id}/trash/")
+        self.assertRedirects(trashed, "/studio/")
+        self.assertFalse(accessible_workspaces(self.owner).filter(id=copied.id).exists())
+        restored = self.client.post(f"/studio/workspaces/{copied.id}/restore/")
+        self.assertRedirects(restored, f"/studio/workspaces/{copied.id}/")
+        self.assertTrue(accessible_workspaces(self.owner).filter(id=copied.id).exists())
 
     def test_prompt_can_attach_existing_project_image(self):
         import tempfile

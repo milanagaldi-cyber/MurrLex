@@ -102,6 +102,45 @@ def create_asset(*, user, workspace, uploaded, kind, project=None, scene=None, c
 
 
 @transaction.atomic
+def crop_asset(*, asset, user, x, y, width, height):
+    if not asset.project_id or not asset.content_type.startswith("image/") or not asset.file.name:
+        raise ValidationError("Only active project images can be cropped.")
+    try:
+        with asset.file.open("rb") as source, Image.open(source) as image:
+            image = ImageOps.exif_transpose(image)
+            image_width, image_height = image.size
+            left, top = int(x), int(y)
+            crop_width, crop_height = int(width), int(height)
+            if left < 0 or top < 0 or crop_width < 2 or crop_height < 2:
+                raise ValueError
+            if left + crop_width > image_width or top + crop_height > image_height:
+                raise ValueError
+            cropped = image.crop((left, top, left + crop_width, top + crop_height)).convert("RGB")
+            output = io.BytesIO()
+            cropped.save(output, "JPEG", quality=94, optimize=True)
+    except (OSError, ValueError, TypeError) as exc:
+        raise ValidationError("Choose a valid crop area inside the image.") from exc
+    filename = f"{Path(asset.original_filename).stem}-crop.jpg"
+    uploaded = ContentFile(output.getvalue(), name=filename)
+    uploaded.content_type = "image/jpeg"
+    cropped_asset = create_asset(
+        user=user,
+        workspace=asset.workspace,
+        uploaded=uploaded,
+        kind=Asset.Kind.OTHER,
+        project=asset.project,
+    )
+    audit(
+        workspace=asset.workspace,
+        actor=user,
+        action="ASSET_CROPPED",
+        instance=cropped_asset,
+        metadata={"sourceAssetId": str(asset.id), "crop": [left, top, crop_width, crop_height]},
+    )
+    return cropped_asset
+
+
+@transaction.atomic
 def trash_asset(*, asset, user):
     locked = Asset.all_objects.select_for_update().get(pk=asset.pk)
     if not locked.content_type.startswith("image/"):

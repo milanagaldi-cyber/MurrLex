@@ -28,7 +28,7 @@ from .models import AdditionalGeneration, AiModelProfile, AiSuggestion, Asset, C
 from .permissions import accessible_assets, accessible_projects, accessible_suggestions, accessible_workspaces, has_capability, has_object_capability, has_project_capability
 from .revisions import audit, record_revision
 from .services import bulk_replace_subtitle_lines, create_workspace, propagate_project_original_language, reorder_subtitle_lines, save_translation
-from .storage import create_asset, purge_asset, restore_asset, trash_asset
+from .storage import create_asset, crop_asset, purge_asset, restore_asset, trash_asset
 
 
 @login_required
@@ -37,7 +37,8 @@ def dashboard(request):
     orderings = {"name": "name", "created": "-created_at", "updated": "-updated_at", "projects": "name"}
     workspaces = accessible_workspaces(request.user).select_related("owner", "created_by", "updated_by").prefetch_related("projects").order_by(orderings.get(sort, "-updated_at"), "name")
     shared_projects = accessible_projects(request.user).exclude(workspace__in=workspaces).select_related("workspace")
-    return render(request, "studio/dashboard.html", {"workspaces": workspaces, "shared_projects": shared_projects, "sort": sort})
+    trashed_workspaces = Workspace.all_objects.filter(owner=request.user, deleted_at__isnull=False).order_by("-deleted_at")
+    return render(request, "studio/dashboard.html", {"workspaces": workspaces, "shared_projects": shared_projects, "trashed_workspaces": trashed_workspaces, "sort": sort})
 
 
 def _set_single_default(model, instance):
@@ -128,6 +129,8 @@ def workspace_detail(request, workspace_id):
     projects = list(workspace.projects.select_related("created_by", "updated_by").prefetch_related("assets", "memberships__user").order_by(orderings.get(sort, "-updated_at"), "title"))
     for project in projects:
         project.cover_asset = min((asset for asset in project.assets.all() if asset.thumbnail), key=lambda asset: asset.created_at, default=None)
+        project.can_edit = has_project_capability(request.user, project, "edit")
+        project.can_manage = has_project_capability(request.user, project, "manage_project")
     return render(request, "studio/workspace_detail.html", {"workspace": workspace, "projects": projects, "sort": sort, "can_edit": has_capability(request.user, workspace, "edit"), "imports": workspace.docx_imports.select_related("project")[:10]})
 
 
@@ -135,6 +138,60 @@ def workspace_detail(request, workspace_id):
 def workspace_edit(request, workspace_id):
     workspace = get_object_or_404(accessible_workspaces(request.user), id=workspace_id)
     return _edit_entity(request, item=workspace, form_class=WorkspaceForm, workspace=workspace, title="Edit workspace", success_url=lambda item: ("studio:workspace_detail", item.id))
+
+
+def _unique_workspace_identity(name):
+    base_name = f"{name} copy"[:170]
+    candidate, counter = base_name, 2
+    while Workspace.all_objects.filter(name=candidate).exists():
+        candidate = f"{base_name} {counter}"[:180]
+        counter += 1
+    base_slug = slugify(candidate)[:170] or "workspace-copy"
+    slug, counter = base_slug, 2
+    while Workspace.all_objects.filter(slug=slug).exists():
+        slug = f"{base_slug}-{counter}"[:180]
+        counter += 1
+    return candidate, slug
+
+
+@login_required
+@transaction.atomic
+def workspace_copy(request, workspace_id):
+    source = get_object_or_404(accessible_workspaces(request.user), id=workspace_id)
+    if request.method != "POST" or not has_capability(request.user, source, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    name, slug = _unique_workspace_identity(source.name)
+    copied = create_workspace(user=request.user, name=name, slug=slug)
+    copied.description = source.description
+    copied.save(update_fields=["description", "updated_at"])
+    messages.success(request, "Workspace copied. Projects can be copied into it individually.")
+    return redirect("studio:workspace_detail", workspace_id=copied.id)
+
+
+@login_required
+def workspace_trash(request, workspace_id):
+    workspace = get_object_or_404(accessible_workspaces(request.user), id=workspace_id)
+    if request.method != "POST" or not has_capability(request.user, workspace, "manage_project"):
+        return HttpResponseForbidden("Full control permission is required.")
+    workspace.deleted_at = timezone.now()
+    workspace.deleted_by = request.user
+    workspace.updated_by = request.user
+    workspace.save(update_fields=["deleted_at", "deleted_by", "updated_by", "updated_at"])
+    messages.success(request, "Workspace moved to trash for 30 days.")
+    return redirect("studio:dashboard")
+
+
+@login_required
+def workspace_restore(request, workspace_id):
+    workspace = get_object_or_404(Workspace.all_objects, id=workspace_id, deleted_at__isnull=False)
+    if request.method != "POST" or workspace.owner_id != request.user.id:
+        return HttpResponseForbidden("Workspace owner permission is required.")
+    workspace.deleted_at = None
+    workspace.deleted_by = None
+    workspace.updated_by = request.user
+    workspace.save(update_fields=["deleted_at", "deleted_by", "updated_by", "updated_at"])
+    messages.success(request, "Workspace restored.")
+    return redirect("studio:workspace_detail", workspace_id=workspace.id)
 
 
 def _create_entity(request, *, form_class, parent, parent_field, workspace, title, success_url, position_manager=None):
@@ -148,6 +205,8 @@ def _create_entity(request, *, form_class, parent, parent_field, workspace, titl
         item.updated_by = request.user
         if position_manager is not None:
             item.position = position_manager.count()
+        if isinstance(item, Scene):
+            item.number = item.position + 1
         try:
             item.full_clean()
         except ValidationError as exc:
@@ -232,8 +291,11 @@ def _image_upload(request, *, target, workspace, title, success_url, kind, proje
             form.add_error("file", exc)
         else:
             messages.success(request, "Image uploaded.")
+            requested = request.POST.get("next", "")
+            if requested and url_has_allowed_host_and_scheme(requested, {request.get_host()}, require_https=request.is_secure()):
+                return HttpResponseRedirect(requested)
             return redirect(*success_url(target))
-    return render(request, "studio/entity_form.html", {"form": form, "title": title, "submit_label": "Upload image", "multipart": True})
+    return render(request, "studio/entity_form.html", {"form": form, "title": title, "submit_label": "Upload image", "multipart": True, "return_to": request.GET.get("next", "")})
 
 
 @login_required
@@ -490,6 +552,9 @@ def project_access(request, project_id):
             membership = get_object_or_404(ProjectMembership, project=project, id=request.POST.get("membership_id"))
             membership.delete()
             messages.success(request, "Project access removed.")
+            requested = request.POST.get("next", "")
+            if requested and url_has_allowed_host_and_scheme(requested, {request.get_host()}, require_https=request.is_secure()):
+                return HttpResponseRedirect(requested)
             return redirect("studio:project_access", project_id=project.id)
         if form.is_valid():
             ProjectMembership.objects.update_or_create(
@@ -528,7 +593,8 @@ def scene_detail(request, scene_id):
             record_revision(instance=scene, user=request.user, operation="INLINE_UPDATE")
             audit(workspace=workspace, actor=request.user, action="SCENE_INLINE_UPDATED", instance=scene)
             messages.success(request, f"Scene {scene.number} saved.")
-            return redirect("studio:scene_detail", scene_id=scene.id)
+            focus = request.POST.get("navigation_focus", "top")
+            return HttpResponseRedirect(reverse("studio:scene_detail", kwargs={"scene_id": scene.id}) + f"?focus={focus}#scene-navigation-{focus}")
     episode_scenes = list(scene.episode.scenes.order_by("position", "number", "id"))
     scene_index = next(index for index, item in enumerate(episode_scenes) if item.id == scene.id)
     editor_prompts = [prompt for prompt in scene.prompts.all() if not prompt.source_prompt_id]
@@ -1155,6 +1221,66 @@ def asset_trash(request, asset_id):
 
 
 @login_required
+def asset_crop(request, asset_id):
+    asset = _asset_for_edit(request, asset_id)
+    if request.method != "POST" or not has_object_capability(request.user, asset, "edit"):
+        return JsonResponse({"error": "Edit permission is required."}, status=403)
+    try:
+        data = json.loads(request.body or b"{}")
+        cropped = crop_asset(
+            asset=asset,
+            user=request.user,
+            x=data.get("x"),
+            y=data.get("y"),
+            width=data.get("width"),
+            height=data.get("height"),
+        )
+    except (json.JSONDecodeError, ValidationError) as exc:
+        message = "; ".join(exc.messages) if isinstance(exc, ValidationError) else "Invalid crop request."
+        return JsonResponse({"error": message}, status=400)
+    return JsonResponse({
+        "id": str(cropped.id),
+        "viewUrl": reverse("studio_api:asset_view", kwargs={"asset_id": cropped.id}),
+        "thumbnailUrl": reverse("studio_api:asset_thumbnail", kwargs={"asset_id": cropped.id}),
+    }, status=201)
+
+
+@login_required
+def asset_detach(request, asset_id, scope, owner_id):
+    asset = _asset_for_edit(request, asset_id)
+    if request.method != "POST" or not has_object_capability(request.user, asset, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    detached = False
+    if scope == "scene":
+        scene = get_object_or_404(Scene.objects.filter(episode__project__in=accessible_projects(request.user)), id=owner_id)
+        if asset.scene_id == scene.id:
+            asset.scene = None
+            asset.kind = Asset.Kind.OTHER
+            detached = True
+    elif scope == "prompt":
+        prompt = get_object_or_404(Prompt.objects.filter(scene__episode__project__in=accessible_projects(request.user)), id=owner_id)
+        if asset.prompt_id == prompt.id:
+            asset.prompt = None
+            detached = True
+        if prompt.reference_assets.filter(id=asset.id).exists():
+            prompt.reference_assets.remove(asset)
+            detached = True
+    elif scope == "character":
+        character = get_object_or_404(Character.objects.filter(project__in=accessible_projects(request.user)), id=owner_id)
+        if asset.character_id == character.id:
+            asset.character = None
+            asset.kind = Asset.Kind.OTHER
+            detached = True
+    if not detached:
+        return HttpResponseForbidden("This image is not attached here.")
+    asset.updated_by = request.user
+    asset.save(update_fields=["scene", "prompt", "character", "kind", "updated_by", "updated_at"])
+    audit(workspace=asset.workspace, actor=request.user, action="ASSET_DETACHED", instance=asset, metadata={"scope": scope, "ownerId": str(owner_id)})
+    messages.success(request, "Image detached. It remains available in the project gallery.")
+    return _asset_action_redirect(request, asset)
+
+
+@login_required
 def asset_restore(request, asset_id):
     asset = _asset_for_edit(request, asset_id, include_deleted=True)
     if request.method != "POST" or not has_object_capability(request.user, asset, "edit"):
@@ -1743,12 +1869,14 @@ def episode_scene_reorder(request, episode_id):
         for offset, scene_id in enumerate(ordered_ids):
             scene = by_id[scene_id]
             scene.position = 100000 + offset
-            scene.save(update_fields=["position", "updated_at"])
+            scene.number = 100000 + offset
+            scene.save(update_fields=["position", "number", "updated_at"])
         for position, scene_id in enumerate(ordered_ids):
             scene = by_id[scene_id]
             scene.position = position
+            scene.number = position + 1
             scene.updated_by = request.user
-            scene.save(update_fields=["position", "updated_by", "updated_at"])
+            scene.save(update_fields=["position", "number", "updated_by", "updated_at"])
         audit(
             workspace=workspace,
             actor=request.user,

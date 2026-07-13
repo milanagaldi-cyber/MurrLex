@@ -33,13 +33,14 @@ def accessible_projects(user):
     if not getattr(user, "is_authenticated", False):
         return Project.objects.none()
     if user.is_superuser:
-        return Project.objects.all()
+        return Project.objects.filter(workspace__deleted_at__isnull=True)
     return Project.objects.filter(
         Q(
             workspace__memberships__user=user,
             workspace__memberships__status=WorkspaceMembership.Status.ACTIVE,
         )
-        | Q(memberships__user=user, memberships__is_active=True)
+        | Q(memberships__user=user, memberships__is_active=True),
+        workspace__deleted_at__isnull=True,
     ).distinct()
 
 

@@ -52,7 +52,7 @@ main{width:min(1600px,calc(100% - 32px))}
       <div class="scene-editor-head"><h3>Scene {{ scene.number }}. {{ scene.title }}</h3><a href="{% url 'studio:scene_detail' scene.id %}">Open full scene</a></div>
       <div class="scene-editor-layout">
         <aside class="selected-scene-image">
-          {% for asset in scene.chain_images %}{% if asset.thumbnail %}<figure class="asset"><a href="{% url 'studio_api:asset_view' asset.id %}"><img src="{% url 'studio_api:asset_thumbnail' asset.id %}" alt="{{ asset.original_filename }}"></a><figcaption>{{ asset.original_filename }}{% include "studio/_asset_actions.html" with asset=asset %}</figcaption></figure>{% endif %}{% empty %}<div class="clip-empty panel" style="min-height:180px">No scene image</div>{% endfor %}
+          {% for asset in scene.chain_images %}{% if asset.thumbnail %}<figure class="asset" data-crop-url="{% url 'studio:asset_crop' asset.id %}"><a href="{% url 'studio_api:asset_view' asset.id %}"><img src="{% url 'studio_api:asset_thumbnail' asset.id %}" alt="{{ asset.original_filename }}"></a><figcaption>{{ asset.original_filename }}{% include "studio/_asset_actions.html" with asset=asset attachment_scope='scene' attachment_id=scene.id %}</figcaption></figure>{% endif %}{% empty %}<div class="clip-empty panel" style="min-height:180px">No scene image</div>{% endfor %}
           {% if can_edit %}<a class="button secondary" href="{% url 'studio:scene_image_upload' scene.id %}">Upload image</a>{% endif %}
         </aside>
         <div class="scene-editor-form">
