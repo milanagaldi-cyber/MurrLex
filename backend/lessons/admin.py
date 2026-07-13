@@ -1,5 +1,7 @@
 from django import forms
 from django.contrib import admin
+from django.contrib.auth import get_user_model
+from django.contrib.auth.admin import UserAdmin
 from django.shortcuts import redirect
 from django.urls import reverse
 from django.utils import timezone
@@ -10,6 +12,32 @@ from .models import ApiSession, Card, GoogleOAuthAllowedUser, ImportLog, Lesson,
 admin.site.enable_nav_sidebar = False
 admin.site.index_template = "admin/index.html"
 admin.site.index_title = "Server dashboard"
+
+
+User = get_user_model()
+admin.site.unregister(User)
+
+
+@admin.register(User)
+class MurrLexUserAdmin(UserAdmin):
+    """Keep routine admins useful without letting them grant themselves power."""
+
+    def get_readonly_fields(self, request, obj=None):
+        readonly = list(super().get_readonly_fields(request, obj))
+        if not request.user.is_superuser:
+            readonly.extend(("is_staff", "is_superuser", "groups", "user_permissions"))
+        return tuple(dict.fromkeys(readonly))
+
+    def has_change_permission(self, request, obj=None):
+        allowed = super().has_change_permission(request, obj)
+        if obj is not None and obj.is_superuser and not request.user.is_superuser:
+            return False
+        return allowed
+
+    def has_delete_permission(self, request, obj=None):
+        if not request.user.is_superuser:
+            return False
+        return super().has_delete_permission(request, obj)
 
 
 @admin.register(GoogleOAuthAllowedUser)

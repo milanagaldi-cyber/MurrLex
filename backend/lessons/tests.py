@@ -3,11 +3,13 @@ from unittest.mock import patch
 
 from cryptography.fernet import Fernet
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import Group
 from django.urls import reverse
 from django.test import TestCase, override_settings
 
 from allauth.socialaccount.models import SocialAccount
 
+from .admin_roles import DAILY_ADMIN_GROUP, sync_daily_admin_group
 from .models import Card, GoogleOAuthAllowedUser, ImportLog, Lesson, ProviderCredential, UserApiAccess
 from .provider_credentials import get_provider_api_key
 from .services import import_lesson_payload
@@ -906,3 +908,58 @@ class AccountAppNavigationTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Lexamora Studio")
         self.assertContains(response, "Open Studio")
+
+
+class DailyAdminRoleTests(TestCase):
+    def setUp(self):
+        users = get_user_model()
+        self.superuser = users.objects.create_superuser(
+            "role-owner", "owner@example.com", "strong-pass"
+        )
+        self.daily_admin = users.objects.create_user(
+            "daily-admin", "daily@example.com", "strong-pass", is_staff=True
+        )
+        self.regular_user = users.objects.create_user(
+            "regular-user", "regular@example.com", "strong-pass"
+        )
+        self.group = sync_daily_admin_group()
+        self.daily_admin.groups.add(self.group)
+
+    def test_role_contains_routine_permissions_without_server_secrets(self):
+        permissions = set(
+            self.group.permissions.values_list(
+                "content_type__app_label", "codename"
+            )
+        )
+
+        self.assertIn(("auth", "change_user"), permissions)
+        self.assertIn(("lessons", "change_userapiaccess"), permissions)
+        self.assertIn(("lessons", "change_lesson"), permissions)
+        self.assertNotIn(("auth", "change_group"), permissions)
+        self.assertNotIn(("lessons", "change_providercredential"), permissions)
+
+    def test_role_sync_is_idempotent(self):
+        synced_again = sync_daily_admin_group()
+
+        self.assertEqual(synced_again.pk, self.group.pk)
+        self.assertEqual(Group.objects.filter(name=DAILY_ADMIN_GROUP).count(), 1)
+
+    def test_daily_admin_can_manage_regular_user_but_not_superuser(self):
+        self.client.force_login(self.daily_admin)
+
+        regular_response = self.client.get(
+            reverse("admin:auth_user_change", args=[self.regular_user.pk])
+        )
+        owner_response = self.client.get(
+            reverse("admin:auth_user_change", args=[self.superuser.pk])
+        )
+        provider_response = self.client.get(
+            reverse("admin:lessons_providercredential_changelist")
+        )
+
+        self.assertEqual(regular_response.status_code, 200)
+        self.assertEqual(owner_response.status_code, 200)
+        self.assertTrue(regular_response.context["has_change_permission"])
+        self.assertFalse(owner_response.context["has_change_permission"])
+        self.assertEqual(provider_response.status_code, 403)
+        self.assertNotContains(regular_response, 'name="is_superuser"')
