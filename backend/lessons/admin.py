@@ -1,12 +1,21 @@
 from django import forms
 from django.contrib import admin
 
-from .models import ApiSession, Card, ImportLog, Lesson, ProviderCredential, UserApiAccess
+from .models import ApiSession, Card, GoogleOAuthAllowedUser, ImportLog, Lesson, ProviderCredential, UserApiAccess
 
 
 admin.site.enable_nav_sidebar = False
 admin.site.index_template = "admin/index.html"
 admin.site.index_title = "Server dashboard"
+
+
+@admin.register(GoogleOAuthAllowedUser)
+class GoogleOAuthAllowedUserAdmin(admin.ModelAdmin):
+    list_display = ("email", "google_sub", "is_active", "note", "updated_at")
+    list_editable = ("is_active",)
+    list_filter = ("is_active",)
+    search_fields = ("email", "google_sub", "note")
+    readonly_fields = ("created_at", "updated_at")
 
 
 @admin.register(UserApiAccess)

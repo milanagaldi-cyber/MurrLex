@@ -90,7 +90,14 @@ AI_MAX_AUDIO_BYTES = max(1024 * 1024, int(os.environ.get("AI_MAX_AUDIO_BYTES", s
 AI_MAX_IMAGE_BYTES = max(1024 * 1024, int(os.environ.get("AI_MAX_IMAGE_BYTES", str(12 * 1024 * 1024))))
 GOOGLE_OAUTH_CLIENT_ID = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
 GOOGLE_OAUTH_CLIENT_SECRET = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "")
-GOOGLE_OAUTH_ENABLED = bool(GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET)
+GOOGLE_OAUTH_ENABLED = env_bool("GOOGLE_OAUTH_ENABLED", bool(GOOGLE_OAUTH_CLIENT_ID))
+GOOGLE_OAUTH_REDIRECT_URI = os.environ.get(
+    "GOOGLE_OAUTH_REDIRECT_URI",
+    "https://ml-staging-api.lexaailabs.com/accounts/google/login/callback/",
+)
+GOOGLE_OAUTH_TEST_ALLOWLIST_ENABLED = env_bool("GOOGLE_OAUTH_TEST_ALLOWLIST_ENABLED", True)
+GOOGLE_OAUTH_ALLOWED_EMAILS = [value.lower() for value in env_list("GOOGLE_OAUTH_ALLOWED_EMAILS", [])]
+GOOGLE_OAUTH_ALLOWED_SUBS = env_list("GOOGLE_OAUTH_ALLOWED_SUBS", [])
 LOGIN_URL = "/login/"
 LOGIN_REDIRECT_URL = "/account/"
 LOGOUT_REDIRECT_URL = "/login/"
@@ -99,6 +106,8 @@ ACCOUNT_LOGOUT_REDIRECT_URL = "/login/"
 ACCOUNT_EMAIL_VERIFICATION = "none"
 SOCIALACCOUNT_EMAIL_VERIFICATION = "none"
 SOCIALACCOUNT_AUTO_SIGNUP = True
+SOCIALACCOUNT_STORE_TOKENS = False
+SOCIALACCOUNT_ADAPTER = "lessons.social_auth.StagingSocialAccountAdapter"
 SITE_ID = 1
 
 
@@ -127,6 +136,7 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "lessons.social_auth.GoogleOAuthGuardMiddleware",
     "allauth.account.middleware.AccountMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
@@ -139,7 +149,7 @@ AUTHENTICATION_BACKENDS = [
 
 SOCIALACCOUNT_PROVIDERS = {
     "google": {
-        "SCOPE": ["profile", "email"],
+        "SCOPE": ["openid", "email", "profile"],
         "AUTH_PARAMS": {"access_type": "online"},
         "OAUTH_PKCE_ENABLED": True,
         "APP": {

@@ -99,6 +99,31 @@ class Project(SoftDeleteModel):
         return self.title
 
 
+class ProjectMembership(models.Model):
+    class Role(models.TextChoices):
+        VIEWER = "VIEWER", "View"
+        EDITOR = "EDITOR", "Edit"
+        CONTROLLER = "CONTROLLER", "Full control"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="memberships")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="studio_project_memberships")
+    role = models.CharField(max_length=16, choices=Role.choices, default=Role.VIEWER)
+    is_active = models.BooleanField(default=True)
+    invited_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="studio_project_invitations")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["user__email", "user__username", "id"]
+        constraints = [
+            models.UniqueConstraint(fields=["project", "user"], name="studio_unique_project_member"),
+        ]
+
+    def __str__(self):
+        return f"{self.project}: {self.user} ({self.get_role_display()})"
+
+
 class Character(SoftDeleteModel):
     project = models.ForeignKey(Project, on_delete=models.PROTECT, related_name="characters")
     name = models.CharField(max_length=180)

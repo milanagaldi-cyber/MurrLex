@@ -1,4 +1,6 @@
-from .models import Workspace, WorkspaceMembership
+from django.db.models import Q
+
+from .models import AdditionalGeneration, AiSuggestion, Asset, Character, DialogueLine, Episode, ExportJob, Project, ProjectMembership, Prompt, PromptBlock, Revision, Scene, Workspace, WorkspaceMembership
 
 
 ROLE_CAPABILITIES = {
@@ -7,6 +9,12 @@ ROLE_CAPABILITIES = {
     WorkspaceMembership.Role.EDITOR: {"view", "edit", "translate"},
     WorkspaceMembership.Role.TRANSLATOR: {"view", "translate"},
     WorkspaceMembership.Role.VIEWER: {"view"},
+}
+
+PROJECT_ROLE_CAPABILITIES = {
+    ProjectMembership.Role.VIEWER: {"view"},
+    ProjectMembership.Role.EDITOR: {"view", "edit", "translate"},
+    ProjectMembership.Role.CONTROLLER: {"view", "edit", "translate", "manage_project", "use_ai", "export"},
 }
 
 
@@ -19,6 +27,61 @@ def accessible_workspaces(user):
         memberships__user=user,
         memberships__status=WorkspaceMembership.Status.ACTIVE,
     ).distinct()
+
+
+def accessible_projects(user):
+    if not getattr(user, "is_authenticated", False):
+        return Project.objects.none()
+    if user.is_superuser:
+        return Project.objects.all()
+    return Project.objects.filter(
+        Q(
+            workspace__memberships__user=user,
+            workspace__memberships__status=WorkspaceMembership.Status.ACTIVE,
+        )
+        | Q(memberships__user=user, memberships__is_active=True)
+    ).distinct()
+
+
+def accessible_assets(user, *, include_deleted=False):
+    manager = Asset.all_objects if include_deleted else Asset.objects
+    projects = accessible_projects(user)
+    workspaces = accessible_workspaces(user)
+    return manager.filter(
+        Q(project__in=projects)
+        | Q(scene__episode__project__in=projects)
+        | Q(character__project__in=projects)
+        | Q(prompt__scene__episode__project__in=projects)
+        | Q(
+            workspace__in=workspaces,
+            project__isnull=True,
+            scene__isnull=True,
+            character__isnull=True,
+            prompt__isnull=True,
+        )
+    ).distinct()
+
+
+def accessible_suggestions(user):
+    return AiSuggestion.objects.filter(prompt__scene__episode__project__in=accessible_projects(user))
+
+
+def accessible_exports(user):
+    return ExportJob.objects.filter(project__in=accessible_projects(user))
+
+
+def accessible_revisions(user):
+    projects = accessible_projects(user)
+    return Revision.objects.filter(
+        Q(entity_type="lexamora_studio.project", entity_id__in=projects.values("id"))
+        | Q(entity_type="lexamora_studio.character", entity_id__in=Character.objects.filter(project__in=projects).values("id"))
+        | Q(entity_type="lexamora_studio.episode", entity_id__in=Episode.objects.filter(project__in=projects).values("id"))
+        | Q(entity_type="lexamora_studio.scene", entity_id__in=Scene.objects.filter(episode__project__in=projects).values("id"))
+        | Q(entity_type="lexamora_studio.dialogueline", entity_id__in=DialogueLine.objects.filter(scene__episode__project__in=projects).values("id"))
+        | Q(entity_type="lexamora_studio.prompt", entity_id__in=Prompt.objects.filter(scene__episode__project__in=projects).values("id"))
+        | Q(entity_type="lexamora_studio.promptblock", entity_id__in=PromptBlock.objects.filter(prompt__scene__episode__project__in=projects).values("id"))
+        | Q(entity_type="lexamora_studio.additionalgeneration", entity_id__in=AdditionalGeneration.objects.filter(scene__episode__project__in=projects).values("id"))
+    )
 
 
 def membership_for(user, workspace):
@@ -44,3 +107,41 @@ def has_capability(user, workspace, capability):
         "use_ai": membership.can_use_ai,
         "export": membership.can_export,
     }.get(capability, False)
+
+
+def has_project_capability(user, project, capability):
+    if getattr(user, "is_superuser", False):
+        return True
+    if has_capability(user, project.workspace, capability):
+        return True
+    membership = ProjectMembership.objects.filter(project=project, user=user, is_active=True).first()
+    return membership is not None and capability in PROJECT_ROLE_CAPABILITIES.get(membership.role, set())
+
+
+def project_for_object(item):
+    if isinstance(item, Project):
+        return item
+    for path in (
+        ("project",),
+        ("episode", "project"),
+        ("scene", "episode", "project"),
+        ("prompt", "scene", "episode", "project"),
+        ("generation", "scene", "episode", "project"),
+    ):
+        value = item
+        try:
+            for name in path:
+                value = getattr(value, name)
+        except (AttributeError, type(item).DoesNotExist):
+            continue
+        if isinstance(value, Project):
+            return value
+    return None
+
+
+def has_object_capability(user, item, capability):
+    project = project_for_object(item)
+    if project is not None:
+        return has_project_capability(user, project, capability)
+    workspace = item if isinstance(item, Workspace) else getattr(item, "workspace", None)
+    return workspace is not None and has_capability(user, workspace, capability)

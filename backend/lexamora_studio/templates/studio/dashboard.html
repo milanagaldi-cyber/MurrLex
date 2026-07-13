@@ -2,4 +2,5 @@
 {% block content %}
 <div class="toolbar"><h1>Workspaces</h1><a class="button" href="{% url 'studio:workspace_create' %}">New workspace</a></div>
 {% if workspaces %}<div class="list">{% for workspace in workspaces %}<div class="row"><a href="{% url 'studio:workspace_detail' workspace.id %}">{{ workspace.name }}</a><span class="muted">{{ workspace.projects.count }} projects</span><span class="muted">{{ workspace.updated_at|date:"Y-m-d" }}</span></div>{% endfor %}</div>{% else %}<p class="empty">No production workspaces yet.</p>{% endif %}
+{% if shared_projects %}<h2>Shared with me</h2><div class="list">{% for project in shared_projects %}<div class="row"><a href="{% url 'studio:project_detail' project.id %}">{{ project.title }}</a><span class="muted">{{ project.workspace.name }}</span><span class="muted">{{ project.updated_at|date:"Y-m-d" }}</span></div>{% endfor %}</div>{% endif %}
 {% endblock %}

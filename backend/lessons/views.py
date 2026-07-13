@@ -36,6 +36,7 @@ from .api_auth import (
     token_payload,
 )
 from .provider_credentials import user_has_ai_access
+from .social_auth import GoogleIdentityError, user_for_google_claims, verify_google_id_token
 from .sync_service import (
     mark_card_updated,
     mark_lesson_updated,
@@ -549,6 +550,25 @@ def api_login(request):
     user = authenticate_login(str(payload.get("login", "")).strip(), str(payload.get("password", "")))
     if user is None:
         return json_error("Incorrect login or password.", 401)
+    session, refresh_token = create_session(user, str(payload.get("deviceName", "")))
+    return JsonResponse(token_payload(user, session, refresh_token))
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def api_google_login(request):
+    if not settings.GOOGLE_OAUTH_ENABLED:
+        return JsonResponse({"detail": "Google sign-in is disabled."}, status=403)
+    payload = _api_payload(request)
+    if payload is None:
+        return JsonResponse({"detail": "Invalid JSON."}, status=400)
+    try:
+        claims = verify_google_id_token(str(payload.get("id_token", "")))
+        user = user_for_google_claims(claims)
+    except GoogleIdentityError as exc:
+        return JsonResponse({"detail": str(exc)}, status=401)
+    except PermissionError as exc:
+        return JsonResponse({"detail": str(exc)}, status=403)
     session, refresh_token = create_session(user, str(payload.get("deviceName", "")))
     return JsonResponse(token_payload(user, session, refresh_token))
 

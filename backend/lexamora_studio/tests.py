@@ -5,8 +5,8 @@ from cryptography.fernet import Fernet
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 
-from .models import Project, WorkspaceMembership
-from .permissions import accessible_workspaces, has_capability
+from .models import Project, ProjectMembership, WorkspaceMembership
+from .permissions import accessible_projects, accessible_workspaces, has_capability, has_project_capability
 from .services import create_workspace
 
 
@@ -55,6 +55,73 @@ class StudioPermissionsTests(TestCase):
         membership = WorkspaceMembership.objects.get(workspace=created, user=self.outsider)
         self.assertEqual(membership.role, WorkspaceMembership.Role.OWNER)
         self.assertTrue(membership.can_use_ai)
+
+
+class ProjectSharingTests(TestCase):
+    def setUp(self):
+        users = get_user_model()
+        self.owner = users.objects.create_user("share-owner", email="owner@example.com", password="pass")
+        self.viewer = users.objects.create_user("share-viewer", email="viewer@example.com", password="pass")
+        self.editor = users.objects.create_user("share-editor", email="editor@example.com", password="pass")
+        self.controller = users.objects.create_user("share-controller", email="controller@example.com", password="pass")
+        self.outsider = users.objects.create_user("share-outsider", email="outsider@example.com", password="pass")
+        self.workspace = create_workspace(user=self.owner, name="Private Studio", slug="private-studio")
+        self.project = Project.objects.create(
+            workspace=self.workspace, project_type=Project.Type.SERIES, title="Shared project",
+            created_by=self.owner, updated_by=self.owner,
+        )
+        self.other_project = Project.objects.create(
+            workspace=self.workspace, project_type=Project.Type.SERIES, title="Private project",
+            created_by=self.owner, updated_by=self.owner,
+        )
+        ProjectMembership.objects.create(project=self.project, user=self.viewer, role=ProjectMembership.Role.VIEWER, invited_by=self.owner)
+        ProjectMembership.objects.create(project=self.project, user=self.editor, role=ProjectMembership.Role.EDITOR, invited_by=self.owner)
+        ProjectMembership.objects.create(project=self.project, user=self.controller, role=ProjectMembership.Role.CONTROLLER, invited_by=self.owner)
+
+    def test_project_share_does_not_expose_workspace_or_sibling_project(self):
+        self.assertTrue(accessible_projects(self.viewer).filter(id=self.project.id).exists())
+        self.assertFalse(accessible_projects(self.viewer).filter(id=self.other_project.id).exists())
+        self.assertFalse(accessible_workspaces(self.viewer).filter(id=self.workspace.id).exists())
+        self.client.force_login(self.viewer)
+        self.assertEqual(self.client.get(f"/studio/projects/{self.project.id}/").status_code, 200)
+        self.assertEqual(self.client.get(f"/studio/projects/{self.other_project.id}/").status_code, 404)
+
+    def test_viewer_cannot_edit_and_editor_can_edit(self):
+        self.assertFalse(has_project_capability(self.viewer, self.project, "edit"))
+        self.assertTrue(has_project_capability(self.editor, self.project, "edit"))
+        self.client.force_login(self.viewer)
+        self.assertEqual(self.client.get(f"/studio/projects/{self.project.id}/edit/").status_code, 403)
+        self.client.force_login(self.editor)
+        self.assertEqual(self.client.get(f"/studio/projects/{self.project.id}/edit/").status_code, 200)
+
+    def test_full_control_can_manage_project_members(self):
+        self.client.force_login(self.controller)
+        response = self.client.post(
+            f"/studio/projects/{self.project.id}/access/",
+            {"email": self.outsider.email, "role": ProjectMembership.Role.VIEWER},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(ProjectMembership.objects.filter(project=self.project, user=self.outsider).exists())
+
+    def test_editor_cannot_manage_project_members(self):
+        self.client.force_login(self.editor)
+        self.assertEqual(self.client.get(f"/studio/projects/{self.project.id}/access/").status_code, 403)
+
+    def test_full_control_can_manage_members_through_api(self):
+        self.client.force_login(self.controller)
+        response = self.client.post(
+            f"/api/v1/studio/projects/{self.project.id}/members",
+            data=json.dumps({"email": self.outsider.email, "role": ProjectMembership.Role.EDITOR}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 201)
+        membership_id = response.json()["id"]
+        self.assertEqual(self.client.get(f"/api/v1/studio/projects/{self.project.id}/members").status_code, 200)
+        self.assertEqual(self.client.delete(f"/api/v1/studio/projects/{self.project.id}/members/{membership_id}").status_code, 200)
+
+    def test_viewer_cannot_manage_members_through_api(self):
+        self.client.force_login(self.viewer)
+        self.assertEqual(self.client.get(f"/api/v1/studio/projects/{self.project.id}/members").status_code, 403)
 
 class StudioApiTests(TestCase):
     def setUp(self):

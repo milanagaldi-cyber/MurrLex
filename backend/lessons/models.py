@@ -22,6 +22,38 @@ class UserApiAccess(models.Model):
         return f"{self.user.get_username()}: {'enabled' if self.ai_api_enabled else 'disabled'}"
 
 
+class GoogleOAuthAllowedUser(models.Model):
+    email = models.EmailField(blank=True, db_index=True)
+    google_sub = models.CharField(max_length=255, blank=True, db_index=True)
+    is_active = models.BooleanField(default=True)
+    note = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["email", "google_sub", "id"]
+        constraints = [
+            models.CheckConstraint(
+                condition=~models.Q(email="") | ~models.Q(google_sub=""),
+                name="google_oauth_allowlist_has_identity",
+            ),
+            models.UniqueConstraint(
+                fields=["email"], condition=~models.Q(email=""), name="google_oauth_unique_allowed_email",
+            ),
+            models.UniqueConstraint(
+                fields=["google_sub"], condition=~models.Q(google_sub=""), name="google_oauth_unique_allowed_sub",
+            ),
+        ]
+
+    def save(self, *args, **kwargs):
+        self.email = self.email.strip().lower()
+        self.google_sub = self.google_sub.strip()
+        return super().save(*args, **kwargs)
+
+    def __str__(self) -> str:
+        return self.email or self.google_sub
+
+
 class Lesson(models.Model):
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL,

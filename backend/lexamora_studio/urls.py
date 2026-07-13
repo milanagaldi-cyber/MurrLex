@@ -14,6 +14,7 @@ urlpatterns = [
     path("imports/<uuid:import_id>/accept/", views.docx_import_accept, name="docx_import_accept"),
     path("workspaces/<uuid:workspace_id>/projects/new/", views.project_create, name="project_create"),
     path("projects/<uuid:project_id>/", views.project_detail, name="project_detail"),
+    path("projects/<uuid:project_id>/access/", views.project_access, name="project_access"),
     path("projects/<uuid:project_id>/master/", views.project_master, name="project_master"),
     path("projects/<uuid:project_id>/scene-chain/", views.project_scene_chain, name="project_scene_chain"),
     path("move/<str:entity_type>/<uuid:entity_id>/<str:direction>/", views.entity_move, name="entity_move"),

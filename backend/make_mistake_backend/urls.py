@@ -74,6 +74,7 @@ urlpatterns = [
     path("api/ready", lesson_views.api_ready, name="api_ready"),
     path("api/auth/register", lesson_views.api_register, name="api_register"),
     path("api/auth/login", lesson_views.api_login, name="api_login"),
+    path("api/auth/google/", lesson_views.api_google_login, name="api_google_login"),
     path("api/auth/refresh", lesson_views.api_refresh, name="api_refresh"),
     path("api/auth/logout", lesson_views.api_logout, name="api_logout"),
     path("api/ai/text", lesson_views.api_text, name="api_text"),

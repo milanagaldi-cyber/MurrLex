@@ -6,9 +6,12 @@ from django.contrib.auth import get_user_model
 from django.urls import reverse
 from django.test import TestCase, override_settings
 
-from .models import Card, ImportLog, Lesson, ProviderCredential, UserApiAccess
+from allauth.socialaccount.models import SocialAccount
+
+from .models import Card, GoogleOAuthAllowedUser, ImportLog, Lesson, ProviderCredential, UserApiAccess
 from .provider_credentials import get_provider_api_key
 from .services import import_lesson_payload
+from .social_auth import GoogleIdentityError
 
 
 @override_settings(
@@ -392,6 +395,87 @@ class PremiumPageTests(TestCase):
         self.assertContains(response, "Higher API limits")
 
 
+@override_settings(
+    GOOGLE_OAUTH_ENABLED=True,
+    GOOGLE_OAUTH_CLIENT_ID="test-client.apps.googleusercontent.com",
+    GOOGLE_OAUTH_TEST_ALLOWLIST_ENABLED=True,
+    GOOGLE_OAUTH_ALLOWED_EMAILS=["allowed@gmail.com"],
+    GOOGLE_OAUTH_ALLOWED_SUBS=[],
+    JWT_SIGNING_KEY="google-api-test-key-at-least-32-bytes",
+)
+class GoogleOAuthApiTests(TestCase):
+    def claims(self, **overrides):
+        values = {
+            "sub": "google-sub-1",
+            "email": "allowed@gmail.com",
+            "email_verified": True,
+            "name": "Allowed User",
+            "picture": "https://example.com/avatar.png",
+            "iss": "https://accounts.google.com",
+        }
+        values.update(overrides)
+        return values
+
+    @override_settings(GOOGLE_OAUTH_ENABLED=False)
+    def test_disabled_google_oauth_is_rejected(self):
+        response = self.client.post("/api/auth/google/", data=json.dumps({"id_token": "token"}), content_type="application/json")
+        self.assertEqual(response.status_code, 403)
+
+    @patch("lessons.views.verify_google_id_token")
+    def test_allowed_google_identity_creates_basic_user_and_mobile_session(self, verify):
+        verify.return_value = self.claims()
+        response = self.client.post("/api/auth/google/", data=json.dumps({"id_token": "token"}), content_type="application/json")
+        self.assertEqual(response.status_code, 200)
+        user = get_user_model().objects.get(email="allowed@gmail.com")
+        self.assertFalse(user.is_staff)
+        self.assertFalse(user.is_superuser)
+        self.assertFalse(UserApiAccess.objects.filter(user=user, ai_api_enabled=True).exists())
+        self.assertEqual(SocialAccount.objects.get(provider="google", uid="google-sub-1").user, user)
+        self.assertIn("accessToken", response.json())
+
+    @patch("lessons.views.verify_google_id_token")
+    def test_unlisted_identity_is_rejected(self, verify):
+        verify.return_value = self.claims(email="other@gmail.com")
+        response = self.client.post("/api/auth/google/", data=json.dumps({"id_token": "token"}), content_type="application/json")
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["detail"], "Google account is not allowed for this staging environment.")
+
+    @patch("lessons.views.verify_google_id_token")
+    def test_unverified_email_is_rejected(self, verify):
+        verify.return_value = self.claims(email_verified=False)
+        response = self.client.post("/api/auth/google/", data=json.dumps({"id_token": "token"}), content_type="application/json")
+        self.assertEqual(response.status_code, 403)
+
+    @patch("lessons.views.verify_google_id_token", side_effect=GoogleIdentityError("Google id_token is invalid."))
+    def test_invalid_token_is_rejected_without_logging_token(self, verify):
+        response = self.client.post("/api/auth/google/", data=json.dumps({"id_token": "secret-token"}), content_type="application/json")
+        self.assertEqual(response.status_code, 401)
+
+    @patch("lessons.views.verify_google_id_token")
+    def test_existing_google_sub_reuses_same_user(self, verify):
+        user = get_user_model().objects.create_user("existing-google", email="old@gmail.com")
+        SocialAccount.objects.create(user=user, provider="google", uid="google-sub-1", extra_data={})
+        verify.return_value = self.claims()
+        response = self.client.post("/api/auth/google/", data=json.dumps({"id_token": "token"}), content_type="application/json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["user"]["id"], user.id)
+
+    @override_settings(GOOGLE_OAUTH_ALLOWED_EMAILS=[])
+    @patch("lessons.views.verify_google_id_token")
+    def test_database_allowlist_is_case_insensitive(self, verify):
+        GoogleOAuthAllowedUser.objects.create(email="Allowed@Gmail.com")
+        verify.return_value = self.claims(email="ALLOWED@GMAIL.COM")
+        response = self.client.post("/api/auth/google/", data=json.dumps({"id_token": "token"}), content_type="application/json")
+        self.assertEqual(response.status_code, 200)
+
+    @override_settings(GOOGLE_OAUTH_ALLOWED_EMAILS=[], GOOGLE_OAUTH_ALLOWED_SUBS=[])
+    @patch("lessons.views.verify_google_id_token")
+    def test_empty_enabled_allowlist_fails_closed(self, verify):
+        verify.return_value = self.claims()
+        response = self.client.post("/api/auth/google/", data=json.dumps({"id_token": "token"}), content_type="application/json")
+        self.assertEqual(response.status_code, 403)
+
+
 class LoginAuthenticationTests(TestCase):
     def test_login_page_shows_google_setup_hint_without_credentials(self):
         response = self.client.get("/login/")
@@ -422,6 +506,10 @@ class LoginAuthenticationTests(TestCase):
 
     def test_google_login_route_is_connected(self):
         self.assertEqual(reverse("google_login"), "/accounts/google/login/")
+
+    @override_settings(GOOGLE_OAUTH_ENABLED=False)
+    def test_disabled_browser_google_route_is_rejected(self):
+        self.assertEqual(self.client.post("/accounts/google/login/").status_code, 403)
 
     def test_login_accepts_username(self):
         user_model = get_user_model()

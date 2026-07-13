@@ -1,0 +1,14 @@
+{% extends "studio/base.html" %}
+{% block content %}
+<div class="toolbar"><div><p class="muted"><a href="{% url 'studio:project_detail' project.id %}">{{ project.title }}</a></p><h1>Project access</h1><p class="muted">Share only this project. Other projects in {{ project.workspace.name }} remain private.</p></div></div>
+<section class="panel" style="padding:20px;max-width:760px">
+  <h2>Add or update access</h2>
+  <form method="post">{% csrf_token %}{{ form.as_p }}<button type="submit">Save access</button></form>
+</section>
+<h2>People with access</h2>
+<div class="list">
+{% for membership in memberships %}
+  <div class="row"><strong>{{ membership.user.email|default:membership.user.username }}</strong><span>{{ membership.get_role_display }}</span><form method="post">{% csrf_token %}<input type="hidden" name="action" value="remove"><input type="hidden" name="membership_id" value="{{ membership.id }}"><button class="danger" type="submit" onclick="return confirm('Remove this user from the project?')">Remove</button></form></div>
+{% empty %}<p class="empty">This project has not been shared yet.</p>{% endfor %}
+</div>
+{% endblock %}

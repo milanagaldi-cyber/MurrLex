@@ -3,7 +3,7 @@ from django import forms
 from lessons.ai_gateway import TEXT_MODELS
 
 from .ai_catalog import default_prompt_template
-from .models import AdditionalGeneration, Asset, Character, DialogueLine, Episode, Project, Prompt, PromptBlock, Scene, StudioTextModel
+from .models import AdditionalGeneration, Asset, Character, DialogueLine, Episode, Project, ProjectMembership, Prompt, PromptBlock, Scene, StudioTextModel
 
 
 class ProjectForm(forms.ModelForm):
@@ -22,6 +22,27 @@ class ProjectForm(forms.ModelForm):
     def clean_translation_languages(self):
         value = self.cleaned_data["translation_languages"]
         return list(dict.fromkeys(part.strip().lower() for part in value.split(",") if part.strip()))
+
+
+class ProjectMembershipForm(forms.Form):
+    email = forms.EmailField(label="User email")
+    role = forms.ChoiceField(choices=ProjectMembership.Role.choices)
+
+    def __init__(self, *args, project, **kwargs):
+        self.project = project
+        super().__init__(*args, **kwargs)
+
+    def clean_email(self):
+        from django.contrib.auth import get_user_model
+
+        email = self.cleaned_data["email"].strip().lower()
+        matches = list(get_user_model().objects.filter(email__iexact=email)[:2])
+        if len(matches) != 1:
+            raise forms.ValidationError("A single registered user with this email is required.")
+        if matches[0] == self.project.workspace.owner:
+            raise forms.ValidationError("The workspace owner already has full access.")
+        self.user = matches[0]
+        return email
 
 
 class CharacterForm(forms.ModelForm):

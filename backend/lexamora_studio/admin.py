@@ -1,10 +1,15 @@
 from django.contrib import admin
 
-from .models import AccessEvent, AdditionalGeneration, AiModelProfile, AiSuggestion, AiUsageLog, Asset, AuditEvent, Character, DialogueLine, DocxImport, Episode, ExportJob, GenerationOutput, Project, Prompt, PromptBlock, PromptTemplate, Revision, Scene, StudioTextModel, SubtitleLine, SubtitleTrack, TranslationUnit, Workspace, WorkspaceMembership
+from .models import AccessEvent, AdditionalGeneration, AiModelProfile, AiSuggestion, AiUsageLog, Asset, AuditEvent, Character, DialogueLine, DocxImport, Episode, ExportJob, GenerationOutput, Project, ProjectMembership, Prompt, PromptBlock, PromptTemplate, Revision, Scene, StudioTextModel, SubtitleLine, SubtitleTrack, TranslationUnit, Workspace, WorkspaceMembership
 
 
 class MembershipInline(admin.TabularInline):
     model = WorkspaceMembership
+    extra = 0
+
+
+class ProjectMembershipInline(admin.TabularInline):
+    model = ProjectMembership
     extra = 0
 
 
@@ -20,6 +25,7 @@ class ProjectAdmin(admin.ModelAdmin):
     list_display = ("title", "workspace", "project_type", "status", "updated_at")
     list_filter = ("project_type", "status", "workspace")
     search_fields = ("title", "concept")
+    inlines = [ProjectMembershipInline]
 
 
 admin.site.register(Character)
