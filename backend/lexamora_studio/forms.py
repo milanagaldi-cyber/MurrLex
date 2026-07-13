@@ -9,6 +9,10 @@ from .models import AdditionalGeneration, Asset, Character, DialogueLine, Episod
 class ProjectForm(forms.ModelForm):
     original_language = forms.CharField(widget=forms.Select(choices=PROMPT_LANGUAGES), initial="EN")
     translation_languages = forms.CharField(required=False, help_text="Comma-separated language codes, for example: en, pl, de")
+    confirm_language_propagation = forms.BooleanField(
+        required=False,
+        label="Confirm language update for existing content",
+    )
 
     class Meta:
         model = Project
@@ -17,9 +21,20 @@ class ProjectForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        if self.instance and self.instance.pk:
+        if self.instance and not self.instance._state.adding:
             self.initial["original_language"] = (self.instance.original_language or "EN").upper()
             self.initial["translation_languages"] = ", ".join(self.instance.translation_languages or [])
+            prompt_count = Prompt.objects.filter(
+                scene__episode__project=self.instance,
+                source_prompt__isnull=True,
+            ).count()
+            dialogue_count = DialogueLine.objects.filter(scene__episode__project=self.instance).count()
+            self.fields["confirm_language_propagation"].help_text = (
+                f"Required when changing the original language. The new language will be applied to "
+                f"{prompt_count} original prompts and {dialogue_count} dialogue lines. Saved translations remain translations."
+            )
+        else:
+            self.fields.pop("confirm_language_propagation")
 
     def clean_original_language(self):
         value = self.cleaned_data["original_language"].strip().upper()
@@ -30,6 +45,18 @@ class ProjectForm(forms.ModelForm):
     def clean_translation_languages(self):
         value = self.cleaned_data["translation_languages"]
         return list(dict.fromkeys(part.strip().lower() for part in value.split(",") if part.strip()))
+
+    def clean(self):
+        cleaned = super().clean()
+        if self.instance and not self.instance._state.adding:
+            old_language = (self.instance.original_language or "EN").strip().upper()
+            new_language = (cleaned.get("original_language") or "").strip().upper()
+            if new_language and new_language != old_language and not cleaned.get("confirm_language_propagation"):
+                self.add_error(
+                    "confirm_language_propagation",
+                    "Confirm that the new language will update every original prompt and dialogue line in this project.",
+                )
+        return cleaned
 
 
 class ProjectMembershipForm(forms.Form):

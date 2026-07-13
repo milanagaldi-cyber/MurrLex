@@ -25,7 +25,7 @@ from .forms import AdditionalGenerationForm, AssetEditForm, CharacterForm, Dialo
 from .models import AdditionalGeneration, AiModelProfile, AiSuggestion, Asset, Character, DialogueLine, DocxImport, Episode, ExportJob, GenerationOutput, Project, ProjectMembership, Prompt, PromptBlock, Scene, StudioTextModel, SubtitleTrack, TranslationUnit, Workspace
 from .permissions import accessible_assets, accessible_projects, accessible_suggestions, accessible_workspaces, has_capability, has_object_capability, has_project_capability
 from .revisions import audit, record_revision
-from .services import bulk_replace_subtitle_lines, create_workspace, reorder_subtitle_lines, save_translation
+from .services import bulk_replace_subtitle_lines, create_workspace, propagate_project_original_language, reorder_subtitle_lines, save_translation
 from .storage import create_asset, purge_asset, restore_asset, trash_asset
 
 
@@ -204,7 +204,43 @@ def _image_upload(request, *, target, workspace, title, success_url, kind, proje
 @login_required
 def project_edit(request, project_id):
     item = get_object_or_404(accessible_projects(request.user), id=project_id)
-    return _edit_entity(request, item=item, form_class=ProjectForm, workspace=item.workspace, title="Edit project", success_url=lambda value: ("studio:project_detail", value.id))
+    if not has_object_capability(request.user, item, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    old_language = (item.original_language or "EN").strip().upper()
+    form = ProjectForm(request.POST or None, instance=item)
+    if request.method == "POST" and form.is_valid():
+        new_language = form.cleaned_data["original_language"]
+        with transaction.atomic():
+            item = form.save(commit=False)
+            item.updated_by = request.user
+            item.full_clean()
+            item.save()
+            record_revision(instance=item, user=request.user, operation="UPDATE")
+            if new_language != old_language:
+                counts = propagate_project_original_language(project=item, language=new_language, user=request.user)
+                audit(
+                    workspace=item.workspace,
+                    actor=request.user,
+                    action="PROJECT_ORIGINAL_LANGUAGE_PROPAGATED",
+                    instance=item,
+                    metadata={"from": old_language, "to": new_language, **counts},
+                )
+        if new_language != old_language:
+            messages.success(
+                request,
+                f"Original language changed {old_language} -> {new_language}. "
+                f"Updated {counts['originalPrompts']} original prompts, {counts['translations']} translations, "
+                f"and {counts['dialogueLines']} dialogue lines.",
+            )
+        else:
+            messages.success(request, "Project saved.")
+        return redirect("studio:project_detail", project_id=item.id)
+    return render(request, "studio/entity_form.html", {
+        "form": form,
+        "title": "Edit project",
+        "submit_label": "Save changes",
+        "language_propagation": True,
+    })
 
 
 @login_required
@@ -1157,6 +1193,7 @@ def _prompt_payload(prompt):
         {
             "id": str(item.id),
             "language": item.language,
+            "label": f"{'Translation' if item.source_prompt_id else 'Original'} · {item.language}",
             "dataUrl": reverse("studio:prompt_editor_data", kwargs={"prompt_id": item.id}),
         }
         for item in prompt.language_versions()
@@ -1164,6 +1201,8 @@ def _prompt_payload(prompt):
     return {
         "id": str(prompt.id),
         "language": prompt.language,
+        "originalLanguage": prompt.original_language,
+        "isTranslation": bool(prompt.source_prompt_id),
         "content": prompt.editor_content,
         "title": prompt.title,
         "aiModel": str(prompt.ai_model_id),
@@ -1283,17 +1322,39 @@ def prompt_quick_save(request, prompt_id):
         messages.error(request, "Choose a valid prompt type and status.")
         return redirect("studio:scene_detail", scene_id=prompt.scene_id)
     with transaction.atomic():
+        old_original_language = prompt.original_language
+        requested_original_language = request.POST.get("original_language", old_original_language).strip().upper()
+        if not prompt.source_prompt_id and requested_original_language not in Prompt.Language.values:
+            if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+                return JsonResponse({"error": "Choose a valid original language."}, status=400)
+            messages.error(request, "Choose a valid original language.")
+            return redirect("studio:scene_detail", scene_id=prompt.scene_id)
         prompt.ai_model = ai_model
         prompt.template = default_prompt_template(prompt_type)
         prompt.prompt_type = prompt_type
         prompt.title = request.POST.get("title", "").strip()
         prompt.status = status
+        if not prompt.source_prompt_id:
+            prompt.original_language = requested_original_language
+            prompt.language = requested_original_language
         content = request.POST.get("content", prompt.editor_content)
         prompt.updated_by = request.user
         prompt.full_clean()
-        prompt.save(update_fields=["ai_model", "template", "prompt_type", "title", "status", "updated_by", "updated_at"])
+        prompt.save(update_fields=["ai_model", "template", "prompt_type", "title", "status", "original_language", "language", "updated_by", "updated_at"])
+        if not prompt.source_prompt_id and requested_original_language != old_original_language:
+            for translated in prompt.translations.all():
+                translated.original_language = requested_original_language
+                translated.updated_by = request.user
+                translated.save(update_fields=["original_language", "updated_by", "updated_at"])
+                record_revision(instance=translated, user=request.user, operation="LANGUAGE_PROPAGATION")
         _save_unified_prompt_content(prompt, content, request.user)
-        audit(workspace=workspace, actor=request.user, action="PROMPT_INLINE_UPDATED", instance=prompt)
+        audit(
+            workspace=workspace,
+            actor=request.user,
+            action="PROMPT_INLINE_UPDATED",
+            instance=prompt,
+            metadata={"originalLanguageFrom": old_original_language, "originalLanguageTo": prompt.original_language},
+        )
     if request.headers.get("X-Requested-With") == "XMLHttpRequest":
         return JsonResponse(_prompt_payload(prompt))
     messages.success(request, "Prompt saved.")

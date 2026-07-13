@@ -1,6 +1,7 @@
 import json
 
 from django.contrib.auth import get_user_model
+from django.db import transaction
 from django.http import FileResponse, JsonResponse
 from django.shortcuts import get_object_or_404
 from django.core.exceptions import ValidationError
@@ -13,7 +14,7 @@ from lessons.provider_credentials import user_has_ai_access
 
 from .models import AccessEvent, AdditionalGeneration, AiModelProfile, AiSuggestion, Asset, DialogueLine, DocxImport, Episode, ExportJob, GenerationOutput, Project, ProjectMembership, Prompt, PromptBlock, Revision, Scene, SubtitleLine, SubtitleTrack, TranslationUnit
 from .permissions import accessible_assets, accessible_exports, accessible_projects, accessible_revisions, accessible_suggestions, accessible_workspaces, has_capability, has_object_capability, has_project_capability
-from .services import bulk_replace_subtitle_lines, create_workspace, reorder_subtitle_lines, save_translation, update_dialogue_line
+from .services import bulk_replace_subtitle_lines, create_workspace, propagate_project_original_language, reorder_subtitle_lines, save_translation, update_dialogue_line
 from .storage import create_asset
 from .exports import ExportError, generate_export
 from .docx_imports import accept_docx_import, parse_docx
@@ -125,19 +126,36 @@ def project_detail(request, project_id):
     data = payload(request)
     if data is None:
         return error("invalid_json", "A JSON object is required.")
-    for api_name, field_name in {
-        "title": "title",
-        "concept": "concept",
-        "originalLanguage": "original_language",
-        "translationLanguages": "translation_languages",
-        "status": "status",
-    }.items():
-        if api_name in data:
-            setattr(item, field_name, data[api_name])
-    item.updated_by = user
-    item.full_clean()
-    item.save()
-    record_revision(instance=item, user=user, operation="UPDATE")
+    old_language = (item.original_language or "EN").strip().upper()
+    new_language = str(data.get("originalLanguage", old_language)).strip().upper()
+    if new_language not in Prompt.Language.values:
+        return error("validation_error", "Choose a supported original language.", fields={"originalLanguage": "Invalid language."})
+    if new_language != old_language and data.get("confirmLanguagePropagation") is not True:
+        return error(
+            "language_propagation_confirmation_required",
+            "Changing the original language updates every original prompt and dialogue line. Confirm the propagation and retry.",
+            409,
+        )
+    with transaction.atomic():
+        for api_name, field_name in {
+            "title": "title",
+            "concept": "concept",
+            "originalLanguage": "original_language",
+            "translationLanguages": "translation_languages",
+            "status": "status",
+        }.items():
+            if api_name in data:
+                setattr(item, field_name, new_language if api_name == "originalLanguage" else data[api_name])
+        item.updated_by = user
+        item.full_clean()
+        item.save()
+        record_revision(instance=item, user=user, operation="UPDATE")
+        if new_language != old_language:
+            counts = propagate_project_original_language(project=item, language=new_language, user=user)
+            audit(
+                workspace=item.workspace, actor=user, action="PROJECT_ORIGINAL_LANGUAGE_PROPAGATED",
+                instance=item, metadata={"from": old_language, "to": new_language, **counts},
+            )
     return JsonResponse(project_json(item))
 
 
@@ -301,7 +319,7 @@ def scene_prompts(request, scene_id):
     if request.method == "GET":
         return JsonResponse({"results": [
             {"id": str(item.id), "model": item.ai_model.name, "type": item.prompt_type, "status": item.status,
-             "language": item.language, "translationScope": item.translation_scope,
+             "language": item.language, "originalLanguage": item.original_language, "translationScope": item.translation_scope,
              "content": item.editor_content,
              "sourcePromptId": str(item.source_prompt_id) if item.source_prompt_id else None,
              "needsReview": item.needs_review}

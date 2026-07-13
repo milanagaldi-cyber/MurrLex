@@ -27,7 +27,7 @@ VERSIONED_MODELS = {
     "lexamora_studio.scene": (Scene, ["number", "title", "hook", "description", "location", "actions", "performance_notes", "position", "status"]),
     "lexamora_studio.dialogueline": (DialogueLine, ["speaker", "text", "language", "delivery", "position", "status"]),
     "lexamora_studio.prompt": (Prompt, [
-        "template", "source_prompt", "language", "translation_scope",
+        "template", "source_prompt", "original_language", "language", "translation_scope",
         "title", "content", "status", "position", "needs_review",
     ]),
     "lexamora_studio.promptblock": (PromptBlock, ["block_type", "content", "translated_content", "translation_language", "translation_model", "position"]),

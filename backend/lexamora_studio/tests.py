@@ -1023,10 +1023,75 @@ class StudioWebEditingAndImagesTests(TestCase):
         self.assertEqual(self.project.translation_languages, ["en", "pl"])
         self.assertTrue(Revision.objects.filter(entity_id=self.project.id, operation="UPDATE").exists())
 
+    def test_project_language_change_requires_confirmation_and_propagates(self):
+        from .models import AiModelProfile, DialogueLine, Prompt
+
+        model = AiModelProfile.objects.create(
+            name="Language image model", provider="test", model_id="language-image",
+            media_type=AiModelProfile.MediaType.IMAGE,
+        )
+        original = Prompt.objects.create(
+            scene=self.scene, ai_model=model, prompt_type=Prompt.Type.IMAGE,
+            content="Original prompt", created_by=self.owner, updated_by=self.owner,
+        )
+        translated = Prompt.objects.create(
+            scene=self.scene, ai_model=model, source_prompt=original, language="EN",
+            prompt_type=Prompt.Type.IMAGE, position=1, content="Translated prompt",
+            created_by=self.owner, updated_by=self.owner,
+        )
+        dialogue = DialogueLine.objects.create(
+            scene=self.scene, speaker="Hero", text="Czesc", language="RU",
+            created_by=self.owner, updated_by=self.owner,
+        )
+        payload = {
+            "project_type": "SERIES", "title": "Before", "original_language": "PL",
+            "translation_languages": "en", "status": "DRAFT",
+        }
+        self.client.force_login(self.owner)
+
+        rejected = self.client.post(f"/studio/projects/{self.project.id}/edit/", payload)
+        self.assertEqual(rejected.status_code, 200)
+        self.assertContains(rejected, "Confirm that the new language")
+        self.project.refresh_from_db()
+        self.assertEqual(self.project.original_language, "ru")
+
+        payload["confirm_language_propagation"] = "on"
+        saved = self.client.post(f"/studio/projects/{self.project.id}/edit/", payload, follow=True)
+        self.assertRedirects(saved, f"/studio/projects/{self.project.id}/")
+        self.assertContains(saved, "Updated 1 original prompts, 1 translations, and 1 dialogue lines")
+        self.project.refresh_from_db()
+        original.refresh_from_db()
+        translated.refresh_from_db()
+        dialogue.refresh_from_db()
+        self.assertEqual(self.project.original_language, "PL")
+        self.assertEqual((original.original_language, original.language), ("PL", "PL"))
+        self.assertEqual((translated.original_language, translated.language), ("PL", "EN"))
+        self.assertEqual(dialogue.language, "PL")
+
     def test_viewer_cannot_edit_project(self):
         self.client.force_login(self.viewer)
         response = self.client.get(f"/studio/projects/{self.project.id}/edit/")
         self.assertEqual(response.status_code, 403)
+
+    def test_api_language_change_also_requires_propagation_confirmation(self):
+        self.client.force_login(self.owner)
+        denied = self.client.patch(
+            f"/api/v1/studio/projects/{self.project.id}",
+            data=json.dumps({"originalLanguage": "PL"}),
+            content_type="application/json",
+        )
+        self.assertEqual(denied.status_code, 409, denied.content)
+        self.assertEqual(denied.json()["error"]["code"], "language_propagation_confirmation_required")
+        self.project.refresh_from_db()
+        self.assertEqual(self.project.original_language, "ru")
+
+        saved = self.client.patch(
+            f"/api/v1/studio/projects/{self.project.id}",
+            data=json.dumps({"originalLanguage": "PL", "confirmLanguagePropagation": True}),
+            content_type="application/json",
+        )
+        self.assertEqual(saved.status_code, 200, saved.content)
+        self.assertEqual(saved.json()["originalLanguage"], "PL")
 
     def test_owner_can_upload_private_scene_image_and_open_thumbnail(self):
         import tempfile
@@ -1503,6 +1568,40 @@ class StudioInlineEditingWorkflowTests(TestCase):
                 self.assertContains(page, asset.original_filename)
                 self.assertContains(page, "data-image-modal")
         self.assertTrue(AuditEvent.objects.filter(action="PROMPT_INLINE_UPDATED").exists())
+
+    def test_original_prompt_language_is_editable_and_inherited_by_translations(self):
+        from .models import Prompt
+
+        self.client.force_login(self.owner)
+        original = Prompt.objects.create(
+            scene=self.first_scene, ai_model=self.ai_model, prompt_type=Prompt.Type.IMAGE,
+            content="Source", created_by=self.owner, updated_by=self.owner,
+        )
+        translated = Prompt.objects.create(
+            scene=self.first_scene, ai_model=self.ai_model, source_prompt=original,
+            language="DE", prompt_type=Prompt.Type.IMAGE, position=1, content="Ubersetzung",
+            created_by=self.owner, updated_by=self.owner,
+        )
+        page = self.client.get(f"/studio/scenes/{self.first_scene.id}/")
+        self.assertContains(page, "Original &middot; EN")
+        self.assertContains(page, "Translation &middot; DE")
+        self.assertContains(page, "Original language")
+        response = self.client.post(
+            f"/studio/prompts/{original.id}/quick-save/",
+            {
+                "title": "Source prompt", "ai_model": str(self.ai_model.id),
+                "original_language": "PL", "prompt_type": "IMAGE", "status": "DRAFT",
+                "content": "Source",
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["originalLanguage"], "PL")
+        self.assertEqual({row["label"] for row in response.json()["versions"]}, {"Original · PL", "Translation · DE"})
+        original.refresh_from_db()
+        translated.refresh_from_db()
+        self.assertEqual((original.original_language, original.language), ("PL", "PL"))
+        self.assertEqual((translated.original_language, translated.language), ("PL", "DE"))
 
     def test_scene_chain_quick_edit_and_drag_reorder_endpoint(self):
         from .models import AuditEvent, Scene

@@ -301,6 +301,7 @@ class Prompt(SoftDeleteModel):
     source_prompt = models.ForeignKey(
         "self", on_delete=models.PROTECT, related_name="translations", null=True, blank=True,
     )
+    original_language = models.CharField(max_length=2, choices=Language.choices, default=Language.EN)
     language = models.CharField(max_length=2, choices=Language.choices, default=Language.EN)
     translation_scope = models.CharField(
         max_length=16, choices=TranslationScope.choices, default=TranslationScope.ORIGINAL,
@@ -321,10 +322,14 @@ class Prompt(SoftDeleteModel):
             from .ai_catalog import default_prompt_template
 
             self.template = default_prompt_template(self.prompt_type)
-        if self._state.adding and not self.source_prompt_id and self.language == self.Language.EN:
-            project_language = (self.scene.episode.project.original_language or "").strip().upper()
-            if project_language in self.Language.values:
-                self.language = project_language
+        if self._state.adding:
+            if self.source_prompt_id:
+                self.original_language = self.source_prompt.original_language
+            else:
+                project_language = (self.scene.episode.project.original_language or "").strip().upper()
+                if project_language in self.Language.values:
+                    self.original_language = project_language
+                self.language = self.original_language
         return super().save(*args, **kwargs)
 
     @property

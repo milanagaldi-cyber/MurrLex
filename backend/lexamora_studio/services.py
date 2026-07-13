@@ -1,7 +1,7 @@
 from django.db import transaction
 from django.utils import timezone
 
-from .models import Prompt, Revision, SubtitleLine, TranslationUnit, Workspace, WorkspaceMembership
+from .models import DialogueLine, Prompt, Revision, SubtitleLine, TranslationUnit, Workspace, WorkspaceMembership
 from .revisions import record_revision
 
 
@@ -25,6 +25,40 @@ def create_workspace(*, user, name, slug, description=""):
         can_manage_members=True,
     )
     return workspace
+
+
+def propagate_project_original_language(*, project, language, user):
+    original_count = translation_count = 0
+    roots = Prompt.objects.filter(
+        scene__episode__project=project,
+        source_prompt__isnull=True,
+    ).prefetch_related("translations")
+    for prompt in roots:
+        prompt.original_language = language
+        prompt.language = language
+        prompt.updated_by = user
+        prompt.save(update_fields=["original_language", "language", "updated_by", "updated_at"])
+        record_revision(instance=prompt, user=user, operation="LANGUAGE_PROPAGATION")
+        original_count += 1
+        for translated in prompt.translations.all():
+            translated.original_language = language
+            translated.updated_by = user
+            translated.save(update_fields=["original_language", "updated_by", "updated_at"])
+            record_revision(instance=translated, user=user, operation="LANGUAGE_PROPAGATION")
+            translation_count += 1
+
+    dialogue_count = 0
+    for line in DialogueLine.objects.filter(scene__episode__project=project):
+        line.language = language
+        line.updated_by = user
+        line.save(update_fields=["language", "updated_by", "updated_at"])
+        record_revision(instance=line, user=user, operation="LANGUAGE_PROPAGATION")
+        dialogue_count += 1
+    return {
+        "originalPrompts": original_count,
+        "translations": translation_count,
+        "dialogueLines": dialogue_count,
+    }
 
 @transaction.atomic
 def update_dialogue_line(*, line, user, text, speaker=None, delivery=None, language=None, status=None):

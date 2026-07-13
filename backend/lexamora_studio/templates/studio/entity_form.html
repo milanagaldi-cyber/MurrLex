@@ -1,6 +1,7 @@
 {% extends "studio/base.html" %}
 {% block content %}
 <h1>{{ title }}</h1>
+{% if language_propagation %}<aside class="form-warning"><strong>Language propagation</strong><p>Changing the project original language will update every original prompt, the original-language attribute of saved translations, and every dialogue line. Review the counts below and confirm before saving.</p></aside>{% endif %}
 <form method="post"{% if multipart %} enctype="multipart/form-data"{% endif %}>{% csrf_token %}
   {{ form.as_p }}
   <button class="button" type="submit">{{ submit_label|default:"Save" }}</button>
