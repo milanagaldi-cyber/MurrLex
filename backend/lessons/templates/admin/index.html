@@ -111,7 +111,7 @@
             <span class="dashboard-system-action">Show technical settings</span>
         </summary>
         <div class="dashboard-system-links">
-            {% if perms.lessons.view_googleoauthalloweduser %}<a href="{% url 'admin:lessons_googleoauthalloweduser_changelist' %}"><strong>Google staging allowlist</strong><small>Test accounts permitted to use Google Sign-In.</small></a>{% endif %}
+            {% if perms.lessons.view_googleoauthalloweduser %}<a href="{% url 'admin:lessons_googleoauthalloweduser_changelist' %}"><strong>Registration &amp; Google allowlist</strong><small>Email addresses permitted to register or use Google Sign-In.</small></a>{% endif %}
             {% if perms.account.view_emailaddress %}<a href="{% url 'admin:account_emailaddress_changelist' %}"><strong>Email Addresses</strong><small>Verification records linked to users.</small></a>{% endif %}
             {% if perms.sites.view_site %}<a href="{% url 'admin:sites_site_changelist' %}"><strong>Sites</strong><small>Domain identity used by authentication.</small></a>{% endif %}
             {% if perms.socialaccount.view_socialapp %}<a href="{% url 'admin:socialaccount_socialapp_changelist' %}"><strong>Social Applications</strong><small>Google OAuth application configuration.</small></a>{% endif %}

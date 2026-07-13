@@ -22,6 +22,7 @@ from .social_auth import GoogleIdentityError
     JWT_REFRESH_DAYS=30,
     CREDENTIAL_ENCRYPTION_KEY=Fernet.generate_key().decode("ascii"),
     PUBLIC_SIGNUP_ENABLED=True,
+    REGISTRATION_ALLOWLIST_ENABLED=False,
 )
 class MobileApiTests(TestCase):
     def create_user_and_login(self):
@@ -330,6 +331,7 @@ class LessonImportServiceTests(TestCase):
         self.assertEqual(ImportLog.objects.filter(status=ImportLog.Status.SUCCESS).count(), 2)
 
 
+@override_settings(PUBLIC_SIGNUP_ENABLED=False)
 class HomePageTests(TestCase):
     def test_home_page_is_public(self):
         response = self.client.get("/")
@@ -696,7 +698,95 @@ class ClosedSignupTests(TestCase):
         self.assertNotContains(response, 'href="/register/"')
 
 
-@override_settings(PUBLIC_SIGNUP_ENABLED=True)
+@override_settings(
+    PUBLIC_SIGNUP_ENABLED=True,
+    REGISTRATION_ALLOWLIST_ENABLED=True,
+    GOOGLE_OAUTH_ALLOWED_EMAILS=[],
+)
+class AllowlistedRegistrationTests(TestCase):
+    registration_data = {
+        "username": "invited-user",
+        "email": "invited@example.com",
+        "password1": "StrongPass-2026!",
+        "password2": "StrongPass-2026!",
+    }
+
+    def test_login_and_registration_pages_offer_self_registration(self):
+        home_page = self.client.get("/")
+        login_page = self.client.get("/login/")
+        registration_page = self.client.get("/register/")
+
+        self.assertContains(home_page, 'href="/register/"')
+        self.assertContains(home_page, "Register")
+        self.assertEqual(login_page.status_code, 200)
+        self.assertContains(login_page, 'href="/register/"')
+        self.assertContains(login_page, "Create your account")
+        self.assertEqual(registration_page.status_code, 200)
+        self.assertContains(registration_page, "choose your own username and password")
+
+    def test_invited_email_can_register_case_insensitively(self):
+        GoogleOAuthAllowedUser.objects.create(email="Invited@Example.com")
+        data = {**self.registration_data, "email": "INVITED@example.com"}
+
+        response = self.client.post("/register/", data=data)
+
+        self.assertRedirects(response, "/account/")
+        user = get_user_model().objects.get(username="invited-user")
+        self.assertEqual(user.email, "invited@example.com")
+        self.assertEqual(int(self.client.session["_auth_user_id"]), user.pk)
+
+    def test_unknown_or_disabled_email_cannot_register(self):
+        GoogleOAuthAllowedUser.objects.create(
+            email="disabled@example.com",
+            is_active=False,
+        )
+
+        for email in ("outsider@example.com", "disabled@example.com"):
+            with self.subTest(email=email):
+                data = {
+                    **self.registration_data,
+                    "username": email.split("@", 1)[0],
+                    "email": email,
+                }
+                response = self.client.post("/register/", data=data)
+                self.assertEqual(response.status_code, 200)
+                self.assertContains(response, "This email is not invited")
+                self.assertFalse(get_user_model().objects.filter(email__iexact=email).exists())
+
+    def test_mobile_registration_uses_the_same_allowlist(self):
+        GoogleOAuthAllowedUser.objects.create(email="mobile-invited@example.com")
+        allowed = self.client.post(
+            "/api/auth/register",
+            data=json.dumps(
+                {
+                    "username": "mobile-invited",
+                    "email": "mobile-invited@example.com",
+                    "password": "StrongPass-2026!",
+                    "deviceName": "Android",
+                }
+            ),
+            content_type="application/json",
+        )
+        denied = self.client.post(
+            "/api/auth/register",
+            data=json.dumps(
+                {
+                    "username": "mobile-outsider",
+                    "email": "mobile-outsider@example.com",
+                    "password": "StrongPass-2026!",
+                    "deviceName": "Android",
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(allowed.status_code, 201)
+        self.assertEqual(denied.status_code, 400)
+        self.assertIn("email", denied.json()["fields"])
+        self.assertFalse(get_user_model().objects.filter(username="mobile-outsider").exists())
+
+
+@override_settings(PUBLIC_SIGNUP_ENABLED=True, REGISTRATION_ALLOWLIST_ENABLED=False)
 class PublicAccountTests(TestCase):
     def test_register_page_is_public(self):
         response = self.client.get("/register/")

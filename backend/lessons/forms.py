@@ -3,6 +3,7 @@ from django.contrib.auth import authenticate, get_user_model
 from django.contrib.auth.forms import AuthenticationForm, UserCreationForm
 
 from .models import Card, Lesson, ProviderCredential
+from .signup_access import is_registration_email_allowed
 
 
 class UsernameOrEmailAuthenticationForm(AuthenticationForm):
@@ -49,6 +50,8 @@ class PublicRegistrationForm(UserCreationForm):
         user_model = get_user_model()
         if user_model.objects.filter(email__iexact=email).exists():
             raise forms.ValidationError("A user with this email already exists.")
+        if not is_registration_email_allowed(email):
+            raise forms.ValidationError("This email is not invited to MurrLex closed testing.")
         return email
 
 

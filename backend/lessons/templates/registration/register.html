@@ -21,7 +21,7 @@
         <a class="button full" href="{% url 'login' %}">Back to login</a>
     {% else %}
     <h1>Create account</h1>
-    <p>Register a public MurrLex account to open your personal cabinet.</p>
+    <p>Use the email invited by an administrator, then choose your own username and password.</p>
 
     <form method="post">
         {% csrf_token %}

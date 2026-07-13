@@ -64,6 +64,13 @@ class GoogleOAuthAllowedUserAdmin(admin.ModelAdmin):
     search_fields = ("email", "google_sub", "note")
     readonly_fields = ("created_at", "updated_at")
 
+    def changelist_view(self, request, extra_context=None):
+        extra_context = {
+            **(extra_context or {}),
+            "title": "Registration & Google allowlist",
+        }
+        return super().changelist_view(request, extra_context=extra_context)
+
 
 @admin.register(UserApiAccess)
 class UserApiAccessAdmin(admin.ModelAdmin):
