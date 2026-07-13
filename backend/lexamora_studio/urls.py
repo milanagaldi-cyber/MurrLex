@@ -7,6 +7,7 @@ app_name = "studio"
 urlpatterns = [
     path("", views.dashboard, name="dashboard"),
     path("settings/", views.studio_settings, name="settings"),
+    path("settings/text-models/quick-create/", views.text_model_quick_create, name="text_model_quick_create"),
     path("workspaces/new/", views.workspace_create, name="workspace_create"),
     path("workspaces/<uuid:workspace_id>/", views.workspace_detail, name="workspace_detail"),
     path("workspaces/<uuid:workspace_id>/edit/", views.workspace_edit, name="workspace_edit"),

@@ -16,29 +16,31 @@ class WorkspaceForm(forms.ModelForm):
 class ProjectForm(forms.ModelForm):
     original_language = forms.CharField(widget=forms.Select(choices=PROMPT_LANGUAGES), initial="EN")
     translation_languages = forms.CharField(required=False, help_text="Comma-separated language codes, for example: en, pl, de")
-    confirm_language_propagation = forms.BooleanField(
-        required=False,
-        label="Confirm language update for existing content",
-    )
+    confirm_language_propagation = forms.BooleanField(required=False, widget=forms.HiddenInput)
 
     class Meta:
         model = Project
-        fields = ["project_type", "title", "concept", "original_language", "translation_languages", "rights_holder", "publication_info", "status"]
-        widgets = {"concept": forms.Textarea(attrs={"rows": 4})}
+        fields = ["project_type", "title", "concept", "original_language", "translation_languages", "prompt_template", "rights_holder", "publication_info", "status"]
+        widgets = {
+            "concept": forms.Textarea(attrs={"rows": 4}),
+            "prompt_template": forms.Textarea(attrs={"rows": 4, "placeholder": "Text appended to every new prompt in this project"}),
+        }
+        labels = {"prompt_template": "Project prompt template"}
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         if self.instance and not self.instance._state.adding:
             self.initial["original_language"] = (self.instance.original_language or "EN").upper()
+            self.fields["original_language"].widget.attrs["data-initial-language"] = self.initial["original_language"]
             self.initial["translation_languages"] = ", ".join(self.instance.translation_languages or [])
             prompt_count = Prompt.objects.filter(
                 scene__episode__project=self.instance,
                 source_prompt__isnull=True,
             ).count()
             dialogue_count = DialogueLine.objects.filter(scene__episode__project=self.instance).count()
-            self.fields["confirm_language_propagation"].help_text = (
-                f"Required when changing the original language. The new language will be applied to "
-                f"{prompt_count} original prompts and {dialogue_count} dialogue lines. Saved translations remain translations."
+            self.language_change_summary = (
+                f"The new language will be applied to {prompt_count} original prompts and "
+                f"{dialogue_count} dialogue lines. Saved translations remain translations."
             )
         else:
             self.fields.pop("confirm_language_propagation")

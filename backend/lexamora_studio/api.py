@@ -52,6 +52,7 @@ def project_json(item):
         "concept": item.concept,
         "originalLanguage": item.original_language,
         "translationLanguages": item.translation_languages,
+        "promptTemplate": item.prompt_template,
         "status": item.status,
         "updatedAt": item.updated_at.isoformat(),
     }
@@ -104,6 +105,7 @@ def projects(request):
         concept=str(data.get("concept", "")).strip(),
         original_language=str(data.get("originalLanguage", "")).strip(),
         translation_languages=data.get("translationLanguages", []),
+        prompt_template=str(data.get("promptTemplate", "")).strip(),
         created_by=user,
         updated_by=user,
     )
@@ -142,6 +144,7 @@ def project_detail(request, project_id):
             "concept": "concept",
             "originalLanguage": "original_language",
             "translationLanguages": "translation_languages",
+            "promptTemplate": "prompt_template",
             "status": "status",
         }.items():
             if api_name in data:
@@ -346,10 +349,14 @@ def scene_prompts(request, scene_id):
         content=unified_content,
         position=scene.prompts.count(), created_by=user, updated_by=user,
     )
+    project_template = (scene.episode.project.prompt_template or "").strip()
     for position, block in enumerate(supplied_blocks):
         if isinstance(block, dict) and str(block.get("content", "")).strip() and block.get("type") in PromptBlock.Type.values:
+            block_content = str(block["content"]).strip()
+            if position == len(supplied_blocks) - 1 and project_template and not block_content.endswith(project_template):
+                block_content = f"{block_content}\n\n{project_template}"
             PromptBlock.objects.create(
-                prompt=prompt, block_type=block["type"], content=str(block["content"]).strip(),
+                prompt=prompt, block_type=block["type"], content=block_content,
                 position=position, created_by=user, updated_by=user,
             )
     record_revision(instance=prompt, user=user, operation="CREATE")

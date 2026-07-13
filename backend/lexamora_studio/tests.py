@@ -151,11 +151,15 @@ class StudioApiTests(TestCase):
         self.client.force_login(self.owner)
         response = self.client.post(
             "/api/v1/studio/projects",
-            data=json.dumps({"workspaceId": str(self.workspace.id), "type": "SERIES", "title": "Dom"}),
+            data=json.dumps({
+                "workspaceId": str(self.workspace.id), "type": "SERIES", "title": "Dom",
+                "promptTemplate": "No music. Keep character references.",
+            }),
             content_type="application/json",
         )
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.json()["title"], "Dom")
+        self.assertEqual(response.json()["promptTemplate"], "No music. Keep character references.")
 
     def test_viewer_cannot_create_project(self):
         self.client.force_login(self.viewer)
@@ -546,6 +550,26 @@ class StudioAiSuggestionTests(TestCase):
         self.assertEqual(response.json()["content"], "A pokoj at night")
         provider_payload = json.loads(mocked_run_text.call_args.args[1])
         self.assertEqual(provider_payload["content"], "room")
+
+    @patch("lexamora_studio.ai.run_text")
+    def test_dialogue_preview_updates_spoken_language_label(self, mocked_run_text):
+        mocked_run_text.return_value = (
+            json.dumps({"content": 'Hero says in Polish: "Dzien dobry". Camera stays wide.'}),
+            "gpt-5.4-mini",
+        )
+        self.client.force_login(self.editor)
+        response = self.client.post(
+            f"/studio/prompts/{self.prompt.id}/ai-preview/",
+            data=json.dumps({
+                "action": "translate", "content": 'Hero says in Polish: "Dzien dobry". Camera stays wide.',
+                "targetLanguage": "RU", "scope": "DIALOGUE", "textModel": "gpt-5.4-mini",
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["content"], 'Hero says in Russian: "Dzien dobry". Camera stays wide.')
+        provider_payload = json.loads(mocked_run_text.call_args.args[1])
+        self.assertIn("in Russian", " ".join(provider_payload["rules"]))
 
     @patch("lexamora_studio.ai.run_text")
     def test_improve_creates_suggestion_without_overwriting_or_sending_dialogue(self, mocked_run_text):
@@ -1048,6 +1072,9 @@ class StudioWebEditingAndImagesTests(TestCase):
             "translation_languages": "en", "status": "DRAFT",
         }
         self.client.force_login(self.owner)
+        form_page = self.client.get(f"/studio/projects/{self.project.id}/edit/")
+        self.assertContains(form_page, "data-language-propagation-dialog")
+        self.assertNotContains(form_page, '<aside class="form-warning">')
 
         rejected = self.client.post(f"/studio/projects/{self.project.id}/edit/", payload)
         self.assertEqual(rejected.status_code, 200)
@@ -1509,6 +1536,8 @@ class StudioInlineEditingWorkflowTests(TestCase):
         from .models import Asset, AuditEvent, Prompt, PromptBlock
 
         self.client.force_login(self.owner)
+        self.project.prompt_template = "Camera: locked. No music."
+        self.project.save(update_fields=["prompt_template", "updated_at"])
         created = self.client.post(
             f"/studio/scenes/{self.first_scene.id}/prompts/quick-create/",
             {
@@ -1522,6 +1551,10 @@ class StudioInlineEditingWorkflowTests(TestCase):
         prompt = Prompt.objects.get(scene=self.first_scene)
         block = prompt.blocks.get()
         self.assertRedirects(created, f"/studio/scenes/{self.first_scene.id}/#prompt-{prompt.id}")
+        self.assertEqual(prompt.content, "Wide establishing shot\n\nCamera: locked. No music.")
+        self.assertEqual(block.content, prompt.content)
+        prompt_page = self.client.get(f"/studio/scenes/{self.first_scene.id}/")
+        self.assertContains(prompt_page, "Add Template")
 
         saved = self.client.post(
             f"/studio/prompts/{prompt.id}/quick-save/",
@@ -1588,7 +1621,7 @@ class StudioInlineEditingWorkflowTests(TestCase):
         page = self.client.get(f"/studio/scenes/{self.first_scene.id}/")
         self.assertContains(page, "Original &middot; EN")
         self.assertContains(page, "Translation &middot; DE")
-        self.assertContains(page, "Original language")
+        self.assertNotContains(page, "<label>Original language")
         response = self.client.post(
             f"/studio/prompts/{original.id}/quick-save/",
             {
@@ -1878,3 +1911,25 @@ class StudioGeneralSettingsTests(TestCase):
         page = self.client.get("/studio/settings/")
         self.assertContains(page, "Default prompt addition")
         self.assertNotContains(page, "Create template")
+
+    def test_admin_can_add_or_activate_model_from_prompt_dropdown(self):
+        from .models import StudioTextModel
+
+        self.client.force_login(self.admin)
+        response = self.client.post(
+            "/studio/settings/text-models/quick-create/",
+            {"name": "Fast prompt model", "model_id": "gpt-5.4-nano"},
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["modelId"], "gpt-5.4-nano")
+        model = StudioTextModel.objects.get(model_id="gpt-5.4-nano")
+        self.assertEqual(model.name, "Fast prompt model")
+        self.assertTrue(model.is_active)
+
+        self.client.force_login(self.user)
+        denied = self.client.post(
+            "/studio/settings/text-models/quick-create/",
+            {"name": "Forbidden", "model_id": "gpt-5.4-mini"},
+        )
+        self.assertEqual(denied.status_code, 403)

@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import timedelta
 
 from django.conf import settings
@@ -134,6 +135,10 @@ def preview_prompt_translation(
             f"Translate only direct speech and dialogue into {PROMPT_LANGUAGE_NAMES[target]} ({target}); keep every other part unchanged."
         )
         rules.append("Return the complete prompt, including unchanged narrative text.")
+        rules.append(
+            f"In production directions, replace language labels such as 'in Polish' with "
+            f"'in {PROMPT_LANGUAGE_NAMES[target]}'."
+        )
     elif scope == Prompt.TranslationScope.FULL:
         rules.append("Return the complete translated prompt.")
     else:
@@ -158,6 +163,14 @@ def preview_prompt_translation(
     usage.status = "SUCCESS"
     usage.output_chars = len(raw_text)
     usage.save(update_fields=["model", "status", "output_chars"])
+    if scope == Prompt.TranslationScope.DIALOGUE:
+        language_names = "|".join(re.escape(value) for value in PROMPT_LANGUAGE_NAMES.values())
+        result = re.sub(
+            rf"\bin\s+(?:{language_names})\b",
+            f"in {PROMPT_LANGUAGE_NAMES[target]}",
+            result,
+            flags=re.IGNORECASE,
+        )
     if scope == Prompt.TranslationScope.SELECTED:
         result = before + result + after
     return result, selected_model

@@ -14,7 +14,7 @@ from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils.text import slugify
 
-from lessons.ai_gateway import ProviderError, run_text
+from lessons.ai_gateway import ProviderError, TEXT_MODELS, run_text
 from lessons.provider_credentials import user_has_ai_access
 
 from .ai import StudioAiError, accept_suggestion, improve_prompt, preview_prompt_translation, reject_suggestion, translate_prompt, translate_prompt_dialogue, undo_suggestion
@@ -82,6 +82,26 @@ def studio_settings(request):
         "prompt_addition": prompt_addition,
         "murrlex_default_model": default_text_model_id(),
     })
+
+
+@login_required
+def text_model_quick_create(request):
+    if request.method != "POST" or not request.user.is_superuser:
+        return JsonResponse({"error": "Server administrator access is required."}, status=403)
+    model_id = request.POST.get("model_id", "").strip()
+    name = request.POST.get("name", "").strip()
+    if model_id not in TEXT_MODELS or not name:
+        return JsonResponse({"error": "Choose a supported model and enter its name."}, status=400)
+    model, _ = StudioTextModel.objects.update_or_create(
+        model_id=model_id,
+        defaults={
+            "name": name[:120],
+            "provider": StudioTextModel.Provider.OPENAI,
+            "is_active": True,
+            "updated_by": request.user,
+        },
+    )
+    return JsonResponse({"id": str(model.id), "modelId": model.model_id, "name": model.name})
 
 
 @login_required
@@ -524,7 +544,7 @@ def scene_detail(request, scene_id):
         "can_use_ai": has_object_capability(request.user, scene, "use_ai") and user_has_ai_access(request.user),
         "scene_images": scene.assets.filter(prompt__isnull=True),
         "project_assets": scene.episode.project.assets.filter(content_type__startswith="image/").order_by("-created_at"),
-        **_prompt_editor_context(),
+        **_prompt_editor_context(request),
     })
 
 @login_required
@@ -541,7 +561,7 @@ def prompt_detail(request, prompt_id):
         "prompt": prompt,
         "can_edit": has_object_capability(request.user, prompt, "edit"),
         "can_use_ai": has_object_capability(request.user, prompt, "use_ai") and user_has_ai_access(request.user),
-        **_prompt_editor_context(),
+        **_prompt_editor_context(request),
     })
 
 
@@ -1236,6 +1256,7 @@ def project_copy(request, project_id):
     copied = Project.objects.create(
         workspace=source.workspace, project_type=source.project_type, title=_unique_project_title(source.workspace, source.title),
         concept=source.concept, original_language=source.original_language, translation_languages=source.translation_languages,
+        prompt_template=source.prompt_template,
         rights_holder=source.rights_holder, publication_info=source.publication_info, status=Project.Status.DRAFT,
         created_by=request.user, updated_by=request.user,
     )
@@ -1398,7 +1419,7 @@ def docx_roundtrip(request, job_id):
         "can_export": has_object_capability(request.user, job, "export"),
     })
 
-def _prompt_editor_context():
+def _prompt_editor_context(request):
     return {
         "ai_models": AiModelProfile.objects.filter(is_active=True),
         "text_models": active_text_models(),
@@ -1408,6 +1429,8 @@ def _prompt_editor_context():
         "prompt_types": Prompt.Type.choices,
         "prompt_statuses": Prompt.Status.choices,
         "block_types": PromptBlock.Type.choices,
+        "can_manage_text_models": request.user.is_superuser,
+        "available_text_models": sorted((value, value) for value in TEXT_MODELS),
     }
 
 
@@ -1513,6 +1536,7 @@ def scene_prompt_quick_create(request, scene_id):
         created_by=request.user,
         updated_by=request.user,
     )
+    content = prompt.content
     if content:
         block = PromptBlock.objects.create(
             prompt=prompt,
@@ -1666,7 +1690,7 @@ def project_scene_chain(request, project_id):
         "project": project,
         "can_edit": has_project_capability(request.user, project, "edit"),
         "can_use_ai": has_project_capability(request.user, project, "use_ai") and user_has_ai_access(request.user),
-        **_prompt_editor_context(),
+        **_prompt_editor_context(request),
     }
     return render(request, "studio/project_scene_chain.html", context)
 

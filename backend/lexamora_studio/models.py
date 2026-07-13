@@ -87,6 +87,7 @@ class Project(SoftDeleteModel):
     concept = models.TextField(blank=True)
     original_language = models.CharField(max_length=16, blank=True)
     translation_languages = models.JSONField(default=list, blank=True)
+    prompt_template = models.TextField(blank=True)
     rights_holder = models.TextField(blank=True)
     publication_info = models.TextField(blank=True)
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.DRAFT)
@@ -333,6 +334,9 @@ class Prompt(SoftDeleteModel):
                 if project_language in self.Language.values:
                     self.original_language = project_language
                 self.language = self.original_language
+                project_template = (self.scene.episode.project.prompt_template or "").strip()
+                if project_template and not self.content.rstrip().endswith(project_template):
+                    self.content = f"{self.content.rstrip()}\n\n{project_template}".strip()
         return super().save(*args, **kwargs)
 
     @property

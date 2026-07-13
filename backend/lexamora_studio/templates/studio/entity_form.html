@@ -1,9 +1,17 @@
 {% extends "studio/base.html" %}
 {% block content %}
 <h1>{{ title }}</h1>
-{% if language_propagation %}<aside class="form-warning"><strong>Language propagation</strong><p>Changing the project original language will update every original prompt, the original-language attribute of saved translations, and every dialogue line. Review the counts below and confirm before saving.</p></aside>{% endif %}
-<form method="post"{% if multipart %} enctype="multipart/form-data"{% endif %}>{% csrf_token %}
+<form method="post"{% if multipart %} enctype="multipart/form-data"{% endif %}{% if language_propagation %} data-language-propagation-form{% endif %}>{% csrf_token %}
   {{ form.as_p }}
   <button class="button" type="submit">{{ submit_label|default:"Save" }}</button>
 </form>
+{% if language_propagation %}
+<dialog class="confirmation-dialog" data-language-propagation-dialog>
+  <h2>Change original language?</h2>
+  <p>{{ form.language_change_summary }}</p>
+  <p>This changes the language attribute of existing original prompts and dialogue lines across the project.</p>
+  <div class="dialog-actions"><button class="secondary" type="button" data-language-cancel>Cancel</button><button type="button" data-language-confirm>Change language</button></div>
+</dialog>
+<script>(()=>{const form=document.querySelector('[data-language-propagation-form]'),language=form?.querySelector('[name="original_language"]'),confirmation=form?.querySelector('[name="confirm_language_propagation"]'),dialog=document.querySelector('[data-language-propagation-dialog]');if(!form||!language||!confirmation||!dialog)return;form.addEventListener('submit',event=>{const changed=language.value!==language.dataset.initialLanguage;if(changed&&confirmation.value!=='on'){event.preventDefault();dialog.showModal()}});dialog.querySelector('[data-language-cancel]').addEventListener('click',()=>dialog.close());dialog.querySelector('[data-language-confirm]').addEventListener('click',()=>{confirmation.value='on';dialog.close();form.requestSubmit()});language.addEventListener('change',()=>{confirmation.value=''})})();</script>
+{% endif %}
 {% endblock %}

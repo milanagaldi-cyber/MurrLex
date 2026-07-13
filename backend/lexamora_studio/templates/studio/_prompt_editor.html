@@ -16,10 +16,6 @@
       <fieldset class="prompt-fieldset">
         <div class="prompt-meta-grid compact">
           <label>Title<input name="title" value="{{ prompt.title }}" data-prompt-title{% if not can_edit %} disabled{% endif %}></label>
-          <label>Original language
-            {% if prompt.source_prompt_id %}<input value="{{ prompt.original_language }}" data-prompt-original-language readonly>
-            {% else %}<select name="original_language" data-prompt-original-language{% if not can_edit %} disabled{% endif %}>{% for value,label in prompt_languages %}<option value="{{ value }}"{% if value == prompt.original_language %} selected{% endif %}>{{ label }}</option>{% endfor %}</select>{% endif %}
-          </label>
           <label>Generation model<select name="ai_model" data-prompt-model{% if not can_edit %} disabled{% endif %}>{% for model in ai_models %}<option value="{{ model.id }}"{% if model.id == prompt.ai_model_id %} selected{% endif %}>{{ model.name }}</option>{% endfor %}</select></label>
           <label>Type<select name="prompt_type" data-prompt-type{% if not can_edit %} disabled{% endif %}>{% for value,label in prompt_types %}<option value="{{ value }}"{% if value == prompt.prompt_type %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
           <label>Status<select name="status" data-prompt-status{% if not can_edit %} disabled{% endif %}>{% for value,label in prompt_statuses %}<option value="{{ value }}"{% if value == prompt.status %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
@@ -31,6 +27,7 @@
           <button class="secondary icon-tool" type="button" data-prompt-undo title="Undo" aria-label="Undo"{% if not can_edit %} disabled{% endif %}>&#8630;</button>
           <button class="secondary icon-tool" type="button" data-prompt-redo title="Redo" aria-label="Redo"{% if not can_edit %} disabled{% endif %}>&#8631;</button>
           <button class="secondary" type="button" data-prompt-clear title="Clear prompt"{% if not can_edit %} disabled{% endif %}>Clear</button>
+          {% if prompt.scene.episode.project.prompt_template and can_edit %}<button class="secondary" type="button" data-prompt-add-template>Add Template</button><textarea data-project-prompt-template hidden>{{ prompt.scene.episode.project.prompt_template }}</textarea>{% endif %}
         </div>
         <label class="prompt-unified-field">Prompt
           <textarea name="content" rows="10" data-prompt-content{% if not can_edit %} readonly{% endif %}>{{ prompt.editor_content }}</textarea>
@@ -43,7 +40,7 @@
     <section class="prompt-ai-panel" data-prompt-ai-panel>
       <label>Target language<select data-ai-target>{% for value,label in prompt_languages %}<option value="{{ value }}"{% if value == "PL" %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
       <label>Translate<select data-ai-scope><option value="FULL">Entire prompt</option><option value="DIALOGUE">Dialogue only</option><option value="SELECTED">Selected text</option></select></label>
-      <label>AI model<select data-ai-model>{% for model in text_models %}<option value="{{ model.model_id }}"{% if model.model_id == default_text_model %} selected{% endif %}>{{ model.name }}</option>{% endfor %}</select></label>
+      <label>AI model<select data-ai-model>{% for model in text_models %}<option value="{{ model.model_id }}"{% if model.model_id == default_text_model %} selected{% endif %}>{{ model.name }}</option>{% endfor %}{% if can_manage_text_models %}<option value="__add_model__">+ Add model...</option>{% endif %}</select></label>
       <button type="button" data-ai-translate>Suggest translation</button>
       <span class="save-state" data-ai-state></span>
     </section>
@@ -56,6 +53,7 @@
         <button class="secondary" type="button" data-ai-cancel>Cancel</button>
       </div>
     </section>
+    {% if can_manage_text_models %}<dialog class="confirmation-dialog quick-model-dialog" data-quick-model-dialog><form method="post" action="{% url 'studio:text_model_quick_create' %}" data-quick-model-form>{% csrf_token %}<h2>Add OpenAI model</h2><label>Name<input name="name" required maxlength="120"></label><label>Model<select name="model_id" required>{% for value,label in available_text_models %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select></label><div class="dialog-actions"><button class="secondary" type="button" data-quick-model-cancel>Cancel</button><button type="submit">Add model</button></div><span class="save-state" data-quick-model-state></span></form></dialog>{% endif %}
     {% endif %}
 
     <div class="prompt-assets asset-grid">
