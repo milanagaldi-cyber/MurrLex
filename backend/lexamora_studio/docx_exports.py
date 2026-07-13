@@ -96,6 +96,8 @@ def generate_docx_export(*, project, user):
                 for block in prompt.blocks.all():
                     cells = table.add_row().cells
                     cells[0].text, cells[1].text = block.get_block_type_display(), block.content
+                for asset in prompt.assets.all():
+                    _add_image(document, asset)
         for track in episode.subtitle_tracks.all():
             document.add_heading(f"Subtitles {track.language} / {track.get_kind_display()}", 2)
             for line in track.lines.all():

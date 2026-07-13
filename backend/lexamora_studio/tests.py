@@ -1161,3 +1161,192 @@ class StudioImageGenerationWorkflowTests(TestCase):
             {"reason": "Change", "prompt": "Change it", "status": "DRAFT"},
         )
         self.assertEqual(denied.status_code, 403)
+
+class StudioInlineEditingWorkflowTests(TestCase):
+    def setUp(self):
+        from .models import AiModelProfile, Episode, Scene
+
+        users = get_user_model()
+        self.owner = users.objects.create_user("inline-owner", password="strong-pass")
+        self.viewer = users.objects.create_user("inline-viewer", password="strong-pass")
+        self.workspace = create_workspace(user=self.owner, name="Inline Studio", slug="inline-studio")
+        WorkspaceMembership.objects.create(
+            workspace=self.workspace, user=self.viewer, role=WorkspaceMembership.Role.VIEWER
+        )
+        self.project = Project.objects.create(
+            workspace=self.workspace, project_type=Project.Type.SERIES, title="Inline Project",
+            created_by=self.owner, updated_by=self.owner,
+        )
+        self.episode = Episode.objects.create(
+            project=self.project, number=1, title="Pilot",
+            created_by=self.owner, updated_by=self.owner,
+        )
+        self.first_scene = Scene.objects.create(
+            episode=self.episode, number=1, title="First", position=0,
+            created_by=self.owner, updated_by=self.owner,
+        )
+        self.second_scene = Scene.objects.create(
+            episode=self.episode, number=2, title="Second", position=1,
+            created_by=self.owner, updated_by=self.owner,
+        )
+        self.ai_model = AiModelProfile.objects.create(
+            name="Inline Image Model", provider="test", model_id="inline-image",
+            media_type=AiModelProfile.MediaType.IMAGE,
+        )
+
+    @staticmethod
+    def image_file(name="prompt.png"):
+        import io
+        from PIL import Image
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        output = io.BytesIO()
+        Image.new("RGB", (72, 54), "#286c91").save(output, "PNG")
+        return SimpleUploadedFile(name, output.getvalue(), content_type="image/png")
+
+    def test_inline_prompt_create_edit_and_image_upload(self):
+        import tempfile
+        from pathlib import Path
+        from .models import Asset, AuditEvent, Prompt, PromptBlock
+
+        self.client.force_login(self.owner)
+        created = self.client.post(
+            f"/studio/scenes/{self.first_scene.id}/prompts/quick-create/",
+            {
+                "title": "Opening frame",
+                "ai_model": str(self.ai_model.id),
+                "prompt_type": "IMAGE",
+                "status": "DRAFT",
+                "content": "Wide establishing shot",
+            },
+        )
+        prompt = Prompt.objects.get(scene=self.first_scene)
+        block = prompt.blocks.get()
+        self.assertRedirects(created, f"/studio/scenes/{self.first_scene.id}/#prompt-{prompt.id}")
+
+        saved = self.client.post(
+            f"/studio/prompts/{prompt.id}/quick-save/",
+            {
+                "title": "Opening frame revised",
+                "ai_model": str(self.ai_model.id),
+                "prompt_type": "IMAGE",
+                "status": "IN_REVIEW",
+                f"block_{block.id}": "Closer establishing shot",
+                f"block_type_{block.id}": "NARRATIVE",
+                "new_block_type": "NEGATIVE",
+                "new_block_content": "No text overlays",
+            },
+        )
+        self.assertRedirects(saved, f"/studio/scenes/{self.first_scene.id}/#prompt-{prompt.id}")
+        prompt.refresh_from_db()
+        block.refresh_from_db()
+        self.assertEqual(prompt.title, "Opening frame revised")
+        self.assertEqual(prompt.status, "IN_REVIEW")
+        self.assertEqual(block.content, "Closer establishing shot")
+        self.assertTrue(PromptBlock.objects.filter(prompt=prompt, block_type="NEGATIVE").exists())
+
+        with tempfile.TemporaryDirectory() as directory:
+            with self.settings(STUDIO_PRIVATE_MEDIA_ROOT=Path(directory)):
+                uploaded = self.client.post(
+                    f"/studio/prompts/{prompt.id}/images/new/",
+                    {"file": self.image_file()},
+                )
+                self.assertRedirects(uploaded, f"/studio/scenes/{self.first_scene.id}/#prompt-{prompt.id}")
+                asset = Asset.objects.get(prompt=prompt)
+                self.assertEqual(asset.scene, self.first_scene)
+                page = self.client.get(f"/studio/scenes/{self.first_scene.id}/")
+                self.assertContains(page, asset.original_filename)
+                self.assertContains(page, "data-image-modal")
+        self.assertTrue(AuditEvent.objects.filter(action="PROMPT_INLINE_UPDATED").exists())
+
+    def test_scene_chain_quick_edit_and_drag_reorder_endpoint(self):
+        from .models import AuditEvent, Scene
+
+        self.client.force_login(self.owner)
+        page = self.client.get(f"/studio/projects/{self.project.id}/scene-chain/")
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, "Scene chain")
+        self.assertContains(page, "data-scene-list")
+        self.assertContains(page, "drag-handle")
+        self.assertContains(page, "data-theme-toggle")
+
+        saved = self.client.post(
+            f"/studio/scenes/{self.first_scene.id}/quick-save/",
+            {
+                "number": 1,
+                "title": "First revised",
+                "hook": "Hook",
+                "description": "Updated in chain",
+                "location": "Room",
+                "actions": "Walks",
+                "performance_notes": "Quiet",
+                "status": "IN_REVIEW",
+            },
+        )
+        self.assertRedirects(saved, f"/studio/projects/{self.project.id}/scene-chain/#scene-{self.first_scene.id}")
+        self.first_scene.refresh_from_db()
+        self.assertEqual(self.first_scene.title, "First revised")
+
+        reordered = self.client.post(
+            f"/studio/episodes/{self.episode.id}/scenes/reorder/",
+            data=json.dumps({"sceneIds": [str(self.second_scene.id), str(self.first_scene.id)]}),
+            content_type="application/json",
+        )
+        self.assertEqual(reordered.status_code, 200)
+        self.assertEqual(
+            list(Scene.objects.filter(episode=self.episode).order_by("position").values_list("id", flat=True)),
+            [self.second_scene.id, self.first_scene.id],
+        )
+        self.assertTrue(AuditEvent.objects.filter(action="SCENES_DRAG_REORDERED").exists())
+
+    def test_asset_api_can_attach_image_to_prompt(self):
+        import tempfile
+        from pathlib import Path
+        from .models import Asset, Prompt
+
+        prompt = Prompt.objects.create(
+            scene=self.first_scene,
+            ai_model=self.ai_model,
+            prompt_type="IMAGE",
+            title="API prompt",
+            created_by=self.owner,
+            updated_by=self.owner,
+        )
+        self.client.force_login(self.owner)
+        with tempfile.TemporaryDirectory() as directory:
+            with self.settings(STUDIO_PRIVATE_MEDIA_ROOT=Path(directory)):
+                response = self.client.post(
+                    "/api/v1/studio/assets",
+                    {
+                        "workspaceId": str(self.workspace.id),
+                        "promptId": str(prompt.id),
+                        "kind": "OTHER",
+                        "file": self.image_file("api-prompt.png"),
+                    },
+                )
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()["promptId"], str(prompt.id))
+        self.assertTrue(Asset.objects.filter(prompt=prompt, scene=self.first_scene).exists())
+    def test_viewer_sees_inline_prompts_but_cannot_change_them(self):
+        from .models import Prompt
+
+        prompt = Prompt.objects.create(
+            scene=self.first_scene, ai_model=self.ai_model, prompt_type="IMAGE",
+            title="Read only", created_by=self.owner, updated_by=self.owner,
+        )
+        self.client.force_login(self.viewer)
+        page = self.client.get(f"/studio/scenes/{self.first_scene.id}/")
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, "prompt-fieldset")
+        self.assertContains(page, "disabled")
+        denied = self.client.post(
+            f"/studio/prompts/{prompt.id}/quick-save/",
+            {"title": "Changed", "ai_model": str(self.ai_model.id), "prompt_type": "IMAGE", "status": "DRAFT"},
+        )
+        self.assertEqual(denied.status_code, 403)
+        reorder = self.client.post(
+            f"/studio/episodes/{self.episode.id}/scenes/reorder/",
+            data=json.dumps({"sceneIds": [str(self.second_scene.id), str(self.first_scene.id)]}),
+            content_type="application/json",
+        )
+        self.assertEqual(reorder.status_code, 403)

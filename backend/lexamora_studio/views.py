@@ -1,8 +1,11 @@
+import json
+
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ValidationError
 from django.db import transaction
-from django.http import Http404, HttpResponseForbidden, HttpResponseRedirect
+from django.db.models import Prefetch
+from django.http import Http404, HttpResponseForbidden, HttpResponseRedirect, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils.text import slugify
@@ -16,7 +19,7 @@ from .docx_imports import accept_docx_import, parse_docx
 from .docx_exports import generate_docx_export
 from .docx_roundtrip import compare_docx_export
 from .forms import AdditionalGenerationForm, AssetEditForm, CharacterForm, DialogueLineForm, DocxImportUploadForm, EpisodeForm, GenerationOutputUploadForm, ImageUploadForm, ProjectForm, PromptBlockForm, PromptForm, SceneForm
-from .models import AdditionalGeneration, AiSuggestion, Asset, Character, DialogueLine, DocxImport, Episode, ExportJob, GenerationOutput, Project, Prompt, PromptBlock, Scene, SubtitleTrack, TranslationUnit, Workspace
+from .models import AdditionalGeneration, AiModelProfile, AiSuggestion, Asset, Character, DialogueLine, DocxImport, Episode, ExportJob, GenerationOutput, Project, Prompt, PromptBlock, Scene, SubtitleTrack, TranslationUnit, Workspace
 from .permissions import accessible_workspaces, has_capability
 from .revisions import audit, record_revision
 from .services import bulk_replace_subtitle_lines, create_workspace, reorder_subtitle_lines, save_translation
@@ -294,6 +297,7 @@ def project_master(request, project_id):
             "assets", "characters__assets", "episodes__subtitle_tracks__lines",
             "episodes__scenes__assets", "episodes__scenes__dialogue_lines",
             "episodes__scenes__prompts__ai_model", "episodes__scenes__prompts__blocks",
+            "episodes__scenes__prompts__assets",
             "episodes__scenes__additional_generations__outputs__asset",
         ).filter(workspace__in=accessible_workspaces(request.user)), id=project_id,
     )
@@ -354,13 +358,18 @@ def project_detail(request, project_id):
 def scene_detail(request, scene_id):
     scene = get_object_or_404(
         Scene.objects.select_related("episode__project__workspace").prefetch_related(
-            "dialogue_lines", "prompts__ai_model", "prompts__blocks", "assets"
+            "dialogue_lines", "prompts__ai_model", "prompts__blocks", "prompts__assets", "assets"
         ).filter(episode__project__workspace__in=accessible_workspaces(request.user)),
         id=scene_id,
     )
     return render(request, "studio/scene_detail.html", {
         "scene": scene,
         "can_edit": has_capability(request.user, scene.episode.project.workspace, "edit"),
+        "ai_models": AiModelProfile.objects.filter(is_active=True),
+        "prompt_types": Prompt.Type.choices,
+        "prompt_statuses": Prompt.Status.choices,
+        "block_types": PromptBlock.Type.choices,
+        "scene_images": scene.assets.filter(prompt__isnull=True),
     })
 
 @login_required
@@ -509,6 +518,7 @@ def project_exports(request, project_id):
     project = get_object_or_404(
         Project.objects.prefetch_related(
             "characters", "episodes__scenes__dialogue_lines", "episodes__scenes__prompts__blocks",
+            "episodes__scenes__prompts__assets",
             "episodes__scenes__additional_generations__outputs__asset", "episodes__subtitle_tracks__lines",
         ).filter(workspace__in=accessible_workspaces(request.user)),
         id=project_id,
@@ -763,3 +773,229 @@ def docx_roundtrip(request, job_id):
         "report": report,
         "can_export": has_capability(request.user, job.workspace, "export"),
     })
+
+def _prompt_editor_context():
+    return {
+        "ai_models": AiModelProfile.objects.filter(is_active=True),
+        "prompt_types": Prompt.Type.choices,
+        "prompt_statuses": Prompt.Status.choices,
+        "block_types": PromptBlock.Type.choices,
+    }
+
+
+@login_required
+def scene_prompt_quick_create(request, scene_id):
+    scene = get_object_or_404(
+        Scene.objects.select_related("episode__project__workspace").filter(
+            episode__project__workspace__in=accessible_workspaces(request.user)
+        ),
+        id=scene_id,
+    )
+    workspace = scene.episode.project.workspace
+    if request.method != "POST" or not has_capability(request.user, workspace, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    ai_model = get_object_or_404(AiModelProfile.objects.filter(is_active=True), id=request.POST.get("ai_model"))
+    prompt_type = request.POST.get("prompt_type", Prompt.Type.IMAGE)
+    status = request.POST.get("status", Prompt.Status.DRAFT)
+    if prompt_type not in Prompt.Type.values or status not in Prompt.Status.values:
+        messages.error(request, "Choose a valid prompt type and status.")
+        return redirect("studio:scene_detail", scene_id=scene.id)
+    prompt = Prompt.objects.create(
+        scene=scene,
+        ai_model=ai_model,
+        prompt_type=prompt_type,
+        title=request.POST.get("title", "").strip(),
+        status=status,
+        position=scene.prompts.count(),
+        created_by=request.user,
+        updated_by=request.user,
+    )
+    content = request.POST.get("content", "").strip()
+    if content:
+        block = PromptBlock.objects.create(
+            prompt=prompt,
+            block_type=PromptBlock.Type.NARRATIVE,
+            content=content,
+            position=0,
+            created_by=request.user,
+            updated_by=request.user,
+        )
+        record_revision(instance=block, user=request.user, operation="CREATE")
+    record_revision(instance=prompt, user=request.user, operation="CREATE")
+    audit(workspace=workspace, actor=request.user, action="PROMPT_INLINE_CREATED", instance=prompt)
+    messages.success(request, "Prompt created.")
+    return HttpResponseRedirect(reverse("studio:scene_detail", kwargs={"scene_id": scene.id}) + f"#prompt-{prompt.id}")
+
+
+@login_required
+def prompt_quick_save(request, prompt_id):
+    prompt = get_object_or_404(
+        Prompt.objects.select_related("scene__episode__project__workspace", "ai_model")
+        .prefetch_related("blocks")
+        .filter(scene__episode__project__workspace__in=accessible_workspaces(request.user)),
+        id=prompt_id,
+    )
+    workspace = prompt.scene.episode.project.workspace
+    if request.method != "POST" or not has_capability(request.user, workspace, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    ai_model = get_object_or_404(AiModelProfile.objects.filter(is_active=True), id=request.POST.get("ai_model"))
+    prompt_type = request.POST.get("prompt_type", prompt.prompt_type)
+    status = request.POST.get("status", prompt.status)
+    if prompt_type not in Prompt.Type.values or status not in Prompt.Status.values:
+        messages.error(request, "Choose a valid prompt type and status.")
+        return redirect("studio:scene_detail", scene_id=prompt.scene_id)
+    with transaction.atomic():
+        prompt.ai_model = ai_model
+        prompt.prompt_type = prompt_type
+        prompt.title = request.POST.get("title", "").strip()
+        prompt.status = status
+        prompt.updated_by = request.user
+        prompt.full_clean()
+        prompt.save()
+        record_revision(instance=prompt, user=request.user, operation="INLINE_UPDATE")
+        for block in prompt.blocks.all():
+            if block.block_type == PromptBlock.Type.DIALOGUE_REFERENCE:
+                continue
+            value = request.POST.get(f"block_{block.id}")
+            block_type = request.POST.get(f"block_type_{block.id}", block.block_type)
+            if value is None or block_type not in PromptBlock.Type.values:
+                continue
+            block.content = value.strip()
+            block.block_type = block_type
+            block.updated_by = request.user
+            block.save()
+            record_revision(instance=block, user=request.user, operation="INLINE_UPDATE")
+        new_content = request.POST.get("new_block_content", "").strip()
+        new_type = request.POST.get("new_block_type", PromptBlock.Type.NARRATIVE)
+        if new_content and new_type in PromptBlock.Type.values:
+            block = PromptBlock.objects.create(
+                prompt=prompt,
+                block_type=new_type,
+                content=new_content,
+                position=prompt.blocks.count(),
+                created_by=request.user,
+                updated_by=request.user,
+            )
+            record_revision(instance=block, user=request.user, operation="CREATE")
+        audit(workspace=workspace, actor=request.user, action="PROMPT_INLINE_UPDATED", instance=prompt)
+    messages.success(request, "Prompt saved.")
+    if request.POST.get("return_to") == "chain":
+        return HttpResponseRedirect(reverse("studio:project_scene_chain", kwargs={"project_id": prompt.scene.episode.project_id}) + f"#prompt-{prompt.id}")
+    return HttpResponseRedirect(reverse("studio:scene_detail", kwargs={"scene_id": prompt.scene_id}) + f"#prompt-{prompt.id}")
+
+
+@login_required
+def prompt_image_upload(request, prompt_id):
+    prompt = get_object_or_404(
+        Prompt.objects.select_related("scene__episode__project__workspace").filter(
+            scene__episode__project__workspace__in=accessible_workspaces(request.user)
+        ),
+        id=prompt_id,
+    )
+    workspace = prompt.scene.episode.project.workspace
+    if request.method != "POST" or not has_capability(request.user, workspace, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    form = ImageUploadForm(request.POST, request.FILES)
+    if form.is_valid():
+        try:
+            create_asset(
+                user=request.user,
+                workspace=workspace,
+                uploaded=form.cleaned_data["file"],
+                kind=Asset.Kind.OTHER,
+                project=prompt.scene.episode.project,
+                scene=prompt.scene,
+                prompt=prompt,
+            )
+        except ValidationError as exc:
+            messages.error(request, "; ".join(exc.messages))
+        else:
+            messages.success(request, "Prompt image attached.")
+    else:
+        messages.error(request, "Choose a valid JPG, PNG or WEBP image.")
+    if request.POST.get("return_to") == "chain":
+        return HttpResponseRedirect(reverse("studio:project_scene_chain", kwargs={"project_id": prompt.scene.episode.project_id}) + f"#prompt-{prompt.id}")
+    return HttpResponseRedirect(reverse("studio:scene_detail", kwargs={"scene_id": prompt.scene_id}) + f"#prompt-{prompt.id}")
+
+
+@login_required
+def project_scene_chain(request, project_id):
+    project = get_object_or_404(
+        Project.objects.select_related("workspace").prefetch_related(
+            Prefetch("episodes__scenes__assets", queryset=Asset.objects.filter(prompt__isnull=True), to_attr="chain_images"),
+            "episodes__scenes__prompts__ai_model",
+            "episodes__scenes__prompts__blocks",
+            "episodes__scenes__prompts__assets",
+        ).filter(workspace__in=accessible_workspaces(request.user)),
+        id=project_id,
+    )
+    context = {
+        "project": project,
+        "can_edit": has_capability(request.user, project.workspace, "edit"),
+        **_prompt_editor_context(),
+    }
+    return render(request, "studio/project_scene_chain.html", context)
+
+
+@login_required
+def scene_quick_save(request, scene_id):
+    scene = get_object_or_404(
+        Scene.objects.select_related("episode__project__workspace").filter(
+            episode__project__workspace__in=accessible_workspaces(request.user)
+        ),
+        id=scene_id,
+    )
+    workspace = scene.episode.project.workspace
+    if request.method != "POST" or not has_capability(request.user, workspace, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    form = SceneForm(request.POST, instance=scene)
+    if form.is_valid():
+        scene = form.save(commit=False)
+        scene.updated_by = request.user
+        scene.save()
+        record_revision(instance=scene, user=request.user, operation="CHAIN_UPDATE")
+        audit(workspace=workspace, actor=request.user, action="SCENE_CHAIN_UPDATED", instance=scene)
+        messages.success(request, f"Scene {scene.number} saved.")
+    else:
+        messages.error(request, "Scene could not be saved. Check the entered values.")
+    return HttpResponseRedirect(reverse("studio:project_scene_chain", kwargs={"project_id": scene.episode.project_id}) + f"#scene-{scene.id}")
+
+
+@login_required
+def episode_scene_reorder(request, episode_id):
+    episode = get_object_or_404(
+        Episode.objects.select_related("project__workspace").filter(
+            project__workspace__in=accessible_workspaces(request.user)
+        ),
+        id=episode_id,
+    )
+    workspace = episode.project.workspace
+    if request.method != "POST" or not has_capability(request.user, workspace, "edit"):
+        return JsonResponse({"error": "Edit permission is required."}, status=403)
+    try:
+        data = json.loads(request.body.decode("utf-8"))
+        ordered_ids = [str(value) for value in data.get("sceneIds", [])]
+    except (ValueError, TypeError, UnicodeDecodeError):
+        return JsonResponse({"error": "Invalid reorder payload."}, status=400)
+    with transaction.atomic():
+        scenes = list(Scene.objects.select_for_update().filter(episode=episode).order_by("position", "id"))
+        by_id = {str(scene.id): scene for scene in scenes}
+        if len(ordered_ids) != len(scenes) or set(ordered_ids) != set(by_id):
+            return JsonResponse({"error": "Every scene must be included exactly once."}, status=400)
+        for offset, scene_id in enumerate(ordered_ids):
+            scene = by_id[scene_id]
+            scene.position = 100000 + offset
+            scene.save(update_fields=["position", "updated_at"])
+        for position, scene_id in enumerate(ordered_ids):
+            scene = by_id[scene_id]
+            scene.position = position
+            scene.updated_by = request.user
+            scene.save(update_fields=["position", "updated_by", "updated_at"])
+        audit(
+            workspace=workspace,
+            actor=request.user,
+            action="SCENES_DRAG_REORDERED",
+            instance=episode,
+            metadata={"sceneIds": ordered_ids},
+        )
+    return JsonResponse({"ok": True, "sceneIds": ordered_ids})

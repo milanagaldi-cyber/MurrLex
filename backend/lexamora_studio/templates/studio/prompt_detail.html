@@ -1,7 +1,7 @@
 {% extends "studio/base.html" %}
 {% block content %}
 <p class="muted"><a href="{% url 'studio:scene_detail' prompt.scene.id %}">Scene {{ prompt.scene.number }}</a> · {{ prompt.ai_model.name }}</p>
-<div class="toolbar"><h1>{{ prompt.title|default:prompt.get_prompt_type_display }}</h1>{% if can_edit %}<a class="button secondary" href="{% url 'studio:prompt_edit' prompt.id %}">Edit prompt</a>{% endif %}</div>
+<div class="toolbar"><h1>{{ prompt.title|default:prompt.get_prompt_type_display }}</h1>{% if can_edit %}<a class="button secondary" href="{% url 'studio:scene_detail' prompt.scene.id %}#prompt-{{ prompt.id }}">Edit in scene</a>{% endif %}</div>
 {% if messages %}{% for message in messages %}<p>{{ message }}</p>{% endfor %}{% endif %}
 <div class="toolbar">
   <span class="muted">{{ prompt.get_status_display }}{% if prompt.needs_review %} · Needs review{% endif %}</span>

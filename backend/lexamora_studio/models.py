@@ -251,6 +251,7 @@ class Asset(SoftDeleteModel):
     project = models.ForeignKey(Project, on_delete=models.PROTECT, related_name="assets", null=True, blank=True)
     scene = models.ForeignKey(Scene, on_delete=models.PROTECT, related_name="assets", null=True, blank=True)
     character = models.ForeignKey(Character, on_delete=models.PROTECT, related_name="assets", null=True, blank=True)
+    prompt = models.ForeignKey(Prompt, on_delete=models.PROTECT, related_name="assets", null=True, blank=True)
     kind = models.CharField(max_length=32, choices=Kind.choices)
     file = models.FileField(storage=private_storage, upload_to=studio_asset_path, max_length=500)
     thumbnail = models.FileField(storage=private_storage, upload_to=studio_thumbnail_path, max_length=500, blank=True)

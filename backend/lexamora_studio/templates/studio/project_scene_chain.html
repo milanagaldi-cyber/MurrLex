@@ -1,0 +1,62 @@
+{% extends "studio/base.html" %}
+{% block title %}{{ project.title }} / Scene chain{% endblock %}
+{% block content %}
+<div class="toolbar"><div><p class="muted"><a href="{% url 'studio:project_detail' project.id %}">{{ project.title }}</a></p><h1>Scene chain</h1><p class="muted">Edit scenes in context and drag them into the required order.</p></div><div><a class="button secondary" href="{% url 'studio:project_master' project.id %}">Master Document</a></div></div>
+<div class="scene-chain">
+{% for episode in project.episodes.all %}
+<section class="episode-chain" id="episode-{{ episode.id }}">
+  <div class="scene-chain-head"><h2>Episode {{ episode.number }}. {{ episode.title }}</h2>{% if can_edit %}<span class="save-state" data-reorder-state>Drag a scene by the handle</span>{% endif %}</div>
+  <div data-scene-list data-reorder-url="{% url 'studio:episode_scene_reorder' episode.id %}">
+  {% for scene in episode.scenes.all %}
+  <article id="scene-{{ scene.id }}" class="scene-chain-card" data-scene-id="{{ scene.id }}">
+    <div class="scene-chain-head"><div><span class="drag-handle" title="Drag scene" aria-label="Drag scene">&#8942;&#8942;</span> <strong>Scene {{ scene.number }}. {{ scene.title }}</strong></div><a href="{% url 'studio:scene_detail' scene.id %}">Open scene</a></div>
+    <div class="scene-chain-layout">
+      <div class="scene-chain-image">
+        {% for asset in scene.chain_images %}{% if asset.thumbnail %}<figure class="asset"><a href="{% url 'studio_api:asset_view' asset.id %}"><img src="{% url 'studio_api:asset_thumbnail' asset.id %}" alt="{{ asset.original_filename }}"></a></figure>{% endif %}{% empty %}<div class="empty panel" style="padding:18px">No scene image</div>{% endfor %}
+        {% if can_edit %}<a href="{% url 'studio:scene_image_upload' scene.id %}">Upload image</a>{% endif %}
+      </div>
+      <div>
+      {% if can_edit %}
+      <form method="post" action="{% url 'studio:scene_quick_save' scene.id %}">{% csrf_token %}
+        <div class="scene-edit-grid"><label>Number<input type="number" name="number" value="{{ scene.number }}" min="1"></label><label>Title<input name="title" value="{{ scene.title }}"></label><label>Status<select name="status">{% for value,label in scene.Status.choices %}<option value="{{ value }}"{% if value == scene.status %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label><label class="wide">Hook<textarea name="hook" rows="2">{{ scene.hook }}</textarea></label><label class="wide">Description<textarea name="description" rows="4">{{ scene.description }}</textarea></label><label>Location<textarea name="location" rows="3">{{ scene.location }}</textarea></label><label>Actions<textarea name="actions" rows="3">{{ scene.actions }}</textarea></label><label>Performance<textarea name="performance_notes" rows="3">{{ scene.performance_notes }}</textarea></label></div>
+        <button type="submit">Save scene</button>
+      </form>
+      {% else %}<p>{{ scene.description|linebreaksbr }}</p>{% endif %}
+      </div>
+    </div>
+    <details class="chain-prompts"><summary>Prompts ({{ scene.prompts.count }})</summary><div class="prompt-stack" style="margin-top:14px">{% for prompt in scene.prompts.all %}{% include "studio/_prompt_editor.html" with prompt=prompt prompt_return="chain" %}{% empty %}<p class="empty">No prompts.</p>{% endfor %}</div></details>
+  </article>
+  {% empty %}<p class="empty">No scenes.</p>{% endfor %}
+  </div>
+</section>
+{% empty %}<p class="empty">No episodes yet.</p>{% endfor %}
+</div>
+{% endblock %}
+{% block extra_script %}
+<script>
+(() => {
+  const csrf=document.querySelector('input[name="csrfmiddlewaretoken"]')?.value;
+  document.querySelectorAll("[data-scene-list]").forEach(list=>{
+    let dragged=null;
+    list.querySelectorAll(".scene-chain-card").forEach(card=>{
+      const handle=card.querySelector(".drag-handle");
+      if(!handle)return;
+      handle.addEventListener("mousedown",()=>card.draggable=true);
+      card.addEventListener("dragstart",()=>{dragged=card;card.classList.add("dragging")});
+      card.addEventListener("dragend",()=>{card.draggable=false;card.classList.remove("dragging");list.querySelectorAll(".drag-target").forEach(x=>x.classList.remove("drag-target"))});
+      card.addEventListener("dragover",e=>{e.preventDefault();if(card!==dragged){card.classList.add("drag-target");const box=card.getBoundingClientRect();list.insertBefore(dragged,e.clientY<box.top+box.height/2?card:card.nextSibling)}});
+      card.addEventListener("dragleave",()=>card.classList.remove("drag-target"));
+    });
+    list.addEventListener("drop",async e=>{
+      e.preventDefault();
+      list.querySelectorAll(".drag-target").forEach(x=>x.classList.remove("drag-target"));
+      const state=list.closest(".episode-chain").querySelector("[data-reorder-state]");
+      state.textContent="Saving order...";
+      const sceneIds=[...list.querySelectorAll(".scene-chain-card")].map(card=>card.dataset.sceneId);
+      const response=await fetch(list.dataset.reorderUrl,{method:"POST",headers:{"Content-Type":"application/json","X-CSRFToken":csrf},body:JSON.stringify({sceneIds})});
+      state.textContent=response.ok?"Order saved":"Could not save order";
+    });
+  });
+})();
+</script>
+{% endblock %}

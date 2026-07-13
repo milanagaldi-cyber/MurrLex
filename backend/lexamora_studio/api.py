@@ -325,6 +325,7 @@ def asset_json(item):
         "filename": item.original_filename, "contentType": item.content_type,
         "sizeBytes": item.size_bytes, "checksumSha256": item.checksum_sha256,
         "width": item.width, "height": item.height, "hasThumbnail": bool(item.thumbnail),
+        "promptId": str(item.prompt_id) if item.prompt_id else None,
     }
 
 
@@ -344,12 +345,17 @@ def assets(request):
         return error("validation_error", "A valid asset kind is required.")
     project = None
     scene = None
+    prompt = None
     if request.POST.get("projectId"):
         project = get_object_or_404(Project.objects.filter(workspace=workspace), id=request.POST["projectId"])
     if request.POST.get("sceneId"):
         scene = get_object_or_404(Scene.objects.filter(episode__project__workspace=workspace), id=request.POST["sceneId"])
+    if request.POST.get("promptId"):
+        prompt = get_object_or_404(Prompt.objects.filter(scene__episode__project__workspace=workspace), id=request.POST["promptId"])
+        scene = prompt.scene
+        project = prompt.scene.episode.project
     try:
-        item = create_asset(user=user, workspace=workspace, uploaded=uploaded, kind=kind, project=project, scene=scene)
+        item = create_asset(user=user, workspace=workspace, uploaded=uploaded, kind=kind, project=project, scene=scene, prompt=prompt)
     except ValidationError as exc:
         return error("validation_error", "; ".join(exc.messages), fields={"file": exc.messages})
     return JsonResponse(asset_json(item), status=201)

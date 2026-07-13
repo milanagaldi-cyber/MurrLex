@@ -64,7 +64,7 @@ def validate_upload(uploaded):
 
 
 @transaction.atomic
-def create_asset(*, user, workspace, uploaded, kind, project=None, scene=None, character=None):
+def create_asset(*, user, workspace, uploaded, kind, project=None, scene=None, character=None, prompt=None):
     for related in (project,):
         if related is not None and related.workspace_id != workspace.id:
             raise ValidationError("Related object belongs to another workspace.")
@@ -72,6 +72,8 @@ def create_asset(*, user, workspace, uploaded, kind, project=None, scene=None, c
         raise ValidationError("Scene belongs to another workspace.")
     if character is not None and character.project.workspace_id != workspace.id:
         raise ValidationError("Character belongs to another workspace.")
+    if prompt is not None and prompt.scene.episode.project.workspace_id != workspace.id:
+        raise ValidationError("Prompt belongs to another workspace.")
     filename, content_type, image_data = validate_upload(uploaded)
     checksum = _hash_upload(uploaded)
     asset = Asset(
@@ -79,6 +81,7 @@ def create_asset(*, user, workspace, uploaded, kind, project=None, scene=None, c
         project=project,
         scene=scene,
         character=character,
+        prompt=prompt,
         kind=kind,
         original_filename=filename,
         content_type=content_type,
