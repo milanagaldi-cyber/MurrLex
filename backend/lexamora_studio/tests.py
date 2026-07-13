@@ -1269,6 +1269,10 @@ class StudioInlineEditingWorkflowTests(TestCase):
         self.assertContains(page, "data-scene-list")
         self.assertContains(page, "drag-handle")
         self.assertContains(page, "data-theme-toggle")
+        self.assertContains(page, "timeline-track")
+        self.assertContains(page, "scene-editor-deck")
+        self.assertContains(page, "data-scroll-direction")
+        self.assertContains(page, 'class="scene-editor-panel"')
 
         saved = self.client.post(
             f"/studio/scenes/{self.first_scene.id}/quick-save/",
