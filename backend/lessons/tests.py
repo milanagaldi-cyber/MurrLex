@@ -372,6 +372,11 @@ class AdminThemeTests(TestCase):
             email="admin-theme@example.com",
             password="Strong-admin-theme-password-2026!",
         )
+        self.target_user = get_user_model().objects.create_user(
+            username="ai-access-target",
+            email="ai-target@example.com",
+            password="Strong-target-password-2026!",
+        )
         self.client.force_login(self.user)
 
     def test_admin_page_includes_working_theme_toggle(self):
@@ -383,6 +388,27 @@ class AdminThemeTests(TestCase):
         self.assertContains(response, 'return mode === "light" ? "light" : "dark"')
         self.assertContains(response, "localStorage.setItem(\"theme\", mode)")
         self.assertContains(response, "admin/js/theme.js")
+
+    def test_ai_access_is_managed_from_user_list(self):
+        changelist = self.client.get("/admin/lessons/userapiaccess/")
+        self.assertEqual(changelist.status_code, 200)
+        self.assertContains(changelist, "ai-target@example.com")
+        self.assertNotContains(changelist, 'href="/admin/lessons/userapiaccess/add/"')
+
+        add_page = self.client.get("/admin/lessons/userapiaccess/add/")
+        self.assertRedirects(add_page, "/admin/lessons/userapiaccess/", fetch_redirect_response=False)
+
+    def test_ai_access_bulk_enable_action(self):
+        access = self.target_user.api_access
+        self.assertFalse(access.ai_api_enabled)
+        response = self.client.post(
+            "/admin/lessons/userapiaccess/",
+            {"action": "enable_ai_access", "_selected_action": [str(access.id)]},
+            follow=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        access.refresh_from_db()
+        self.assertTrue(access.ai_api_enabled)
 
 
 class PremiumPageTests(TestCase):

@@ -1,5 +1,8 @@
 from django import forms
 from django.contrib import admin
+from django.shortcuts import redirect
+from django.urls import reverse
+from django.utils import timezone
 
 from .models import ApiSession, Card, GoogleOAuthAllowedUser, ImportLog, Lesson, ProviderCredential, UserApiAccess
 
@@ -26,6 +29,23 @@ class UserApiAccessAdmin(admin.ModelAdmin):
     search_fields = ("user__username", "user__email")
     readonly_fields = ("user", "updated_at")
     list_select_related = ("user",)
+    actions = ("enable_ai_access", "disable_ai_access")
+
+    def has_add_permission(self, request):
+        return False
+
+    def add_view(self, request, form_url="", extra_context=None):
+        return redirect(reverse("admin:lessons_userapiaccess_changelist"))
+
+    @admin.action(description="Enable AI access for selected users")
+    def enable_ai_access(self, request, queryset):
+        updated = queryset.update(ai_api_enabled=True, updated_at=timezone.now())
+        self.message_user(request, f"AI access enabled for {updated} user(s).")
+
+    @admin.action(description="Disable AI access for selected users")
+    def disable_ai_access(self, request, queryset):
+        updated = queryset.update(ai_api_enabled=False, updated_at=timezone.now())
+        self.message_user(request, f"AI access disabled for {updated} user(s).")
 
     @admin.display(ordering="user__username", description="Username")
     def username(self, access):
