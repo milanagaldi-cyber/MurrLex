@@ -121,6 +121,8 @@ def home(request):
             "description": "Machine endpoint for text translation requests.",
         },
     ]
+    if not settings.PUBLIC_SIGNUP_ENABLED:
+        site_links = [link for link in site_links if link["href"] != "/register/"]
     return render(request, "lessons/home.html", {"site_links": site_links})
 
 
@@ -128,6 +130,9 @@ def home(request):
 def register(request):
     if request.user.is_authenticated:
         return redirect("account")
+
+    if not settings.PUBLIC_SIGNUP_ENABLED:
+        return render(request, "registration/register.html", {"signup_closed": True}, status=403)
 
     if request.method == "POST":
         form = PublicRegistrationForm(request.POST)
@@ -520,6 +525,8 @@ def _mobile_user_or_error(request, require_ai=False):
 @csrf_exempt
 @require_http_methods(["POST"])
 def api_register(request):
+    if not settings.PUBLIC_SIGNUP_ENABLED:
+        return json_error("Registration is closed. Ask an administrator for access.", 403)
     payload = _api_payload(request)
     if payload is None:
         return json_error("Invalid JSON.")

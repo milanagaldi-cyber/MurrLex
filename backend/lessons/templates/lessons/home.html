@@ -19,7 +19,9 @@
                 </form>
             {% else %}
                 <a href="{% url 'login' %}">Login</a>
+                {% if public_signup_enabled %}
                 <a class="button secondary" href="{% url 'register' %}">Register</a>
+                {% endif %}
             {% endif %}
             {% include "lessons/theme_toggle.html" %}
         </nav>
@@ -45,9 +47,13 @@
         <article class="card">
             <span class="badge open">Public</span>
             <h2>Public access</h2>
-            <p>Open entry points for users who are registering or signing in.</p>
+            <p>Entry points for invited test users.</p>
             <p><a href="{% url 'login' %}">Login</a></p>
+            {% if public_signup_enabled %}
             <p><a href="{% url 'register' %}">Register</a></p>
+            {% else %}
+            <p class="muted">Registration is managed through the Google staging allowlist.</p>
+            {% endif %}
             <p><a href="{% url 'account' %}">User cabinet</a></p>
             <p><a href="{% url 'premium' %}">Premium preview</a></p>
         </article>

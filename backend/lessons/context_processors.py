@@ -8,5 +8,6 @@ def oauth_status(request):
     return {
         "google_oauth_enabled": settings.GOOGLE_OAUTH_ENABLED and bool(google_app.get("client_id") and google_app.get("secret")),
         "google_oauth_redirect_uri": settings.GOOGLE_OAUTH_REDIRECT_URI,
+        "public_signup_enabled": settings.PUBLIC_SIGNUP_ENABLED,
         "murrlex_ai_access": user_has_ai_access(request.user),
     }

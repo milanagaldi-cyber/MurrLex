@@ -19,6 +19,7 @@ from .social_auth import GoogleIdentityError
     JWT_ACCESS_MINUTES=15,
     JWT_REFRESH_DAYS=30,
     CREDENTIAL_ENCRYPTION_KEY=Fernet.generate_key().decode("ascii"),
+    PUBLIC_SIGNUP_ENABLED=True,
 )
 class MobileApiTests(TestCase):
     def create_user_and_login(self):
@@ -340,7 +341,6 @@ class HomePageTests(TestCase):
         expected_links = [
             "/api/health",
             "/login/",
-            "/register/",
             "/account/",
             "/premium/",
             "/admin/",
@@ -352,17 +352,24 @@ class HomePageTests(TestCase):
         ]
         for href in expected_links:
             self.assertContains(response, f'href="{href}"')
+        self.assertNotContains(response, 'href="/register/"')
 
     def test_public_pages_include_theme_switcher(self):
         for path in ("/", "/login/", "/register/", "/premium/"):
             with self.subTest(path=path):
                 response = self.client.get(path)
+                expected_status = 403 if path == "/register/" else 200
                 self.assertContains(
                     response,
                     'data-theme-toggle aria-label="Switch theme"',
                     count=1,
+                    status_code=expected_status,
                 )
-                self.assertContains(response, 'localStorage.setItem("theme", next)')
+                self.assertContains(
+                    response,
+                    'localStorage.setItem("theme", next)',
+                    status_code=expected_status,
+                )
 
 
 class AdminThemeTests(TestCase):
@@ -615,6 +622,54 @@ class LoginAuthenticationTests(TestCase):
         self.assertNotIn("_auth_user_id", self.client.session)
 
 
+@override_settings(PUBLIC_SIGNUP_ENABLED=False)
+class ClosedSignupTests(TestCase):
+    def test_closed_registration_page_explains_invite_only_access(self):
+        response = self.client.get("/register/")
+
+        self.assertEqual(response.status_code, 403)
+        self.assertContains(response, "Closed testing", status_code=403)
+        self.assertContains(response, "Google email", status_code=403)
+
+    def test_closed_web_registration_does_not_create_user(self):
+        response = self.client.post(
+            "/register/",
+            data={
+                "username": "outsider",
+                "email": "outsider@example.com",
+                "password1": "StrongPass-2026!",
+                "password2": "StrongPass-2026!",
+            },
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(get_user_model().objects.filter(username="outsider").exists())
+
+    def test_closed_mobile_registration_does_not_create_user(self):
+        response = self.client.post(
+            "/api/auth/register",
+            data=json.dumps(
+                {
+                    "username": "outsider",
+                    "email": "outsider@example.com",
+                    "password": "StrongPass-2026!",
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(get_user_model().objects.filter(username="outsider").exists())
+
+    def test_login_page_hides_public_registration_link(self):
+        response = self.client.get("/login/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Closed testing")
+        self.assertNotContains(response, 'href="/register/"')
+
+
+@override_settings(PUBLIC_SIGNUP_ENABLED=True)
 class PublicAccountTests(TestCase):
     def test_register_page_is_public(self):
         response = self.client.get("/register/")

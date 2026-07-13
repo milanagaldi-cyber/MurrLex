@@ -22,11 +22,14 @@ GOOGLE_OAUTH_REDIRECT_URI=https://ml-staging-api.lexaailabs.com/accounts/google/
 GOOGLE_OAUTH_TEST_ALLOWLIST_ENABLED=true
 GOOGLE_OAUTH_ALLOWED_EMAILS=you@gmail.com,test@gmail.com
 GOOGLE_OAUTH_ALLOWED_SUBS=
+PUBLIC_SIGNUP_ENABLED=false
 ```
 
 Never commit the real client ID or secret. Environment email matching is case-insensitive; Google `sub` matching is exact. When allowlisting is enabled and both env and database lists are empty, access is denied to everyone.
 
 Test users can also be managed in Django Admin under **Google staging allowlist**. A successful first login creates a normal active user with no staff, superuser, or AI API grant.
+
+Keep `PUBLIC_SIGNUP_ENABLED=false` on staging so `/register/` and `/api/auth/register` cannot bypass the Google allowlist. Existing password accounts can still sign in; administrators create any required password account manually.
 
 ## API request
 

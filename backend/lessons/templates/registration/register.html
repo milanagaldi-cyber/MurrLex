@@ -14,6 +14,12 @@
             <span>MurrLex Server</span>
         </a>
     </div>
+    {% if signup_closed %}
+        <h1>Closed testing</h1>
+        <p>New accounts are available only to invited MurrLex test users.</p>
+        <div class="errors">Ask an administrator to add your Google email to the staging allowlist.</div>
+        <a class="button full" href="{% url 'login' %}">Back to login</a>
+    {% else %}
     <h1>Create account</h1>
     <p>Register a public MurrLex account to open your personal cabinet.</p>
 
@@ -34,5 +40,6 @@
     <p style="margin-top:18px;">
         Already have an account? <a href="{% url 'login' %}">Log in</a>.
     </p>
+    {% endif %}
 </main>
 {% endblock %}
