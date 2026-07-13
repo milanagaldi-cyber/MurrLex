@@ -302,6 +302,7 @@ def scene_prompts(request, scene_id):
         return JsonResponse({"results": [
             {"id": str(item.id), "model": item.ai_model.name, "type": item.prompt_type, "status": item.status,
              "language": item.language, "translationScope": item.translation_scope,
+             "content": item.editor_content,
              "sourcePromptId": str(item.source_prompt_id) if item.source_prompt_id else None,
              "needsReview": item.needs_review}
             for item in scene.prompts.select_related("ai_model", "template")
@@ -316,13 +317,18 @@ def scene_prompts(request, scene_id):
     if prompt_type not in Prompt.Type.values:
         return error("validation_error", "A valid prompt type is required.")
     template = default_prompt_template(prompt_type)
+    supplied_blocks = [block for block in data.get("blocks", []) if isinstance(block, dict)]
+    unified_content = str(data.get("content", "")).strip() or "\n\n".join(
+        str(block.get("content", "")).strip() for block in supplied_blocks if str(block.get("content", "")).strip()
+    )
     prompt = Prompt.objects.create(
         scene=scene, ai_model=model,
         template=template,
         prompt_type=prompt_type, title=str(data.get("title", "")).strip(),
+        content=unified_content,
         position=scene.prompts.count(), created_by=user, updated_by=user,
     )
-    for position, block in enumerate(data.get("blocks", [])):
+    for position, block in enumerate(supplied_blocks):
         if isinstance(block, dict) and str(block.get("content", "")).strip() and block.get("type") in PromptBlock.Type.values:
             PromptBlock.objects.create(
                 prompt=prompt, block_type=block["type"], content=str(block["content"]).strip(),

@@ -92,16 +92,10 @@ def generate_docx_export(*, project, user):
                 _add_image(document, asset)
             for prompt in scene.prompts.all():
                 document.add_heading(prompt.title or f"{prompt.get_prompt_type_display()} prompt - {prompt.ai_model.name} [{prompt.language}]", 2)
-                table = document.add_table(rows=1, cols=2)
-                table.rows[0].cells[0].text, table.rows[0].cells[1].text = "Block", "Content"
-                cells = table.add_row().cells
-                for block in prompt.blocks.all():
-                    cells = table.add_row().cells
-                    cells[0].text, cells[1].text = block.get_block_type_display(), block.content
+                document.add_paragraph(prompt.editor_content)
                 addition = default_prompt_template(prompt.prompt_type).content.strip()
                 if addition:
-                    cells = table.add_row().cells
-                    cells[0].text, cells[1].text = "Default prompt addition", addition
+                    document.add_paragraph(f"Default prompt addition: {addition}")
                 for asset in prompt.assets.all():
                     _add_image(document, asset)
         for track in episode.subtitle_tracks.all():

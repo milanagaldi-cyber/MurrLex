@@ -282,6 +282,7 @@ class Prompt(SoftDeleteModel):
         ORIGINAL = "ORIGINAL", "Original"
         FULL = "FULL", "Full text"
         DIALOGUE = "DIALOGUE", "Dialogue only"
+        SELECTED = "SELECTED", "Selected text"
 
     class Type(models.TextChoices):
         IMAGE = "IMAGE", "Image"
@@ -304,6 +305,7 @@ class Prompt(SoftDeleteModel):
     translation_scope = models.CharField(
         max_length=16, choices=TranslationScope.choices, default=TranslationScope.ORIGINAL,
     )
+    content = models.TextField(blank=True)
     prompt_type = models.CharField(max_length=16, choices=Type.choices)
     title = models.CharField(max_length=180, blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
@@ -319,7 +321,21 @@ class Prompt(SoftDeleteModel):
             from .ai_catalog import default_prompt_template
 
             self.template = default_prompt_template(self.prompt_type)
+        if self._state.adding and not self.source_prompt_id and self.language == self.Language.EN:
+            project_language = (self.scene.episode.project.original_language or "").strip().upper()
+            if project_language in self.Language.values:
+                self.language = project_language
         return super().save(*args, **kwargs)
+
+    @property
+    def editor_content(self):
+        if self.content:
+            return self.content
+        return "\n\n".join(self.blocks.values_list("content", flat=True))
+
+    def language_versions(self):
+        root_id = self.source_prompt_id or self.id
+        return Prompt.objects.filter(models.Q(id=root_id) | models.Q(source_prompt_id=root_id)).order_by("language", "created_at")
 
 
 class PromptBlock(SoftDeleteModel):

@@ -5,7 +5,7 @@ from cryptography.fernet import Fernet
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 
-from .models import Project, ProjectMembership, WorkspaceMembership
+from .models import Project, ProjectMembership, Prompt, WorkspaceMembership
 from .permissions import accessible_projects, accessible_workspaces, has_capability, has_project_capability
 from .services import create_workspace
 
@@ -487,13 +487,65 @@ class StudioAiSuggestionTests(TestCase):
         response = self.client.get(f"/studio/scenes/{self.prompt.scene_id}/")
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Added automatically")
-        self.assertContains(response, "Improve")
-        self.assertContains(response, "Translate all")
+        self.assertContains(response, "Copy")
+        self.assertContains(response, "Paste")
+        self.assertContains(response, "Clear")
+        self.assertContains(response, "Suggest translation")
+        self.assertContains(response, "Entire prompt")
         self.assertContains(response, "Dialogue only")
+        self.assertContains(response, "Selected text")
+        self.assertContains(response, "Apply Translation")
+        self.assertContains(response, "Improve Translation")
+        self.assertContains(response, "data-prompt-toggle")
         self.assertContains(response, '<option value="BL">BL</option>', html=True)
         self.assertContains(response, "gpt-5.4-mini")
         self.assertNotContains(response, "Mandatory template")
         self.assertNotContains(response, "Improve action")
+
+    @patch("lexamora_studio.ai.run_text")
+    def test_prompt_translation_preview_and_apply_create_language_version(self, mocked_run_text):
+        mocked_run_text.return_value = (json.dumps({"content": "Filmowy pokoj"}), "gpt-5.4-mini")
+        self.client.force_login(self.editor)
+        preview = self.client.post(
+            f"/studio/prompts/{self.prompt.id}/ai-preview/",
+            data=json.dumps({
+                "action": "translate", "content": "Cinematic room", "targetLanguage": "PL",
+                "scope": "FULL", "textModel": "gpt-5.4-mini",
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(preview.status_code, 200, preview.content)
+        self.assertEqual(preview.json()["content"], "Filmowy pokoj")
+
+        applied = self.client.post(
+            f"/studio/prompts/{self.prompt.id}/apply-translation/",
+            data=json.dumps({"content": preview.json()["content"], "targetLanguage": "PL", "scope": "FULL"}),
+            content_type="application/json",
+        )
+        self.assertEqual(applied.status_code, 200, applied.content)
+        translated = Prompt.objects.get(source_prompt=self.prompt, language="PL")
+        self.assertEqual(translated.content, "Filmowy pokoj")
+        self.assertEqual(translated.blocks.get().content, "Filmowy pokoj")
+        self.assertEqual({row["language"] for row in applied.json()["versions"]}, {"EN", "PL"})
+
+    @patch("lexamora_studio.ai.run_text")
+    def test_selected_text_preview_preserves_unselected_prompt(self, mocked_run_text):
+        mocked_run_text.return_value = (json.dumps({"content": "pokoj"}), "gpt-5.4-mini")
+        self.client.force_login(self.editor)
+        source = "A room at night"
+        response = self.client.post(
+            f"/studio/prompts/{self.prompt.id}/ai-preview/",
+            data=json.dumps({
+                "action": "translate", "content": source, "targetLanguage": "PL",
+                "scope": "SELECTED", "selectionStart": 2, "selectionEnd": 6,
+                "textModel": "gpt-5.4-mini",
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["content"], "A pokoj at night")
+        provider_payload = json.loads(mocked_run_text.call_args.args[1])
+        self.assertEqual(provider_payload["content"], "room")
 
     @patch("lexamora_studio.ai.run_text")
     def test_improve_creates_suggestion_without_overwriting_or_sending_dialogue(self, mocked_run_text):
@@ -1410,10 +1462,7 @@ class StudioInlineEditingWorkflowTests(TestCase):
                 "ai_model": str(self.ai_model.id),
                 "prompt_type": "IMAGE",
                 "status": "IN_REVIEW",
-                f"block_{block.id}": "Closer establishing shot",
-                f"block_type_{block.id}": "NARRATIVE",
-                "new_block_type": "NEGATIVE",
-                "new_block_content": "No text overlays",
+                "content": "Closer establishing shot\n\nNo text overlays",
             },
         )
         self.assertRedirects(saved, f"/studio/scenes/{self.first_scene.id}/#prompt-{prompt.id}")
@@ -1421,8 +1470,25 @@ class StudioInlineEditingWorkflowTests(TestCase):
         block.refresh_from_db()
         self.assertEqual(prompt.title, "Opening frame revised")
         self.assertEqual(prompt.status, "IN_REVIEW")
-        self.assertEqual(block.content, "Closer establishing shot")
-        self.assertTrue(PromptBlock.objects.filter(prompt=prompt, block_type="NEGATIVE").exists())
+        self.assertEqual(prompt.content, "Closer establishing shot\n\nNo text overlays")
+        self.assertEqual(block.content, "Closer establishing shot\n\nNo text overlays")
+        self.assertEqual(PromptBlock.objects.filter(prompt=prompt).count(), 1)
+
+        ajax_saved = self.client.post(
+            f"/studio/prompts/{prompt.id}/quick-save/",
+            {
+                "title": "Opening frame revised",
+                "ai_model": str(self.ai_model.id),
+                "prompt_type": "IMAGE",
+                "status": "IN_REVIEW",
+                "content": "Saved without reloading the scene",
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertEqual(ajax_saved.status_code, 200, ajax_saved.content)
+        self.assertEqual(ajax_saved.json()["content"], "Saved without reloading the scene")
+        self.assertEqual(ajax_saved.json()["id"], str(prompt.id))
+        self.assertIn("previewUrl", ajax_saved.json())
 
         with tempfile.TemporaryDirectory() as directory:
             with self.settings(STUDIO_PRIVATE_MEDIA_ROOT=Path(directory)):

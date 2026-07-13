@@ -73,7 +73,7 @@ main{width:min(1600px,calc(100% - 32px))}
         {% else %}<p>{{ scene.description|linebreaksbr }}</p>{% endif %}
         </div>
       </div>
-      <details class="chain-prompts"><summary>Prompts ({{ scene.prompts.count }})</summary><div class="prompt-stack">{% for prompt in scene.prompts.all %}{% include "studio/_prompt_editor.html" with prompt=prompt prompt_return="chain" %}{% empty %}<p class="empty">No prompts.</p>{% endfor %}</div></details>
+      <details class="chain-prompts"><summary>Prompts ({{ scene.editor_prompts|length }})</summary><div class="prompt-stack">{% for prompt in scene.editor_prompts %}{% include "studio/_prompt_editor.html" with prompt=prompt prompt_return="chain" %}{% empty %}<p class="empty">No prompts.</p>{% endfor %}</div></details>
     </section>
   {% endfor %}
   </div>

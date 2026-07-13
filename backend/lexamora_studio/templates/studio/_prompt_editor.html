@@ -1,57 +1,62 @@
-<article id="prompt-{{ prompt.id }}" class="prompt-editor">
-  <form method="post" action="{% url 'studio:prompt_quick_save' prompt.id %}">
-    {% csrf_token %}<input type="hidden" name="return_to" value="{{ prompt_return|default:'scene' }}">
-    <fieldset class="prompt-fieldset"{% if not can_edit %} disabled{% endif %}>
-      <div class="prompt-editor-head">
-        <div><strong>{{ prompt.title|default:prompt.ai_model.name }}</strong> <span class="language-badge">{{ prompt.language }}</span>{% if prompt.source_prompt_id %}<span class="muted prompt-origin">{{ prompt.get_translation_scope_display }} translation</span>{% endif %}</div>
-        <span class="badge-status">{{ prompt.get_status_display }}</span>
-      </div>
-      <div class="prompt-meta-grid compact">
-        <label>Title<input name="title" value="{{ prompt.title }}"></label>
-        <label>Generation model<select name="ai_model">{% for model in ai_models %}<option value="{{ model.id }}"{% if model.id == prompt.ai_model_id %} selected{% endif %}>{{ model.name }}</option>{% endfor %}</select></label>
-        <label>Type<select name="prompt_type">{% for value,label in prompt_types %}<option value="{{ value }}"{% if value == prompt.prompt_type %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
-        <label>Status<select name="status">{% for value,label in prompt_statuses %}<option value="{{ value }}"{% if value == prompt.status %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
-      </div>
-      {% if prompt_addition.content %}<p class="prompt-addition"><strong>Added automatically:</strong> {{ prompt_addition.content }}</p>{% endif %}
-      <div class="prompt-block-list">
-      {% for block in prompt.blocks.all %}
-        <label class="prompt-content-row"><span>{{ block.get_block_type_display }}</span>
-          {% if block.block_type == "DIALOGUE_REFERENCE" %}<textarea rows="3" readonly>{{ block.content }}</textarea>
-          {% else %}<select name="block_type_{{ block.id }}" aria-label="Block type">{% for value,label in block_types %}{% if value != "DIALOGUE_REFERENCE" %}<option value="{{ value }}"{% if value == block.block_type %} selected{% endif %}>{{ label }}</option>{% endif %}{% endfor %}</select><textarea name="block_{{ block.id }}" rows="4">{{ block.content }}</textarea>{% endif %}
-        </label>
-      {% endfor %}
-      </div>
-      {% if can_edit %}
-      <details class="inline-add"><summary>Add block or dialogue</summary><div class="prompt-meta-grid compact"><label>Block type<select name="new_block_type">{% for value,label in block_types %}{% if value != "DIALOGUE_REFERENCE" %}<option value="{{ value }}">{{ label }}</option>{% endif %}{% endfor %}</select></label><label>Scene dialogue<select name="new_dialogue_line"><option value="">None</option>{% for line in prompt.scene.dialogue_lines.all %}<option value="{{ line.id }}">{{ line.speaker|default:"Dialogue" }}: {{ line.text|truncatechars:80 }}</option>{% endfor %}</select></label></div><textarea name="new_block_content" rows="3" placeholder="New prompt block"></textarea></details>
-      <button type="submit">Save</button>
-      {% endif %}
-    </fieldset>
-  </form>
-
-  {% if can_use_ai %}
-  <form class="ai-command-bar" method="post" action="{% url 'studio:prompt_ai_action' prompt.id %}">
-    {% csrf_token %}<input type="hidden" name="return_to" value="{{ prompt_return|default:'scene' }}">
-    <label>AI model<select name="text_model">{% for model in text_models %}<option value="{{ model.model_id }}"{% if model.model_id == default_text_model %} selected{% endif %}>{{ model.name }}</option>{% endfor %}</select></label>
-    <label>Language<select name="target_language">{% for value,label in prompt_languages %}<option value="{{ value }}"{% if value == "PL" %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
-    <div class="ai-command-actions">
-      <button type="submit" name="action" value="improve" title="Improve the prompt and convert non-English text to production English">Improve</button>
-      <button class="secondary" type="submit" name="action" value="translate_all" title="Create a new prompt with every block translated">Translate all</button>
-      <button class="secondary" type="submit" name="action" value="translate_dialogue" title="Create a new prompt with only direct speech translated">Dialogue only</button>
+<article id="prompt-{{ prompt.id }}" class="prompt-editor" data-prompt-editor data-current-prompt-id="{{ prompt.id }}" data-editor-data-url="{% url 'studio:prompt_editor_data' prompt.id %}" data-can-edit="{% if can_edit %}true{% else %}false{% endif %}">
+  <div class="prompt-editor-head">
+    <div class="prompt-heading">
+      <button class="icon-button prompt-toggle" type="button" data-prompt-toggle title="Collapse prompt" aria-label="Collapse prompt" aria-expanded="true">&#8963;</button>
+      <strong data-prompt-heading>{{ prompt.title|default:prompt.ai_model.name }}</strong>
+      <select class="prompt-language-select" data-prompt-version aria-label="Prompt language">
+        {% for version in prompt.language_versions %}<option value="{{ version.id }}" data-url="{% url 'studio:prompt_editor_data' version.id %}"{% if version.id == prompt.id %} selected{% endif %}>{{ version.language }}</option>{% endfor %}
+      </select>
     </div>
-  </form>
-  {% endif %}
-
-  {% for suggestion in prompt.pending_suggestions %}
-  <section class="suggestion-inline">
-    <div class="suggestion-title"><strong>Improved version</strong><span class="muted">Original is unchanged</span></div>
-    {% for row in suggestion.suggested_blocks %}<p>{{ row.content|linebreaksbr }}</p>{% endfor %}
-    {% if can_edit %}<div class="suggestion-actions"><form method="post" action="{% url 'studio:suggestion_decide' suggestion.id 'accept' %}">{% csrf_token %}<input type="hidden" name="return_to" value="{{ prompt_return|default:'scene' }}"><button type="submit">Apply</button></form><form method="post" action="{% url 'studio:suggestion_decide' suggestion.id 'reject' %}">{% csrf_token %}<input type="hidden" name="return_to" value="{{ prompt_return|default:'scene' }}"><button class="secondary" type="submit">Cancel</button></form></div>{% endif %}
-  </section>
-  {% endfor %}
-  {% if prompt.undo_suggestion and can_edit %}<form class="undo-improvement" method="post" action="{% url 'studio:suggestion_decide' prompt.undo_suggestion.id 'undo' %}">{% csrf_token %}<input type="hidden" name="return_to" value="{{ prompt_return|default:'scene' }}"><button class="secondary" type="submit">Undo improvement</button></form>{% endif %}
-
-  <div class="prompt-assets asset-grid">
-    {% for asset in prompt.assets.all %}{% if asset.thumbnail %}<figure class="asset"><a href="{% url 'studio_api:asset_view' asset.id %}"><img src="{% url 'studio_api:asset_thumbnail' asset.id %}" alt="{{ asset.original_filename }}"></a><figcaption><span class="asset-name">{{ asset.original_filename }}</span>{% include "studio/_asset_actions.html" with asset=asset %}</figcaption></figure>{% endif %}{% endfor %}
+    <span class="badge-status" data-prompt-status-label>{{ prompt.get_status_display }}</span>
   </div>
-  {% if can_edit %}<form class="prompt-image-upload" method="post" enctype="multipart/form-data" action="{% url 'studio:prompt_image_upload' prompt.id %}">{% csrf_token %}<input type="hidden" name="return_to" value="{{ prompt_return|default:'scene' }}"><label>Image<input type="file" name="file" accept="image/jpeg,image/png,image/webp" required></label><button class="secondary" type="submit">Upload</button></form>{% endif %}
+
+  <div data-prompt-body>
+    <form class="prompt-main-form" method="post" action="{% url 'studio:prompt_quick_save' prompt.id %}" data-prompt-save-form>
+      {% csrf_token %}<input type="hidden" name="return_to" value="{{ prompt_return|default:'scene' }}">
+      <fieldset class="prompt-fieldset">
+        <div class="prompt-meta-grid compact">
+          <label>Title<input name="title" value="{{ prompt.title }}" data-prompt-title{% if not can_edit %} disabled{% endif %}></label>
+          <label>Generation model<select name="ai_model" data-prompt-model{% if not can_edit %} disabled{% endif %}>{% for model in ai_models %}<option value="{{ model.id }}"{% if model.id == prompt.ai_model_id %} selected{% endif %}>{{ model.name }}</option>{% endfor %}</select></label>
+          <label>Type<select name="prompt_type" data-prompt-type{% if not can_edit %} disabled{% endif %}>{% for value,label in prompt_types %}<option value="{{ value }}"{% if value == prompt.prompt_type %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+          <label>Status<select name="status" data-prompt-status{% if not can_edit %} disabled{% endif %}>{% for value,label in prompt_statuses %}<option value="{{ value }}"{% if value == prompt.status %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+        </div>
+        {% if prompt_addition.content %}<p class="prompt-addition"><strong>Added automatically:</strong> {{ prompt_addition.content }}</p>{% endif %}
+        <div class="prompt-text-tools" role="toolbar" aria-label="Prompt editing tools">
+          <button class="secondary" type="button" data-prompt-copy title="Copy prompt">Copy</button>
+          <button class="secondary" type="button" data-prompt-paste title="Replace with clipboard"{% if not can_edit %} disabled{% endif %}>Paste</button>
+          <button class="secondary icon-tool" type="button" data-prompt-undo title="Undo" aria-label="Undo"{% if not can_edit %} disabled{% endif %}>&#8630;</button>
+          <button class="secondary icon-tool" type="button" data-prompt-redo title="Redo" aria-label="Redo"{% if not can_edit %} disabled{% endif %}>&#8631;</button>
+          <button class="secondary" type="button" data-prompt-clear title="Clear prompt"{% if not can_edit %} disabled{% endif %}>Clear</button>
+        </div>
+        <label class="prompt-unified-field">Prompt
+          <textarea name="content" rows="10" data-prompt-content{% if not can_edit %} readonly{% endif %}>{{ prompt.editor_content }}</textarea>
+        </label>
+        {% if can_edit %}<div class="prompt-save-row"><button type="submit">Save</button><span class="save-state" data-prompt-save-state>Saved</span></div>{% endif %}
+      </fieldset>
+    </form>
+
+    {% if can_use_ai %}
+    <section class="prompt-ai-panel" data-prompt-ai-panel>
+      <label>Target language<select data-ai-target>{% for value,label in prompt_languages %}<option value="{{ value }}"{% if value == "PL" %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+      <label>Translate<select data-ai-scope><option value="FULL">Entire prompt</option><option value="DIALOGUE">Dialogue only</option><option value="SELECTED">Selected text</option></select></label>
+      <label>AI model<select data-ai-model>{% for model in text_models %}<option value="{{ model.model_id }}"{% if model.model_id == default_text_model %} selected{% endif %}>{{ model.name }}</option>{% endfor %}</select></label>
+      <button type="button" data-ai-translate>Suggest translation</button>
+      <span class="save-state" data-ai-state></span>
+    </section>
+    <section class="suggestion-inline prompt-ai-draft" data-ai-draft hidden>
+      <div class="suggestion-title"><strong>Translation draft</strong><span class="language-badge" data-ai-draft-language></span></div>
+      <textarea rows="9" data-ai-draft-content></textarea>
+      <div class="suggestion-actions">
+        <button type="button" data-ai-apply>Apply Translation</button>
+        <button class="secondary" type="button" data-ai-improve>Improve Translation</button>
+        <button class="secondary" type="button" data-ai-cancel>Cancel</button>
+      </div>
+    </section>
+    {% endif %}
+
+    <div class="prompt-assets asset-grid">
+      {% for asset in prompt.assets.all %}{% if asset.thumbnail %}<figure class="asset"><a href="{% url 'studio_api:asset_view' asset.id %}"><img src="{% url 'studio_api:asset_thumbnail' asset.id %}" alt="{{ asset.original_filename }}"></a><figcaption><span class="asset-name">{{ asset.original_filename }}</span>{% include "studio/_asset_actions.html" with asset=asset %}</figcaption></figure>{% endif %}{% endfor %}
+    </div>
+    {% if can_edit %}<form class="prompt-image-upload" method="post" enctype="multipart/form-data" action="{% url 'studio:prompt_image_upload' prompt.id %}">{% csrf_token %}<input type="hidden" name="return_to" value="{{ prompt_return|default:'scene' }}"><label>Image<input type="file" name="file" accept="image/jpeg,image/png,image/webp" required></label><button class="secondary" type="submit">Upload</button></form>{% endif %}
+  </div>
 </article>

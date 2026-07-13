@@ -240,9 +240,10 @@ def accept_docx_import(*, draft, user):
                 if model is None:
                     media_type = AiModelProfile.MediaType.IMAGE if "banana" in model_name.casefold() else AiModelProfile.MediaType.VIDEO
                     model, _ = AiModelProfile.objects.get_or_create(name=model_name[:120] or "Imported model", defaults={"provider": "imported", "model_id": model_name[:160] or "imported", "media_type": media_type})
-                prompt = Prompt.objects.create(scene=scene, ai_model=model, prompt_type=Prompt.Type.IMAGE if model.media_type == AiModelProfile.MediaType.IMAGE else Prompt.Type.VIDEO, title=model_name[:180], position=prompt_position, created_by=user, updated_by=user)
+                prompt_content = prompt_data.get("content", "")
+                prompt = Prompt.objects.create(scene=scene, ai_model=model, prompt_type=Prompt.Type.IMAGE if model.media_type == AiModelProfile.MediaType.IMAGE else Prompt.Type.VIDEO, title=model_name[:180], content=prompt_content, position=prompt_position, created_by=user, updated_by=user)
                 record_revision(instance=prompt, user=user, operation="IMPORT")
-                block = PromptBlock.objects.create(prompt=prompt, block_type=PromptBlock.Type.NARRATIVE, content=prompt_data.get("content", ""), position=0, created_by=user, updated_by=user)
+                block = PromptBlock.objects.create(prompt=prompt, block_type=PromptBlock.Type.NARRATIVE, content=prompt_content, position=0, created_by=user, updated_by=user)
                 record_revision(instance=block, user=user, operation="IMPORT")
             for position, (speaker, text) in enumerate(_dialogue_parts(scene_data.get("dialogue", ""))):
                 line = DialogueLine.objects.create(scene=scene, speaker=speaker[:180], text=text, position=position, created_by=user, updated_by=user)

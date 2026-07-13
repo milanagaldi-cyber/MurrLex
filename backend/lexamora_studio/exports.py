@@ -152,8 +152,7 @@ def render_project_pdf(project, episode, sections):
             if "prompts" in sections:
                 for prompt in scene.prompts.all():
                     story.append(Paragraph(f"{_safe(prompt.ai_model.name)} / {prompt.get_prompt_type_display()}", styles["Heading3"]))
-                    for block in prompt.blocks.all():
-                        story.append(Paragraph(f"<b>{block.get_block_type_display()}:</b> {_safe(block.content)}", styles["Normal"]))
+                    story.append(Paragraph(_safe(prompt.editor_content), styles["Normal"]))
             if "assets" in sections:
                 for asset in scene.assets.all():
                     story.append(Paragraph(_safe(asset.original_filename), styles["StudioMeta"]))

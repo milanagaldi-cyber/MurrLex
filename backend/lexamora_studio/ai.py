@@ -67,10 +67,100 @@ def _parse_blocks(raw_text, allowed_ids):
     return result
 
 
+def _parse_content(raw_text):
+    clean = raw_text.strip()
+    fence = chr(96) * 3
+    if clean.startswith(fence):
+        clean = clean.split("\n", 1)[-1]
+        clean = clean.rsplit(fence, 1)[0].strip()
+    try:
+        parsed = json.loads(clean)
+    except json.JSONDecodeError as exc:
+        raise StudioAiError("invalid_provider_response", "AI returned an invalid prompt draft.") from exc
+    content = str(parsed.get("content", "")).strip() if isinstance(parsed, dict) else ""
+    if not content:
+        raise StudioAiError("invalid_provider_response", "AI returned an empty prompt draft.")
+    return content
+
+
 def _check_rate(user):
     cutoff = timezone.now() - timedelta(minutes=1)
     if AiUsageLog.objects.filter(user=user, created_at__gte=cutoff).count() >= settings.STUDIO_AI_RATE_PER_MINUTE:
         raise StudioAiError("rate_limited", "AI request limit reached. Please wait before trying again.")
+
+
+def preview_prompt_translation(
+    *, prompt, user, content, target_language, text_model, scope,
+    selection_start=None, selection_end=None, improve=False,
+):
+    from .ai_catalog import PROMPT_LANGUAGE_NAMES
+
+    target = (target_language or "").strip().upper()
+    if target not in Prompt.Language.values:
+        raise StudioAiError("invalid_target_language", "Choose a target language from the list.")
+    if scope not in {Prompt.TranslationScope.FULL, Prompt.TranslationScope.DIALOGUE, Prompt.TranslationScope.SELECTED}:
+        raise StudioAiError("invalid_translation_scope", "Choose full prompt, dialogue, or selected text.")
+    source = (content or "").strip()
+    if not source:
+        raise StudioAiError("empty_prompt", "Enter prompt text first.")
+    _check_rate(user)
+
+    before = after = ""
+    supplied = source
+    if scope == Prompt.TranslationScope.SELECTED:
+        try:
+            start = int(selection_start)
+            end = int(selection_end)
+        except (TypeError, ValueError) as exc:
+            raise StudioAiError("selection_required", "Select text in the prompt first.") from exc
+        if start < 0 or end <= start or end > len(source):
+            raise StudioAiError("selection_required", "Select text in the prompt first.")
+        before, supplied, after = source[:start], source[start:end], source[end:]
+
+    task = (
+        f"Improve the supplied translation in {PROMPT_LANGUAGE_NAMES[target]} ({target})."
+        if improve else
+        f"Translate the supplied text into {PROMPT_LANGUAGE_NAMES[target]} ({target})."
+    )
+    rules = [
+        "Return JSON only with shape {\"content\": \"...\"}.",
+        "Preserve meaning, names, formatting, tone, punctuation, and production terminology.",
+        "Do not add explanations or information absent from the source.",
+    ]
+    if scope == Prompt.TranslationScope.DIALOGUE:
+        task = (
+            f"Improve only the translated direct speech in {PROMPT_LANGUAGE_NAMES[target]} ({target}); keep all non-dialogue text unchanged."
+            if improve else
+            f"Translate only direct speech and dialogue into {PROMPT_LANGUAGE_NAMES[target]} ({target}); keep every other part unchanged."
+        )
+        rules.append("Return the complete prompt, including unchanged narrative text.")
+    elif scope == Prompt.TranslationScope.FULL:
+        rules.append("Return the complete translated prompt.")
+    else:
+        rules.append("Return only the translated selected fragment.")
+
+    instruction = {"task": task, "rules": rules, "content": supplied}
+    request_text = json.dumps(instruction, ensure_ascii=False)
+    usage = AiUsageLog.objects.create(
+        workspace=workspace_for(prompt), user=user, prompt=prompt,
+        action="IMPROVE_TRANSLATION" if improve else f"TRANSLATE_PREVIEW_{scope}",
+        model=text_model, status="STARTED", input_chars=len(request_text),
+    )
+    try:
+        raw_text, selected_model = run_text(text_model, request_text)
+        result = _parse_content(raw_text)
+    except (ProviderError, StudioAiError) as exc:
+        usage.status = "ERROR"
+        usage.error_code = exc.code if isinstance(exc, StudioAiError) else "provider_error"
+        usage.save(update_fields=["status", "error_code"])
+        raise
+    usage.model = selected_model
+    usage.status = "SUCCESS"
+    usage.output_chars = len(raw_text)
+    usage.save(update_fields=["model", "status", "output_chars"])
+    if scope == Prompt.TranslationScope.SELECTED:
+        result = before + result + after
+    return result, selected_model
 
 
 @transaction.atomic

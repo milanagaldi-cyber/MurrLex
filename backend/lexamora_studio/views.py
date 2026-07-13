@@ -8,13 +8,14 @@ from django.db.models import Prefetch
 from django.http import FileResponse, Http404, HttpResponseForbidden, HttpResponseRedirect, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils.text import slugify
 
 from lessons.ai_gateway import ProviderError
 from lessons.provider_credentials import user_has_ai_access
 
-from .ai import StudioAiError, accept_suggestion, improve_prompt, reject_suggestion, translate_prompt, translate_prompt_dialogue, undo_suggestion
+from .ai import StudioAiError, accept_suggestion, improve_prompt, preview_prompt_translation, reject_suggestion, translate_prompt, translate_prompt_dialogue, undo_suggestion
 from .ai_catalog import PROMPT_LANGUAGES, active_text_models, default_prompt_template, default_text_model_id, selected_text_model
 from .exports import ALL_SECTIONS, ExportError, generate_export
 from .docx_imports import accept_docx_import, parse_docx
@@ -444,9 +445,11 @@ def scene_detail(request, scene_id):
         id=scene_id,
     )
     workspace = scene.episode.project.workspace
-    _attach_prompt_ai_state(scene.prompts.all())
+    editor_prompts = [prompt for prompt in scene.prompts.all() if not prompt.source_prompt_id]
+    _attach_prompt_ai_state(editor_prompts)
     return render(request, "studio/scene_detail.html", {
         "scene": scene,
+        "editor_prompts": editor_prompts,
         "can_edit": has_object_capability(request.user, scene, "edit"),
         "can_use_ai": has_object_capability(request.user, scene, "use_ai") and user_has_ai_access(request.user),
         "scene_images": scene.assets.filter(prompt__isnull=True),
@@ -564,6 +567,108 @@ def prompt_ai_action(request, prompt_id):
         return _prompt_action_redirect(request, prompt)
     messages.success(request, f"Created a new {translated_prompt.language} prompt. Translated blocks: {count}.")
     return _prompt_action_redirect(request, translated_prompt)
+
+
+@login_required
+def prompt_editor_data(request, prompt_id):
+    prompt = get_object_or_404(
+        Prompt.objects.select_related("scene__episode__project__workspace", "ai_model")
+        .prefetch_related("blocks")
+        .filter(scene__episode__project__in=accessible_projects(request.user)),
+        id=prompt_id,
+    )
+    return JsonResponse(_prompt_payload(prompt))
+
+
+@login_required
+def prompt_ai_preview(request, prompt_id):
+    prompt = get_object_or_404(
+        Prompt.objects.select_related("scene__episode__project__workspace", "ai_model")
+        .filter(scene__episode__project__in=accessible_projects(request.user)),
+        id=prompt_id,
+    )
+    if request.method != "POST" or not has_object_capability(request.user, prompt, "use_ai") or not user_has_ai_access(request.user):
+        return JsonResponse({"error": "AI access is not enabled for this account."}, status=403)
+    try:
+        data = json.loads(request.body or b"{}")
+        model_id = selected_text_model(data.get("textModel"))
+        scope = str(data.get("scope", Prompt.TranslationScope.FULL)).upper()
+        content, used_model = preview_prompt_translation(
+            prompt=prompt,
+            user=request.user,
+            content=data.get("content", ""),
+            target_language=data.get("targetLanguage"),
+            text_model=model_id,
+            scope=scope,
+            selection_start=data.get("selectionStart"),
+            selection_end=data.get("selectionEnd"),
+            improve=data.get("action") == "improve_translation",
+        )
+    except (json.JSONDecodeError, StudioAiError, ProviderError, ValidationError) as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    return JsonResponse({
+        "content": content,
+        "language": str(data.get("targetLanguage", "")).upper(),
+        "scope": scope,
+        "model": used_model,
+    })
+
+
+@login_required
+def prompt_apply_translation(request, prompt_id):
+    prompt = get_object_or_404(
+        Prompt.objects.select_related("source_prompt", "scene__episode__project__workspace", "ai_model", "template")
+        .filter(scene__episode__project__in=accessible_projects(request.user)),
+        id=prompt_id,
+    )
+    if request.method != "POST" or not has_object_capability(request.user, prompt, "edit"):
+        return JsonResponse({"error": "Edit permission is required."}, status=403)
+    try:
+        data = json.loads(request.body or b"{}")
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid request."}, status=400)
+    target = str(data.get("targetLanguage", "")).strip().upper()
+    scope = str(data.get("scope", Prompt.TranslationScope.FULL)).upper()
+    content = str(data.get("content", "")).strip()
+    if target not in Prompt.Language.values or scope not in Prompt.TranslationScope.values or not content:
+        return JsonResponse({"error": "Language, scope, and translated text are required."}, status=400)
+    root = prompt.source_prompt or prompt
+    with transaction.atomic():
+        if target == root.language:
+            version = root
+            version.translation_scope = Prompt.TranslationScope.ORIGINAL
+        else:
+            version = root.translations.filter(language=target).order_by("created_at").first()
+            if version is None:
+                version = Prompt.objects.create(
+                    scene=root.scene,
+                    ai_model=root.ai_model,
+                    template=root.template,
+                    source_prompt=root,
+                    language=target,
+                    translation_scope=scope,
+                    prompt_type=root.prompt_type,
+                    title=f"{root.title or root.get_prompt_type_display()} [{target}]",
+                    status=Prompt.Status.DRAFT,
+                    position=root.scene.prompts.count(),
+                    content=content,
+                    created_by=request.user,
+                    updated_by=request.user,
+                )
+            else:
+                version.translation_scope = scope
+        version.translation_scope = Prompt.TranslationScope.ORIGINAL if version == root else scope
+        version.updated_by = request.user
+        version.save(update_fields=["translation_scope", "updated_by", "updated_at"])
+        _save_unified_prompt_content(version, content, request.user, operation="AI_TRANSLATION_APPLY")
+        audit(
+            workspace=root.scene.episode.project.workspace,
+            actor=request.user,
+            action="PROMPT_TRANSLATION_APPLIED",
+            instance=version,
+            metadata={"sourcePromptId": str(root.id), "targetLanguage": target, "scope": scope},
+        )
+    return JsonResponse(_prompt_payload(version))
 
 
 def _prompt_action_redirect(request, prompt):
@@ -1047,6 +1152,63 @@ def _prompt_editor_context():
     }
 
 
+def _prompt_payload(prompt):
+    versions = [
+        {
+            "id": str(item.id),
+            "language": item.language,
+            "dataUrl": reverse("studio:prompt_editor_data", kwargs={"prompt_id": item.id}),
+        }
+        for item in prompt.language_versions()
+    ]
+    return {
+        "id": str(prompt.id),
+        "language": prompt.language,
+        "content": prompt.editor_content,
+        "title": prompt.title,
+        "aiModel": str(prompt.ai_model_id),
+        "promptType": prompt.prompt_type,
+        "status": prompt.status,
+        "versions": versions,
+        "saveUrl": reverse("studio:prompt_quick_save", kwargs={"prompt_id": prompt.id}),
+        "previewUrl": reverse("studio:prompt_ai_preview", kwargs={"prompt_id": prompt.id}),
+        "applyUrl": reverse("studio:prompt_apply_translation", kwargs={"prompt_id": prompt.id}),
+    }
+
+
+def _save_unified_prompt_content(prompt, content, user, operation="INLINE_UPDATE"):
+    clean = (content or "").strip()
+    prompt.content = clean
+    prompt.updated_by = user
+    prompt.save(update_fields=["content", "updated_by", "updated_at"])
+    blocks = list(prompt.blocks.order_by("position", "id"))
+    if blocks:
+        primary = blocks[0]
+        primary.content = clean
+        primary.block_type = PromptBlock.Type.NARRATIVE
+        primary.source_dialogue = None
+        primary.updated_by = user
+        primary.save(update_fields=["content", "block_type", "source_dialogue", "updated_by", "updated_at"])
+        record_revision(instance=primary, user=user, operation=operation)
+        now = timezone.now()
+        for extra in blocks[1:]:
+            extra.deleted_at = now
+            extra.deleted_by = user
+            extra.updated_by = user
+            extra.save(update_fields=["deleted_at", "deleted_by", "updated_by", "updated_at"])
+    else:
+        primary = PromptBlock.objects.create(
+            prompt=prompt,
+            block_type=PromptBlock.Type.NARRATIVE,
+            content=clean,
+            position=0,
+            created_by=user,
+            updated_by=user,
+        )
+        record_revision(instance=primary, user=user, operation="CREATE")
+    record_revision(instance=prompt, user=user, operation=operation)
+
+
 def _attach_prompt_ai_state(prompts):
     for prompt in prompts:
         suggestions = list(prompt.ai_suggestions.all())
@@ -1074,6 +1236,7 @@ def scene_prompt_quick_create(request, scene_id):
     if prompt_type not in Prompt.Type.values or status not in Prompt.Status.values:
         messages.error(request, "Choose a valid prompt type and status.")
         return redirect("studio:scene_detail", scene_id=scene.id)
+    content = request.POST.get("content", "").strip()
     prompt = Prompt.objects.create(
         scene=scene,
         ai_model=ai_model,
@@ -1082,10 +1245,10 @@ def scene_prompt_quick_create(request, scene_id):
         title=request.POST.get("title", "").strip(),
         status=status,
         position=scene.prompts.count(),
+        content=content,
         created_by=request.user,
         updated_by=request.user,
     )
-    content = request.POST.get("content", "").strip()
     if content:
         block = PromptBlock.objects.create(
             prompt=prompt,
@@ -1125,49 +1288,14 @@ def prompt_quick_save(request, prompt_id):
         prompt.prompt_type = prompt_type
         prompt.title = request.POST.get("title", "").strip()
         prompt.status = status
+        content = request.POST.get("content", prompt.editor_content)
         prompt.updated_by = request.user
         prompt.full_clean()
-        prompt.save()
-        record_revision(instance=prompt, user=request.user, operation="INLINE_UPDATE")
-        for block in prompt.blocks.all():
-            if block.block_type == PromptBlock.Type.DIALOGUE_REFERENCE:
-                continue
-            value = request.POST.get(f"block_{block.id}")
-            block_type = request.POST.get(f"block_type_{block.id}", block.block_type)
-            if value is None or block_type not in PromptBlock.Type.values:
-                continue
-            block.content = value.strip()
-            block.block_type = block_type
-            block.updated_by = request.user
-            block.save()
-            record_revision(instance=block, user=request.user, operation="INLINE_UPDATE")
-        new_content = request.POST.get("new_block_content", "").strip()
-        new_type = request.POST.get("new_block_type", PromptBlock.Type.NARRATIVE)
-        if new_content and new_type in PromptBlock.Type.values:
-            block = PromptBlock.objects.create(
-                prompt=prompt,
-                block_type=new_type,
-                content=new_content,
-                position=prompt.blocks.count(),
-                created_by=request.user,
-                updated_by=request.user,
-            )
-            record_revision(instance=block, user=request.user, operation="CREATE")
-        dialogue_line_id = request.POST.get("new_dialogue_line")
-        if dialogue_line_id and not prompt.blocks.filter(source_dialogue_id=dialogue_line_id).exists():
-            line = prompt.scene.dialogue_lines.filter(id=dialogue_line_id).first()
-            if line is not None:
-                block = PromptBlock.objects.create(
-                    prompt=prompt,
-                    block_type=PromptBlock.Type.DIALOGUE_REFERENCE,
-                    content=line.text,
-                    source_dialogue=line,
-                    position=prompt.blocks.count(),
-                    created_by=request.user,
-                    updated_by=request.user,
-                )
-                record_revision(instance=block, user=request.user, operation="CREATE")
+        prompt.save(update_fields=["ai_model", "template", "prompt_type", "title", "status", "updated_by", "updated_at"])
+        _save_unified_prompt_content(prompt, content, request.user)
         audit(workspace=workspace, actor=request.user, action="PROMPT_INLINE_UPDATED", instance=prompt)
+    if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+        return JsonResponse(_prompt_payload(prompt))
     messages.success(request, "Prompt saved.")
     if request.POST.get("return_to") == "chain":
         return HttpResponseRedirect(reverse("studio:project_scene_chain", kwargs={"project_id": prompt.scene.episode.project_id}) + f"#prompt-{prompt.id}")
@@ -1224,7 +1352,8 @@ def project_scene_chain(request, project_id):
     )
     for episode in project.episodes.all():
         for scene in episode.scenes.all():
-            _attach_prompt_ai_state(scene.prompts.all())
+            scene.editor_prompts = [prompt for prompt in scene.prompts.all() if not prompt.source_prompt_id]
+            _attach_prompt_ai_state(scene.editor_prompts)
     context = {
         "project": project,
         "can_edit": has_project_capability(request.user, project, "edit"),

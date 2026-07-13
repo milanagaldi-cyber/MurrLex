@@ -2,11 +2,12 @@ from django import forms
 
 from lessons.ai_gateway import TEXT_MODELS
 
-from .ai_catalog import default_prompt_template
+from .ai_catalog import PROMPT_LANGUAGES, default_prompt_template
 from .models import AdditionalGeneration, Asset, Character, DialogueLine, Episode, Project, ProjectMembership, Prompt, PromptBlock, Scene, StudioTextModel
 
 
 class ProjectForm(forms.ModelForm):
+    original_language = forms.CharField(widget=forms.Select(choices=PROMPT_LANGUAGES), initial="EN")
     translation_languages = forms.CharField(required=False, help_text="Comma-separated language codes, for example: en, pl, de")
 
     class Meta:
@@ -17,7 +18,14 @@ class ProjectForm(forms.ModelForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         if self.instance and self.instance.pk:
+            self.initial["original_language"] = (self.instance.original_language or "EN").upper()
             self.initial["translation_languages"] = ", ".join(self.instance.translation_languages or [])
+
+    def clean_original_language(self):
+        value = self.cleaned_data["original_language"].strip().upper()
+        if value not in dict(PROMPT_LANGUAGES):
+            raise forms.ValidationError("Choose a supported project language.")
+        return value
 
     def clean_translation_languages(self):
         value = self.cleaned_data["translation_languages"]
@@ -72,7 +80,8 @@ class DialogueLineForm(forms.ModelForm):
 class PromptForm(forms.ModelForm):
     class Meta:
         model = Prompt
-        fields = ["ai_model", "prompt_type", "title", "status"]
+        fields = ["ai_model", "prompt_type", "title", "content", "status"]
+        widgets = {"content": forms.Textarea(attrs={"rows": 8})}
 
     def save(self, commit=True):
         instance = super().save(commit=False)
