@@ -97,8 +97,26 @@
         .site-shell {
             width: min(1160px, calc(100% - 32px));
             margin: 0 auto;
-            padding: 24px 0 56px;
+            padding: 76px 0 56px;
         }
+        .global-back {
+            position: fixed;
+            z-index: 100;
+            top: 16px;
+            left: max(16px, calc((100vw - 1160px) / 2));
+            min-height: 40px;
+            border-color: var(--line);
+            padding: 0 13px;
+            background: var(--panel);
+            color: var(--ink);
+            gap: 8px;
+        }
+        .global-back:hover {
+            border-color: var(--accent);
+            background: var(--panel-2);
+            color: var(--ink);
+        }
+        .global-back-icon { font-size: 19px; line-height: 1; }
         .topbar {
             display: flex;
             align-items: center;
@@ -434,9 +452,32 @@
     {% block extra_head %}{% endblock %}
 </head>
 <body class="{% block body_class %}{% endblock %}">
+    <button class="global-back" type="button" data-history-back data-back-fallback="{% url 'home' %}" aria-label="Go back">
+        <span class="global-back-icon" aria-hidden="true">&larr;</span>
+        <span>Back</span>
+    </button>
     {% block body %}{% endblock %}
     <script>
         (() => {
+            const backButton = document.querySelector("[data-history-back]");
+            if (backButton) {
+                backButton.addEventListener("click", () => {
+                    const fallback = backButton.dataset.backFallback || "/";
+                    let previousPageIsLocal = false;
+                    try {
+                        previousPageIsLocal = Boolean(document.referrer)
+                            && new URL(document.referrer).origin === window.location.origin;
+                    } catch (error) {
+                        previousPageIsLocal = false;
+                    }
+                    if (previousPageIsLocal && window.history.length > 1) {
+                        window.history.back();
+                    } else {
+                        window.location.assign(fallback);
+                    }
+                });
+            }
+
             const button = document.querySelector("[data-theme-toggle]");
             const icon = document.querySelector("[data-theme-icon]");
             const label = document.querySelector("[data-theme-label]");

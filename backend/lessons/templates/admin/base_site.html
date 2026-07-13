@@ -57,6 +57,13 @@
         background: var(--body-bg);
         letter-spacing: 0;
     }
+    #container a,
+    #container a:link,
+    #container a:visited,
+    #container a:hover,
+    #container a:focus {
+        text-decoration: none !important;
+    }
     .skip-to-content-link {
         position: absolute;
         left: -999px;
@@ -87,6 +94,12 @@
     #branding {
         flex: 1 1 auto;
         min-width: 240px;
+    }
+    .murrlex-admin-branding {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        flex-wrap: wrap;
     }
     #user-tools {
         flex: 0 1 auto;
@@ -174,6 +187,25 @@
         font-weight: 700;
         margin-left: 4px;
     }
+    .admin-back {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 36px;
+        margin: 0;
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        padding: 0 11px;
+        background: var(--admin-input-bg);
+        color: var(--link-fg);
+        font: 800 13px var(--font-family-primary);
+        cursor: pointer;
+    }
+    .admin-back:hover,
+    .admin-back:focus {
+        border-color: var(--accent);
+        color: var(--body-loud-color);
+    }
     .murrlex-admin-home {
         display: inline-flex;
         align-items: center;
@@ -192,18 +224,26 @@
         padding-top: 10px;
         border-top: 1px solid var(--hairline-color);
     }
-    .murrlex-admin-nav a {
+    .murrlex-admin-nav a,
+    .murrlex-admin-nav button {
         display: inline-flex;
         align-items: center;
         min-height: 34px;
+        margin: 0;
+        border: 0;
         padding: 0 10px;
         border-radius: 6px;
+        background: transparent;
         color: var(--body-quiet-color) !important;
+        font-family: inherit;
         font-size: 13px;
         font-weight: 800;
+        cursor: pointer;
     }
     .murrlex-admin-nav a:hover,
-    .murrlex-admin-nav a:focus {
+    .murrlex-admin-nav a:focus,
+    .murrlex-admin-nav button:hover,
+    .murrlex-admin-nav button:focus {
         background: var(--secondary);
         color: var(--link-fg) !important;
     }
@@ -473,7 +513,8 @@
             width: auto;
             align-items: stretch;
         }
-        .murrlex-admin-nav a { justify-content: center; text-align: center; }
+        .murrlex-admin-nav a,
+        .murrlex-admin-nav button { justify-content: center; text-align: center; }
         .main {
             padding-inline: 16px;
         }
@@ -543,6 +584,24 @@
 {{ block.super }}
 <script>
     window.addEventListener("DOMContentLoaded", () => {
+        const backButton = document.querySelector("[data-admin-history-back]");
+        if (backButton) {
+            backButton.addEventListener("click", () => {
+                let previousPageIsLocal = false;
+                try {
+                    previousPageIsLocal = Boolean(document.referrer)
+                        && new URL(document.referrer).origin === window.location.origin;
+                } catch (error) {
+                    previousPageIsLocal = false;
+                }
+                if (previousPageIsLocal && window.history.length > 1) {
+                    window.history.back();
+                } else {
+                    window.location.assign("/");
+                }
+            });
+        }
+
         const button = document.querySelector("[data-admin-theme-toggle]");
         const icon = document.querySelector("[data-admin-theme-icon]");
         if (!button || !icon) return;
@@ -580,10 +639,13 @@
 {% endblock %}
 
 {% block branding %}
-<div class="murrlex-admin-brand">
-    <span class="murrlex-admin-mark">ML</span>
-    <span>MurrLex Admin</span>
-    <span class="murrlex-admin-subtitle">Server control panel</span>
+<div class="murrlex-admin-branding">
+    <div class="murrlex-admin-brand">
+        <span class="murrlex-admin-mark">ML</span>
+        <span>MurrLex Admin</span>
+        <span class="murrlex-admin-subtitle">Server control panel</span>
+    </div>
+    <button class="admin-back" type="button" data-admin-history-back aria-label="Go back">&larr; Back</button>
 </div>
 {% endblock %}
 

@@ -373,6 +373,14 @@ class HomePageTests(TestCase):
                     status_code=expected_status,
                 )
 
+    def test_public_pages_include_safe_back_button(self):
+        for path in ("/", "/login/", "/premium/"):
+            with self.subTest(path=path):
+                response = self.client.get(path)
+                self.assertContains(response, '<button class="global-back"', count=1)
+                self.assertContains(response, 'data-back-fallback="/"')
+                self.assertContains(response, "previousPageIsLocal")
+
 
 class AdminThemeTests(TestCase):
     def setUp(self):
@@ -397,6 +405,23 @@ class AdminThemeTests(TestCase):
         self.assertContains(response, 'return mode === "light" ? "light" : "dark"')
         self.assertContains(response, "localStorage.setItem(\"theme\", mode)")
         self.assertContains(response, "admin/js/theme.js")
+
+    def test_admin_has_back_button_and_links_are_not_underlined(self):
+        response = self.client.get("/admin/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "data-admin-history-back")
+        self.assertContains(response, "previousPageIsLocal")
+        self.assertContains(response, "text-decoration: none !important")
+
+    def test_admin_login_also_has_back_button(self):
+        self.client.logout()
+
+        response = self.client.get("/admin/login/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "data-admin-history-back", count=2)
+        self.assertContains(response, "&larr; Back", html=True)
 
     def test_ai_access_is_managed_from_user_list(self):
         changelist = self.client.get("/admin/lessons/userapiaccess/")
