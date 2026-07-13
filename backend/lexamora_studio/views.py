@@ -5,30 +5,79 @@ from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Prefetch
-from django.http import Http404, HttpResponseForbidden, HttpResponseRedirect, JsonResponse
+from django.http import FileResponse, Http404, HttpResponseForbidden, HttpResponseRedirect, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils.text import slugify
 
 from lessons.ai_gateway import ProviderError
 from lessons.provider_credentials import user_has_ai_access
 
-from .ai import StudioAiError, accept_suggestion, improve_prompt, reject_suggestion
+from .ai import MODES, StudioAiError, accept_suggestion, improve_prompt, reject_suggestion, translate_prompt_dialogue
+from .ai_catalog import active_prompt_templates, active_text_models, default_text_model_id, selected_prompt_template, selected_text_model
 from .exports import ALL_SECTIONS, ExportError, generate_export
 from .docx_imports import accept_docx_import, parse_docx
 from .docx_exports import generate_docx_export
 from .docx_roundtrip import compare_docx_export
-from .forms import AdditionalGenerationForm, AssetEditForm, CharacterForm, DialogueLineForm, DocxImportUploadForm, EpisodeForm, GenerationOutputUploadForm, ImageUploadForm, ProjectForm, PromptBlockForm, PromptForm, SceneForm
-from .models import AdditionalGeneration, AiModelProfile, AiSuggestion, Asset, Character, DialogueLine, DocxImport, Episode, ExportJob, GenerationOutput, Project, Prompt, PromptBlock, Scene, SubtitleTrack, TranslationUnit, Workspace
+from .forms import AdditionalGenerationForm, AssetEditForm, CharacterForm, DialogueLineForm, DocxImportUploadForm, EpisodeForm, GenerationOutputUploadForm, ImageUploadForm, ProjectForm, PromptBlockForm, PromptForm, PromptTemplateForm, SceneForm, StudioTextModelForm
+from .models import AdditionalGeneration, AiModelProfile, AiSuggestion, Asset, Character, DialogueLine, DocxImport, Episode, ExportJob, GenerationOutput, Project, Prompt, PromptBlock, PromptTemplate, Scene, StudioTextModel, SubtitleTrack, TranslationUnit, Workspace
 from .permissions import accessible_workspaces, has_capability
 from .revisions import audit, record_revision
 from .services import bulk_replace_subtitle_lines, create_workspace, reorder_subtitle_lines, save_translation
-from .storage import create_asset
+from .storage import create_asset, purge_asset, restore_asset, trash_asset
 
 
 @login_required
 def dashboard(request):
     return render(request, "studio/dashboard.html", {"workspaces": accessible_workspaces(request.user).prefetch_related("projects")})
+
+
+def _set_single_default(model, instance):
+    if instance.is_default:
+        model.objects.exclude(pk=instance.pk).update(is_default=False)
+
+
+@login_required
+def studio_settings(request):
+    if not request.user.is_superuser:
+        return HttpResponseForbidden("Studio settings require a server administrator.")
+    model_form = StudioTextModelForm(prefix="model")
+    template_form = PromptTemplateForm(prefix="template")
+    if request.method == "POST":
+        action = request.POST.get("action")
+        if action in {"create_model", "update_model"}:
+            instance = None
+            if action == "update_model":
+                instance = get_object_or_404(StudioTextModel, id=request.POST.get("id"))
+            model_form = StudioTextModelForm(request.POST, instance=instance, prefix="model")
+            if model_form.is_valid():
+                item = model_form.save(commit=False)
+                item.provider = StudioTextModel.Provider.OPENAI
+                item.updated_by = request.user
+                item.save()
+                _set_single_default(StudioTextModel, item)
+                messages.success(request, "OpenAI text model saved.")
+                return redirect("studio:settings")
+        elif action in {"create_template", "update_template"}:
+            instance = None
+            if action == "update_template":
+                instance = get_object_or_404(PromptTemplate, id=request.POST.get("id"))
+            template_form = PromptTemplateForm(request.POST, instance=instance, prefix="template")
+            if template_form.is_valid():
+                item = template_form.save(commit=False)
+                item.updated_by = request.user
+                item.save()
+                _set_single_default(PromptTemplate, item)
+                messages.success(request, "Prompt template saved.")
+                return redirect("studio:settings")
+    return render(request, "studio/settings.html", {
+        "model_form": model_form,
+        "template_form": template_form,
+        "text_models": StudioTextModel.objects.all(),
+        "templates": PromptTemplate.objects.all(),
+        "murrlex_default_model": default_text_model_id(),
+    })
 
 
 @login_required
@@ -358,25 +407,25 @@ def project_detail(request, project_id):
 def scene_detail(request, scene_id):
     scene = get_object_or_404(
         Scene.objects.select_related("episode__project__workspace").prefetch_related(
-            "dialogue_lines", "prompts__ai_model", "prompts__blocks", "prompts__assets", "assets"
+            "dialogue_lines", "prompts__ai_model", "prompts__template", "prompts__blocks__source_dialogue",
+            "prompts__assets", "prompts__ai_suggestions", "assets"
         ).filter(episode__project__workspace__in=accessible_workspaces(request.user)),
         id=scene_id,
     )
+    workspace = scene.episode.project.workspace
     return render(request, "studio/scene_detail.html", {
         "scene": scene,
-        "can_edit": has_capability(request.user, scene.episode.project.workspace, "edit"),
-        "ai_models": AiModelProfile.objects.filter(is_active=True),
-        "prompt_types": Prompt.Type.choices,
-        "prompt_statuses": Prompt.Status.choices,
-        "block_types": PromptBlock.Type.choices,
+        "can_edit": has_capability(request.user, workspace, "edit"),
+        "can_use_ai": has_capability(request.user, workspace, "use_ai") and user_has_ai_access(request.user),
         "scene_images": scene.assets.filter(prompt__isnull=True),
+        **_prompt_editor_context(),
     })
 
 @login_required
 def prompt_detail(request, prompt_id):
     prompt = get_object_or_404(
-        Prompt.objects.select_related("scene__episode__project__workspace", "ai_model")
-        .prefetch_related("blocks", "ai_suggestions")
+        Prompt.objects.select_related("scene__episode__project__workspace", "ai_model", "template")
+        .prefetch_related("scene__dialogue_lines", "blocks__source_dialogue", "assets", "ai_suggestions")
         .filter(scene__episode__project__workspace__in=accessible_workspaces(request.user)),
         id=prompt_id,
     )
@@ -385,6 +434,7 @@ def prompt_detail(request, prompt_id):
         "prompt": prompt,
         "can_edit": has_capability(request.user, workspace, "edit"),
         "can_use_ai": has_capability(request.user, workspace, "use_ai") and user_has_ai_access(request.user),
+        **_prompt_editor_context(),
     })
 
 
@@ -393,7 +443,7 @@ def prompt_improve(request, prompt_id):
     if request.method != "POST":
         return redirect("studio:prompt_detail", prompt_id=prompt_id)
     prompt = get_object_or_404(
-        Prompt.objects.select_related("scene__episode__project__workspace", "ai_model")
+        Prompt.objects.select_related("scene__episode__project__workspace", "ai_model", "template")
         .prefetch_related("blocks")
         .filter(scene__episode__project__workspace__in=accessible_workspaces(request.user)),
         id=prompt_id,
@@ -401,17 +451,57 @@ def prompt_improve(request, prompt_id):
     workspace = prompt.scene.episode.project.workspace
     if not has_capability(request.user, workspace, "use_ai") or not user_has_ai_access(request.user):
         messages.error(request, "AI access is not enabled for this account and workspace.")
-        return redirect("studio:prompt_detail", prompt_id=prompt.id)
+        return _prompt_action_redirect(request, prompt)
     try:
+        model_id = selected_text_model(request.POST.get("text_model"))
         improve_prompt(
             prompt=prompt, user=request.user, mode=request.POST.get("mode", "non_dialogue"),
             selected_block_ids=request.POST.getlist("selected_blocks"),
-            text_model=request.POST.get("text_model", "gpt-5.4-mini"),
+            text_model=model_id,
         )
-    except (StudioAiError, ProviderError) as exc:
+    except (StudioAiError, ProviderError, ValidationError) as exc:
         messages.error(request, str(exc))
     else:
         messages.success(request, "AI suggestion is ready for review.")
+    return _prompt_action_redirect(request, prompt)
+
+
+@login_required
+def prompt_translate_dialogue(request, prompt_id):
+    prompt = get_object_or_404(
+        Prompt.objects.select_related("scene__episode__project__workspace", "ai_model", "template")
+        .prefetch_related("blocks__source_dialogue")
+        .filter(scene__episode__project__workspace__in=accessible_workspaces(request.user)),
+        id=prompt_id,
+    )
+    workspace = prompt.scene.episode.project.workspace
+    if request.method != "POST" or not has_capability(request.user, workspace, "use_ai") or not user_has_ai_access(request.user):
+        messages.error(request, "AI access is not enabled for this account and workspace.")
+        return _prompt_action_redirect(request, prompt)
+    try:
+        model_id = selected_text_model(request.POST.get("text_model"))
+        count, _ = translate_prompt_dialogue(
+            prompt=prompt,
+            user=request.user,
+            target_language=request.POST.get("target_language"),
+            text_model=model_id,
+        )
+    except (StudioAiError, ProviderError, ValidationError) as exc:
+        messages.error(request, str(exc))
+    else:
+        messages.success(request, f"Translated {count} dialogue reference(s). Narrative prompt content stayed unchanged.")
+    return _prompt_action_redirect(request, prompt)
+
+
+def _prompt_action_redirect(request, prompt):
+    return_to = request.POST.get("return_to")
+    if return_to == "chain":
+        return HttpResponseRedirect(
+            reverse("studio:project_scene_chain", kwargs={"project_id": prompt.scene.episode.project_id})
+            + f"#prompt-{prompt.id}"
+        )
+    if return_to == "scene":
+        return HttpResponseRedirect(reverse("studio:scene_detail", kwargs={"scene_id": prompt.scene_id}) + f"#prompt-{prompt.id}")
     return redirect("studio:prompt_detail", prompt_id=prompt.id)
 
 
@@ -425,7 +515,7 @@ def suggestion_decide(request, suggestion_id, decision):
     )
     if request.method != "POST" or not has_capability(request.user, suggestion.workspace, "edit"):
         messages.error(request, "Edit permission is required.")
-        return redirect("studio:prompt_detail", prompt_id=suggestion.prompt_id)
+        return _prompt_action_redirect(request, suggestion.prompt)
     try:
         if decision == "accept":
             accept_suggestion(suggestion=suggestion, user=request.user)
@@ -435,7 +525,7 @@ def suggestion_decide(request, suggestion_id, decision):
         messages.error(request, str(exc))
     else:
         messages.success(request, f"Suggestion {decision}ed.")
-    return redirect("studio:prompt_detail", prompt_id=suggestion.prompt_id)
+    return _prompt_action_redirect(request, suggestion.prompt)
 
 @login_required
 def translation_workspace(request, project_id):
@@ -744,6 +834,108 @@ def asset_edit(request, asset_id):
         "form": form, "title": "Edit image details", "submit_label": "Save changes",
     })
 
+
+def _asset_action_redirect(request, asset):
+    requested = request.POST.get("next", "")
+    if requested and url_has_allowed_host_and_scheme(
+        requested,
+        allowed_hosts={request.get_host()},
+        require_https=request.is_secure(),
+    ):
+        return HttpResponseRedirect(requested)
+    if asset.project_id:
+        return redirect("studio:project_detail", project_id=asset.project_id)
+    return redirect("studio:dashboard")
+
+
+def _asset_for_edit(request, asset_id, include_deleted=False):
+    manager = Asset.all_objects if include_deleted else Asset.objects
+    return get_object_or_404(
+        manager.select_related("workspace", "project", "scene", "character", "prompt").filter(
+            workspace__in=accessible_workspaces(request.user),
+            content_type__startswith="image/",
+        ),
+        id=asset_id,
+    )
+
+
+@login_required
+def asset_trash(request, asset_id):
+    asset = _asset_for_edit(request, asset_id)
+    if request.method != "POST" or not has_capability(request.user, asset.workspace, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    try:
+        trash_asset(asset=asset, user=request.user)
+    except ValidationError as exc:
+        messages.error(request, "; ".join(exc.messages))
+    else:
+        messages.success(request, "Image moved to trash.")
+    return _asset_action_redirect(request, asset)
+
+
+@login_required
+def asset_restore(request, asset_id):
+    asset = _asset_for_edit(request, asset_id, include_deleted=True)
+    if request.method != "POST" or not has_capability(request.user, asset.workspace, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    try:
+        restore_asset(asset=asset, user=request.user)
+    except ValidationError as exc:
+        messages.error(request, "; ".join(exc.messages))
+    else:
+        messages.success(request, "Image restored.")
+    return _asset_action_redirect(request, asset)
+
+
+@login_required
+def asset_purge(request, asset_id):
+    asset = _asset_for_edit(request, asset_id, include_deleted=True)
+    if request.method != "POST" or not has_capability(request.user, asset.workspace, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    try:
+        purge_asset(asset=asset, user=request.user)
+    except ValidationError as exc:
+        messages.error(request, "; ".join(exc.messages))
+    else:
+        messages.success(request, "Image file permanently deleted.")
+    return _asset_action_redirect(request, asset)
+
+
+@login_required
+def project_image_trash(request, project_id):
+    project = get_object_or_404(
+        Project.objects.select_related("workspace").filter(workspace__in=accessible_workspaces(request.user)),
+        id=project_id,
+    )
+    return render(request, "studio/image_trash.html", {
+        "project": project,
+        "assets": Asset.all_objects.filter(
+            project=project,
+            content_type__startswith="image/",
+            deleted_at__isnull=False,
+            purged_at__isnull=True,
+        ),
+        "can_edit": has_capability(request.user, project.workspace, "edit"),
+    })
+
+
+@login_required
+def trashed_asset_file(request, asset_id, thumbnail=False):
+    asset = get_object_or_404(
+        Asset.all_objects.select_related("workspace").filter(
+            workspace__in=accessible_workspaces(request.user),
+            content_type__startswith="image/",
+            deleted_at__isnull=False,
+            purged_at__isnull=True,
+        ),
+        id=asset_id,
+    )
+    field = asset.thumbnail if thumbnail and asset.thumbnail.name else asset.file
+    if not field.name:
+        raise Http404("Image file not found.")
+    audit(workspace=asset.workspace, actor=request.user, action="ASSET_TRASH_VIEW", instance=asset)
+    return FileResponse(field.open("rb"), content_type="image/jpeg" if thumbnail else asset.content_type)
+
 @login_required
 def docx_roundtrip(request, job_id):
     job = get_object_or_404(
@@ -777,6 +969,10 @@ def docx_roundtrip(request, job_id):
 def _prompt_editor_context():
     return {
         "ai_models": AiModelProfile.objects.filter(is_active=True),
+        "prompt_templates": active_prompt_templates(),
+        "text_models": active_text_models(),
+        "default_text_model": default_text_model_id(),
+        "improve_modes": MODES.items(),
         "prompt_types": Prompt.Type.choices,
         "prompt_statuses": Prompt.Status.choices,
         "block_types": PromptBlock.Type.choices,
@@ -803,6 +999,7 @@ def scene_prompt_quick_create(request, scene_id):
     prompt = Prompt.objects.create(
         scene=scene,
         ai_model=ai_model,
+        template=selected_prompt_template(request.POST.get("template"), prompt_type),
         prompt_type=prompt_type,
         title=request.POST.get("title", "").strip(),
         status=status,
@@ -830,7 +1027,7 @@ def scene_prompt_quick_create(request, scene_id):
 @login_required
 def prompt_quick_save(request, prompt_id):
     prompt = get_object_or_404(
-        Prompt.objects.select_related("scene__episode__project__workspace", "ai_model")
+        Prompt.objects.select_related("scene__episode__project__workspace", "ai_model", "template")
         .prefetch_related("blocks")
         .filter(scene__episode__project__workspace__in=accessible_workspaces(request.user)),
         id=prompt_id,
@@ -846,6 +1043,7 @@ def prompt_quick_save(request, prompt_id):
         return redirect("studio:scene_detail", scene_id=prompt.scene_id)
     with transaction.atomic():
         prompt.ai_model = ai_model
+        prompt.template = selected_prompt_template(request.POST.get("template"), prompt_type)
         prompt.prompt_type = prompt_type
         prompt.title = request.POST.get("title", "").strip()
         prompt.status = status
@@ -877,6 +1075,20 @@ def prompt_quick_save(request, prompt_id):
                 updated_by=request.user,
             )
             record_revision(instance=block, user=request.user, operation="CREATE")
+        dialogue_line_id = request.POST.get("new_dialogue_line")
+        if dialogue_line_id and not prompt.blocks.filter(source_dialogue_id=dialogue_line_id).exists():
+            line = prompt.scene.dialogue_lines.filter(id=dialogue_line_id).first()
+            if line is not None:
+                block = PromptBlock.objects.create(
+                    prompt=prompt,
+                    block_type=PromptBlock.Type.DIALOGUE_REFERENCE,
+                    content=line.text,
+                    source_dialogue=line,
+                    position=prompt.blocks.count(),
+                    created_by=request.user,
+                    updated_by=request.user,
+                )
+                record_revision(instance=block, user=request.user, operation="CREATE")
         audit(workspace=workspace, actor=request.user, action="PROMPT_INLINE_UPDATED", instance=prompt)
     messages.success(request, "Prompt saved.")
     if request.POST.get("return_to") == "chain":
@@ -923,15 +1135,19 @@ def project_scene_chain(request, project_id):
     project = get_object_or_404(
         Project.objects.select_related("workspace").prefetch_related(
             Prefetch("episodes__scenes__assets", queryset=Asset.objects.filter(prompt__isnull=True), to_attr="chain_images"),
+            "episodes__scenes__dialogue_lines",
             "episodes__scenes__prompts__ai_model",
-            "episodes__scenes__prompts__blocks",
+            "episodes__scenes__prompts__template",
+            "episodes__scenes__prompts__blocks__source_dialogue",
             "episodes__scenes__prompts__assets",
+            "episodes__scenes__prompts__ai_suggestions",
         ).filter(workspace__in=accessible_workspaces(request.user)),
         id=project_id,
     )
     context = {
         "project": project,
         "can_edit": has_capability(request.user, project.workspace, "edit"),
+        "can_use_ai": has_capability(request.user, project.workspace, "use_ai") and user_has_ai_access(request.user),
         **_prompt_editor_context(),
     }
     return render(request, "studio/project_scene_chain.html", context)

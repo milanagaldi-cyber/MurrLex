@@ -1,0 +1,7 @@
+<div class="asset-actions">
+  <a href="{% url 'studio_api:asset_download' asset.id %}">Download</a>
+  {% if can_edit %}
+  <form method="post" action="{% url 'studio:asset_trash' asset.id %}" onsubmit="return confirm('Move this image to trash?')">{% csrf_token %}<input type="hidden" name="next" value="{{ request.get_full_path }}"><button class="link-button" type="submit">Trash</button></form>
+  <form method="post" action="{% url 'studio:asset_purge' asset.id %}" onsubmit="return confirm('Permanently delete this image file? This cannot be undone.')">{% csrf_token %}<input type="hidden" name="next" value="{{ request.get_full_path }}"><button class="link-button danger" type="submit">Delete permanently</button></form>
+  {% endif %}
+</div>

@@ -93,9 +93,12 @@ def generate_docx_export(*, project, user):
                 document.add_heading(prompt.title or f"{prompt.get_prompt_type_display()} prompt - {prompt.ai_model.name}", 2)
                 table = document.add_table(rows=1, cols=2)
                 table.rows[0].cells[0].text, table.rows[0].cells[1].text = "Block", "Content"
+                cells = table.add_row().cells
+                cells[0].text, cells[1].text = "Mandatory template", prompt.template.content
                 for block in prompt.blocks.all():
                     cells = table.add_row().cells
-                    cells[0].text, cells[1].text = block.get_block_type_display(), block.content
+                    content = block.translated_content if block.block_type == block.Type.DIALOGUE_REFERENCE and block.translated_content else block.content
+                    cells[0].text, cells[1].text = block.get_block_type_display(), content
                 for asset in prompt.assets.all():
                     _add_image(document, asset)
         for track in episode.subtitle_tracks.all():

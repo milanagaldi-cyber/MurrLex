@@ -16,7 +16,8 @@ from .services import bulk_replace_subtitle_lines, create_workspace, reorder_sub
 from .storage import create_asset
 from .exports import ExportError, generate_export
 from .docx_imports import accept_docx_import, parse_docx
-from .ai import StudioAiError, accept_suggestion, improve_prompt, reject_suggestion
+from .ai import StudioAiError, accept_suggestion, improve_prompt, reject_suggestion, translate_prompt_dialogue
+from .ai_catalog import selected_prompt_template, selected_text_model
 from .revisions import VERSIONED_MODELS, audit, record_revision, restore_revision, revision_diff
 
 
@@ -244,8 +245,8 @@ def scene_prompts(request, scene_id):
     )
     if request.method == "GET":
         return JsonResponse({"results": [
-            {"id": str(item.id), "model": item.ai_model.name, "type": item.prompt_type, "status": item.status, "needsReview": item.needs_review}
-            for item in scene.prompts.select_related("ai_model")
+            {"id": str(item.id), "model": item.ai_model.name, "templateId": str(item.template_id), "template": item.template.name, "type": item.prompt_type, "status": item.status, "needsReview": item.needs_review}
+            for item in scene.prompts.select_related("ai_model", "template")
         ]})
     if not has_capability(user, scene_workspace(scene), "edit"):
         return error("permission_denied", "Edit permission is required.", 403)
@@ -256,8 +257,14 @@ def scene_prompts(request, scene_id):
     prompt_type = str(data.get("type", ""))
     if prompt_type not in Prompt.Type.values:
         return error("validation_error", "A valid prompt type is required.")
+    try:
+        template = selected_prompt_template(data.get("templateId"), prompt_type)
+    except ValidationError as exc:
+        return error("validation_error", "; ".join(exc.messages))
     prompt = Prompt.objects.create(
-        scene=scene, ai_model=model, prompt_type=prompt_type, title=str(data.get("title", "")).strip(),
+        scene=scene, ai_model=model,
+        template=template,
+        prompt_type=prompt_type, title=str(data.get("title", "")).strip(),
         position=scene.prompts.count(), created_by=user, updated_by=user,
     )
     for position, block in enumerate(data.get("blocks", [])):
@@ -562,6 +569,8 @@ def suggestion_json(item):
 def _ai_error_response(exc):
     if isinstance(exc, ProviderError):
         return error("provider_error", str(exc), 502)
+    if isinstance(exc, ValidationError):
+        return error("validation_error", "; ".join(exc.messages), 400)
     status = 429 if exc.code == "rate_limited" else 409 if exc.code in {"stale_suggestion", "already_decided"} else 400
     return error(exc.code, str(exc), status)
 
@@ -589,14 +598,47 @@ def prompt_improve(request, prompt_id):
     if data is None:
         return error("invalid_json", "A JSON object is required.")
     try:
+        model_id = selected_text_model(str(data.get("textModel", "")))
         suggestion = improve_prompt(
             prompt=prompt, user=user, mode=str(data.get("mode", "non_dialogue")),
             selected_block_ids=data.get("selectedBlockIds", []),
-            text_model=str(data.get("textModel", "gpt-5.4-mini")),
+            text_model=model_id,
         )
-    except (StudioAiError, ProviderError) as exc:
+    except (StudioAiError, ProviderError, ValidationError) as exc:
         return _ai_error_response(exc)
     return JsonResponse(suggestion_json(suggestion), status=201)
+
+
+@require_http_methods(["POST"])
+def prompt_translate_dialogue(request, prompt_id):
+    user = require_user(request)
+    if user is None:
+        return error("authentication_required", "Login is required.", 401)
+    prompt = get_object_or_404(
+        Prompt.objects.select_related("scene__episode__project__workspace", "ai_model", "template")
+        .prefetch_related("blocks__source_dialogue")
+        .filter(scene__episode__project__workspace__in=accessible_workspaces(user)),
+        id=prompt_id,
+    )
+    workspace = prompt.scene.episode.project.workspace
+    if not has_capability(user, workspace, "use_ai"):
+        return error("permission_denied", "AI capability is required.", 403)
+    if not user_has_ai_access(user):
+        return error("ai_access_required", "Server AI access is not enabled for this account.", 403)
+    data = payload(request)
+    if data is None:
+        return error("invalid_json", "A JSON object is required.")
+    try:
+        model_id = selected_text_model(str(data.get("textModel", "")))
+        count, selected_model = translate_prompt_dialogue(
+            prompt=prompt,
+            user=user,
+            target_language=str(data.get("targetLanguage", "")),
+            text_model=model_id,
+        )
+    except (StudioAiError, ProviderError, ValidationError) as exc:
+        return _ai_error_response(exc)
+    return JsonResponse({"promptId": str(prompt.id), "translatedBlocks": count, "model": selected_model})
 
 
 def _suggestion_for_user(user, suggestion_id):

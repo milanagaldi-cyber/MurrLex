@@ -29,6 +29,7 @@ GET/POST  scenes/{scene_id}/prompts
 
 ```text
 POST prompts/{prompt_id}/improve
+POST prompts/{prompt_id}/translate-dialogue
 POST suggestions/{suggestion_id}/accept
 POST suggestions/{suggestion_id}/reject
 ```
@@ -36,6 +37,12 @@ POST suggestions/{suggestion_id}/reject
 Improve accepts mode, selected block IDs and target model. It returns a suggestion,
 never an overwritten prompt. HTTP 403 is returned without `can_use_ai`; HTTP 429
 is returned when rate limited; HTTP 409 indicates a stale source revision.
+`improve_translate_en` converts editable non-dialogue blocks to production English.
+Dialogue translation accepts `targetLanguage` and `textModel`, writes only the
+protected dialogue translation layer and leaves narrative prompt blocks unchanged.
+
+The browser Studio settings page manages active OpenAI text models and mandatory
+prompt templates. Provider keys remain in the encrypted MurrLex credential cabinet.
 
 ## Assets, history and exports
 
@@ -54,6 +61,9 @@ GET  exports/{export_id}/download
 
 Uploads use multipart form data. Downloads stream only after object-scoped
 permission checks and create access/audit events.
+Browser image actions support soft deletion to a project trash, restoration and
+permanent byte deletion. Permanent deletion keeps a tombstone for referential and
+audit integrity but removes the original and thumbnail from private storage.
 
 ## Subtitles and imports
 
@@ -76,4 +86,3 @@ DOCX acceptance is explicit because heading/table conventions are not guaranteed
 - ADMIN: editor plus members and workflow administration.
 - OWNER: full workspace control.
 - AI/export actions additionally require the corresponding capability.
-

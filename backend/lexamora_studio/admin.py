@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import AccessEvent, AdditionalGeneration, AiModelProfile, AiSuggestion, AiUsageLog, Asset, AuditEvent, Character, DialogueLine, DocxImport, Episode, ExportJob, GenerationOutput, Project, Prompt, PromptBlock, Revision, Scene, SubtitleLine, SubtitleTrack, TranslationUnit, Workspace, WorkspaceMembership
+from .models import AccessEvent, AdditionalGeneration, AiModelProfile, AiSuggestion, AiUsageLog, Asset, AuditEvent, Character, DialogueLine, DocxImport, Episode, ExportJob, GenerationOutput, Project, Prompt, PromptBlock, PromptTemplate, Revision, Scene, StudioTextModel, SubtitleLine, SubtitleTrack, TranslationUnit, Workspace, WorkspaceMembership
 
 
 class MembershipInline(admin.TabularInline):
@@ -26,6 +26,8 @@ admin.site.register(Character)
 admin.site.register(Episode)
 admin.site.register(Scene)
 admin.site.register(AiModelProfile)
+admin.site.register(StudioTextModel)
+admin.site.register(PromptTemplate)
 admin.site.register(DialogueLine)
 admin.site.register(Prompt)
 admin.site.register(PromptBlock)

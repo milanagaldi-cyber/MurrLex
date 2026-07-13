@@ -26,8 +26,8 @@ VERSIONED_MODELS = {
     "lexamora_studio.episode": (Episode, ["number", "title", "summary", "position"]),
     "lexamora_studio.scene": (Scene, ["number", "title", "hook", "description", "location", "actions", "performance_notes", "position", "status"]),
     "lexamora_studio.dialogueline": (DialogueLine, ["speaker", "text", "language", "delivery", "position", "status"]),
-    "lexamora_studio.prompt": (Prompt, ["title", "status", "position", "needs_review"]),
-    "lexamora_studio.promptblock": (PromptBlock, ["block_type", "content", "position"]),
+    "lexamora_studio.prompt": (Prompt, ["template", "title", "status", "position", "needs_review"]),
+    "lexamora_studio.promptblock": (PromptBlock, ["block_type", "content", "translated_content", "translation_language", "translation_model", "position"]),
     "lexamora_studio.additionalgeneration": (AdditionalGeneration, ["reason", "prompt", "position", "status"]),
 }
 
@@ -116,7 +116,9 @@ def restore_revision(*, revision, user):
     instance = model.all_objects.select_for_update().get(pk=revision.entity_id)
     for field in allowed_fields:
         if field in revision.snapshot:
-            setattr(instance, field, revision.snapshot[field])
+            model_field = instance._meta.get_field(field)
+            target = f"{field}_id" if model_field.is_relation and model_field.many_to_one else field
+            setattr(instance, target, revision.snapshot[field])
     instance.updated_by = user
     instance.full_clean()
     instance.save()

@@ -1,0 +1,15 @@
+{% extends "studio/base.html" %}
+{% block title %}Studio settings{% endblock %}
+{% block content %}
+<div class="toolbar"><div><h1>Studio settings</h1><p class="muted">Shared OpenAI model catalog and mandatory prompt templates. Provider keys remain in the encrypted MurrLex cabinet.</p></div></div>
+<div class="settings-grid">
+  <section class="panel settings-section"><h2>OpenAI text models</h2><p class="muted">Current default: {{ murrlex_default_model }}. ElevenLabs is intentionally excluded.</p>
+    <div class="settings-list">{% for item in text_models %}<form method="post" class="settings-row">{% csrf_token %}<input type="hidden" name="action" value="update_model"><input type="hidden" name="id" value="{{ item.id }}"><input name="model-name" value="{{ item.name }}" aria-label="Display name"><input type="hidden" name="model-model_id" value="{{ item.model_id }}"><code>{{ item.model_id }}</code><label class="check"><input type="checkbox" name="model-is_active"{% if item.is_active %} checked{% endif %}> Active</label><label class="check"><input type="checkbox" name="model-is_default"{% if item.is_default %} checked{% endif %}> Default</label><button type="submit">Save</button></form>{% endfor %}</div>
+    <details class="inline-add"><summary>Add OpenAI model</summary><form method="post">{% csrf_token %}<input type="hidden" name="action" value="create_model">{{ model_form.as_p }}<button type="submit">Add model</button></form></details>
+  </section>
+  <section class="panel settings-section"><h2>Mandatory prompt templates</h2><p class="muted">Every prompt references one template. Existing prompts keep their assigned template when it is archived.</p>
+    <div class="settings-list">{% for item in templates %}<form method="post" class="template-settings-row">{% csrf_token %}<input type="hidden" name="action" value="update_template"><input type="hidden" name="id" value="{{ item.id }}"><label>Name<input name="template-name" value="{{ item.name }}"></label><label>Scope<select name="template-scope">{% for value,label in item.Scope.choices %}<option value="{{ value }}"{% if value == item.scope %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label><label class="check"><input type="checkbox" name="template-is_active"{% if item.is_active %} checked{% endif %}> Active</label><label class="check"><input type="checkbox" name="template-is_default"{% if item.is_default %} checked{% endif %}> Default</label><label class="full">Template<textarea name="template-content" rows="5">{{ item.content }}</textarea></label><button type="submit">Save template</button></form>{% endfor %}</div>
+    <details class="inline-add"><summary>Create template</summary><form method="post">{% csrf_token %}<input type="hidden" name="action" value="create_template">{{ template_form.as_p }}<button type="submit">Create template</button></form></details>
+  </section>
+</div>
+{% endblock %}

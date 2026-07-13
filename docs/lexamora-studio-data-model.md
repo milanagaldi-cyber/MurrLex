@@ -26,15 +26,20 @@ All production identifiers are UUIDs. All mutable production entities include
 - `DialogueLine`: scene, position, speaker/character, text, language, delivery,
   status.
 - `AiModelProfile`: provider, name, model identifier, media type, active, defaults.
-- `Prompt`: scene, AI model profile, prompt type IMAGE/VIDEO, status, position,
-  needs_review.
+- `StudioTextModel`: shared OpenAI text model catalog, active/default flags.
+- `PromptTemplate`: named mandatory generation template, IMAGE/VIDEO/ALL scope,
+  active/default flags.
+- `Prompt`: scene, AI model profile, mandatory template, prompt type IMAGE/VIDEO,
+  status, position, needs_review.
 - `PromptBlock`: prompt, type NARRATIVE/DIALOGUE_REFERENCE/NEGATIVE/AUDIO,
-  position, content, source dialogue reference.
+  position, content, source dialogue reference, optional translated dialogue text,
+  target language and OpenAI model provenance.
 
 ## Media and generation
 
 - `Asset`: workspace, project, optional entity link, kind, storage key, original
-  filename, MIME, bytes, checksum, width, height, thumbnail key, uploader.
+  filename, MIME, bytes, checksum, width, height, thumbnail key, uploader and
+  permanent-purge timestamp/actor.
 - `AdditionalGeneration`: scene, reason, source asset, prompt, position, status.
 - `GenerationOutput`: generation, asset, model metadata, position, is_final.
 
@@ -67,5 +72,6 @@ All production identifiers are UUIDs. All mutable production entities include
 - Approved source dialogue changes mark translations STALE and related prompts
   `needs_review=True`.
 - Soft-deleted rows are excluded from normal queries but retained in revisions.
+- Trashed images can be restored. Permanent purge removes private bytes and leaves
+  an inaccessible tombstone so existing protected relations remain valid.
 - Asset and export downloads are always resolved through workspace membership.
-

@@ -81,8 +81,11 @@ AI calls reuse encrypted server provider credentials. A request requires active
 membership, `can_use_ai`, a configured provider and rate-limit capacity. The
 provider output is stored as an immutable suggestion with model, prompt version,
 usage and response metadata. Accepting a suggestion is a separate user action.
-Dialogue blocks are excluded unless a future explicit permission and UI action are
-added.
+Dialogue blocks are excluded from generic improvement. The explicit dialogue
+translation action sends only direct speech, stores a separate translated layer and
+never sends or rewrites the English narrative prompt. Prompt improvement can also
+convert simple non-English source blocks to reviewed production English. Both
+actions use an active OpenAI text model selected from shared Studio settings.
 
 ## Observability and Security
 
@@ -93,4 +96,3 @@ added.
 - Same-origin browser deployment avoids broad CORS.
 - Nginx and Django upload limits must agree.
 - Readiness checks include database connectivity; health remains lightweight.
-

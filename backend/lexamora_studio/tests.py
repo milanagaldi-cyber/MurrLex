@@ -387,9 +387,13 @@ class StudioAiSuggestionTests(TestCase):
             prompt=self.prompt, block_type=PromptBlock.Type.NARRATIVE, content="Plain room",
             position=0, created_by=self.editor, updated_by=self.editor,
         )
+        self.source_dialogue = DialogueLine.objects.create(
+            scene=scene, speaker="Hero", text="Secret dialogue", language="en",
+            position=0, created_by=self.editor, updated_by=self.editor,
+        )
         self.dialogue = PromptBlock.objects.create(
             prompt=self.prompt, block_type=PromptBlock.Type.DIALOGUE_REFERENCE, content="Secret dialogue",
-            position=1, created_by=self.editor, updated_by=self.editor,
+            source_dialogue=self.source_dialogue, position=1, created_by=self.editor, updated_by=self.editor,
         )
 
     def provider_response(self):
@@ -397,6 +401,15 @@ class StudioAiSuggestionTests(TestCase):
             {"id": str(self.narrative.id), "content": "Cinematic room with precise lighting"},
             {"id": str(self.dialogue.id), "content": "Rewritten dialogue"},
         ]})
+
+    def test_inline_prompt_ui_exposes_template_models_and_ai_actions(self):
+        self.client.force_login(self.editor)
+        response = self.client.get(f"/studio/scenes/{self.prompt.scene_id}/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, self.prompt.template.name)
+        self.assertContains(response, "improve_translate_en")
+        self.assertContains(response, "Translate dialogue")
+        self.assertContains(response, "gpt-5.4-mini")
 
     @patch("lexamora_studio.ai.run_text")
     def test_improve_creates_suggestion_without_overwriting_or_sending_dialogue(self, mocked_run_text):
@@ -416,6 +429,54 @@ class StudioAiSuggestionTests(TestCase):
         self.assertEqual(AiUsageLog.objects.get().status, "SUCCESS")
         provider_prompt = mocked_run_text.call_args.args[1]
         self.assertNotIn("Secret dialogue", provider_prompt)
+        self.assertIn(self.prompt.template.content, provider_prompt)
+
+    @patch("lexamora_studio.ai.run_text")
+    def test_russian_prompt_can_be_improved_and_translated_to_english(self, mocked_run_text):
+        self.narrative.content = "Простая комната и герой входит"
+        self.narrative.save(update_fields=["content", "updated_at"])
+        mocked_run_text.return_value = (
+            json.dumps({"blocks": [{"id": str(self.narrative.id), "content": "A cinematic room as the hero enters."}]}),
+            "gpt-5.4",
+        )
+        self.client.force_login(self.editor)
+        response = self.client.post(
+            f"/api/v1/studio/prompts/{self.prompt.id}/improve",
+            data=json.dumps({"mode": "improve_translate_en", "textModel": "gpt-5.4"}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(response.json()["model"], "gpt-5.4")
+        provider_prompt = mocked_run_text.call_args.args[1]
+        self.assertIn("Return every editable block in English", provider_prompt)
+
+    @patch("lexamora_studio.ai.run_text")
+    def test_dialogue_translation_does_not_change_narrative_prompt(self, mocked_run_text):
+        from .models import AiUsageLog, TranslationUnit
+
+        mocked_run_text.return_value = (
+            json.dumps({"dialogue": [{"id": str(self.dialogue.id), "translation": "Tajny dialog"}]}),
+            "gpt-5.4-mini",
+        )
+        self.client.force_login(self.editor)
+        response = self.client.post(
+            f"/api/v1/studio/prompts/{self.prompt.id}/translate-dialogue",
+            data=json.dumps({"targetLanguage": "pl", "textModel": "gpt-5.4-mini"}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.narrative.refresh_from_db()
+        self.dialogue.refresh_from_db()
+        self.assertEqual(self.narrative.content, "Plain room")
+        self.assertEqual(self.dialogue.content, "Secret dialogue")
+        self.assertEqual(self.dialogue.translated_content, "Tajny dialog")
+        self.assertEqual(self.dialogue.translation_language, "pl")
+        self.assertTrue(TranslationUnit.objects.filter(
+            dialogue_line=self.source_dialogue, target_language="pl", translated_text="Tajny dialog"
+        ).exists())
+        self.assertTrue(AiUsageLog.objects.filter(action="TRANSLATE_DIALOGUE", status="SUCCESS").exists())
+        provider_prompt = mocked_run_text.call_args.args[1]
+        self.assertNotIn("Plain room", provider_prompt)
 
     @patch("lexamora_studio.ai.run_text")
     def test_accept_updates_non_dialogue_and_preserves_dialogue(self, mocked_run_text):
@@ -1354,3 +1415,134 @@ class StudioInlineEditingWorkflowTests(TestCase):
             content_type="application/json",
         )
         self.assertEqual(reorder.status_code, 403)
+
+
+class StudioAssetLifecycleTests(TestCase):
+    def setUp(self):
+        from .models import Project
+
+        users = get_user_model()
+        self.owner = users.objects.create_user("asset-owner", password="strong-pass")
+        self.viewer = users.objects.create_user("asset-viewer", password="strong-pass")
+        self.workspace = create_workspace(user=self.owner, name="Asset Studio", slug="asset-studio")
+        WorkspaceMembership.objects.create(
+            workspace=self.workspace, user=self.viewer, role=WorkspaceMembership.Role.VIEWER
+        )
+        self.project = Project.objects.create(
+            workspace=self.workspace, project_type=Project.Type.SERIES, title="Asset Project",
+            created_by=self.owner, updated_by=self.owner,
+        )
+
+    @staticmethod
+    def image_file(name="lifecycle.png"):
+        import io
+        from PIL import Image
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        output = io.BytesIO()
+        Image.new("RGB", (80, 60), "#d87a31").save(output, "PNG")
+        return SimpleUploadedFile(name, output.getvalue(), content_type="image/png")
+
+    def test_image_can_be_trashed_restored_and_permanently_purged(self):
+        import tempfile
+        from pathlib import Path
+        from .models import Asset, AuditEvent
+        from .storage import create_asset
+
+        self.client.force_login(self.owner)
+        with tempfile.TemporaryDirectory() as directory:
+            with self.settings(STUDIO_PRIVATE_MEDIA_ROOT=Path(directory)):
+                asset = create_asset(
+                    user=self.owner, workspace=self.workspace, project=self.project,
+                    uploaded=self.image_file(), kind=Asset.Kind.OTHER,
+                )
+                original_path = Path(asset.file.path)
+                thumbnail_path = Path(asset.thumbnail.path)
+                trashed = self.client.post(
+                    f"/studio/assets/{asset.id}/trash/",
+                    {"next": f"/studio/projects/{self.project.id}/images/trash/"},
+                )
+                self.assertEqual(trashed.status_code, 302)
+                self.assertFalse(Asset.objects.filter(id=asset.id).exists())
+                self.assertEqual(self.client.get(f"/api/v1/studio/assets/{asset.id}/view").status_code, 404)
+                trash_page = self.client.get(f"/studio/projects/{self.project.id}/images/trash/")
+                self.assertContains(trash_page, asset.original_filename)
+                trash_preview = self.client.get(f"/studio/assets/{asset.id}/trash-thumbnail/")
+                self.assertEqual(trash_preview.status_code, 200)
+                trash_preview.close()
+
+                restored = self.client.post(f"/studio/assets/{asset.id}/restore/")
+                self.assertEqual(restored.status_code, 302)
+                self.assertTrue(Asset.objects.filter(id=asset.id).exists())
+
+                with self.captureOnCommitCallbacks(execute=True):
+                    purged = self.client.post(f"/studio/assets/{asset.id}/purge/")
+                self.assertEqual(purged.status_code, 302)
+                asset = Asset.all_objects.get(id=asset.id)
+                self.assertIsNotNone(asset.purged_at)
+                self.assertEqual(asset.file.name, "")
+                self.assertFalse(original_path.exists())
+                self.assertFalse(thumbnail_path.exists())
+        self.assertTrue(AuditEvent.objects.filter(action="ASSET_TRASHED").exists())
+        self.assertTrue(AuditEvent.objects.filter(action="ASSET_RESTORED").exists())
+        self.assertTrue(AuditEvent.objects.filter(action="ASSET_PURGED").exists())
+
+    def test_viewer_cannot_delete_image(self):
+        import tempfile
+        from pathlib import Path
+        from .models import Asset
+        from .storage import create_asset
+
+        with tempfile.TemporaryDirectory() as directory:
+            with self.settings(STUDIO_PRIVATE_MEDIA_ROOT=Path(directory)):
+                asset = create_asset(
+                    user=self.owner, workspace=self.workspace, project=self.project,
+                    uploaded=self.image_file(), kind=Asset.Kind.OTHER,
+                )
+                self.client.force_login(self.viewer)
+                self.assertEqual(self.client.post(f"/studio/assets/{asset.id}/trash/").status_code, 403)
+                self.assertTrue(Asset.objects.filter(id=asset.id).exists())
+
+
+class StudioGeneralSettingsTests(TestCase):
+    def setUp(self):
+        users = get_user_model()
+        self.admin = users.objects.create_superuser("studio-admin", "admin@example.com", "strong-pass")
+        self.user = users.objects.create_user("studio-user", password="strong-pass")
+
+    def test_settings_are_admin_only_and_can_change_default_model(self):
+        from .models import StudioTextModel
+
+        self.client.force_login(self.user)
+        self.assertEqual(self.client.get("/studio/settings/").status_code, 403)
+        self.client.force_login(self.admin)
+        model = StudioTextModel.objects.get(model_id="gpt-5.4")
+        response = self.client.post("/studio/settings/", {
+            "action": "update_model",
+            "id": str(model.id),
+            "model-name": "GPT 5.4 production",
+            "model-model_id": "gpt-5.4",
+            "model-is_active": "on",
+            "model-is_default": "on",
+        })
+        self.assertRedirects(response, "/studio/settings/")
+        model.refresh_from_db()
+        self.assertTrue(model.is_default)
+        self.assertFalse(StudioTextModel.objects.exclude(id=model.id).filter(is_default=True).exists())
+
+    def test_admin_can_create_mandatory_prompt_template(self):
+        from .models import PromptTemplate
+
+        self.client.force_login(self.admin)
+        response = self.client.post("/studio/settings/", {
+            "action": "create_template",
+            "template-name": "Vertical video template",
+            "template-scope": "VIDEO",
+            "template-content": "Use a vertical frame and preserve character continuity.",
+            "template-is_active": "on",
+            "template-is_default": "on",
+        })
+        self.assertRedirects(response, "/studio/settings/")
+        template = PromptTemplate.objects.get(name="Vertical video template")
+        self.assertTrue(template.is_default)
+        self.assertFalse(PromptTemplate.objects.exclude(id=template.id).filter(is_default=True).exists())

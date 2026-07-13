@@ -7,8 +7,9 @@ from django.utils import timezone
 
 from lessons.ai_gateway import ProviderError, run_text
 
-from .models import AiSuggestion, AiUsageLog, PromptBlock, Revision
+from .models import AiSuggestion, AiUsageLog, PromptBlock, Revision, TranslationUnit
 from .revisions import audit, record_revision, workspace_for
+from .services import save_translation
 
 
 MODES = {
@@ -21,6 +22,7 @@ MODES = {
     "adapt_model": "Adapt the supplied prompt for the named generation model.",
     "fix_contradictions": "Resolve contradictions while preserving the intended scene.",
     "preserve_consistency": "Improve the prompt while preserving character and scene consistency.",
+    "improve_translate_en": "Translate the supplied non-dialogue prompt content into natural production English and improve it for generation.",
 }
 
 
@@ -65,6 +67,34 @@ def _parse_blocks(raw_text, allowed_ids):
     return result
 
 
+def _parse_dialogue_translations(raw_text, allowed_ids):
+    clean = raw_text.strip()
+    fence = chr(96) * 3
+    if clean.startswith(fence):
+        clean = clean.split("\n", 1)[-1]
+        clean = clean.rsplit(fence, 1)[0].strip()
+    try:
+        parsed = json.loads(clean)
+    except json.JSONDecodeError as exc:
+        raise StudioAiError("invalid_provider_response", "AI returned an invalid dialogue translation.") from exc
+    rows = parsed.get("dialogue") if isinstance(parsed, dict) else None
+    if not isinstance(rows, list):
+        raise StudioAiError("invalid_provider_response", "AI translation does not contain dialogue rows.")
+    result = []
+    seen = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        block_id = str(row.get("id", ""))
+        translation = str(row.get("translation", "")).strip()
+        if block_id in allowed_ids and block_id not in seen and translation:
+            result.append({"id": block_id, "translation": translation})
+            seen.add(block_id)
+    if not result:
+        raise StudioAiError("invalid_provider_response", "AI returned no usable dialogue translations.")
+    return result
+
+
 def _check_rate(user):
     cutoff = timezone.now() - timedelta(minutes=1)
     if AiUsageLog.objects.filter(user=user, created_at__gte=cutoff).count() >= settings.STUDIO_AI_RATE_PER_MINUTE:
@@ -89,14 +119,18 @@ def improve_prompt(*, prompt, user, mode, selected_block_ids, text_model):
     instruction = {
         "task": MODES[mode],
         "generation_model": prompt.ai_model.name,
+        "mandatory_template": prompt.template.content,
         "rules": [
             "Return JSON only with shape blocks containing id and content.",
             "Return only IDs supplied in editable_blocks.",
             "Do not add, rewrite, infer, or quote dialogue.",
             "Preserve factual scene and character constraints.",
+            "The mandatory template is fixed context and must remain applicable to the improved result.",
         ],
         "editable_blocks": block_payload,
     }
+    if mode == "improve_translate_en":
+        instruction["rules"].append("Return every editable block in English even when the source is in another language.")
     prompt_text = json.dumps(instruction, ensure_ascii=False)
     usage = AiUsageLog.objects.create(
         workspace=workspace_for(prompt), user=user, prompt=prompt, action="IMPROVE_PROMPT",
@@ -121,6 +155,81 @@ def improve_prompt(*, prompt, user, mode, selected_block_ids, text_model):
     )
     audit(workspace=suggestion.workspace, actor=user, action="AI_SUGGESTION_CREATED", instance=prompt, metadata={"suggestionId": str(suggestion.id), "mode": mode, "model": selected_model})
     return suggestion
+
+
+def translate_prompt_dialogue(*, prompt, user, target_language, text_model):
+    target = (target_language or "").strip().lower()[:16]
+    if not target:
+        raise StudioAiError("target_language_required", "Enter a target language code for dialogue translation.")
+    _check_rate(user)
+    blocks = list(
+        prompt.blocks.filter(block_type=PromptBlock.Type.DIALOGUE_REFERENCE)
+        .select_related("source_dialogue")
+        .order_by("position", "id")
+    )
+    if not blocks:
+        raise StudioAiError("no_dialogue", "This prompt has no dialogue reference blocks to translate.")
+    rows = [
+        {
+            "id": str(block.id),
+            "speaker": block.source_dialogue.speaker if block.source_dialogue else "",
+            "text": block.source_dialogue.text if block.source_dialogue else block.content,
+        }
+        for block in blocks
+    ]
+    instruction = {
+        "task": f"Translate only the supplied direct speech into language code {target}.",
+        "rules": [
+            "Return JSON only with shape dialogue containing id and translation.",
+            "Return every supplied ID exactly once.",
+            "Do not translate, rewrite, or return any narrative prompt content.",
+            "Preserve speaker intent, tone, names, and punctuation.",
+        ],
+        "dialogue": rows,
+    }
+    prompt_text = json.dumps(instruction, ensure_ascii=False)
+    usage = AiUsageLog.objects.create(
+        workspace=workspace_for(prompt), user=user, prompt=prompt, action="TRANSLATE_DIALOGUE",
+        model=text_model, status="STARTED", input_chars=len(prompt_text),
+    )
+    try:
+        raw_text, selected_model = run_text(text_model, prompt_text)
+        translated = _parse_dialogue_translations(raw_text, {str(block.id) for block in blocks})
+    except (ProviderError, StudioAiError) as exc:
+        usage.status = "ERROR"
+        usage.error_code = exc.code if isinstance(exc, StudioAiError) else "provider_error"
+        usage.save(update_fields=["status", "error_code"])
+        raise
+
+    by_id = {str(block.id): block for block in blocks}
+    with transaction.atomic():
+        for row in translated:
+            block = by_id[row["id"]]
+            block.translated_content = row["translation"]
+            block.translation_language = target
+            block.translation_model = selected_model
+            block.updated_by = user
+            block.save(update_fields=[
+                "translated_content", "translation_language", "translation_model", "updated_by", "updated_at",
+            ])
+            record_revision(instance=block, user=user, operation="AI_DIALOGUE_TRANSLATION")
+            if block.source_dialogue_id:
+                save_translation(
+                    dialogue_line=block.source_dialogue,
+                    user=user,
+                    target_language=target,
+                    translated_text=row["translation"],
+                    status=TranslationUnit.Status.DRAFT,
+                )
+        audit(
+            workspace=workspace_for(prompt), actor=user, action="PROMPT_DIALOGUE_TRANSLATED", instance=prompt,
+            metadata={"targetLanguage": target, "model": selected_model, "blockCount": len(translated)},
+        )
+    usage.model = selected_model
+    usage.status = "SUCCESS"
+    usage.output_chars = len(raw_text)
+    usage.save(update_fields=["model", "status", "output_chars"])
+    return len(translated), selected_model
 
 
 @transaction.atomic

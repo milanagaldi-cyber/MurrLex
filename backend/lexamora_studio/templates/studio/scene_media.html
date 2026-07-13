@@ -13,7 +13,7 @@
   {% if asset.thumbnail %}
   <figure class="asset">
     <a href="{% url 'studio_api:asset_view' asset.id %}" target="_blank" rel="noopener"><img src="{% url 'studio_api:asset_thumbnail' asset.id %}" alt="{{ asset.original_filename }}"></a>
-    <figcaption><strong>{{ asset.original_filename }}</strong><br><span class="muted">{{ asset.get_kind_display }} / {{ asset.width }}x{{ asset.height }}</span><br><a href="{% url 'studio_api:asset_view' asset.id %}" target="_blank" rel="noopener">View</a> / <a href="{% url 'studio_api:asset_download' asset.id %}">Download</a>{% if can_edit %} / <a href="{% url 'studio:asset_edit' asset.id %}">Edit</a>{% endif %}</figcaption>
+    <figcaption><strong>{{ asset.original_filename }}</strong><br><span class="muted">{{ asset.get_kind_display }} / {{ asset.width }}x{{ asset.height }}</span>{% if can_edit %}<br><a href="{% url 'studio:asset_edit' asset.id %}">Edit details</a>{% endif %}{% include "studio/_asset_actions.html" with asset=asset %}</figcaption>
   </figure>
   {% endif %}
 {% empty %}<p class="empty">No scene images yet.</p>{% endfor %}
@@ -39,7 +39,7 @@
         {% if output.is_final %}<strong>Final result</strong><br>{% endif %}
         {{ output.asset.original_filename }}<br>
         {% if output.model_metadata.model %}<span class="muted">{{ output.model_metadata.model }}</span><br>{% endif %}
-        <a href="{% url 'studio_api:asset_view' output.asset.id %}" target="_blank" rel="noopener">View</a> / <a href="{% url 'studio_api:asset_download' output.asset.id %}">Download</a>{% if can_edit %} / <a href="{% url 'studio:asset_edit' output.asset.id %}">Edit</a>{% endif %}
+        {% if can_edit %}<a href="{% url 'studio:asset_edit' output.asset.id %}">Edit details</a>{% endif %}{% include "studio/_asset_actions.html" with asset=output.asset %}
         {% if can_edit and not output.is_final %}<form method="post" action="{% url 'studio:generation_output_final' output.id %}" style="margin-top:8px">{% csrf_token %}<button class="button secondary" type="submit">Set as final</button></form>{% endif %}
       </figcaption>
     </figure>

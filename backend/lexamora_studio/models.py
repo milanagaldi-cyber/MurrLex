@@ -164,6 +164,62 @@ class AiModelProfile(models.Model):
         ordering = ["media_type", "name"]
 
 
+class StudioTextModel(models.Model):
+    class Provider(models.TextChoices):
+        OPENAI = "openai", "OpenAI"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=120)
+    provider = models.CharField(max_length=32, choices=Provider.choices, default=Provider.OPENAI)
+    model_id = models.CharField(max_length=160, unique=True)
+    is_active = models.BooleanField(default=True)
+    is_default = models.BooleanField(default=False)
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="updated_studio_text_models",
+        null=True,
+        blank=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name", "model_id"]
+
+    def __str__(self):
+        return self.name
+
+
+class PromptTemplate(models.Model):
+    class Scope(models.TextChoices):
+        ALL = "ALL", "Image and video"
+        IMAGE = "IMAGE", "Image"
+        VIDEO = "VIDEO", "Video"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=160, unique=True)
+    content = models.TextField()
+    scope = models.CharField(max_length=16, choices=Scope.choices, default=Scope.ALL)
+    is_active = models.BooleanField(default=True)
+    is_default = models.BooleanField(default=False)
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="updated_prompt_templates",
+        null=True,
+        blank=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name", "id"]
+
+    def __str__(self):
+        return self.name
+
+
 class DialogueLine(SoftDeleteModel):
     class Status(models.TextChoices):
         DRAFT = "DRAFT", "Draft"
@@ -200,6 +256,7 @@ class Prompt(SoftDeleteModel):
 
     scene = models.ForeignKey(Scene, on_delete=models.PROTECT, related_name="prompts")
     ai_model = models.ForeignKey(AiModelProfile, on_delete=models.PROTECT, related_name="prompts")
+    template = models.ForeignKey(PromptTemplate, on_delete=models.PROTECT, related_name="prompts")
     prompt_type = models.CharField(max_length=16, choices=Type.choices)
     title = models.CharField(max_length=180, blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
@@ -209,6 +266,13 @@ class Prompt(SoftDeleteModel):
     class Meta:
         ordering = ["position", "id"]
         constraints = [models.UniqueConstraint(fields=["scene", "ai_model", "prompt_type", "position"], name="studio_unique_prompt_position")]
+
+    def save(self, *args, **kwargs):
+        if not self.template_id:
+            from .ai_catalog import default_prompt_template
+
+            self.template = default_prompt_template(self.prompt_type)
+        return super().save(*args, **kwargs)
 
 
 class PromptBlock(SoftDeleteModel):
@@ -222,6 +286,9 @@ class PromptBlock(SoftDeleteModel):
     block_type = models.CharField(max_length=24, choices=Type.choices)
     content = models.TextField()
     source_dialogue = models.ForeignKey(DialogueLine, on_delete=models.SET_NULL, related_name="prompt_blocks", null=True, blank=True)
+    translated_content = models.TextField(blank=True)
+    translation_language = models.CharField(max_length=16, blank=True)
+    translation_model = models.CharField(max_length=160, blank=True)
     position = models.PositiveIntegerField(default=0)
 
     class Meta:
@@ -261,6 +328,14 @@ class Asset(SoftDeleteModel):
     checksum_sha256 = models.CharField(max_length=64)
     width = models.PositiveIntegerField(null=True, blank=True)
     height = models.PositiveIntegerField(null=True, blank=True)
+    purged_at = models.DateTimeField(null=True, blank=True)
+    purged_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="purged_studio_assets",
+        null=True,
+        blank=True,
+    )
 
     class Meta:
         ordering = ["-created_at", "id"]

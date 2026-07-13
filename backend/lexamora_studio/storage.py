@@ -7,6 +7,7 @@ from django.conf import settings
 from django.core.files.base import ContentFile
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.utils import timezone
 
 from .models import Asset
 from .revisions import audit
@@ -98,3 +99,66 @@ def create_asset(*, user, workspace, uploaded, kind, project=None, scene=None, c
     asset.save()
     audit(workspace=workspace, actor=user, action="ASSET_UPLOAD", instance=asset, metadata={"filename": filename, "sizeBytes": uploaded.size})
     return asset
+
+
+@transaction.atomic
+def trash_asset(*, asset, user):
+    locked = Asset.all_objects.select_for_update().get(pk=asset.pk)
+    if not locked.content_type.startswith("image/"):
+        raise ValidationError("Only uploaded images can be moved to the image trash.")
+    if locked.purged_at is not None:
+        raise ValidationError("This image has already been permanently deleted.")
+    locked.deleted_at = timezone.now()
+    locked.deleted_by = user
+    locked.updated_by = user
+    locked.save(update_fields=["deleted_at", "deleted_by", "updated_by", "updated_at"])
+    audit(workspace=locked.workspace, actor=user, action="ASSET_TRASHED", instance=locked)
+    return locked
+
+
+@transaction.atomic
+def restore_asset(*, asset, user):
+    locked = Asset.all_objects.select_for_update().get(pk=asset.pk)
+    if locked.purged_at is not None:
+        raise ValidationError("A permanently deleted image cannot be restored.")
+    locked.deleted_at = None
+    locked.deleted_by = None
+    locked.updated_by = user
+    locked.save(update_fields=["deleted_at", "deleted_by", "updated_by", "updated_at"])
+    audit(workspace=locked.workspace, actor=user, action="ASSET_RESTORED", instance=locked)
+    return locked
+
+
+@transaction.atomic
+def purge_asset(*, asset, user):
+    locked = Asset.all_objects.select_for_update().get(pk=asset.pk)
+    if not locked.content_type.startswith("image/"):
+        raise ValidationError("Only uploaded images can be permanently deleted here.")
+    if locked.purged_at is not None:
+        return locked
+    storage = locked.file.storage
+    file_names = [name for name in (locked.file.name, locked.thumbnail.name) if name]
+    locked.deleted_at = locked.deleted_at or timezone.now()
+    locked.deleted_by = locked.deleted_by or user
+    locked.purged_at = timezone.now()
+    locked.purged_by = user
+    locked.file.name = ""
+    locked.thumbnail.name = ""
+    locked.size_bytes = 0
+    locked.checksum_sha256 = ""
+    locked.width = None
+    locked.height = None
+    locked.updated_by = user
+    locked.save(update_fields=[
+        "deleted_at", "deleted_by", "purged_at", "purged_by", "file", "thumbnail",
+        "size_bytes", "checksum_sha256", "width", "height", "updated_by", "updated_at",
+    ])
+    audit(workspace=locked.workspace, actor=user, action="ASSET_PURGED", instance=locked)
+
+    def remove_files():
+        for name in file_names:
+            if storage.exists(name):
+                storage.delete(name)
+
+    transaction.on_commit(remove_files)
+    return locked

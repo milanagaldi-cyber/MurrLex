@@ -27,6 +27,7 @@ urlpatterns = [
     path("entities/<str:entity_type>/<uuid:entity_id>/revisions/compare", api.revision_compare, name="revision_compare"),
     path("entities/<str:entity_type>/<uuid:entity_id>/restore/<uuid:revision_id>", api.revision_restore, name="revision_restore"),
     path("prompts/<uuid:prompt_id>/improve", api.prompt_improve, name="prompt_improve"),
+    path("prompts/<uuid:prompt_id>/translate-dialogue", api.prompt_translate_dialogue, name="prompt_translate_dialogue"),
     path("suggestions/<uuid:suggestion_id>/accept", api.suggestion_accept, name="suggestion_accept"),
     path("suggestions/<uuid:suggestion_id>/reject", api.suggestion_reject, name="suggestion_reject"),
     path("episodes/<uuid:episode_id>/subtitle-tracks", api.episode_subtitle_tracks, name="episode_subtitle_tracks"),
