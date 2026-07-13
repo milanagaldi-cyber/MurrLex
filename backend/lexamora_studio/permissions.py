@@ -4,8 +4,8 @@ from .models import AdditionalGeneration, AiSuggestion, Asset, Character, Dialog
 
 
 ROLE_CAPABILITIES = {
-    WorkspaceMembership.Role.OWNER: {"view", "edit", "translate", "manage_members", "use_ai", "export"},
-    WorkspaceMembership.Role.ADMIN: {"view", "edit", "translate", "manage_members", "use_ai", "export"},
+    WorkspaceMembership.Role.OWNER: {"view", "edit", "translate", "manage_members", "manage_project", "use_ai", "export"},
+    WorkspaceMembership.Role.ADMIN: {"view", "edit", "translate", "manage_members", "manage_project", "use_ai", "export"},
     WorkspaceMembership.Role.EDITOR: {"view", "edit", "translate"},
     WorkspaceMembership.Role.TRANSLATOR: {"view", "translate"},
     WorkspaceMembership.Role.VIEWER: {"view"},

@@ -78,6 +78,13 @@ class ProjectSharingTests(TestCase):
         ProjectMembership.objects.create(project=self.project, user=self.editor, role=ProjectMembership.Role.EDITOR, invited_by=self.owner)
         ProjectMembership.objects.create(project=self.project, user=self.controller, role=ProjectMembership.Role.CONTROLLER, invited_by=self.owner)
 
+    def test_workspace_owner_can_open_project_sharing(self):
+        self.assertTrue(has_project_capability(self.owner, self.project, "manage_project"))
+        self.client.force_login(self.owner)
+        detail = self.client.get(f"/studio/projects/{self.project.id}/")
+        self.assertContains(detail, f"/studio/projects/{self.project.id}/access/")
+        self.assertEqual(self.client.get(f"/studio/projects/{self.project.id}/access/").status_code, 200)
+
     def test_project_share_does_not_expose_workspace_or_sibling_project(self):
         self.assertTrue(accessible_projects(self.viewer).filter(id=self.project.id).exists())
         self.assertFalse(accessible_projects(self.viewer).filter(id=self.other_project.id).exists())
