@@ -17,7 +17,7 @@
 </div>
 
 <div class="dashboard-sections">
-    {% if perms.auth.view_user or perms.auth.view_group or perms.lessons.view_userapiaccess or perms.lessons.view_adminmfapolicy %}
+    {% if perms.auth.view_user or perms.auth.view_group or perms.lessons.view_userapiaccess or perms.lessons.view_adminmfapolicy or perms.lessons.view_usersecurityprofile %}
     <section class="dashboard-section" aria-labelledby="users-heading">
         <div class="dashboard-section-heading">
             <div>
@@ -54,7 +54,7 @@
     </section>
     {% endif %}
 
-    {% if perms.lessons.view_providercredential or perms.lessons.view_apisession %}
+    {% if perms.lessons.view_providercredential or perms.lessons.view_apisession or perms.lessons.view_subscription or perms.lessons.view_creditledger or perms.lessons.view_adminauditlog %}
     <section class="dashboard-section" aria-labelledby="server-heading">
         <div class="dashboard-section-heading">
             <div>
@@ -73,6 +73,30 @@
             <a class="dashboard-link" href="{% url 'admin:lessons_apisession_changelist' %}">
                 <span class="dashboard-link-copy"><strong>API Sessions</strong><small>Mobile sign-ins, expiry, and revoked sessions.</small></span>
                 <span class="dashboard-count">{{ stats.active_sessions }}</span>
+            </a>
+            {% endif %}
+            {% if perms.lessons.view_subscription %}
+            <a class="dashboard-link" href="{% url 'admin:lessons_subscription_changelist' %}">
+                <span class="dashboard-link-copy"><strong>Subscriptions</strong><small>Plans and controlled subscription status changes.</small></span>
+                <span class="dashboard-status"><b>{{ stats.active_subscriptions }}</b> active</span>
+            </a>
+            {% endif %}
+            {% if perms.lessons.view_creditledger %}
+            <a class="dashboard-link" href="{% url 'admin:lessons_creditledger_changelist' %}">
+                <span class="dashboard-link-copy"><strong>Credit Ledger</strong><small>Immutable credit grants, usage, and reversals.</small></span>
+                <span class="dashboard-count">{{ stats.credit_events }}</span>
+            </a>
+            {% endif %}
+            {% if perms.lessons.view_adminauditlog %}
+            <a class="dashboard-link" href="{% url 'admin:lessons_adminauditlog_changelist' %}">
+                <span class="dashboard-link-copy"><strong>Security Audit Log</strong><small>Who performed sensitive account and access actions.</small></span>
+                <span class="dashboard-count">{{ stats.audit_events }}</span>
+            </a>
+            {% endif %}
+            {% if perms.lessons.view_usersecurityprofile %}
+            <a class="dashboard-link" href="{% url 'admin:lessons_usersecurityprofile_changelist' %}">
+                <span class="dashboard-link-copy"><strong>Security Profiles</strong><small>Emergency accounts, internal notes, soft deletion, and access reviews.</small></span>
+                <span class="dashboard-status">Review</span>
             </a>
             {% endif %}
         </div>

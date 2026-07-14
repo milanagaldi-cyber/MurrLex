@@ -1,0 +1,22 @@
+name: Deploy staging
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: murrlex-staging-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, linux, murrlex-staging]
+    environment: staging
+    permissions:
+      contents: read
+    steps:
+      - name: Verify approved branch
+        shell: bash
+        run: test "${GITHUB_REF_NAME}" = "Server_Main"
+      - name: Deploy through restricted local runner
+        shell: bash
+        run: /opt/MurrLex/deploy/scripts/deploy.sh

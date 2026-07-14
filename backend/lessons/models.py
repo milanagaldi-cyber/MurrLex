@@ -1,7 +1,21 @@
 import uuid
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models import Sum
+from django.utils import timezone
+
+
+class ImmutableQuerySet(models.QuerySet):
+    def update(self, **kwargs):
+        raise ValidationError("Immutable records cannot be updated.")
+
+    def delete(self):
+        raise ValidationError("Immutable records cannot be deleted.")
+
+
+ImmutableManager = models.Manager.from_queryset(ImmutableQuerySet)
 
 
 class AdminMfaPolicy(models.Model):
@@ -27,6 +41,43 @@ class AdminMfaPolicy(models.Model):
         return self.user.get_username()
 
 
+class UserSecurityProfile(models.Model):
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="security_profile",
+    )
+    is_break_glass = models.BooleanField(
+        default=False,
+        help_text="Emergency owner account that must not be used for daily work.",
+    )
+    internal_note = models.TextField(blank=True)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+    deletion_reason = models.TextField(blank=True)
+    access_reviewed_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "user security profile"
+        verbose_name_plural = "user security profiles"
+        permissions = [
+            ("manage_user_status", "Can block, unblock, and soft-delete users"),
+            ("adjust_credits", "Can issue and revoke credit adjustments"),
+            ("manage_subscriptions", "Can change subscription status"),
+        ]
+
+    @property
+    def is_soft_deleted(self) -> bool:
+        return self.deleted_at is not None
+
+    def mark_deleted(self, reason: str) -> None:
+        self.deleted_at = timezone.now()
+        self.deletion_reason = reason
+
+    def __str__(self) -> str:
+        return self.user.get_username()
+
+
 class UserApiAccess(models.Model):
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
@@ -43,6 +94,116 @@ class UserApiAccess(models.Model):
 
     def __str__(self) -> str:
         return f"{self.user.get_username()}: {'enabled' if self.ai_api_enabled else 'disabled'}"
+
+
+class Subscription(models.Model):
+    class Status(models.TextChoices):
+        FREE = "free", "Free"
+        ACTIVE = "active", "Active"
+        PAST_DUE = "past_due", "Past due"
+        CANCELLED = "cancelled", "Cancelled"
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="subscription",
+    )
+    plan_code = models.CharField(max_length=64, default="free")
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.FREE)
+    valid_until = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["user__username"]
+        permissions = [("manage_subscription_status", "Can perform subscription status actions")]
+
+    def __str__(self) -> str:
+        return f"{self.user.get_username()}: {self.status}"
+
+
+class CreditLedger(models.Model):
+    class Reason(models.TextChoices):
+        PURCHASE = "purchase", "Purchase"
+        USAGE = "usage", "Usage"
+        SUPPORT_BONUS = "support_bonus", "Support bonus"
+        ADMIN_ADJUSTMENT = "admin_adjustment", "Admin adjustment"
+        REVERSAL = "reversal", "Reversal"
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="credit_entries")
+    amount = models.IntegerField(help_text="Positive values add credits; negative values spend or revoke them.")
+    reason = models.CharField(max_length=32, choices=Reason.choices)
+    note = models.TextField(blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="created_credit_entries",
+        null=True,
+        blank=True,
+    )
+    reversal_of = models.OneToOneField(
+        "self",
+        on_delete=models.PROTECT,
+        related_name="reversal",
+        null=True,
+        blank=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    objects = ImmutableManager()
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        permissions = [("issue_credit_adjustment", "Can issue controlled credit adjustments")]
+
+    @classmethod
+    def balance_for(cls, user) -> int:
+        return cls.objects.filter(user=user).aggregate(total=Sum("amount"))["total"] or 0
+
+    def save(self, *args, **kwargs):
+        if self.pk and type(self).objects.filter(pk=self.pk).exists():
+            raise ValidationError("Credit ledger entries are immutable. Create a reversal entry instead.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Credit ledger entries cannot be deleted.")
+
+    def __str__(self) -> str:
+        return f"{self.user}: {self.amount} ({self.reason})"
+
+
+class AdminAuditLog(models.Model):
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="admin_audit_events",
+        null=True,
+        blank=True,
+    )
+    actor_label = models.CharField(max_length=150, blank=True)
+    action = models.CharField(max_length=100)
+    target_type = models.CharField(max_length=100)
+    target_id = models.CharField(max_length=100, blank=True)
+    old_value = models.JSONField(default=dict, blank=True)
+    new_value = models.JSONField(default=dict, blank=True)
+    reason = models.TextField(blank=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    objects = ImmutableManager()
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        verbose_name = "admin audit event"
+        verbose_name_plural = "admin audit log"
+
+    def save(self, *args, **kwargs):
+        if self.pk and type(self).objects.filter(pk=self.pk).exists():
+            raise ValidationError("Audit events are immutable.")
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("Audit events cannot be deleted.")
+
+    def __str__(self) -> str:
+        return f"{self.created_at:%Y-%m-%d %H:%M} {self.action}"
 
 
 class GoogleOAuthAllowedUser(models.Model):

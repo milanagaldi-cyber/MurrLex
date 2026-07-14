@@ -1,0 +1,2 @@
+# Validate with visudo -cf before installing as /etc/sudoers.d/murrlex-deploy (mode 0440).
+deploy ALL=(root) NOPASSWD: /usr/bin/systemctl restart murrlex-backend.service, /usr/bin/systemctl is-active --quiet murrlex-backend.service

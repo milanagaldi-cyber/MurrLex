@@ -2,7 +2,17 @@ from django.contrib.auth import get_user_model
 from django import template
 from django.utils import timezone
 
-from lessons.models import ApiSession, Card, ImportLog, Lesson, ProviderCredential, UserApiAccess
+from lessons.models import (
+    AdminAuditLog,
+    ApiSession,
+    Card,
+    CreditLedger,
+    ImportLog,
+    Lesson,
+    ProviderCredential,
+    Subscription,
+    UserApiAccess,
+)
 
 
 register = template.Library()
@@ -31,5 +41,11 @@ def admin_dashboard_stats(context):
         stats["cards"] = Card.objects.count()
     if user.has_perm("lessons.view_importlog"):
         stats["import_logs"] = ImportLog.objects.count()
+    if user.has_perm("lessons.view_subscription"):
+        stats["active_subscriptions"] = Subscription.objects.filter(status=Subscription.Status.ACTIVE).count()
+    if user.has_perm("lessons.view_creditledger"):
+        stats["credit_events"] = CreditLedger.objects.count()
+    if user.has_perm("lessons.view_adminauditlog"):
+        stats["audit_events"] = AdminAuditLog.objects.count()
 
     return stats

@@ -1,0 +1,11 @@
+# Apply only after owner and deploy key access works in separate open sessions.
+PermitRootLogin no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PubkeyAuthentication yes
+PermitEmptyPasswords no
+X11Forwarding no
+AllowAgentForwarding no
+MaxAuthTries 3
+LoginGraceTime 30
+AllowUsers owner deploy

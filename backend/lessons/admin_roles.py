@@ -21,20 +21,35 @@ DAILY_ADMIN_PERMISSIONS = {
     "lessons.googleoauthalloweduser": {"add", "change", "delete", "view"},
     "lessons.importlog": {"view"},
     "lessons.lesson": {"add", "change", "delete", "view"},
+    "lessons.subscription": {"view"},
     "lessons.userapiaccess": {"change", "view"},
+    "lessons.usersecurityprofile": {"change", "view"},
 }
 
 SUPPORT_PERMISSIONS = {
     "auth.user": {"add", "change", "view"},
     "lessons.apisession": {"change", "delete", "view"},
     "lessons.googleoauthalloweduser": {"add", "change", "delete", "view"},
+    "lessons.creditledger": {"view"},
+    "lessons.subscription": {"view"},
     "lessons.userapiaccess": {"change", "view"},
+    "lessons.usersecurityprofile": {"change", "view"},
 }
 
 BILLING_PERMISSIONS = {
     "auth.user": {"view"},
+    "lessons.adminauditlog": {"view"},
+    "lessons.creditledger": {"add", "view"},
+    "lessons.subscription": {"change", "view"},
     "lessons.userapiaccess": {"change", "view"},
+    "lessons.usersecurityprofile": {"view"},
     "lexamora_studio.aiusagelog": {"view"},
+}
+
+CUSTOM_ROLE_PERMISSIONS = {
+    DAILY_ADMIN_GROUP: {"manage_user_status"},
+    "Support": {"manage_user_status"},
+    "Billing": {"adjust_credits", "issue_credit_adjustment", "manage_subscription_status"},
 }
 
 CONTENT_PERMISSIONS = {
@@ -75,13 +90,20 @@ def _explicit_permissions(permission_map: dict[str, set[str]]) -> QuerySet[Permi
     return Permission.objects.filter(query)
 
 
+def _with_custom_permissions(role_name: str, permissions: QuerySet[Permission]) -> QuerySet[Permission]:
+    custom = CUSTOM_ROLE_PERMISSIONS.get(role_name, set())
+    if not custom:
+        return permissions
+    return Permission.objects.filter(Q(pk__in=permissions.values("pk")) | Q(codename__in=custom))
+
+
 def permissions_for_role(role_name: str) -> QuerySet[Permission]:
     if role_name == DAILY_ADMIN_GROUP:
-        return _explicit_permissions(DAILY_ADMIN_PERMISSIONS)
+        return _with_custom_permissions(role_name, _explicit_permissions(DAILY_ADMIN_PERMISSIONS))
     if role_name == "Support":
-        return _explicit_permissions(SUPPORT_PERMISSIONS)
+        return _with_custom_permissions(role_name, _explicit_permissions(SUPPORT_PERMISSIONS))
     if role_name == "Billing":
-        return _explicit_permissions(BILLING_PERMISSIONS)
+        return _with_custom_permissions(role_name, _explicit_permissions(BILLING_PERMISSIONS))
     if role_name == "Content":
         lesson_permissions = _explicit_permissions(CONTENT_PERMISSIONS)
         studio_permissions = Permission.objects.filter(

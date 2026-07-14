@@ -112,6 +112,24 @@ cd /opt/MurrLex/backend
 9. Put Nginx/Caddy/Apache in front with HTTPS.
 10. Verify `/api/health`, `/login/`, and `/lab/lessons/`.
 
+## Access Control Operations
+
+Read `docs/ACCESS_CONTROL.md` before changing staff, MFA, SSH, or deployment access.
+
+After migrations, synchronize the standard Django groups:
+
+```bash
+python manage.py bootstrap_roles
+```
+
+Generate a read-only staff access review:
+
+```bash
+python manage.py review_access
+```
+
+The repository contains a manual GitHub Actions workflow plus restricted deploy/SSHD examples. They do not alter the VPS until an owner explicitly creates and tests the separate Linux accounts and self-hosted runner.
+
 ## Connector Test
 
 With Django running:

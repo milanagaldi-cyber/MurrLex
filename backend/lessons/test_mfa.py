@@ -7,6 +7,8 @@ from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.test import TestCase
 
+from .models import AdminAuditLog
+
 
 class StaffMFAEnforcementTests(TestCase):
     password = "Strong-staff-password-2026!"
@@ -94,6 +96,11 @@ class StaffMFAEnforcementTests(TestCase):
         self.assertIn("_auth_user_id", self.client.session)
 
     def test_reset_command_removes_mfa_and_keeps_policy_required(self):
+        owner = get_user_model().objects.create_superuser(
+            username="recovery-owner",
+            email="owner@example.com",
+            password=self.password,
+        )
         Authenticator.objects.create(
             user=self.staff,
             type=Authenticator.Type.TOTP,
@@ -101,9 +108,22 @@ class StaffMFAEnforcementTests(TestCase):
         )
         output = StringIO()
 
-        call_command("reset_staff_mfa", self.staff.username, reason="Lost phone", stdout=output)
+        call_command(
+            "reset_staff_mfa",
+            self.staff.username,
+            actor=owner.username,
+            reason="Lost phone",
+            stdout=output,
+        )
 
         self.assertFalse(Authenticator.objects.filter(user=self.staff).exists())
         self.staff.admin_mfa_policy.refresh_from_db()
         self.assertTrue(self.staff.admin_mfa_policy.mfa_required)
+        self.assertTrue(
+            AdminAuditLog.objects.filter(
+                actor=owner,
+                action="staff_mfa_reset",
+                target_id=str(self.staff.pk),
+            ).exists()
+        )
         self.assertIn("Lost phone", output.getvalue())
