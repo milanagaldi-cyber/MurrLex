@@ -1960,6 +1960,56 @@ class StudioInlineEditingWorkflowTests(TestCase):
                 self.assertIsNone(source.scene)
                 self.assertTrue(Asset.objects.filter(id=source.id, deleted_at__isnull=True).exists())
 
+    def test_workspace_media_library_uploads_multiple_images(self):
+        import tempfile
+        from pathlib import Path
+        from .models import Asset
+
+        self.client.force_login(self.owner)
+        with tempfile.TemporaryDirectory() as directory:
+            with self.settings(STUDIO_PRIVATE_MEDIA_ROOT=Path(directory)):
+                response = self.client.post(
+                    f"/studio/workspaces/{self.workspace.id}/images/new/",
+                    {
+                        "file": [self.image_file("workspace-a.png"), self.image_file("workspace-b.png")],
+                        "next": f"/studio/workspaces/{self.workspace.id}/#workspace-images",
+                    },
+                )
+                self.assertRedirects(response, f"/studio/workspaces/{self.workspace.id}/#workspace-images")
+                self.assertEqual(Asset.objects.filter(workspace=self.workspace, project__isnull=True).count(), 2)
+                page = self.client.get(f"/studio/workspaces/{self.workspace.id}/")
+                self.assertContains(page, "Workspace Images")
+                self.assertContains(page, "workspace-a.png")
+                self.assertContains(page, "data-media-library")
+
+    def test_workspace_image_is_available_in_project_picker_and_can_be_cropped(self):
+        import tempfile
+        from pathlib import Path
+        from .models import Asset
+        from .storage import create_asset
+
+        self.client.force_login(self.owner)
+        with tempfile.TemporaryDirectory() as directory:
+            with self.settings(STUDIO_PRIVATE_MEDIA_ROOT=Path(directory)):
+                source = create_asset(
+                    user=self.owner,
+                    workspace=self.workspace,
+                    uploaded=self.image_file("workspace-reference.png"),
+                    kind=Asset.Kind.OTHER,
+                )
+                page = self.client.get(f"/studio/projects/{self.project.id}/")
+                self.assertContains(page, "workspace-reference.png")
+                self.assertContains(page, "Workspace / 72x54")
+                cropped = self.client.post(
+                    f"/studio/assets/{source.id}/crop/",
+                    data=json.dumps({"x": 4, "y": 3, "width": 40, "height": 30}),
+                    content_type="application/json",
+                )
+                self.assertEqual(cropped.status_code, 201, cropped.content)
+                result = Asset.objects.get(id=cropped.json()["id"])
+                self.assertIsNone(result.project)
+                self.assertEqual((result.width, result.height), (40, 30))
+
     def test_workspace_tiles_copy_trash_and_restore(self):
         self.client.force_login(self.owner)
         dashboard = self.client.get("/studio/")

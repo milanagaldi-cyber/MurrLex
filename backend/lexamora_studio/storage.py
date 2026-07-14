@@ -114,8 +114,8 @@ def create_asset(*, user, workspace, uploaded, kind, project=None, scene=None, c
 
 @transaction.atomic
 def crop_asset(*, asset, user, x, y, width, height):
-    if not asset.project_id or not asset.content_type.startswith("image/") or not asset.file.name:
-        raise ValidationError("Only active project images can be cropped.")
+    if not asset.content_type.startswith("image/") or not asset.file.name:
+        raise ValidationError("Only active images can be cropped.")
     try:
         with asset.file.open("rb") as source, Image.open(source) as image:
             image = ImageOps.exif_transpose(image)

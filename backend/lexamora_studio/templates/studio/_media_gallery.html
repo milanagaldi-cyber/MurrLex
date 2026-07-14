@@ -1,0 +1,41 @@
+<section class="media-library" id="{{ gallery_id|default:'images' }}" data-media-library>
+  <div class="toolbar media-library-toolbar">
+    <h2>{{ gallery_title|default:"Images" }}</h2>
+    <div class="media-library-controls">
+      <label class="compact-control">Sort
+        <select data-media-sort>
+          <option value="created">Recently added</option>
+          <option value="alpha">A-Z</option>
+        </select>
+      </label>
+      <label class="compact-control">Project
+        <select data-media-project>
+          <option value="all">All projects</option>
+          <option value="workspace">Workspace</option>
+          {% for item in gallery_projects %}<option value="{{ item.id }}">{{ item.title }}</option>{% endfor %}
+        </select>
+      </label>
+      <label class="compact-control">Format
+        <select data-media-orientation>
+          <option value="all">All formats</option>
+          <option value="vertical">Vertical</option>
+          <option value="horizontal">Horizontal</option>
+          <option value="square">Square</option>
+        </select>
+      </label>
+      <div class="view-switch" data-view-switch="{{ gallery_view_key }}">
+        <button type="button" class="icon-button" data-view="large" title="Large images" aria-label="Large images">&#x25A6;</button>
+        <button type="button" class="icon-button" data-view="small" title="Small images" aria-label="Small images">&#x25A5;</button>
+      </div>
+    </div>
+  </div>
+  <div class="asset-grid media-grid large" data-view-container="{{ gallery_view_key }}" data-media-grid>
+    {% for asset in gallery_assets %}{% if asset.thumbnail %}
+      <figure class="asset" data-media-item data-name="{{ asset.original_filename|lower }}" data-created="{{ asset.created_at|date:'U' }}" data-project="{% if asset.project_id %}{{ asset.project_id }}{% else %}workspace{% endif %}" data-orientation="{% if asset.width == asset.height %}square{% elif asset.width > asset.height %}horizontal{% else %}vertical{% endif %}" data-crop-url="{% url 'studio:asset_crop' asset.id %}">
+        <a href="{% url 'studio_api:asset_view' asset.id %}"><img src="{% url 'studio_api:asset_thumbnail' asset.id %}" alt="{{ asset.original_filename }}"></a>
+        <figcaption><span class="asset-name">{{ asset.original_filename }}</span><span class="muted">{% if asset.project %}{{ asset.project.title }} / {% else %}Workspace / {% endif %}{{ asset.width }}x{{ asset.height }}</span>{% include "studio/_asset_actions.html" with asset=asset allow_trash=True %}</figcaption>
+      </figure>
+    {% endif %}{% endfor %}
+    {% if can_edit %}{% include "studio/_image_picker.html" with picker_id=gallery_picker_id upload_url=gallery_upload_url picker_return=request.get_full_path picker_default_scope=gallery_default_scope %}{% endif %}
+  </div>
+</section>

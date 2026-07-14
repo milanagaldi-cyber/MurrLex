@@ -14,6 +14,7 @@ urlpatterns = [
     path("workspaces/<uuid:workspace_id>/email-logs/<uuid:log_id>/", views.workspace_email_log_download, name="workspace_email_log_download"),
     path("workspaces/<uuid:workspace_id>/access/", views.workspace_access, name="workspace_access"),
     path("workspaces/<uuid:workspace_id>/avatar/", views.workspace_avatar_upload, name="workspace_avatar_upload"),
+    path("workspaces/<uuid:workspace_id>/images/new/", views.workspace_image_upload, name="workspace_image_upload"),
     path("workspaces/<uuid:workspace_id>/models/", views.workspace_media_models, name="workspace_media_models"),
     path("workspaces/<uuid:workspace_id>/recycle-bin/", views.workspace_recycle_bin, name="workspace_recycle_bin"),
     path("workspaces/<uuid:workspace_id>/copy/", views.workspace_copy, name="workspace_copy"),

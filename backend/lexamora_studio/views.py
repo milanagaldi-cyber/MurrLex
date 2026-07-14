@@ -161,7 +161,22 @@ def workspace_detail(request, workspace_id):
         project.can_administer = is_workspace_owner_or_admin(request.user, workspace)
     recycle_count = Asset.all_objects.filter(workspace=workspace, deleted_at__isnull=False, purged_at__isnull=True).count()
     archive_count = Project.all_objects.filter(workspace=workspace, deleted_at__isnull=False, purged_at__isnull=True).count()
-    return render(request, "studio/workspace_detail.html", {"workspace": workspace, "projects": projects, "sort": sort, "can_edit": has_capability(request.user, workspace, "edit"), "can_manage": has_capability(request.user, workspace, "manage_members"), "can_administer": is_workspace_owner_or_admin(request.user, workspace), "imports": workspace.docx_imports.select_related("project")[:10], "recycle_count": recycle_count, "archive_count": archive_count})
+    workspace_assets = _accessible_workspace_images(request.user, workspace)
+    return render(request, "studio/workspace_detail.html", {
+        "workspace": workspace,
+        "projects": projects,
+        "sort": sort,
+        "can_edit": has_capability(request.user, workspace, "edit"),
+        "can_manage": has_capability(request.user, workspace, "manage_members"),
+        "can_administer": is_workspace_owner_or_admin(request.user, workspace),
+        "imports": workspace.docx_imports.select_related("project")[:10],
+        "recycle_count": recycle_count,
+        "archive_count": archive_count,
+        "gallery_assets": workspace_assets,
+        "gallery_projects": projects,
+        "project_assets": Asset.objects.none(),
+        "workspace_assets": workspace_assets,
+    })
 
 
 @login_required
@@ -488,13 +503,19 @@ def _image_upload(request, *, target, workspace, title, success_url, kind, proje
     return render(request, "studio/entity_form.html", {"form": form, "title": title, "submit_label": "Upload image", "multipart": True, "return_to": request.GET.get("next", "")})
 
 
+def _accessible_workspace_images(user, workspace):
+    projects = accessible_projects(user).filter(workspace=workspace)
+    return Asset.objects.filter(
+        workspace=workspace,
+        content_type__startswith="image/",
+    ).filter(
+        Q(project__isnull=True) | Q(project__in=projects),
+    ).select_related("project").distinct().order_by("-created_at")
+
+
 def _picker_assets(user, project):
-    images = Asset.objects.filter(content_type__startswith="image/")
-    project_assets = images.filter(project=project).order_by("-created_at")
-    workspace_assets = images.filter(
-        workspace=project.workspace,
-        project__in=accessible_projects(user),
-    ).exclude(project=project).select_related("project").order_by("-created_at")
+    workspace_assets = _accessible_workspace_images(user, project.workspace)
+    project_assets = workspace_assets.filter(project=project)
     return project_assets, workspace_assets
 
 
@@ -598,8 +619,9 @@ def asset_attach(request, scope, owner_id):
     asset = get_object_or_404(
         Asset.objects.filter(
             workspace=project.workspace,
-            project__in=accessible_projects(request.user),
             content_type__startswith="image/",
+        ).filter(
+            Q(project__isnull=True) | Q(project__in=accessible_projects(request.user)),
         ), id=request.POST.get("asset_id"),
     )
     if asset.project_id != project.id:
@@ -693,6 +715,19 @@ def prompt_block_edit(request, block_id):
 def project_image_upload(request, project_id):
     project = get_object_or_404(accessible_projects(request.user).select_related("workspace").prefetch_related("assets", "characters__assets", "episodes__scenes"), id=project_id)
     return _image_upload(request, target=project, workspace=project.workspace, title="Upload project image", success_url=lambda value: ("studio:project_detail", value.id), kind=Asset.Kind.OTHER, project=project)
+
+
+@login_required
+def workspace_image_upload(request, workspace_id):
+    workspace = get_object_or_404(accessible_workspaces(request.user), id=workspace_id)
+    return _image_upload(
+        request,
+        target=workspace,
+        workspace=workspace,
+        title="Upload workspace images",
+        success_url=lambda value: ("studio:workspace_detail", value.id),
+        kind=Asset.Kind.OTHER,
+    )
 
 
 @login_required
@@ -848,6 +883,8 @@ def project_detail(request, project_id):
         "mention_characters": list(project.characters.values_list("name", flat=True)),
         "project_assets": project_assets,
         "workspace_assets": workspace_assets,
+        "gallery_assets": project_assets,
+        "gallery_projects": [project],
     })
 
 
@@ -2158,7 +2195,9 @@ def prompt_asset_attach(request, prompt_id):
         return HttpResponseForbidden("Edit permission is required.")
     project = prompt.scene.episode.project
     asset = get_object_or_404(
-        Asset.objects.filter(workspace=project.workspace, project__in=accessible_projects(request.user), content_type__startswith="image/"),
+        Asset.objects.filter(workspace=project.workspace, content_type__startswith="image/").filter(
+            Q(project__isnull=True) | Q(project__in=accessible_projects(request.user)),
+        ),
         id=request.POST.get("asset_id"),
     )
     if asset.project_id != project.id:
