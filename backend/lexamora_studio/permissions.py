@@ -49,16 +49,13 @@ def accessible_assets(user, *, include_deleted=False):
     projects = accessible_projects(user)
     workspaces = accessible_workspaces(user)
     return manager.filter(
-        Q(project__in=projects)
-        | Q(scene__episode__project__in=projects)
-        | Q(character__project__in=projects)
-        | Q(prompt__scene__episode__project__in=projects)
+        Q(projects__in=projects)
+        | Q(referenced_by_scenes__episode__project__in=projects)
+        | Q(referenced_by_characters__project__in=projects)
+        | Q(referenced_by_prompts__scene__episode__project__in=projects)
         | Q(
             workspace__in=workspaces,
-            project__isnull=True,
-            scene__isnull=True,
-            character__isnull=True,
-            prompt__isnull=True,
+            projects__isnull=True,
         )
     ).distinct()
 

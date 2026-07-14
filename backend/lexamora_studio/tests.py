@@ -2046,6 +2046,71 @@ class StudioInlineEditingWorkflowTests(TestCase):
                 self.assertIsNone(asset.scene)
                 self.assertIsNone(asset.deleted_at)
 
+    def test_shared_workspace_image_is_not_duplicated_and_requires_complete_access_to_delete(self):
+        import tempfile
+        from pathlib import Path
+        from .models import Asset
+        from .storage import create_asset
+
+        editor = get_user_model().objects.create_user("shared-image-editor", password="strong-pass")
+        WorkspaceMembership.objects.create(
+            workspace=self.workspace,
+            user=editor,
+            role=WorkspaceMembership.Role.EDITOR,
+        )
+        hidden_project = Project.objects.create(
+            workspace=self.workspace,
+            project_type=Project.Type.SERIES,
+            title="Private linked project",
+            created_by=self.owner,
+            updated_by=self.owner,
+        )
+        ProjectAccessExclusion.objects.create(
+            project=hidden_project,
+            user=editor,
+            revoked_by=self.owner,
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            with self.settings(STUDIO_PRIVATE_MEDIA_ROOT=Path(directory)):
+                asset = create_asset(
+                    user=self.owner,
+                    workspace=self.workspace,
+                    project=self.project,
+                    uploaded=self.image_file("shared-once.png"),
+                    kind=Asset.Kind.OTHER,
+                )
+                asset.projects.add(hidden_project)
+                self.assertEqual(Asset.objects.count(), 1)
+
+                self.client.force_login(editor)
+                page = self.client.get(f"/studio/workspaces/{self.workspace.id}/")
+                self.assertEqual(page.status_code, 200)
+                self.assertNotContains(page, hidden_project.title)
+                denied = self.client.post(
+                    f"/studio/assets/{asset.id}/trash/",
+                    {"workspace_delete": "1", "confirm_usage": "1"},
+                )
+                self.assertEqual(denied.status_code, 403)
+                asset.refresh_from_db()
+                self.assertIsNone(asset.deleted_at)
+
+                self.client.force_login(self.owner)
+                needs_confirmation = self.client.post(
+                    f"/studio/assets/{asset.id}/trash/",
+                    {"workspace_delete": "1"},
+                )
+                self.assertEqual(needs_confirmation.status_code, 302)
+                asset.refresh_from_db()
+                self.assertIsNone(asset.deleted_at)
+                confirmed = self.client.post(
+                    f"/studio/assets/{asset.id}/trash/",
+                    {"workspace_delete": "1", "confirm_usage": "1"},
+                )
+                self.assertEqual(confirmed.status_code, 302)
+                asset.refresh_from_db()
+                self.assertIsNotNone(asset.deleted_at)
+
     def test_project_cover_can_be_selected_from_workspace(self):
         import tempfile
         from pathlib import Path
@@ -2153,7 +2218,8 @@ class StudioInlineEditingWorkflowTests(TestCase):
                 character.refresh_from_db()
                 character_asset.refresh_from_db()
                 self.assertEqual(character.avatar_asset_id, character_asset.id)
-                self.assertEqual(character_asset.character_id, character.id)
+                self.assertTrue(character.reference_assets.filter(id=character_asset.id).exists())
+                self.assertTrue(character_asset.projects.filter(id=self.project.id).exists())
 
     def test_project_header_is_shared_by_all_four_views(self):
         self.client.force_login(self.owner)
@@ -2212,13 +2278,14 @@ class StudioInlineEditingWorkflowTests(TestCase):
         self.client.force_login(self.owner)
         with tempfile.TemporaryDirectory() as directory:
             with self.settings(STUDIO_PRIVATE_MEDIA_ROOT=Path(directory)):
-                create_asset(user=self.owner, workspace=self.workspace, project=self.project, uploaded=self.image_file("cover.png"), kind=Asset.Kind.OTHER)
+                source_asset = create_asset(user=self.owner, workspace=self.workspace, project=self.project, uploaded=self.image_file("cover.png"), kind=Asset.Kind.OTHER)
                 copied_response = self.client.post(f"/studio/projects/{self.project.id}/copy/")
                 copied = Project.objects.exclude(id=self.project.id).get()
                 self.assertRedirects(copied_response, f"/studio/projects/{copied.id}/")
                 self.assertEqual(copied.episodes.count(), 1)
                 self.assertEqual(copied.episodes.get().scenes.count(), 2)
-                self.assertEqual(copied.assets.count(), 1)
+                self.assertTrue(copied.media_assets.filter(id=source_asset.id).exists())
+                self.assertEqual(Asset.objects.count(), 1)
                 deleted = self.client.post(f"/studio/projects/{copied.id}/trash/")
                 self.assertRedirects(deleted, f"/studio/workspaces/{self.workspace.id}/")
                 self.assertFalse(Project.objects.filter(id=copied.id).exists())
@@ -2294,12 +2361,16 @@ class StudioAssetLifecycleTests(TestCase):
                 thumbnail_path = Path(asset.thumbnail.path)
                 trashed = self.client.post(
                     f"/studio/assets/{asset.id}/trash/",
-                    {"next": f"/studio/projects/{self.project.id}/images/trash/"},
+                    {
+                        "next": f"/studio/projects/{self.project.id}/images/trash/",
+                        "workspace_delete": "1",
+                        "confirm_usage": "1",
+                    },
                 )
                 self.assertEqual(trashed.status_code, 302)
                 self.assertFalse(Asset.objects.filter(id=asset.id).exists())
                 self.assertEqual(self.client.get(f"/api/v1/studio/assets/{asset.id}/view").status_code, 404)
-                trash_page = self.client.get(f"/studio/projects/{self.project.id}/images/trash/")
+                trash_page = self.client.get(f"/studio/workspaces/{self.workspace.id}/recycle-bin/")
                 self.assertContains(trash_page, asset.original_filename)
                 trash_preview = self.client.get(f"/studio/assets/{asset.id}/trash-thumbnail/")
                 self.assertEqual(trash_preview.status_code, 200)

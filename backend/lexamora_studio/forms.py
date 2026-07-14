@@ -263,7 +263,7 @@ class AdditionalGenerationForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
         self.fields["source_asset"].required = False
         self.fields["source_asset"].queryset = (
-            Asset.objects.filter(project=project, content_type__startswith="image/")
+            Asset.objects.filter(projects=project, content_type__startswith="image/").distinct()
             if project is not None else Asset.objects.none()
         )
 

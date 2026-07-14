@@ -108,6 +108,21 @@ def create_asset(*, user, workspace, uploaded, kind, project=None, scene=None, c
         asset.thumbnail.save("thumbnail.jpg", ContentFile(thumbnail), save=False)
     asset.full_clean()
     asset.save()
+    related_project = project
+    if related_project is None and scene is not None:
+        related_project = scene.episode.project
+    if related_project is None and character is not None:
+        related_project = character.project
+    if related_project is None and prompt is not None:
+        related_project = prompt.scene.episode.project
+    if related_project is not None:
+        asset.projects.add(related_project)
+    if scene is not None:
+        scene.reference_assets.add(asset)
+    if character is not None:
+        character.reference_assets.add(asset)
+    if prompt is not None:
+        prompt.reference_assets.add(asset)
     audit(workspace=workspace, actor=user, action="ASSET_UPLOAD", instance=asset, metadata={"filename": filename, "sizeBytes": uploaded.size})
     return asset
 
@@ -141,6 +156,7 @@ def crop_asset(*, asset, user, x, y, width, height):
         kind=Asset.Kind.OTHER,
         project=asset.project,
     )
+    cropped_asset.projects.add(*asset.projects.all())
     audit(
         workspace=asset.workspace,
         actor=user,

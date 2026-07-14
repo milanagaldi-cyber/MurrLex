@@ -9,7 +9,7 @@
 
 <h2>Scene image library</h2>
 <div class="asset-grid">
-{% for asset in scene.assets.all %}
+{% for asset in scene.reference_assets.all %}
   {% if asset.thumbnail %}
   <figure class="asset" data-crop-url="{% url 'studio:asset_crop' asset.id %}">
     <a href="{% url 'studio_api:asset_view' asset.id %}" target="_blank" rel="noopener"><img src="{% url 'studio_api:asset_thumbnail' asset.id %}" alt="{{ asset.original_filename }}"></a>

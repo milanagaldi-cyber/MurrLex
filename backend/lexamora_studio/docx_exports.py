@@ -69,7 +69,7 @@ def generate_docx_export(*, project, user):
             document.add_paragraph(character.description)
             if character.visual_description:
                 document.add_paragraph(character.visual_description)
-            for asset in character.assets.all():
+            for asset in character.reference_assets.all():
                 _add_image(document, asset)
 
     for episode in project.episodes.all():
@@ -88,7 +88,7 @@ def generate_docx_export(*, project, user):
             document.add_heading("Диалоги", 3)
             for line in scene.dialogue_lines.all():
                 document.add_paragraph(f"{line.speaker}: “{line.text}”" if line.speaker else line.text)
-            for asset in scene.assets.all():
+            for asset in scene.reference_assets.all():
                 _add_image(document, asset)
             for prompt in scene.prompts.all():
                 document.add_heading(prompt.title or f"{prompt.get_prompt_type_display()} prompt - {prompt.ai_model.name} [{prompt.language}]", 2)
@@ -96,17 +96,17 @@ def generate_docx_export(*, project, user):
                 addition = default_prompt_template(prompt.prompt_type).content.strip()
                 if addition:
                     document.add_paragraph(f"Default prompt addition: {addition}")
-                for asset in prompt.assets.all():
+                for asset in prompt.reference_assets.all():
                     _add_image(document, asset)
         for track in episode.subtitle_tracks.all():
             document.add_heading(f"Subtitles {track.language} / {track.get_kind_display()}", 2)
             for line in track.lines.all():
                 document.add_paragraph(line.text)
 
-    linked_ids = set(project.assets.exclude(scene__isnull=False).exclude(character__isnull=False).values_list("id", flat=True))
+    linked_ids = set(project.media_assets.values_list("id", flat=True))
     if linked_ids:
         document.add_heading("Project images", 1)
-        for asset in project.assets.filter(id__in=linked_ids):
+        for asset in project.media_assets.filter(id__in=linked_ids):
             _add_image(document, asset)
 
     output = io.BytesIO()

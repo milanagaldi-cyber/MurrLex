@@ -154,7 +154,7 @@ def render_project_pdf(project, episode, sections):
                     story.append(Paragraph(f"{_safe(prompt.ai_model.name)} / {prompt.get_prompt_type_display()}", styles["Heading3"]))
                     story.append(Paragraph(_safe(prompt.editor_content), styles["Normal"]))
             if "assets" in sections:
-                for asset in scene.assets.all():
+                for asset in scene.reference_assets.all():
                     story.append(Paragraph(_safe(asset.original_filename), styles["StudioMeta"]))
                     image = _image_flowable(asset)
                     if image:

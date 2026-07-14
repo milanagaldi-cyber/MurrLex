@@ -6,7 +6,6 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core import signing
 from django.core.exceptions import ValidationError
-from django.core.files.base import ContentFile
 from django.core.mail import send_mail
 from django.db import transaction
 from django.db.models import Prefetch, Q
@@ -153,10 +152,15 @@ def workspace_detail(request, workspace_id):
     workspace = get_object_or_404(accessible_workspaces(request.user).select_related("avatar_asset"), id=workspace_id)
     sort = request.GET.get("sort", "updated")
     orderings = {"title": "title", "created": "-created_at", "updated": "-updated_at", "type": "project_type"}
-    projects = list(workspace.projects.select_related("created_by", "updated_by", "cover_asset").prefetch_related("assets", "memberships__user").order_by(orderings.get(sort, "-updated_at"), "title"))
+    sort_key = f"studio_workspace_sort_{workspace.id}"
+    if request.GET.get("sort") in orderings:
+        request.session[sort_key] = request.GET["sort"]
+    elif not request.GET.get("sort"):
+        sort = request.session.get(sort_key, sort)
+    projects = list(accessible_projects(request.user).filter(workspace=workspace).select_related("created_by", "updated_by", "cover_asset").prefetch_related("media_assets", "assets", "memberships__user").order_by(orderings.get(sort, "-updated_at"), "title"))
     for project in projects:
         project.display_cover_asset = project.cover_asset or min(
-            (asset for asset in project.assets.all() if asset.thumbnail),
+            (asset for asset in project.media_assets.all() if asset.thumbnail),
             key=lambda asset: asset.created_at,
             default=None,
         )
@@ -165,7 +169,8 @@ def workspace_detail(request, workspace_id):
         project.can_administer = is_workspace_owner_or_admin(request.user, workspace)
     recycle_count = Asset.all_objects.filter(workspace=workspace, deleted_at__isnull=False, purged_at__isnull=True).count()
     archive_count = Project.all_objects.filter(workspace=workspace, deleted_at__isnull=False, purged_at__isnull=True).count()
-    workspace_assets = _accessible_workspace_images(request.user, workspace)
+    workspace_assets = list(_accessible_workspace_images(request.user, workspace))
+    _decorate_gallery_assets(request.user, workspace_assets)
     return render(request, "studio/workspace_detail.html", {
         "workspace": workspace,
         "projects": projects,
@@ -178,7 +183,7 @@ def workspace_detail(request, workspace_id):
         "archive_count": archive_count,
         "gallery_assets": workspace_assets,
         "gallery_projects": projects,
-        "project_assets": Asset.objects.none(),
+        "project_assets": [],
         "workspace_assets": workspace_assets,
     })
 
@@ -528,13 +533,14 @@ def _accessible_workspace_images(user, workspace):
         workspace=workspace,
         content_type__startswith="image/",
     ).filter(
-        Q(project__isnull=True) | Q(project__in=projects),
-    ).select_related("project").distinct().order_by("-created_at")
+        Q(projects__in=projects)
+        | Q(projects__isnull=True),
+    ).select_related("project").prefetch_related("projects").distinct().order_by("-created_at")
 
 
 def _picker_assets(user, project):
     workspace_assets = _accessible_workspace_images(user, project.workspace)
-    project_assets = workspace_assets.filter(project=project)
+    project_assets = workspace_assets.filter(projects=project).distinct()
     return project_assets, workspace_assets
 
 
@@ -597,7 +603,7 @@ def character_edit(request, character_id):
 @login_required
 def character_detail(request, character_id):
     character = get_object_or_404(
-        Character.objects.select_related("project__workspace", "avatar_asset").prefetch_related("assets").filter(
+        Character.objects.select_related("project__workspace", "avatar_asset").prefetch_related("assets", "reference_assets").filter(
             project__in=accessible_projects(request.user)
         ), id=character_id,
     )
@@ -665,22 +671,12 @@ def asset_attach(request, scope, owner_id):
             workspace=workspace,
             content_type__startswith="image/",
         ).filter(
-            Q(project__isnull=True) | Q(project__in=accessible_projects(request.user)),
+            Q(projects__in=accessible_projects(request.user))
+            | Q(projects__isnull=True),
         ), id=request.POST.get("asset_id"),
     )
-    if project is not None and asset.project_id != project.id:
-        suffix = asset.original_filename.rsplit(".", 1)[-1] if "." in asset.original_filename else "jpg"
-        stem = asset.original_filename.rsplit(".", 1)[0]
-        clone_name = f"{stem}-{str(project.id)[:8]}.{suffix}"
-        clone = Asset.objects.filter(project=project, original_filename=clone_name, size_bytes=asset.size_bytes, width=asset.width, height=asset.height).first()
-        if clone:
-            asset = clone
-        else:
-            with asset.file.open("rb") as source:
-                uploaded = ContentFile(source.read(), name=clone_name)
-                uploaded.content_type = asset.content_type
-            clone_kind = Asset.Kind.SCENE_IMAGE if scope == "scene" else Asset.Kind.CHARACTER_REFERENCE if scope in {"character", "character_avatar"} else Asset.Kind.OTHER
-            asset = create_asset(user=request.user, workspace=project.workspace, uploaded=uploaded, kind=clone_kind, project=project)
+    if project is not None:
+        asset.projects.add(project)
     if scope == "workspace_avatar":
         owner.avatar_asset = asset
         owner.updated_by = request.user
@@ -690,14 +686,12 @@ def asset_attach(request, scope, owner_id):
         owner.updated_by = request.user
         owner.save(update_fields=["cover_asset", "updated_by", "updated_at"])
     elif scope == "scene":
-        asset.scene = owner
-        asset.kind = Asset.Kind.SCENE_IMAGE
+        owner.reference_assets.add(asset)
     else:
-        asset.character = owner
-        asset.kind = Asset.Kind.CHARACTER_REFERENCE
+        owner.reference_assets.add(asset)
     if scope in {"scene", "character", "character_avatar"}:
         asset.updated_by = request.user
-        asset.save(update_fields=["scene" if scope == "scene" else "character", "kind", "updated_by", "updated_at"])
+        asset.save(update_fields=["updated_by", "updated_at"])
     if scope == "character_avatar":
         owner.avatar_asset = asset
         owner.updated_by = request.user
@@ -721,7 +715,14 @@ def character_set_avatar(request, character_id):
     character = get_object_or_404(Character.objects.select_related("project__workspace").filter(project__in=accessible_projects(request.user)), id=character_id)
     if request.method != "POST" or not has_object_capability(request.user, character, "edit"):
         return HttpResponseForbidden("Edit permission is required.")
-    asset = get_object_or_404(Asset.objects.filter(character=character, content_type__startswith="image/"), id=request.POST.get("asset_id"))
+    asset = get_object_or_404(
+        Asset.objects.filter(
+            Q(character=character) | Q(referenced_by_characters=character),
+            content_type__startswith="image/",
+        ).distinct(),
+        id=request.POST.get("asset_id"),
+    )
+    asset.projects.add(character.project)
     character.avatar_asset = asset; character.updated_by = request.user
     character.save(update_fields=["avatar_asset", "updated_by", "updated_at"])
     messages.success(request, "Character avatar saved.")
@@ -931,7 +932,7 @@ def entity_move(request, entity_type, entity_id, direction):
 @login_required
 def project_detail(request, project_id):
     project = get_object_or_404(
-        accessible_projects(request.user).select_related("workspace", "created_by", "updated_by").prefetch_related("assets", "characters__avatar_asset", "characters__assets", "episodes__scenes", "memberships__user"),
+        accessible_projects(request.user).select_related("workspace", "created_by", "updated_by").prefetch_related("media_assets", "assets", "characters__avatar_asset", "characters__reference_assets", "episodes__scenes", "memberships__user"),
         id=project_id,
     )
     inherited = list(project.workspace.memberships.filter(status=WorkspaceMembership.Status.ACTIVE).exclude(user=project.workspace.owner).select_related("user"))
@@ -941,8 +942,10 @@ def project_detail(request, project_id):
     project_assets, workspace_assets = _picker_assets(request.user, project)
     recent_project_ids = set(project_assets.values_list("id", flat=True)[:10])
     gallery_assets = list(workspace_assets)
+    _decorate_gallery_assets(request.user, gallery_assets)
     for asset in gallery_assets:
         asset.is_recent_project = asset.id in recent_project_ids
+        asset.is_current_project = str(project.id) in asset.gallery_project_ids.split(",")
     return render(request, "studio/project_detail.html", {
         "project": project,
         "inherited_memberships": inherited,
@@ -1008,7 +1011,7 @@ def scene_detail(request, scene_id):
     scene = get_object_or_404(
         Scene.objects.select_related("episode__project__workspace").prefetch_related(
             "dialogue_lines", "prompts__ai_model", "prompts__template", "prompts__blocks__source_dialogue",
-            "prompts__assets", "prompts__reference_assets", "prompts__ai_suggestions", "assets"
+            "prompts__assets", "prompts__reference_assets", "prompts__ai_suggestions", "assets", "reference_assets"
         ).filter(episode__project__in=accessible_projects(request.user)),
         id=scene_id,
     )
@@ -1041,7 +1044,7 @@ def scene_detail(request, scene_id):
         "editor_prompts": editor_prompts,
         "can_edit": can_edit,
         "can_use_ai": has_object_capability(request.user, scene, "use_ai") and user_has_ai_access(request.user),
-        "scene_images": scene.assets.filter(prompt__isnull=True),
+        "scene_images": scene.reference_assets.filter(prompt__isnull=True),
         "project_assets": project_assets,
         "workspace_assets": workspace_assets,
         "mention_characters": list(scene.episode.project.characters.values_list("name", flat=True)),
@@ -1303,10 +1306,19 @@ def suggestion_decide(request, suggestion_id, decision):
 def translation_workspace(request, project_id):
     project = get_object_or_404(accessible_projects(request.user), id=project_id)
     workspace = project.workspace
-    target_language = (request.POST.get("target_language") or request.GET.get("target_language") or "en").strip().lower()[:16]
-    scene_id = request.GET.get("scene", "").strip()
-    prompt_language = request.GET.get("prompt_language", "").strip().upper()
-    sort_direction = request.GET.get("sort", "asc")
+    filter_key = f"studio_translation_filters_{project.id}"
+    saved_filters = request.session.get(filter_key, {})
+    target_language = (request.POST.get("target_language") or request.GET.get("target_language") or saved_filters.get("target_language") or "en").strip().lower()[:16]
+    scene_id = request.GET.get("scene", saved_filters.get("scene", "")).strip()
+    prompt_language = request.GET.get("prompt_language", saved_filters.get("prompt_language", "")).strip().upper()
+    sort_direction = request.GET.get("sort", saved_filters.get("sort", "asc"))
+    if request.method == "GET":
+        request.session[filter_key] = {
+            "target_language": target_language,
+            "scene": scene_id,
+            "prompt_language": prompt_language,
+            "sort": sort_direction,
+        }
     if request.method == "POST" and request.POST.get("line_id"):
         if not has_project_capability(request.user, project, "translate"):
             messages.error(request, "Translation permission is required.")
@@ -1665,11 +1677,50 @@ def _asset_for_edit(request, asset_id, include_deleted=False):
     )
 
 
+def _asset_usage_project_ids(asset):
+    project_ids = set(asset.projects.values_list("id", flat=True))
+    project_ids.update(asset.referenced_by_scenes.values_list("episode__project_id", flat=True))
+    project_ids.update(asset.referenced_by_characters.values_list("project_id", flat=True))
+    project_ids.update(asset.referenced_by_prompts.values_list("scene__episode__project_id", flat=True))
+    project_ids.update(asset.project_cover_for.values_list("id", flat=True))
+    project_ids.update(asset.character_avatar_for.values_list("project_id", flat=True))
+    return {value for value in project_ids if value}
+
+
+def _asset_usage_count(asset):
+    return (
+        asset.projects.count()
+        + asset.referenced_by_scenes.count()
+        + asset.referenced_by_characters.count()
+        + asset.referenced_by_prompts.count()
+        + asset.project_cover_for.count()
+        + asset.character_avatar_for.count()
+    )
+
+
+def _decorate_gallery_assets(user, assets):
+    accessible_ids = set(accessible_projects(user).values_list("id", flat=True))
+    for asset in assets:
+        usage_project_ids = _asset_usage_project_ids(asset)
+        asset.gallery_project_ids = ",".join(str(value) for value in sorted(usage_project_ids, key=str))
+        asset.usage_count = _asset_usage_count(asset)
+        asset.requires_usage_confirmation = asset.usage_count > 1
+        asset.can_trash_from_workspace = usage_project_ids.issubset(accessible_ids)
+    return assets
+
+
 @login_required
 def asset_trash(request, asset_id):
     asset = _asset_for_edit(request, asset_id)
-    if request.method != "POST" or not has_object_capability(request.user, asset, "edit"):
+    if request.method != "POST" or request.POST.get("workspace_delete") != "1" or not has_capability(request.user, asset.workspace, "edit"):
         return HttpResponseForbidden("Edit permission is required.")
+    usage_project_ids = _asset_usage_project_ids(asset)
+    accessible_ids = set(accessible_projects(request.user).filter(id__in=usage_project_ids).values_list("id", flat=True))
+    if accessible_ids != usage_project_ids:
+        return HttpResponseForbidden("This image is used by a project you cannot access and cannot be deleted.")
+    if _asset_usage_count(asset) > 1 and request.POST.get("confirm_usage") != "1":
+        messages.warning(request, "This image is used multiple times or by several projects. Confirm deletion to continue.")
+        return _asset_action_redirect(request, asset)
     try:
         trash_asset(asset=asset, user=request.user)
     except ValidationError as exc:
@@ -1708,17 +1759,24 @@ def asset_crop(request, asset_id):
 @login_required
 def asset_detach(request, asset_id, scope, owner_id):
     asset = _asset_for_edit(request, asset_id)
-    if request.method != "POST" or not has_object_capability(request.user, asset, "edit"):
+    if request.method != "POST":
         return HttpResponseForbidden("Edit permission is required.")
     detached = False
     if scope == "scene":
         scene = get_object_or_404(Scene.objects.filter(episode__project__in=accessible_projects(request.user)), id=owner_id)
+        if not has_object_capability(request.user, scene, "edit"):
+            return HttpResponseForbidden("Edit permission is required.")
+        if scene.reference_assets.filter(id=asset.id).exists():
+            scene.reference_assets.remove(asset)
+            detached = True
         if asset.scene_id == scene.id:
             asset.scene = None
             asset.kind = Asset.Kind.OTHER
             detached = True
     elif scope == "prompt":
         prompt = get_object_or_404(Prompt.objects.filter(scene__episode__project__in=accessible_projects(request.user)), id=owner_id)
+        if not has_object_capability(request.user, prompt, "edit"):
+            return HttpResponseForbidden("Edit permission is required.")
         if asset.prompt_id == prompt.id:
             asset.prompt = None
             detached = True
@@ -1727,22 +1785,39 @@ def asset_detach(request, asset_id, scope, owner_id):
             detached = True
     elif scope == "character":
         character = get_object_or_404(Character.objects.filter(project__in=accessible_projects(request.user)), id=owner_id)
+        if not has_object_capability(request.user, character, "edit"):
+            return HttpResponseForbidden("Edit permission is required.")
+        if character.reference_assets.filter(id=asset.id).exists():
+            character.reference_assets.remove(asset)
+            detached = True
         if asset.character_id == character.id:
             asset.character = None
             asset.kind = Asset.Kind.OTHER
             detached = True
     elif scope == "project":
         project = get_object_or_404(accessible_projects(request.user), id=owner_id)
-        if asset.project_id == project.id:
+        if not has_project_capability(request.user, project, "edit"):
+            return HttpResponseForbidden("Edit permission is required.")
+        if asset.projects.filter(id=project.id).exists() or asset.project_id == project.id:
+            for scene in Scene.objects.filter(episode__project=project, reference_assets=asset):
+                scene.reference_assets.remove(asset)
+            for character in Character.objects.filter(project=project, reference_assets=asset):
+                character.reference_assets.remove(asset)
+            for prompt in Prompt.objects.filter(scene__episode__project=project, reference_assets=asset):
+                prompt.reference_assets.remove(asset)
             if project.cover_asset_id == asset.id:
                 project.cover_asset = None
                 project.updated_by = request.user
                 project.save(update_fields=["cover_asset", "updated_by", "updated_at"])
-            asset.referenced_by_prompts.clear()
-            asset.project = None
-            asset.scene = None
-            asset.character = None
-            asset.prompt = None
+            asset.projects.remove(project)
+            if asset.project_id == project.id:
+                asset.project = None
+            if asset.scene_id and asset.scene.episode.project_id == project.id:
+                asset.scene = None
+            if asset.character_id and asset.character.project_id == project.id:
+                asset.character = None
+            if asset.prompt_id and asset.prompt.scene.episode.project_id == project.id:
+                asset.prompt = None
             asset.kind = Asset.Kind.OTHER
             detached = True
     if not detached:
@@ -1788,19 +1863,8 @@ def project_image_trash(request, project_id):
         accessible_projects(request.user).select_related("workspace"),
         id=project_id,
     )
-    if has_project_capability(request.user, project, "edit"):
-        for asset in Asset.all_objects.filter(project=project, content_type__startswith="image/", deleted_at__lt=timezone.now() - timedelta(days=30), purged_at__isnull=True):
-            purge_asset(asset=asset, user=request.user)
-    return render(request, "studio/image_trash.html", {
-        "project": project,
-        "assets": Asset.all_objects.filter(
-            project=project,
-            content_type__startswith="image/",
-            deleted_at__isnull=False,
-            purged_at__isnull=True,
-        ),
-        "can_edit": has_project_capability(request.user, project, "edit"),
-    })
+    messages.info(request, "Image deletion is managed only from the Workspace Recycle Bin.")
+    return redirect("studio:workspace_recycle_bin", workspace_id=project.workspace_id)
 
 
 @login_required
@@ -1894,26 +1958,36 @@ def project_copy(request, project_id):
                 prompt_map[prompt.id] = new_prompt
                 for block in prompt.blocks.all():
                     PromptBlock.objects.create(prompt=new_prompt, block_type=block.block_type, content=block.content, source_dialogue=line_map.get(block.source_dialogue_id), translated_content=block.translated_content, translation_language=block.translation_language, translation_model=block.translation_model, position=block.position, created_by=request.user, updated_by=request.user)
-    asset_map = {}
-    for asset in source.assets.filter(purged_at__isnull=True).select_related("scene", "character", "prompt"):
-        if not asset.file.name:
-            continue
-        asset.file.open("rb")
-        uploaded = ContentFile(asset.file.read(), name=asset.original_filename)
-        uploaded.content_type = asset.content_type
-        asset_map[asset.id] = create_asset(user=request.user, workspace=copied.workspace, uploaded=uploaded, kind=asset.kind, project=copied, scene=scene_map.get(asset.scene_id), character=character_map.get(asset.character_id), prompt=prompt_map.get(asset.prompt_id))
-        asset.file.close()
+    source_assets = list(
+        Asset.objects.filter(projects=source, purged_at__isnull=True).distinct()
+    )
+    asset_map = {asset.id: asset for asset in source_assets}
+    if source_assets:
+        copied.media_assets.add(*source_assets)
+    for old_scene_id, new_scene in scene_map.items():
+        old_scene = Scene.all_objects.get(id=old_scene_id)
+        references = list(old_scene.reference_assets.all())
+        if references:
+            new_scene.reference_assets.add(*references)
+            copied.media_assets.add(*references)
     for old_prompt_id, new_prompt in prompt_map.items():
-        references = [asset_map[asset.id] for asset in Prompt.all_objects.get(id=old_prompt_id).reference_assets.all() if asset.id in asset_map]
+        references = list(Prompt.all_objects.get(id=old_prompt_id).reference_assets.all())
         if references:
             new_prompt.reference_assets.add(*references)
+            copied.media_assets.add(*references)
     for old_character_id, new_character in character_map.items():
-        old_avatar_id = Character.all_objects.get(id=old_character_id).avatar_asset_id
-        if old_avatar_id in asset_map:
-            new_character.avatar_asset = asset_map[old_avatar_id]
+        old_character = Character.all_objects.get(id=old_character_id)
+        references = list(old_character.reference_assets.all())
+        if references:
+            new_character.reference_assets.add(*references)
+            copied.media_assets.add(*references)
+        old_avatar_id = old_character.avatar_asset_id
+        if old_avatar_id:
+            new_character.avatar_asset_id = old_avatar_id
             new_character.save(update_fields=["avatar_asset", "updated_at"])
-    if source.cover_asset_id in asset_map:
-        copied.cover_asset = asset_map[source.cover_asset_id]
+    if source.cover_asset_id:
+        copied.cover_asset_id = source.cover_asset_id
+        copied.media_assets.add(source.cover_asset_id)
         copied.save(update_fields=["cover_asset", "updated_at"])
     if request.POST.get("copy_access") == "1":
         ProjectMembership.objects.bulk_create([
@@ -1921,7 +1995,7 @@ def project_copy(request, project_id):
             for item in source.memberships.filter(is_active=True).select_related("user")
         ])
     audit(workspace=source.workspace, actor=request.user, action="PROJECT_COPIED", instance=copied, metadata={"sourceProjectId": str(source.id)})
-    messages.success(request, "Project copied with its scenes, prompts, translations, characters and files.")
+    messages.success(request, "Project copied with shared links to its Workspace images.")
     return redirect("studio:project_detail", project_id=copied.id)
 
 
@@ -1934,10 +2008,11 @@ def project_set_cover(request, project_id):
     if request.method != "POST" or not has_project_capability(request.user, project, "edit"):
         return HttpResponseForbidden("Edit permission is required.")
     asset = get_object_or_404(
-        Asset.objects.filter(project=project, content_type__startswith="image/"),
+        Asset.objects.filter(Q(projects=project) | Q(project=project), content_type__startswith="image/").distinct(),
         id=request.POST.get("asset_id"),
     )
     project.cover_asset = asset
+    asset.projects.add(project)
     project.updated_by = request.user
     project.save(update_fields=["cover_asset", "updated_by", "updated_at"])
     audit(
@@ -1997,8 +2072,8 @@ def project_purge(request, project_id):
         return HttpResponseForbidden("Workspace owner or administrator permission is required.")
     if not _archive_purge_allowed(token=request.POST.get("purge_token", ""), kind="project", item_id=project.id, user=request.user):
         return HttpResponseForbidden("Wait 30 seconds on the archive confirmation before deleting permanently.")
-    for asset in Asset.all_objects.filter(project=project, purged_at__isnull=True, content_type__startswith="image/"):
-        purge_asset(asset=asset, user=request.user)
+    for asset in Asset.all_objects.filter(projects=project).distinct():
+        asset.projects.remove(project)
     project.purged_at = timezone.now(); project.purged_by = request.user; project.updated_by = request.user
     project.save(update_fields=["purged_at", "purged_by", "updated_by", "updated_at"])
     messages.success(request, "Project permanently removed from the archive.")
@@ -2016,13 +2091,7 @@ def project_trash_clear(request, workspace_id):
 @login_required
 def project_image_trash_clear(request, project_id):
     project = get_object_or_404(accessible_projects(request.user).select_related("workspace"), id=project_id)
-    if request.method != "POST" or not has_project_capability(request.user, project, "edit"):
-        return HttpResponseForbidden("Edit permission is required.")
-    assets = list(Asset.all_objects.filter(project=project, content_type__startswith="image/", deleted_at__isnull=False, purged_at__isnull=True))
-    for asset in assets:
-        purge_asset(asset=asset, user=request.user)
-    messages.success(request, f"Permanently deleted {len(assets)} image(s).")
-    return redirect("studio:project_image_trash", project_id=project.id)
+    return HttpResponseForbidden("Images can only be deleted from the Workspace Recycle Bin.")
 
 
 @login_required
@@ -2154,8 +2223,7 @@ def _attach_prompt_ai_state(prompts):
             (item for item in suggestions if item.status == AiSuggestion.Status.ACCEPTED and item.original_blocks),
             None,
         )
-        direct = list(prompt.assets.all())
-        prompt.display_assets = direct + [asset for asset in prompt.reference_assets.all() if asset.id not in {item.id for item in direct}]
+        prompt.display_assets = list(prompt.reference_assets.all())
 
 
 @login_required
@@ -2311,22 +2379,12 @@ def prompt_asset_attach(request, prompt_id):
     project = prompt.scene.episode.project
     asset = get_object_or_404(
         Asset.objects.filter(workspace=project.workspace, content_type__startswith="image/").filter(
-            Q(project__isnull=True) | Q(project__in=accessible_projects(request.user)),
+            Q(projects__in=accessible_projects(request.user))
+            | Q(projects__isnull=True),
         ),
         id=request.POST.get("asset_id"),
     )
-    if asset.project_id != project.id:
-        suffix = asset.original_filename.rsplit(".", 1)[-1] if "." in asset.original_filename else "jpg"
-        stem = asset.original_filename.rsplit(".", 1)[0]
-        clone_name = f"{stem}-{str(project.id)[:8]}.{suffix}"
-        clone = Asset.objects.filter(project=project, original_filename=clone_name, size_bytes=asset.size_bytes, width=asset.width, height=asset.height).first()
-        if clone:
-            asset = clone
-        else:
-            with asset.file.open("rb") as source:
-                uploaded = ContentFile(source.read(), name=clone_name)
-                uploaded.content_type = asset.content_type
-            asset = create_asset(user=request.user, workspace=project.workspace, uploaded=uploaded, kind=Asset.Kind.OTHER, project=project)
+    asset.projects.add(project)
     prompt.reference_assets.add(asset)
     prompt.updated_by = request.user
     prompt.save(update_fields=["updated_by", "updated_at"])
@@ -2339,7 +2397,7 @@ def prompt_asset_attach(request, prompt_id):
 def project_scene_chain(request, project_id):
     project = get_object_or_404(
         Project.objects.select_related("workspace").prefetch_related(
-            Prefetch("episodes__scenes__assets", queryset=Asset.objects.filter(prompt__isnull=True), to_attr="chain_images"),
+            Prefetch("episodes__scenes__reference_assets", queryset=Asset.objects.filter(prompt__isnull=True), to_attr="chain_images"),
             Prefetch(
                 "episodes__scenes__prompts",
                 queryset=Prompt.objects.only("id", "scene_id"),

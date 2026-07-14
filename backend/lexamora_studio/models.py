@@ -178,6 +178,7 @@ class Character(SoftDeleteModel):
     visual_description = models.TextField(blank=True)
     position = models.PositiveIntegerField(default=0)
     avatar_asset = models.ForeignKey("Asset", on_delete=models.SET_NULL, related_name="character_avatar_for", null=True, blank=True)
+    reference_assets = models.ManyToManyField("Asset", related_name="referenced_by_characters", blank=True)
 
     class Meta:
         ordering = ["position", "id"]
@@ -215,6 +216,7 @@ class Scene(SoftDeleteModel):
     performance_notes = models.TextField(blank=True)
     position = models.PositiveIntegerField(default=0)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
+    reference_assets = models.ManyToManyField("Asset", related_name="referenced_by_scenes", blank=True)
 
     class Meta:
         ordering = ["position", "number", "id"]
@@ -456,6 +458,7 @@ class Asset(SoftDeleteModel):
 
     workspace = models.ForeignKey(Workspace, on_delete=models.PROTECT, related_name="assets")
     project = models.ForeignKey(Project, on_delete=models.PROTECT, related_name="assets", null=True, blank=True)
+    projects = models.ManyToManyField(Project, related_name="media_assets", blank=True)
     scene = models.ForeignKey(Scene, on_delete=models.PROTECT, related_name="assets", null=True, blank=True)
     character = models.ForeignKey(Character, on_delete=models.PROTECT, related_name="assets", null=True, blank=True)
     prompt = models.ForeignKey(Prompt, on_delete=models.PROTECT, related_name="assets", null=True, blank=True)
