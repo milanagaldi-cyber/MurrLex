@@ -34,7 +34,7 @@
   <article class="entity-card" id="project-{{ project.id }}">
     <div class="project-cover-area"><a class="entity-cover project-cover-link" href="{% url 'studio:project_detail' project.id %}">
       {% if project.display_cover_asset %}<img src="{% url 'studio_api:asset_thumbnail' project.display_cover_asset.id %}" alt="{{ project.title }}">{% else %}<span>{{ project.title|first|upper }}</span>{% endif %}
-    </a>{% if project.can_edit %}<button class="project-cover-change" type="button" data-dialog-open="{{ project.id }}-cover-picker" title="Change project cover" aria-label="Change project cover">Change cover</button>{% endif %}</div>
+    </a>{% if project.can_edit %}<button class="cover-change-label" type="button" data-dialog-open="{{ project.id }}-cover-picker" title="Change project cover" aria-label="Change project cover">Change cover</button>{% endif %}</div>
     <div class="entity-card-body">
       <h3><a href="{% url 'studio:project_detail' project.id %}">{{ project.title }}</a></h3>
       <p>{{ project.concept|default:"No description"|truncatechars:130 }}</p>
