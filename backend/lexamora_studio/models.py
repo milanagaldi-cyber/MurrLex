@@ -105,6 +105,13 @@ class Project(SoftDeleteModel):
         FINAL = "FINAL", "Final"
 
     workspace = models.ForeignKey(Workspace, on_delete=models.PROTECT, related_name="projects")
+    cover_asset = models.ForeignKey(
+        "Asset",
+        on_delete=models.SET_NULL,
+        related_name="project_cover_for",
+        null=True,
+        blank=True,
+    )
     project_type = models.CharField(max_length=24, choices=Type.choices)
     title = models.CharField(max_length=240)
     concept = models.TextField(blank=True)

@@ -9,10 +9,10 @@ main{width:min(1600px,calc(100% - 32px))}
 .timeline-scroll{width:38px;min-height:100%;padding:0;border-color:var(--line);background:var(--panel-2);color:var(--ink);font-size:22px}
 .timeline-track{display:flex;gap:10px;min-width:0;overflow-x:auto;overflow-y:hidden;padding:2px 2px 10px;scroll-behavior:smooth;scroll-snap-type:x proximity;overscroll-behavior-x:contain}
 .timeline-track::-webkit-scrollbar{height:9px}.timeline-track::-webkit-scrollbar-thumb{border-radius:8px;background:var(--line)}
-.timeline-clip{position:relative;display:grid;grid-template-rows:124px auto;flex:0 0 220px;min-width:0;overflow:hidden;border:1px solid var(--line);border-radius:7px;background:var(--panel);cursor:pointer;scroll-snap-align:start;transition:border-color .15s,box-shadow .15s,transform .15s}
+.timeline-clip{position:relative;display:grid;grid-template-rows:124px auto;flex:0 0 220px;min-width:0;overflow:hidden;border:1px solid var(--line);border-radius:7px;background:var(--panel);cursor:pointer;scroll-snap-align:start;transition:border-color .15s,box-shadow .15s,transform .15s}.timeline-track.is-reordering{scroll-behavior:auto;scroll-snap-type:none}
 .timeline-clip:hover{border-color:var(--accent-strong)}.timeline-clip.is-selected{border-color:var(--accent);box-shadow:0 0 0 3px var(--focus)}.timeline-clip.dragging{opacity:.42;transform:scale(.97)}.timeline-clip.drag-target{border-color:var(--accent);box-shadow:0 0 0 3px var(--focus)}
 .clip-preview{position:relative;overflow:hidden;background:var(--panel-2)}.clip-preview .asset{height:100%;border:0;border-radius:0}.clip-preview .asset img{height:100%;aspect-ratio:auto;object-fit:cover}.clip-empty{display:grid;height:100%;place-items:center;color:var(--muted);font-size:13px}
-.drag-handle{position:absolute;z-index:3;top:7px;left:7px;display:grid;place-items:center;width:32px;height:32px;border:1px solid rgba(255,255,255,.55);border-radius:6px;background:rgba(7,15,24,.78);color:#fff;cursor:grab;user-select:none}.drag-handle:active{cursor:grabbing}
+.drag-handle{position:absolute;z-index:3;top:7px;right:7px;left:7px;display:flex;align-items:center;justify-content:flex-start;width:auto;height:40px;padding:0 12px;border:1px solid rgba(255,255,255,.55);border-radius:6px;background:linear-gradient(90deg,rgba(7,15,24,.9),rgba(7,15,24,.6));color:#fff;cursor:grab;touch-action:none;user-select:none}.drag-handle::after{content:"Drag to reorder";margin-left:8px;font-size:11px;font-weight:750;opacity:.88}.drag-handle:active{cursor:grabbing}
 .clip-index{position:absolute;z-index:2;right:7px;bottom:7px;padding:3px 7px;border-radius:5px;background:rgba(7,15,24,.78);color:#fff;font-size:12px;font-weight:800}
 .clip-copy{display:grid;gap:5px;padding:10px}.clip-copy strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.clip-meta{display:flex;align-items:center;justify-content:space-between;gap:8px;color:var(--muted);font-size:12px}
 .scene-editor-deck{margin-top:14px}.scene-editor-panel{padding:20px;border:1px solid var(--line);border-radius:7px;background:var(--panel-2);scroll-margin-top:18px}.scene-editor-panel[hidden]{display:none}
@@ -36,10 +36,10 @@ main{width:min(1600px,calc(100% - 32px))}
       <article class="timeline-clip" data-scene-id="{{ scene.id }}" data-scene-title="{{ scene.title }}" data-editor-id="scene-{{ scene.id }}" role="tab" tabindex="0" aria-controls="scene-{{ scene.id }}" aria-selected="false">
         <div class="clip-preview">
           {% if can_edit %}<span class="drag-handle" title="Drag scene" aria-label="Drag scene">&#8942;&#8942;</span>{% endif %}
-          {% for asset in scene.chain_images %}{% if asset.thumbnail %}<figure class="asset"><a href="{% url 'studio_api:asset_view' asset.id %}"><img src="{% url 'studio_api:asset_thumbnail' asset.id %}" alt="{{ asset.original_filename }}"></a></figure>{% endif %}{% empty %}<div class="clip-empty">No image</div>{% endfor %}
+          {% for asset in scene.chain_images %}{% if asset.thumbnail and forloop.first %}<figure class="asset"><a href="{% url 'studio_api:asset_view' asset.id %}"><img loading="lazy" decoding="async" src="{% url 'studio_api:asset_thumbnail' asset.id %}" alt="{{ asset.original_filename }}"></a></figure>{% endif %}{% empty %}<div class="clip-empty">No image</div>{% endfor %}
           <span class="clip-index">{{ forloop.counter }}</span>
         </div>
-        <div class="clip-copy"><strong data-clip-title>Scene {{ scene.number }}. {{ scene.title }}</strong><div class="clip-meta"><span>{{ scene.get_status_display }}</span><span>{{ scene.prompts.count }} prompts</span></div></div>
+        <div class="clip-copy"><strong data-clip-title>Scene {{ scene.number }}. {{ scene.title }}</strong><div class="clip-meta"><span>{{ scene.get_status_display }}</span><span>{{ scene.chain_prompt_count }} prompts</span></div></div>
       </article>
     {% empty %}<p class="empty">No scenes.</p>{% endfor %}
     </div>
@@ -52,8 +52,7 @@ main{width:min(1600px,calc(100% - 32px))}
       <div class="scene-editor-head"><h3 data-editor-title>Scene {{ scene.number }}. {{ scene.title }}</h3><a href="{% url 'studio:scene_detail' scene.id %}">Open full scene</a></div>
       <div class="scene-editor-layout">
         <aside class="selected-scene-image">
-          {% for asset in scene.chain_images %}{% if asset.thumbnail %}<figure class="asset" data-crop-url="{% url 'studio:asset_crop' asset.id %}"><a href="{% url 'studio_api:asset_view' asset.id %}"><img src="{% url 'studio_api:asset_thumbnail' asset.id %}" alt="{{ asset.original_filename }}"></a><figcaption>{{ asset.original_filename }}{% include "studio/_asset_actions.html" with asset=asset attachment_scope='scene' attachment_id=scene.id %}</figcaption></figure>{% endif %}{% empty %}<div class="clip-empty panel" style="min-height:180px">No scene image</div>{% endfor %}
-          {% if can_edit %}{% url 'studio:scene_image_upload' scene.id as image_upload_url %}{% include "studio/_image_picker.html" with picker_id=scene.image_picker_id attach_scope="scene" owner_id=scene.id upload_url=image_upload_url picker_return=request.get_full_path %}{% endif %}
+          {% for asset in scene.chain_images %}{% if asset.thumbnail and forloop.first %}<figure class="asset" data-crop-url="{% url 'studio:asset_crop' asset.id %}"><a href="{% url 'studio_api:asset_view' asset.id %}"><img loading="lazy" decoding="async" src="{% url 'studio_api:asset_thumbnail' asset.id %}" alt="{{ asset.original_filename }}"></a><figcaption>{{ asset.original_filename }}</figcaption></figure>{% endif %}{% empty %}<div class="clip-empty panel" style="min-height:180px">No scene image</div>{% endfor %}
         </aside>
         <div class="scene-editor-form">
         {% if can_edit %}
@@ -73,7 +72,7 @@ main{width:min(1600px,calc(100% - 32px))}
         {% else %}<p>{{ scene.description|linebreaksbr }}</p>{% endif %}
         </div>
       </div>
-      <details class="chain-prompts"><summary>Prompts ({{ scene.editor_prompts|length }})</summary><div class="prompt-stack">{% for prompt in scene.editor_prompts %}{% include "studio/_prompt_editor.html" with prompt=prompt prompt_return="chain" %}{% empty %}<p class="empty">No prompts.</p>{% endfor %}</div></details>
+      <div class="chain-prompts"><span>Prompts: {{ scene.chain_prompt_count }}</span><a href="{% url 'studio:scene_detail' scene.id %}#prompts">Open prompts and images</a></div>
     </section>
   {% endfor %}
   </div>
@@ -82,7 +81,6 @@ main{width:min(1600px,calc(100% - 32px))}
 </div>
 {% endblock %}
 {% block extra_script %}
-{{ mention_characters|json_script:"mention-characters" }}
 <script>
 (() => {
   const csrf=document.querySelector('input[name="csrfmiddlewaretoken"]')?.value;
@@ -100,29 +98,37 @@ main{width:min(1600px,calc(100% - 32px))}
     const list=episode.querySelector("[data-scene-list]");
     const clips=[...list.querySelectorAll(".timeline-clip")];
     let savedOrder=clips.map(clip=>clip.dataset.sceneId);
-    let dragged=null;
+    let dragged=null,orderChanged=false;
     clips.forEach(clip=>{
       clip.addEventListener("click",e=>{if(!e.target.closest(".asset")&&!e.target.closest(".drag-handle"))activate(episode,clip.dataset.sceneId)});
       clip.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();activate(episode,clip.dataset.sceneId)}});
       const handle=clip.querySelector(".drag-handle");
       if(!handle)return;
-      handle.addEventListener("mousedown",()=>clip.draggable=true);
-      clip.addEventListener("dragstart",()=>{dragged=clip;clip.classList.add("dragging")});
-      clip.addEventListener("dragend",()=>{clip.draggable=false;clip.classList.remove("dragging");list.querySelectorAll(".drag-target").forEach(item=>item.classList.remove("drag-target"))});
-      clip.addEventListener("dragover",e=>{e.preventDefault();if(clip!==dragged){clip.classList.add("drag-target");const box=clip.getBoundingClientRect();list.insertBefore(dragged,e.clientX<box.left+box.width/2?clip:clip.nextSibling)}});
-      clip.addEventListener("dragleave",()=>clip.classList.remove("drag-target"));
+      handle.addEventListener("pointerdown",()=>clip.draggable=true);
+      handle.addEventListener("pointerup",()=>{if(!dragged)clip.draggable=false});
+      clip.addEventListener("dragstart",event=>{dragged=clip;orderChanged=false;clip.classList.add("dragging");list.classList.add("is-reordering");event.dataTransfer.effectAllowed="move";event.dataTransfer.setData("text/plain",clip.dataset.sceneId)});
+      clip.addEventListener("dragend",()=>{clip.draggable=false;clip.classList.remove("dragging");list.classList.remove("is-reordering");list.querySelectorAll(".drag-target").forEach(item=>item.classList.remove("drag-target"));dragged=null});
+    });
+    list.addEventListener("dragover",e=>{
+      if(!dragged)return;e.preventDefault();e.dataTransfer.dropEffect="move";
+      const box=list.getBoundingClientRect(),edge=72;if(e.clientX<box.left+edge)list.scrollLeft-=18;else if(e.clientX>box.right-edge)list.scrollLeft+=18;
+      const siblings=[...list.querySelectorAll(".timeline-clip:not(.dragging)")];
+      const next=siblings.find(item=>{const itemBox=item.getBoundingClientRect();return e.clientX<itemBox.left+itemBox.width/2});
+      const before=dragged.nextElementSibling;if(next!==dragged&&before!==next){list.insertBefore(dragged,next||null);orderChanged=true}
+      siblings.forEach(item=>item.classList.toggle("drag-target",item===next));
     });
     list.addEventListener("drop",e=>{
       e.preventDefault();
       list.querySelectorAll(".drag-target").forEach(item=>item.classList.remove("drag-target"));
       const state=episode.querySelector("[data-reorder-state]");
-      if(!state)return;
+      if(!state||!orderChanged)return;
       state.textContent="Unsaved order";
       episode.querySelector("[data-reorder-actions]").hidden=false;
+      renumber();
     });
     const renumber=()=>[...list.querySelectorAll(".timeline-clip")].forEach((clip,index)=>{const number=index+1,title=`Scene ${number}. ${clip.dataset.sceneTitle}`;clip.querySelector(".clip-index").textContent=number;clip.querySelector("[data-clip-title]").textContent=title;const editor=episode.querySelector(`[data-scene-editor][data-scene-id="${clip.dataset.sceneId}"]`);if(editor){editor.querySelector("[data-editor-title]").textContent=title;editor.querySelector('input[readonly]').value=number}});
     episode.querySelector("[data-reorder-save]")?.addEventListener("click",async()=>{const state=episode.querySelector("[data-reorder-state]");const sceneIds=[...list.querySelectorAll(".timeline-clip")].map(clip=>clip.dataset.sceneId);state.textContent="Saving order...";const response=await fetch(list.dataset.reorderUrl,{method:"POST",headers:{"Content-Type":"application/json","X-CSRFToken":csrf},body:JSON.stringify({sceneIds})});state.textContent=response.ok?"Order saved":"Could not save order";if(response.ok){savedOrder=sceneIds;episode.querySelector("[data-reorder-actions]").hidden=true;renumber()}});
-    episode.querySelector("[data-reorder-cancel]")?.addEventListener("click",()=>{savedOrder.forEach(id=>{const clip=list.querySelector(`[data-scene-id="${id}"]`);if(clip)list.appendChild(clip)});episode.querySelector("[data-reorder-state]").textContent="Order restored";episode.querySelector("[data-reorder-actions]").hidden=true;renumber()});
+    episode.querySelector("[data-reorder-cancel]")?.addEventListener("click",()=>{savedOrder.forEach(id=>{const clip=list.querySelector(`[data-scene-id="${id}"]`);if(clip)list.appendChild(clip)});orderChanged=false;episode.querySelector("[data-reorder-state]").textContent="Order restored";episode.querySelector("[data-reorder-actions]").hidden=true;renumber()});
     episode.querySelectorAll("[data-scroll-direction]").forEach(button=>button.addEventListener("click",()=>list.scrollBy({left:Number(button.dataset.scrollDirection)*Math.max(300,list.clientWidth*.7),behavior:"smooth"})));
   });
 

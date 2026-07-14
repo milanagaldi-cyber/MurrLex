@@ -153,9 +153,13 @@ def workspace_detail(request, workspace_id):
     workspace = get_object_or_404(accessible_workspaces(request.user).select_related("avatar_asset"), id=workspace_id)
     sort = request.GET.get("sort", "updated")
     orderings = {"title": "title", "created": "-created_at", "updated": "-updated_at", "type": "project_type"}
-    projects = list(workspace.projects.select_related("created_by", "updated_by").prefetch_related("assets", "memberships__user").order_by(orderings.get(sort, "-updated_at"), "title"))
+    projects = list(workspace.projects.select_related("created_by", "updated_by", "cover_asset").prefetch_related("assets", "memberships__user").order_by(orderings.get(sort, "-updated_at"), "title"))
     for project in projects:
-        project.cover_asset = min((asset for asset in project.assets.all() if asset.thumbnail), key=lambda asset: asset.created_at, default=None)
+        project.display_cover_asset = project.cover_asset or min(
+            (asset for asset in project.assets.all() if asset.thumbnail),
+            key=lambda asset: asset.created_at,
+            default=None,
+        )
         project.can_edit = has_project_capability(request.user, project, "edit")
         project.can_manage = has_project_capability(request.user, project, "manage_project")
         project.can_administer = is_workspace_owner_or_admin(request.user, workspace)
@@ -1621,6 +1625,7 @@ def asset_trash(request, asset_id):
     except ValidationError as exc:
         messages.error(request, "; ".join(exc.messages))
     else:
+        Project.all_objects.filter(cover_asset=asset).update(cover_asset=None)
         messages.success(request, "Image moved to trash.")
     return _asset_action_redirect(request, asset)
 
@@ -1679,6 +1684,10 @@ def asset_detach(request, asset_id, scope, owner_id):
     elif scope == "project":
         project = get_object_or_404(accessible_projects(request.user), id=owner_id)
         if asset.project_id == project.id:
+            if project.cover_asset_id == asset.id:
+                project.cover_asset = None
+                project.updated_by = request.user
+                project.save(update_fields=["cover_asset", "updated_by", "updated_at"])
             asset.referenced_by_prompts.clear()
             asset.project = None
             asset.scene = None
@@ -1853,6 +1862,9 @@ def project_copy(request, project_id):
         if old_avatar_id in asset_map:
             new_character.avatar_asset = asset_map[old_avatar_id]
             new_character.save(update_fields=["avatar_asset", "updated_at"])
+    if source.cover_asset_id in asset_map:
+        copied.cover_asset = asset_map[source.cover_asset_id]
+        copied.save(update_fields=["cover_asset", "updated_at"])
     if request.POST.get("copy_access") == "1":
         ProjectMembership.objects.bulk_create([
             ProjectMembership(project=copied, user=item.user, role=item.role, is_active=item.is_active, invited_by=request.user)
@@ -1861,6 +1873,35 @@ def project_copy(request, project_id):
     audit(workspace=source.workspace, actor=request.user, action="PROJECT_COPIED", instance=copied, metadata={"sourceProjectId": str(source.id)})
     messages.success(request, "Project copied with its scenes, prompts, translations, characters and files.")
     return redirect("studio:project_detail", project_id=copied.id)
+
+
+@login_required
+def project_set_cover(request, project_id):
+    project = get_object_or_404(
+        accessible_projects(request.user).select_related("workspace"),
+        id=project_id,
+    )
+    if request.method != "POST" or not has_project_capability(request.user, project, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    asset = get_object_or_404(
+        Asset.objects.filter(project=project, content_type__startswith="image/"),
+        id=request.POST.get("asset_id"),
+    )
+    project.cover_asset = asset
+    project.updated_by = request.user
+    project.save(update_fields=["cover_asset", "updated_by", "updated_at"])
+    audit(
+        workspace=project.workspace,
+        actor=request.user,
+        action="PROJECT_COVER_UPDATED",
+        instance=project,
+        metadata={"assetId": str(asset.id)},
+    )
+    messages.success(request, "Project cover updated.")
+    return HttpResponseRedirect(
+        reverse("studio:workspace_detail", kwargs={"workspace_id": project.workspace_id})
+        + f"#project-{project.id}"
+    )
 
 
 @login_required
@@ -2249,29 +2290,20 @@ def project_scene_chain(request, project_id):
     project = get_object_or_404(
         Project.objects.select_related("workspace").prefetch_related(
             Prefetch("episodes__scenes__assets", queryset=Asset.objects.filter(prompt__isnull=True), to_attr="chain_images"),
-            "episodes__scenes__dialogue_lines",
-            "episodes__scenes__prompts__ai_model",
-            "episodes__scenes__prompts__template",
-            "episodes__scenes__prompts__blocks__source_dialogue",
-            "episodes__scenes__prompts__assets",
-            "episodes__scenes__prompts__ai_suggestions",
+            Prefetch(
+                "episodes__scenes__prompts",
+                queryset=Prompt.objects.only("id", "scene_id"),
+                to_attr="chain_prompts",
+            ),
         ).filter(id__in=accessible_projects(request.user)),
         id=project_id,
     )
     for episode in project.episodes.all():
         for scene in episode.scenes.all():
-            scene.image_picker_id = f"scene-image-picker-{scene.id}"
-            scene.editor_prompts = [prompt for prompt in scene.prompts.all() if not prompt.source_prompt_id]
-            _attach_prompt_ai_state(scene.editor_prompts)
-    project_assets, workspace_assets = _picker_assets(request.user, project)
+            scene.chain_prompt_count = len(scene.chain_prompts)
     context = {
         "project": project,
         **_project_header_context(request.user, project),
-        "can_use_ai": has_project_capability(request.user, project, "use_ai") and user_has_ai_access(request.user),
-        "mention_characters": list(project.characters.values_list("name", flat=True)),
-        "project_assets": project_assets,
-        "workspace_assets": workspace_assets,
-        **_prompt_editor_context(request),
     }
     return render(request, "studio/project_scene_chain.html", context)
 

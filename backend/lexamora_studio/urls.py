@@ -37,6 +37,7 @@ urlpatterns = [
     path("projects/<uuid:project_id>/scene-chain/", views.project_scene_chain, name="project_scene_chain"),
     path("move/<str:entity_type>/<uuid:entity_id>/<str:direction>/", views.entity_move, name="entity_move"),
     path("projects/<uuid:project_id>/edit/", views.project_edit, name="project_edit"),
+    path("projects/<uuid:project_id>/cover/", views.project_set_cover, name="project_set_cover"),
     path("projects/<uuid:project_id>/images/new/", views.project_image_upload, name="project_image_upload"),
     path("projects/<uuid:project_id>/images/trash/", views.project_image_trash, name="project_image_trash"),
     path("projects/<uuid:project_id>/images/trash/clear/", views.project_image_trash_clear, name="project_image_trash_clear"),

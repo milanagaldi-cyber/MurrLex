@@ -1703,6 +1703,9 @@ class StudioInlineEditingWorkflowTests(TestCase):
         self.assertContains(page, "scene-editor-deck")
         self.assertContains(page, "data-scroll-direction")
         self.assertContains(page, 'class="scene-editor-panel"')
+        self.assertContains(page, "Open prompts and images")
+        self.assertNotContains(page, 'class="prompt-editor"')
+        self.assertNotContains(page, "asset-picker image-picker-dialog")
 
         saved = self.client.post(
             f"/studio/scenes/{self.first_scene.id}/quick-save/",
@@ -2042,6 +2045,44 @@ class StudioInlineEditingWorkflowTests(TestCase):
                 self.assertIsNone(asset.project)
                 self.assertIsNone(asset.scene)
                 self.assertIsNone(asset.deleted_at)
+
+    def test_project_cover_can_be_selected_from_workspace(self):
+        import tempfile
+        from pathlib import Path
+        from .models import Asset
+        from .storage import create_asset
+
+        self.client.force_login(self.owner)
+        with tempfile.TemporaryDirectory() as directory:
+            with self.settings(STUDIO_PRIVATE_MEDIA_ROOT=Path(directory)):
+                asset = create_asset(
+                    user=self.owner,
+                    workspace=self.workspace,
+                    project=self.project,
+                    uploaded=self.image_file("project-cover.png"),
+                    kind=Asset.Kind.OTHER,
+                )
+                page = self.client.get(f"/studio/workspaces/{self.workspace.id}/")
+                self.assertContains(page, f'id="cover-project-{self.project.id}"')
+                self.assertContains(page, "Change project cover")
+
+                selected = self.client.post(
+                    f"/studio/projects/{self.project.id}/cover/",
+                    {"asset_id": str(asset.id)},
+                )
+                self.assertRedirects(
+                    selected,
+                    f"/studio/workspaces/{self.workspace.id}/#project-{self.project.id}",
+                )
+                self.project.refresh_from_db()
+                self.assertEqual(self.project.cover_asset_id, asset.id)
+
+                self.client.force_login(self.viewer)
+                forbidden = self.client.post(
+                    f"/studio/projects/{self.project.id}/cover/",
+                    {"asset_id": str(asset.id)},
+                )
+                self.assertEqual(forbidden.status_code, 403)
 
     def test_project_header_is_shared_by_all_four_views(self):
         self.client.force_login(self.owner)
