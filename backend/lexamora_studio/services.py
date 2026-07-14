@@ -61,7 +61,12 @@ def propagate_project_original_language(*, project, language, user):
     }
 
 @transaction.atomic
-def update_dialogue_line(*, line, user, text, speaker=None, delivery=None, language=None, status=None):
+def update_dialogue_line(
+    *, line, user, text, speaker=None, delivery=None, language=None, status=None,
+    speaker_documentation=None, speaker_prompt=None, text_documentation=None,
+    text_prompt=None, delivery_documentation=None, delivery_prompt=None,
+    status_comment=None,
+):
     line.text = text
     if speaker is not None:
         line.speaker = speaker
@@ -71,6 +76,17 @@ def update_dialogue_line(*, line, user, text, speaker=None, delivery=None, langu
         line.language = language
     if status is not None:
         line.status = status
+    for field, value in {
+        "speaker_documentation": speaker_documentation,
+        "speaker_prompt": speaker_prompt,
+        "text_documentation": text_documentation,
+        "text_prompt": text_prompt,
+        "delivery_documentation": delivery_documentation,
+        "delivery_prompt": delivery_prompt,
+        "status_comment": status_comment,
+    }.items():
+        if value is not None:
+            setattr(line, field, value)
     line.updated_by = user
     line.full_clean()
     line.save()

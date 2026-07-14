@@ -1,0 +1,28 @@
+{% extends "studio/base.html" %}
+{% block content %}
+<p class="muted"><a href="{% url 'studio:scene_detail' scene.id %}">&larr; Scene {{ scene.number }}</a></p>
+<h1>{{ title }}</h1>
+<form method="post" class="panel localized-form">{% csrf_token %}
+  {{ form.non_field_errors }}{{ form.language.as_hidden }}
+  <section class="localized-group" data-localized-group data-source-role="dialogue" data-translate-url="{{ translate_url }}">
+    <header><h2>Speaker</h2><button class="secondary" type="button" data-translate-dependent>Translate dependent fields</button><span class="save-state" data-translate-state></span></header>
+    <label>Documentation <span class="language-badge">{{ project.documentation_language }}</span>{{ form.speaker_documentation }}</label>
+    <label>Prompt <span class="language-badge">{{ project.prompt_language }}</span>{{ form.speaker_prompt }}</label>
+    <label>Dialogue <span class="language-badge">{{ project.dialogue_language }}</span>{{ form.speaker }}</label>
+  </section>
+  <section class="localized-group" data-localized-group data-source-role="dialogue" data-translate-url="{{ translate_url }}">
+    <header><h2>Dialogue text</h2><button class="secondary" type="button" data-translate-dependent>Translate dependent fields</button><span class="save-state" data-translate-state></span></header>
+    <label>Documentation <span class="language-badge">{{ project.documentation_language }}</span>{{ form.text_documentation }}</label>
+    <label>Prompt <span class="language-badge">{{ project.prompt_language }}</span>{{ form.text_prompt }}</label>
+    <label>Dialogue <span class="language-badge">{{ project.dialogue_language }}</span>{{ form.text }}</label>
+  </section>
+  <section class="localized-group" data-localized-group data-source-role="dialogue" data-translate-url="{{ translate_url }}">
+    <header><h2>Delivery</h2><button class="secondary" type="button" data-translate-dependent>Translate dependent fields</button><span class="save-state" data-translate-state></span></header>
+    <label>Documentation <span class="language-badge">{{ project.documentation_language }}</span>{{ form.delivery_documentation }}</label>
+    <label>Prompt <span class="language-badge">{{ project.prompt_language }}</span>{{ form.delivery_prompt }}</label>
+    <label>Dialogue <span class="language-badge">{{ project.dialogue_language }}</span>{{ form.delivery }}</label>
+  </section>
+  <div class="status-editor"><label>Status{{ form.status }}</label><label>Status comment{{ form.status_comment }}</label></div>
+  <div class="dialog-actions"><a class="button secondary" href="{% url 'studio:scene_detail' scene.id %}">Cancel</a><button type="submit">Save dialogue line</button></div>
+</form>
+{% endblock %}

@@ -20,12 +20,12 @@ from lessons.ai_gateway import ProviderError, TEXT_MODELS, run_text
 from lessons.provider_credentials import user_has_ai_access
 
 from .ai import StudioAiError, accept_suggestion, improve_prompt, preview_prompt_translation, reject_suggestion, translate_prompt, translate_prompt_dialogue, undo_suggestion
-from .ai_catalog import PROMPT_LANGUAGES, active_text_models, default_prompt_template, default_text_model_id, selected_text_model
+from .ai_catalog import PROMPT_LANGUAGES, PROMPT_LANGUAGE_NAMES, active_text_models, default_prompt_template, default_text_model_id, selected_text_model
 from .exports import ALL_SECTIONS, ExportError, generate_export
 from .docx_imports import accept_docx_import, parse_docx
 from .docx_exports import generate_docx_export
 from .docx_roundtrip import compare_docx_export
-from .forms import AdditionalGenerationForm, AiModelProfileForm, AssetEditForm, CharacterForm, DialogueLineForm, DocxImportUploadForm, EpisodeForm, GenerationOutputUploadForm, ImageUploadForm, MultipleImageUploadForm, ProjectForm, ProjectMembershipForm, PromptBlockForm, PromptForm, SceneForm, StudioTextModelForm, WorkspaceForm, WorkspaceMembershipForm
+from .forms import AdditionalGenerationForm, AiModelProfileForm, AssetEditForm, CharacterCreateForm, CharacterForm, DialogueLineForm, DocxImportUploadForm, EpisodeForm, GenerationOutputUploadForm, ImageUploadForm, MultipleImageUploadForm, ProjectForm, ProjectMembershipForm, PromptBlockForm, PromptForm, SceneForm, StudioTextModelForm, WorkspaceForm, WorkspaceMembershipForm
 from .models import AdditionalGeneration, AiModelProfile, AiSuggestion, Asset, Character, DialogueLine, DocxImport, EmailDeliveryLog, Episode, ExportJob, GenerationOutput, Project, ProjectAccessExclusion, ProjectMembership, Prompt, PromptBlock, Scene, StudioTextModel, SubtitleTrack, TranslationUnit, Workspace, WorkspaceMembership
 from .notifications import notify_access_granted
 from .permissions import accessible_assets, accessible_projects, accessible_suggestions, accessible_workspaces, has_capability, has_object_capability, has_project_capability, is_workspace_owner_or_admin
@@ -440,7 +440,33 @@ def project_create(request, workspace_id):
 @login_required
 def character_create(request, project_id):
     project = get_object_or_404(accessible_projects(request.user), id=project_id)
-    return _create_entity(request, form_class=CharacterForm, parent=project, parent_field="project", workspace=project.workspace, title="New character", success_url=lambda item: ("studio:project_detail", item.project_id), position_manager=project.characters)
+    if not has_project_capability(request.user, project, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    form = CharacterCreateForm(request.POST or None, request.FILES or None)
+    if request.method == "POST" and form.is_valid():
+        with transaction.atomic():
+            character = form.save(commit=False)
+            character.project = project
+            character.position = project.characters.count()
+            character.created_by = request.user
+            character.updated_by = request.user
+            character.save()
+            uploaded = form.cleaned_data.get("avatar_file")
+            if uploaded:
+                asset = create_asset(
+                    user=request.user, workspace=project.workspace, project=project,
+                    character=character, uploaded=uploaded, kind=Asset.Kind.CHARACTER_REFERENCE,
+                )
+                character.reference_assets.add(asset)
+                character.avatar_asset = asset
+                character.save(update_fields=["avatar_asset", "updated_at"])
+            record_revision(instance=character, user=request.user, operation="CREATE")
+        messages.success(request, "New character created.")
+        return redirect("studio:character_detail", character_id=character.id)
+    return render(request, "studio/character_form.html", {
+        "form": form, "project": project, "title": "New character", "multipart": True,
+        "translate_url": reverse("studio:localized_translate", kwargs={"project_id": project.id}),
+    })
 
 
 @login_required
@@ -490,9 +516,17 @@ def scene_copy(request, scene_id):
     position = episode.scenes.count()
     copied = Scene.objects.create(
         episode=episode, number=position + 1, title=f"{source.title} copy"[:240],
+        title_prompt=source.title_prompt, title_dialogue=source.title_dialogue,
         hook=source.hook, description=source.description, location=source.location,
+        hook_prompt=source.hook_prompt, hook_dialogue=source.hook_dialogue,
+        description_prompt=source.description_prompt, description_dialogue=source.description_dialogue,
+        location_prompt=source.location_prompt, location_dialogue=source.location_dialogue,
         actions=source.actions, performance_notes=source.performance_notes,
+        actions_prompt=source.actions_prompt, actions_dialogue=source.actions_dialogue,
+        performance_notes_prompt=source.performance_notes_prompt,
+        performance_notes_dialogue=source.performance_notes_dialogue,
         scene_type=source.scene_type, status=Scene.Status.DRAFT, position=position,
+        status_comment=source.status_comment,
         created_by=request.user, updated_by=request.user,
     )
     references = list(source.reference_assets.all())
@@ -505,6 +539,10 @@ def scene_copy(request, scene_id):
         new_line = DialogueLine.objects.create(
             scene=copied, character=line.character, speaker=line.speaker, text=line.text, language=line.language,
             delivery=line.delivery, position=line.position, status=line.status,
+            speaker_documentation=line.speaker_documentation, speaker_prompt=line.speaker_prompt,
+            text_documentation=line.text_documentation, text_prompt=line.text_prompt,
+            delivery_documentation=line.delivery_documentation, delivery_prompt=line.delivery_prompt,
+            status_comment=line.status_comment,
             created_by=request.user, updated_by=request.user,
         )
         line_map[line.id] = new_line
@@ -524,6 +562,7 @@ def scene_copy(request, scene_id):
             source_prompt=prompt_map.get(prompt.source_prompt_id), original_language=prompt.original_language,
             language=prompt.language, translation_scope=prompt.translation_scope, content=prompt.content,
             prompt_type=prompt.prompt_type, title=prompt.title, status=prompt.status,
+            status_comment=prompt.status_comment,
             position=prompt.position, needs_review=prompt.needs_review,
             created_by=request.user, updated_by=request.user,
         )
@@ -546,6 +585,7 @@ def scene_copy(request, scene_id):
         new_generation = AdditionalGeneration.objects.create(
             scene=copied, reason=generation.reason, source_asset=generation.source_asset,
             prompt=generation.prompt, position=generation.position, status=generation.status,
+            status_comment=generation.status_comment,
             created_by=request.user, updated_by=request.user,
         )
         for output in generation.outputs.all():
@@ -596,7 +636,26 @@ def scene_delete(request, scene_id):
 @login_required
 def dialogue_create(request, scene_id):
     scene = get_object_or_404(Scene.objects.filter(episode__project__in=accessible_projects(request.user)), id=scene_id)
-    return _create_entity(request, form_class=DialogueLineForm, parent=scene, parent_field="scene", workspace=scene.episode.project.workspace, title="New dialogue line", success_url=lambda item: ("studio:scene_detail", item.scene_id), position_manager=scene.dialogue_lines)
+    if not has_object_capability(request.user, scene, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    project = scene.episode.project
+    initial = {"language": project.dialogue_language}
+    form = DialogueLineForm(request.POST or None, initial=initial)
+    if request.method == "POST" and form.is_valid():
+        line = form.save(commit=False)
+        line.scene = scene
+        line.position = scene.dialogue_lines.count()
+        line.language = project.dialogue_language
+        line.created_by = request.user
+        line.updated_by = request.user
+        line.save()
+        record_revision(instance=line, user=request.user, operation="CREATE")
+        messages.success(request, "Dialogue line created.")
+        return redirect("studio:scene_detail", scene_id=scene.id)
+    return render(request, "studio/dialogue_form.html", {
+        "form": form, "project": project, "scene": scene, "title": "New dialogue line",
+        "translate_url": reverse("studio:localized_translate", kwargs={"project_id": project.id}),
+    })
 
 
 @login_required
@@ -778,10 +837,12 @@ def character_detail(request, character_id):
     project_assets, workspace_assets = _picker_assets(request.user, character.project)
     return render(request, "studio/character_detail.html", {
         "character": character,
+        "project": character.project,
         "character_form": form,
         "can_edit": can_edit,
         "project_assets": project_assets,
         "workspace_assets": workspace_assets,
+        "translate_url": reverse("studio:localized_translate", kwargs={"project_id": character.project_id}),
     })
 
 
@@ -792,6 +853,12 @@ def asset_attach(request, scope, owner_id):
         project = None
         workspace = owner
     elif scope == "project_cover":
+        owner = get_object_or_404(
+            accessible_projects(request.user).select_related("workspace"), id=owner_id
+        )
+        project = owner
+        workspace = owner.workspace
+    elif scope == "project":
         owner = get_object_or_404(
             accessible_projects(request.user).select_related("workspace"), id=owner_id
         )
@@ -841,6 +908,8 @@ def asset_attach(request, scope, owner_id):
         owner.cover_asset = asset
         owner.updated_by = request.user
         owner.save(update_fields=["cover_asset", "updated_by", "updated_at"])
+    elif scope == "project":
+        pass
     elif scope == "scene":
         owner.reference_assets.add(asset)
     else:
@@ -861,6 +930,8 @@ def asset_attach(request, scope, owner_id):
         return redirect("studio:workspace_detail", workspace_id=owner.id)
     if scope == "project_cover":
         return redirect("studio:workspace_detail", workspace_id=workspace.id)
+    if scope == "project":
+        return redirect("studio:project_detail", project_id=owner.id)
     if scope == "scene":
         return redirect("studio:scene_detail", scene_id=owner.id)
     return redirect("studio:character_detail", character_id=owner.id)
@@ -912,10 +983,21 @@ def dialogue_edit(request, line_id):
             line=item, user=request.user, text=form.cleaned_data["text"],
             speaker=form.cleaned_data["speaker"], delivery=form.cleaned_data["delivery"],
             language=form.cleaned_data["language"], status=form.cleaned_data["status"],
+            speaker_documentation=form.cleaned_data["speaker_documentation"],
+            speaker_prompt=form.cleaned_data["speaker_prompt"],
+            text_documentation=form.cleaned_data["text_documentation"],
+            text_prompt=form.cleaned_data["text_prompt"],
+            delivery_documentation=form.cleaned_data["delivery_documentation"],
+            delivery_prompt=form.cleaned_data["delivery_prompt"],
+            status_comment=form.cleaned_data["status_comment"],
         )
         messages.success(request, "Dialogue line saved.")
         return redirect("studio:scene_detail", scene_id=item.scene_id)
-    return render(request, "studio/entity_form.html", {"form": form, "title": "Edit dialogue line", "submit_label": "Save changes"})
+    return render(request, "studio/dialogue_form.html", {
+        "form": form, "title": "Edit dialogue line", "project": item.scene.episode.project,
+        "scene": item.scene,
+        "translate_url": reverse("studio:localized_translate", kwargs={"project_id": item.scene.episode.project_id}),
+    })
 
 
 @login_required
@@ -1204,6 +1286,7 @@ def scene_detail(request, scene_id):
         "project_assets": project_assets,
         "workspace_assets": workspace_assets,
         "mention_characters": list(scene.episode.project.characters.values_list("name", flat=True)),
+        "translate_url": reverse("studio:localized_translate", kwargs={"project_id": scene.episode.project_id}),
         **_project_header_context(request.user, scene.episode.project),
         **_prompt_editor_context(request),
     })
@@ -1934,6 +2017,7 @@ def asset_crop(request, asset_id):
 
 
 @login_required
+@transaction.atomic
 def asset_detach(request, asset_id, scope, owner_id):
     asset = _asset_for_edit(request, asset_id)
     if request.method != "POST":
@@ -2057,6 +2141,55 @@ def workspace_recycle_bin(request, workspace_id):
 
 
 @login_required
+def localized_translate(request, project_id):
+    project = get_object_or_404(accessible_projects(request.user), id=project_id)
+    if request.method != "POST" or not has_project_capability(request.user, project, "use_ai") or not user_has_ai_access(request.user):
+        return JsonResponse({"error": "AI access is not enabled for this account."}, status=403)
+    try:
+        data = json.loads(request.body or b"{}")
+        source = str(data.get("source", "")).strip()
+        source_language = str(data.get("sourceLanguage", "")).strip().upper()
+        targets = {
+            str(role): str(language).strip().upper()
+            for role, language in dict(data.get("targets") or {}).items()
+            if str(role) in {"documentation", "prompt", "dialogue"}
+        }
+        if not source:
+            raise ValidationError("Enter source text first.")
+        if source_language not in PROMPT_LANGUAGE_NAMES or not targets:
+            raise ValidationError("Choose supported source and target languages.")
+        if any(language not in PROMPT_LANGUAGE_NAMES for language in targets.values()):
+            raise ValidationError("Choose supported target languages.")
+        model = selected_text_model(data.get("textModel"))
+        response_shape = {role: "translated text" for role in targets}
+        instruction = json.dumps({
+            "task": "Translate one production text into each requested language.",
+            "source_language": PROMPT_LANGUAGE_NAMES[source_language],
+            "targets": {role: PROMPT_LANGUAGE_NAMES[language] for role, language in targets.items()},
+            "content": source,
+            "rules": [
+                f"Return JSON only with shape {json.dumps(response_shape)}.",
+                "Preserve names, meaning, formatting, tone and production terminology.",
+                "Do not add explanations or information absent from the source.",
+            ],
+        }, ensure_ascii=False)
+        raw, used_model = run_text(model, instruction)
+        clean = raw.strip()
+        if clean.startswith("```"):
+            clean = clean.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+        parsed = json.loads(clean)
+        translations = {role: str(parsed.get(role, "")).strip() for role in targets}
+        if any(not value for value in translations.values()):
+            raise ValidationError("AI returned an incomplete translation.")
+    except (json.JSONDecodeError, ProviderError, ValidationError, TypeError, ValueError) as exc:
+        message = "; ".join(exc.messages) if isinstance(exc, ValidationError) else str(exc)
+        return JsonResponse({"error": message}, status=400)
+    except Exception:
+        return JsonResponse({"error": "The translation service returned an unexpected error."}, status=500)
+    return JsonResponse({"translations": translations, "model": used_model})
+
+
+@login_required
 def dialogue_translation_preview(request, line_id):
     line = DialogueLine.objects.select_related("scene__episode__project__workspace").filter(id=line_id).first()
     if line is None:
@@ -2112,26 +2245,52 @@ def project_copy(request, project_id):
         prompt_template=source.prompt_template, documentation_language=source.documentation_language,
         dialogue_language=source.dialogue_language, prompt_language=source.prompt_language,
         rights_holder=source.rights_holder, publication_info=source.publication_info, status=Project.Status.DRAFT,
+        status_comment=source.status_comment,
         created_by=request.user, updated_by=request.user,
     )
     character_map = {}
     for character in source.characters.all():
-        character_map[character.id] = Character.objects.create(project=copied, name=character.name, description=character.description, visual_description=character.visual_description, position=character.position, created_by=request.user, updated_by=request.user)
+        character_map[character.id] = Character.objects.create(
+            project=copied, name=character.name, name_prompt=character.name_prompt, name_dialogue=character.name_dialogue,
+            description=character.description, description_prompt=character.description_prompt,
+            description_dialogue=character.description_dialogue, visual_description=character.visual_description,
+            visual_description_prompt=character.visual_description_prompt,
+            visual_description_dialogue=character.visual_description_dialogue, position=character.position,
+            created_by=request.user, updated_by=request.user,
+        )
     scene_map, prompt_map = {}, {}
     for episode in source.episodes.prefetch_related("scenes__dialogue_lines", "scenes__prompts__blocks").all():
         new_episode = Episode.objects.create(project=copied, number=episode.number, title=episode.title, summary=episode.summary, position=episode.position, language=episode.language, created_by=request.user, updated_by=request.user)
         for scene in episode.scenes.all():
-            new_scene = Scene.objects.create(episode=new_episode, number=scene.number, title=scene.title, hook=scene.hook, description=scene.description, location=scene.location, actions=scene.actions, performance_notes=scene.performance_notes, scene_type=scene.scene_type, status=scene.status, position=scene.position, created_by=request.user, updated_by=request.user)
+            new_scene = Scene.objects.create(
+                episode=new_episode, number=scene.number, title=scene.title, title_prompt=scene.title_prompt,
+                title_dialogue=scene.title_dialogue, hook=scene.hook, hook_prompt=scene.hook_prompt,
+                hook_dialogue=scene.hook_dialogue, description=scene.description,
+                description_prompt=scene.description_prompt, description_dialogue=scene.description_dialogue,
+                location=scene.location, location_prompt=scene.location_prompt, location_dialogue=scene.location_dialogue,
+                actions=scene.actions, actions_prompt=scene.actions_prompt, actions_dialogue=scene.actions_dialogue,
+                performance_notes=scene.performance_notes, performance_notes_prompt=scene.performance_notes_prompt,
+                performance_notes_dialogue=scene.performance_notes_dialogue, scene_type=scene.scene_type,
+                status=scene.status, status_comment=scene.status_comment, position=scene.position,
+                created_by=request.user, updated_by=request.user,
+            )
             scene_map[scene.id] = new_scene
             line_map = {}
             for line in scene.dialogue_lines.all():
-                new_line = DialogueLine.objects.create(scene=new_scene, speaker=line.speaker, text=line.text, language=line.language, delivery=line.delivery, position=line.position, status=line.status, created_by=request.user, updated_by=request.user)
+                new_line = DialogueLine.objects.create(
+                    scene=new_scene, speaker=line.speaker, speaker_documentation=line.speaker_documentation,
+                    speaker_prompt=line.speaker_prompt, text=line.text, text_documentation=line.text_documentation,
+                    text_prompt=line.text_prompt, language=line.language, delivery=line.delivery,
+                    delivery_documentation=line.delivery_documentation, delivery_prompt=line.delivery_prompt,
+                    position=line.position, status=line.status, status_comment=line.status_comment,
+                    created_by=request.user, updated_by=request.user,
+                )
                 line_map[line.id] = new_line
                 for translated in line.translations.all():
                     TranslationUnit.objects.create(dialogue_line=new_line, source_text=translated.source_text, translated_text=translated.translated_text, target_language=translated.target_language, status=translated.status, created_by=request.user, updated_by=request.user)
             ordered_prompts = list(scene.prompts.select_related("source_prompt").prefetch_related("blocks").all())
             for prompt in sorted(ordered_prompts, key=lambda item: bool(item.source_prompt_id)):
-                new_prompt = Prompt.objects.create(scene=new_scene, ai_model=prompt.ai_model, template=prompt.template, source_prompt=prompt_map.get(prompt.source_prompt_id), original_language=prompt.original_language, language=prompt.language, translation_scope=prompt.translation_scope, content=prompt.content, prompt_type=prompt.prompt_type, title=prompt.title, status=prompt.status, position=prompt.position, created_by=request.user, updated_by=request.user)
+                new_prompt = Prompt.objects.create(scene=new_scene, ai_model=prompt.ai_model, template=prompt.template, source_prompt=prompt_map.get(prompt.source_prompt_id), original_language=prompt.original_language, language=prompt.language, translation_scope=prompt.translation_scope, content=prompt.content, prompt_type=prompt.prompt_type, title=prompt.title, status=prompt.status, status_comment=prompt.status_comment, position=prompt.position, needs_review=prompt.needs_review, created_by=request.user, updated_by=request.user)
                 prompt_map[prompt.id] = new_prompt
                 for block in prompt.blocks.all():
                     PromptBlock.objects.create(prompt=new_prompt, block_type=block.block_type, content=block.content, source_dialogue=line_map.get(block.source_dialogue_id), translated_content=block.translated_content, translation_language=block.translation_language, translation_model=block.translation_model, position=block.position, created_by=request.user, updated_by=request.user)
@@ -2352,6 +2511,7 @@ def _prompt_payload(prompt):
         "aiModel": str(prompt.ai_model_id),
         "promptType": prompt.prompt_type,
         "status": prompt.status,
+        "statusComment": prompt.status_comment,
         "versions": versions,
         "saveUrl": reverse("studio:prompt_quick_save", kwargs={"prompt_id": prompt.id}),
         "previewUrl": reverse("studio:prompt_ai_preview", kwargs={"prompt_id": prompt.id}),
@@ -2428,6 +2588,7 @@ def scene_prompt_quick_create(request, scene_id):
         prompt_type=prompt_type,
         title=request.POST.get("title", "").strip(),
         status=status,
+        status_comment=request.POST.get("status_comment", "").strip(),
         position=scene.prompts.count(),
         content=content,
         created_by=request.user,
@@ -2480,13 +2641,14 @@ def prompt_quick_save(request, prompt_id):
         prompt.prompt_type = prompt_type
         prompt.title = request.POST.get("title", "").strip()
         prompt.status = status
+        prompt.status_comment = request.POST.get("status_comment", "").strip()
         if not prompt.source_prompt_id:
             prompt.original_language = requested_original_language
             prompt.language = requested_original_language
         content = request.POST.get("content", prompt.editor_content)
         prompt.updated_by = request.user
         prompt.full_clean()
-        prompt.save(update_fields=["ai_model", "template", "prompt_type", "title", "status", "original_language", "language", "updated_by", "updated_at"])
+        prompt.save(update_fields=["ai_model", "template", "prompt_type", "title", "status", "status_comment", "original_language", "language", "updated_by", "updated_at"])
         if not prompt.source_prompt_id and requested_original_language != old_original_language:
             for translated in prompt.translations.all():
                 translated.original_language = requested_original_language

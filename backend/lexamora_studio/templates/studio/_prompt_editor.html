@@ -20,6 +20,7 @@
           <label>Type<select name="prompt_type" data-prompt-type{% if not can_edit %} disabled{% endif %}>{% for value,label in prompt_types %}<option value="{{ value }}"{% if value == prompt.prompt_type %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
           <label>Status<select name="status" data-prompt-status{% if not can_edit %} disabled{% endif %}>{% for value,label in prompt_statuses %}<option value="{{ value }}"{% if value == prompt.status %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
         </div>
+        <label>Status comment<textarea name="status_comment" rows="2" data-prompt-status-comment{% if not can_edit %} readonly{% endif %}>{{ prompt.status_comment }}</textarea></label>
         {% if prompt_addition.content %}<p class="prompt-addition"><strong>Added automatically:</strong> {{ prompt_addition.content }}</p>{% endif %}
         <div class="prompt-text-tools" role="toolbar" aria-label="Prompt editing tools">
           <button class="secondary" type="button" data-prompt-copy title="Copy prompt">Copy</button>

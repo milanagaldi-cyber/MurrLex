@@ -23,17 +23,17 @@ from .models import (
 
 VERSIONED_MODELS = {
     "lexamora_studio.workspace": (Workspace, ["name", "description", "avatar_asset"]),
-    "lexamora_studio.project": (Project, ["title", "concept", "original_language", "translation_languages", "rights_holder", "publication_info", "status"]),
-    "lexamora_studio.character": (Character, ["name", "description", "visual_description", "position"]),
+    "lexamora_studio.project": (Project, ["title", "concept", "original_language", "translation_languages", "rights_holder", "publication_info", "status", "status_comment"]),
+    "lexamora_studio.character": (Character, ["name", "name_prompt", "name_dialogue", "description", "description_prompt", "description_dialogue", "visual_description", "visual_description_prompt", "visual_description_dialogue", "position"]),
     "lexamora_studio.episode": (Episode, ["number", "title", "summary", "position"]),
-    "lexamora_studio.scene": (Scene, ["number", "title", "hook", "description", "location", "actions", "performance_notes", "position", "status"]),
-    "lexamora_studio.dialogueline": (DialogueLine, ["speaker", "text", "language", "delivery", "position", "status"]),
+    "lexamora_studio.scene": (Scene, ["number", "title", "title_prompt", "title_dialogue", "hook", "hook_prompt", "hook_dialogue", "description", "description_prompt", "description_dialogue", "location", "location_prompt", "location_dialogue", "actions", "actions_prompt", "actions_dialogue", "performance_notes", "performance_notes_prompt", "performance_notes_dialogue", "position", "status", "status_comment"]),
+    "lexamora_studio.dialogueline": (DialogueLine, ["speaker", "speaker_documentation", "speaker_prompt", "text", "text_documentation", "text_prompt", "language", "delivery", "delivery_documentation", "delivery_prompt", "position", "status", "status_comment"]),
     "lexamora_studio.prompt": (Prompt, [
         "template", "source_prompt", "original_language", "language", "translation_scope",
-        "title", "content", "status", "position", "needs_review",
+        "title", "content", "status", "status_comment", "position", "needs_review",
     ]),
     "lexamora_studio.promptblock": (PromptBlock, ["block_type", "content", "translated_content", "translation_language", "translation_model", "position"]),
-    "lexamora_studio.additionalgeneration": (AdditionalGeneration, ["reason", "prompt", "position", "status"]),
+    "lexamora_studio.additionalgeneration": (AdditionalGeneration, ["reason", "prompt", "position", "status", "status_comment"]),
 }
 
 

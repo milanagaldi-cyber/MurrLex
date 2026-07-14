@@ -21,6 +21,9 @@
       <label class="compact-control">Format
         <select data-media-orientation><option value="all">All formats</option><option value="vertical">Vertical</option><option value="horizontal">Horizontal</option><option value="square">Square</option></select>
       </label>
+      <label class="compact-control">Preview
+        <select data-preview-shape><option value="auto">Auto</option><option value="vertical">Vertical</option><option value="horizontal">Horizontal</option><option value="square">Square</option></select>
+      </label>
       <span class="view-switch" data-view-switch="{{ gallery_view_key }}">
         <button type="button" class="icon-button" data-view="large" title="Large images" aria-label="Large images">&#x25A6;</button>
         <button type="button" class="icon-button" data-view="small" title="Small images" aria-label="Small images">&#x25A5;</button>
@@ -31,7 +34,7 @@
     {% for asset in gallery_assets %}{% if asset.thumbnail %}
       <figure class="asset" data-media-item data-name="{{ asset.original_filename|lower }}" data-created="{{ asset.created_at|date:'U' }}" data-projects="{{ asset.gallery_project_ids }}" data-recent="{% if asset.is_recent_project %}1{% else %}0{% endif %}" data-orientation="{% if asset.width == asset.height %}square{% elif asset.width > asset.height %}horizontal{% else %}vertical{% endif %}" data-crop-url="{% url 'studio:asset_crop' asset.id %}"{% if gallery_mode == "project" and not asset.is_current_project %} hidden{% endif %}>
         <a href="{% url 'studio_api:asset_view' asset.id %}"><img src="{% url 'studio_api:asset_thumbnail' asset.id %}" alt="{{ asset.original_filename }}" loading="lazy" decoding="async"></a>
-        <figcaption><span class="asset-name">{{ asset.original_filename }}</span><span class="muted">Workspace / {{ asset.width }}x{{ asset.height }}</span>{% if gallery_mode == "workspace" %}{% include "studio/_asset_actions.html" with asset=asset allow_trash=True %}{% elif asset.is_current_project %}{% include "studio/_asset_actions.html" with asset=asset attachment_scope='project' attachment_id=gallery_current_project %}{% else %}{% include "studio/_asset_actions.html" with asset=asset %}{% endif %}</figcaption>
+        <figcaption><span class="asset-name">{{ asset.original_filename }}</span><span class="muted">Workspace / {{ asset.width }}x{{ asset.height }}</span>{% if gallery_mode == "workspace" %}{% include "studio/_asset_actions.html" with asset=asset allow_trash=True %}{% elif asset.is_current_project %}{% include "studio/_asset_actions.html" with asset=asset attachment_scope='project' attachment_id=gallery_current_project %}{% else %}{% include "studio/_asset_actions.html" with asset=asset attach_project_id=gallery_current_project return_anchor=gallery_id %}{% endif %}</figcaption>
       </figure>
     {% endif %}{% endfor %}
     {% if can_edit %}{% include "studio/_image_picker.html" with picker_id=gallery_picker_id upload_url=gallery_upload_url picker_return=request.get_full_path picker_default_scope=gallery_default_scope %}{% endif %}

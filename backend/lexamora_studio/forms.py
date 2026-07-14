@@ -46,7 +46,7 @@ class ProjectForm(forms.ModelForm):
 
     class Meta:
         model = Project
-        fields = ["project_type", "title", "concept", "original_language", "documentation_language", "dialogue_language", "prompt_language", "translation_languages", "prompt_template", "rights_holder", "publication_info", "status"]
+        fields = ["project_type", "title", "concept", "original_language", "documentation_language", "dialogue_language", "prompt_language", "translation_languages", "prompt_template", "rights_holder", "publication_info", "status", "status_comment"]
         widgets = {
             "concept": forms.Textarea(attrs={"rows": 4}),
             "documentation_language": forms.Select(choices=PROMPT_LANGUAGES),
@@ -147,7 +147,19 @@ class WorkspaceMembershipForm(forms.Form):
 class CharacterForm(forms.ModelForm):
     class Meta:
         model = Character
-        fields = ["name", "description", "visual_description"]
+        fields = [
+            "name", "name_prompt", "name_dialogue",
+            "description", "description_prompt", "description_dialogue",
+            "visual_description", "visual_description_prompt", "visual_description_dialogue",
+        ]
+
+
+class CharacterCreateForm(CharacterForm):
+    avatar_file = forms.ImageField(
+        required=False,
+        label="Avatar",
+        widget=forms.ClearableFileInput(attrs={"accept": "image/jpeg,image/png,image/webp"}),
+    )
 
 
 class EpisodeForm(forms.ModelForm):
@@ -173,8 +185,20 @@ class SceneForm(forms.ModelForm):
 
     class Meta:
         model = Scene
-        fields = ["title", "scene_type", "hook", "description", "location", "actions", "performance_notes", "status"]
-        widgets = {field: forms.Textarea(attrs={"rows": 2}) for field in ("hook", "description", "location", "actions", "performance_notes")}
+        fields = [
+            "title", "title_prompt", "title_dialogue", "scene_type",
+            "hook", "hook_prompt", "hook_dialogue",
+            "description", "description_prompt", "description_dialogue",
+            "location", "location_prompt", "location_dialogue",
+            "actions", "actions_prompt", "actions_dialogue",
+            "performance_notes", "performance_notes_prompt", "performance_notes_dialogue",
+            "status", "status_comment",
+        ]
+        widgets = {field: forms.Textarea(attrs={"rows": 2}) for field in (
+            "hook", "hook_prompt", "hook_dialogue", "description", "description_prompt", "description_dialogue",
+            "location", "location_prompt", "location_dialogue", "actions", "actions_prompt", "actions_dialogue",
+            "performance_notes", "performance_notes_prompt", "performance_notes_dialogue", "status_comment",
+        )}
 
     def clean_scene_type(self):
         return self.cleaned_data.get("scene_type") or self.instance.scene_type or Scene.Type.ORIGINAL
@@ -183,13 +207,21 @@ class SceneForm(forms.ModelForm):
 class DialogueLineForm(forms.ModelForm):
     class Meta:
         model = DialogueLine
-        fields = ["speaker", "text", "language", "delivery", "status"]
+        fields = [
+            "speaker_documentation", "speaker_prompt", "speaker",
+            "text_documentation", "text_prompt", "text", "language",
+            "delivery_documentation", "delivery_prompt", "delivery",
+            "status", "status_comment",
+        ]
+        widgets = {field: forms.Textarea(attrs={"rows": 3}) for field in (
+            "text_documentation", "text_prompt", "text", "delivery_documentation", "delivery_prompt", "delivery", "status_comment",
+        )}
 
 
 class PromptForm(forms.ModelForm):
     class Meta:
         model = Prompt
-        fields = ["ai_model", "prompt_type", "title", "content", "status"]
+        fields = ["ai_model", "prompt_type", "title", "content", "status", "status_comment"]
         widgets = {"content": forms.Textarea(attrs={"rows": 8})}
 
     def save(self, commit=True):
@@ -208,7 +240,10 @@ class PromptBlockForm(forms.ModelForm):
 
 
 class ImageUploadForm(forms.Form):
-    file = forms.FileField(help_text="JPG, PNG or WEBP. The original is stored privately.")
+    file = forms.FileField(
+        help_text="JPG, PNG or WEBP. The original is stored privately.",
+        widget=forms.ClearableFileInput(attrs={"accept": "image/jpeg,image/png,image/webp"}),
+    )
 
     def clean_file(self):
         uploaded = self.cleaned_data["file"]
@@ -262,10 +297,11 @@ class DocxImportUploadForm(forms.Form):
 class AdditionalGenerationForm(forms.ModelForm):
     class Meta:
         model = AdditionalGeneration
-        fields = ["reason", "source_asset", "prompt", "status"]
+        fields = ["reason", "source_asset", "prompt", "status", "status_comment"]
         widgets = {
             "reason": forms.Textarea(attrs={"rows": 2}),
             "prompt": forms.Textarea(attrs={"rows": 5}),
+            "status_comment": forms.Textarea(attrs={"rows": 2}),
         }
 
     def __init__(self, *args, project=None, **kwargs):

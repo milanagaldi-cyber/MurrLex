@@ -1,0 +1,28 @@
+{% extends "studio/base.html" %}
+{% block content %}
+<p class="muted"><a href="{% url 'studio:project_detail' project.id %}">&larr; Project {{ project.title }}</a></p>
+<h1>{{ title }}</h1>
+<form method="post" enctype="multipart/form-data" class="panel localized-form">{% csrf_token %}
+  {{ form.non_field_errors }}
+  <section class="localized-group" data-localized-group data-source-role="documentation" data-translate-url="{{ translate_url }}">
+    <header><h2>Name</h2><button class="secondary" type="button" data-translate-dependent>Translate dependent fields</button><span class="save-state" data-translate-state></span></header>
+    <label>Documentation <span class="language-badge">{{ project.documentation_language }}</span>{{ form.name }}</label>
+    <label>Prompt <span class="language-badge">{{ project.prompt_language }}</span>{{ form.name_prompt }}</label>
+    <label>Dialogue <span class="language-badge">{{ project.dialogue_language }}</span>{{ form.name_dialogue }}</label>
+  </section>
+  <section class="localized-group" data-localized-group data-source-role="documentation" data-translate-url="{{ translate_url }}">
+    <header><h2>Description</h2><button class="secondary" type="button" data-translate-dependent>Translate dependent fields</button><span class="save-state" data-translate-state></span></header>
+    <label>Documentation <span class="language-badge">{{ project.documentation_language }}</span>{{ form.description }}</label>
+    <label>Prompt <span class="language-badge">{{ project.prompt_language }}</span>{{ form.description_prompt }}</label>
+    <label>Dialogue <span class="language-badge">{{ project.dialogue_language }}</span>{{ form.description_dialogue }}</label>
+  </section>
+  <section class="localized-group" data-localized-group data-source-role="documentation" data-translate-url="{{ translate_url }}">
+    <header><h2>Visual description</h2><button class="secondary" type="button" data-translate-dependent>Translate dependent fields</button><span class="save-state" data-translate-state></span></header>
+    <label>Documentation <span class="language-badge">{{ project.documentation_language }}</span>{{ form.visual_description }}</label>
+    <label>Prompt <span class="language-badge">{{ project.prompt_language }}</span>{{ form.visual_description_prompt }}</label>
+    <label>Dialogue <span class="language-badge">{{ project.dialogue_language }}</span>{{ form.visual_description_dialogue }}</label>
+  </section>
+  <label class="character-avatar-upload">Avatar{{ form.avatar_file }}<span class="muted">Optional. You can change it later from the character screen.</span></label>
+  <div class="dialog-actions"><a class="button secondary" href="{% url 'studio:project_detail' project.id %}">Cancel</a><button type="submit">Create character</button></div>
+</form>
+{% endblock %}

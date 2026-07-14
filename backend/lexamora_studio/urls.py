@@ -89,6 +89,7 @@ urlpatterns = [
     path("prompts/<uuid:prompt_id>/translate-dialogue/", views.prompt_translate_dialogue, name="prompt_translate_dialogue"),
     path("suggestions/<uuid:suggestion_id>/<str:decision>/", views.suggestion_decide, name="suggestion_decide"),
     path("projects/<uuid:project_id>/translations/", views.translation_workspace, name="translations"),
+    path("projects/<uuid:project_id>/localized-translate/", views.localized_translate, name="localized_translate"),
     path("dialogue/<uuid:line_id>/translation-preview/", views.dialogue_translation_preview, name="dialogue_translation_preview"),
     path("episodes/<uuid:episode_id>/subtitles/", views.episode_subtitles, name="episode_subtitles"),
     path("subtitle-tracks/<uuid:track_id>/", views.subtitle_track, name="subtitle_track"),

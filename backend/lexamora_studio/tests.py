@@ -490,6 +490,7 @@ class StudioAiSuggestionTests(TestCase):
             workspace=self.workspace, project_type=Project.Type.SERIES, title="AI Project",
             created_by=self.editor, updated_by=self.editor,
         )
+        self.project = project
         episode = Episode.objects.create(project=project, number=1, title="Pilot", created_by=self.editor, updated_by=self.editor)
         scene = Scene.objects.create(episode=episode, number=1, title="Opening", created_by=self.editor, updated_by=self.editor)
         model = AiModelProfile.objects.create(name="AI Test Video", provider="Test", model_id="video-test", media_type="VIDEO")
@@ -515,6 +516,25 @@ class StudioAiSuggestionTests(TestCase):
             {"id": str(self.narrative.id), "content": "Cinematic room with precise lighting"},
             {"id": str(self.dialogue.id), "content": "Rewritten dialogue"},
         ]})
+
+    @patch("lexamora_studio.views.run_text")
+    def test_localized_field_translation_returns_both_dependent_languages(self, mocked_run_text):
+        mocked_run_text.return_value = (
+            json.dumps({"prompt": "A quiet office", "dialogue": "Una oficina tranquila"}),
+            "gpt-5.4-mini",
+        )
+        self.client.force_login(self.editor)
+        response = self.client.post(
+            f"/studio/projects/{self.project.id}/localized-translate/",
+            data=json.dumps({
+                "source": "Spokojne biuro", "sourceLanguage": "PL",
+                "targets": {"prompt": "EN", "dialogue": "ES"},
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["translations"]["prompt"], "A quiet office")
+        self.assertEqual(response.json()["translations"]["dialogue"], "Una oficina tranquila")
 
     def test_inline_prompt_ui_is_compact_and_exposes_clear_ai_actions(self):
         self.client.force_login(self.editor)
@@ -1759,6 +1779,52 @@ class StudioInlineEditingWorkflowTests(TestCase):
         self.assertEqual(self.first_scene.scene_type, "ALTERNATIVE")
         self.assertEqual(self.first_scene.status, "PRODUCTION")
 
+    def test_scene_editor_saves_three_language_fields_and_status_comment(self):
+        self.client.force_login(self.owner)
+        response = self.client.post(
+            f"/studio/scenes/{self.first_scene.id}/",
+            {
+                "title": "Opis sceny", "title_prompt": "Scene description", "title_dialogue": "Opis dialogu",
+                "hook": "Dokumentacja", "hook_prompt": "Prompt copy", "hook_dialogue": "Dialog copy",
+                "description": "Główny opis", "description_prompt": "Main description",
+                "description_dialogue": "Opis docelowy", "location": "Biuro", "location_prompt": "Office",
+                "location_dialogue": "Biuro dialog", "actions": "Idzie", "actions_prompt": "Walks",
+                "actions_dialogue": "Idzie dialog", "performance_notes": "Spokojnie",
+                "performance_notes_prompt": "Calmly", "performance_notes_dialogue": "Spokojnie dialog",
+                "scene_type": "ORIGINAL", "status": "PRODUCTION", "status_comment": "Ready for shooting",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.first_scene.refresh_from_db()
+        self.assertEqual(self.first_scene.title_prompt, "Scene description")
+        self.assertEqual(self.first_scene.description_dialogue, "Opis docelowy")
+        self.assertEqual(self.first_scene.status_comment, "Ready for shooting")
+
+    def test_new_character_can_include_multilingual_fields_and_avatar(self):
+        import tempfile
+        from pathlib import Path
+        from .models import Character
+
+        self.client.force_login(self.owner)
+        with tempfile.TemporaryDirectory() as directory:
+            with self.settings(STUDIO_PRIVATE_MEDIA_ROOT=Path(directory)):
+                response = self.client.post(
+                    f"/studio/projects/{self.project.id}/characters/new/",
+                    {
+                        "name": "Kot", "name_prompt": "Cat", "name_dialogue": "Gato",
+                        "description": "Opis", "description_prompt": "Description",
+                        "description_dialogue": "Descripcion", "visual_description": "Rudy",
+                        "visual_description_prompt": "Ginger", "visual_description_dialogue": "Naranja",
+                        "avatar_file": self.image_file("cat-avatar.png"),
+                    },
+                )
+                self.assertEqual(response.status_code, 302)
+                character = Character.objects.get(project=self.project, name="Kot")
+                self.assertEqual(character.name_prompt, "Cat")
+                self.assertEqual(character.name_dialogue, "Gato")
+                self.assertIsNotNone(character.avatar_asset_id)
+                self.assertTrue(character.reference_assets.filter(id=character.avatar_asset_id).exists())
+
     def test_scene_copy_appends_deep_copy_and_delete_renumbers(self):
         from .models import DialogueLine, Prompt, Scene
 
@@ -1792,7 +1858,8 @@ class StudioInlineEditingWorkflowTests(TestCase):
     def test_scene_pages_show_full_path_actions_and_ordered_project_navigation(self):
         self.client.force_login(self.owner)
         page = self.client.get(f"/studio/scenes/{self.first_scene.id}/")
-        self.assertContains(page, "Full scene path")
+        self.assertContains(page, 'aria-label="Scene path"')
+        self.assertContains(page, "Lexamora Studio")
         self.assertContains(page, f"Project {self.project.title}")
         self.assertContains(page, f'/studio/scenes/{self.first_scene.id}/copy/')
         self.assertContains(page, f'/studio/scenes/{self.first_scene.id}/delete/')
@@ -1841,7 +1908,7 @@ class StudioInlineEditingWorkflowTests(TestCase):
         page = self.client.get(f"/studio/scenes/{self.first_scene.id}/")
         self.assertEqual(page.status_code, 200)
         self.assertContains(page, 'id="scene-editor-form"')
-        self.assertContains(page, "Create scene")
+        self.assertContains(page, "Create scene", count=1)
         self.assertContains(page, f'/studio/scenes/{self.second_scene.id}/')
         self.assertContains(page, "data-scene-cancel disabled", count=1)
         self.assertNotContains(page, 'name="number"')
@@ -2581,6 +2648,36 @@ class StudioAssetLifecycleTests(TestCase):
                 self.client.force_login(self.viewer)
                 self.assertEqual(self.client.post(f"/studio/assets/{asset.id}/trash/").status_code, 403)
                 self.assertTrue(Asset.objects.filter(id=asset.id).exists())
+
+    def test_project_detach_keeps_workspace_file_and_attach_restores_link(self):
+        import tempfile
+        from pathlib import Path
+        from .models import Asset
+        from .storage import create_asset
+
+        self.client.force_login(self.owner)
+        with tempfile.TemporaryDirectory() as directory:
+            with self.settings(STUDIO_PRIVATE_MEDIA_ROOT=Path(directory)):
+                asset = create_asset(
+                    user=self.owner, workspace=self.workspace, project=self.project,
+                    uploaded=self.image_file("shared.png"), kind=Asset.Kind.OTHER,
+                )
+                detached = self.client.post(
+                    f"/studio/assets/{asset.id}/detach/project/{self.project.id}/",
+                    {"next": f"/studio/projects/{self.project.id}/#images"},
+                )
+                self.assertEqual(detached.status_code, 302)
+                asset.refresh_from_db()
+                self.assertTrue(Asset.objects.filter(id=asset.id, workspace=self.workspace).exists())
+                self.assertFalse(asset.projects.filter(id=self.project.id).exists())
+                self.assertIsNone(asset.project_id)
+
+                attached = self.client.post(
+                    f"/studio/assets/attach/project/{self.project.id}/",
+                    {"asset_id": str(asset.id), "next": f"/studio/projects/{self.project.id}/#images"},
+                )
+                self.assertEqual(attached.status_code, 302)
+                self.assertTrue(asset.projects.filter(id=self.project.id).exists())
 
 
 class StudioGeneralSettingsTests(TestCase):
