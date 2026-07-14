@@ -7,6 +7,12 @@ def backfill_asset_links(apps, schema_editor):
     Asset = apps.get_model('lexamora_studio', 'Asset')
     Character = apps.get_model('lexamora_studio', 'Character')
     Project = apps.get_model('lexamora_studio', 'Project')
+    AssetProject = Asset.projects.through
+    CharacterReference = Character.reference_assets.through
+    Prompt = apps.get_model('lexamora_studio', 'Prompt')
+    PromptReference = Prompt.reference_assets.through
+    Scene = apps.get_model('lexamora_studio', 'Scene')
+    SceneReference = Scene.reference_assets.through
 
     for asset in Asset.objects.select_related(
         'project', 'scene__episode__project', 'character__project', 'prompt__scene__episode__project'
@@ -19,21 +25,21 @@ def backfill_asset_links(apps, schema_editor):
                 asset.prompt.scene.episode.project_id if asset.prompt_id else None,
             ) if value
         }
-        if project_ids:
-            asset.projects.add(*Project.objects.filter(id__in=project_ids))
+        for project_id in project_ids:
+            AssetProject.objects.get_or_create(asset_id=asset.id, project_id=project_id)
         if asset.scene_id:
-            asset.scene.reference_assets.add(asset)
+            SceneReference.objects.get_or_create(scene_id=asset.scene_id, asset_id=asset.id)
         if asset.character_id:
-            asset.character.reference_assets.add(asset)
+            CharacterReference.objects.get_or_create(character_id=asset.character_id, asset_id=asset.id)
         if asset.prompt_id:
-            asset.prompt.reference_assets.add(asset)
+            PromptReference.objects.get_or_create(prompt_id=asset.prompt_id, asset_id=asset.id)
 
     for character in Character.objects.exclude(avatar_asset_id__isnull=True).select_related('project').iterator():
-        character.reference_assets.add(character.avatar_asset_id)
-        character.avatar_asset.projects.add(character.project)
+        CharacterReference.objects.get_or_create(character_id=character.id, asset_id=character.avatar_asset_id)
+        AssetProject.objects.get_or_create(asset_id=character.avatar_asset_id, project_id=character.project_id)
 
     for project in Project.objects.exclude(cover_asset_id__isnull=True).iterator():
-        project.cover_asset.projects.add(project)
+        AssetProject.objects.get_or_create(asset_id=project.cover_asset_id, project_id=project.id)
 
 
 class Migration(migrations.Migration):
