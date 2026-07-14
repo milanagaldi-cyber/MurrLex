@@ -7,7 +7,17 @@ from django.shortcuts import redirect
 from django.urls import reverse
 from django.utils import timezone
 
-from .models import ApiSession, Card, GoogleOAuthAllowedUser, ImportLog, Lesson, ProviderCredential, UserApiAccess
+from .mfa_policy import user_has_totp
+from .models import (
+    ApiSession,
+    AdminMfaPolicy,
+    Card,
+    GoogleOAuthAllowedUser,
+    ImportLog,
+    Lesson,
+    ProviderCredential,
+    UserApiAccess,
+)
 
 
 admin.site.enable_nav_sidebar = False
@@ -109,6 +119,57 @@ class UserApiAccessAdmin(admin.ModelAdmin):
     @admin.display(boolean=True, ordering="user__is_active", description="Active account")
     def account_active(self, access):
         return access.user.is_active
+
+
+@admin.register(AdminMfaPolicy)
+class AdminMfaPolicyAdmin(admin.ModelAdmin):
+    list_display = ("username", "email", "staff", "mfa_required", "mfa_enabled", "updated_at")
+    list_editable = ("mfa_required",)
+    list_filter = ("mfa_required", "user__is_staff", "user__is_active")
+    search_fields = ("user__username", "user__email")
+    readonly_fields = ("user", "updated_at")
+    list_select_related = ("user",)
+    actions = ("reset_selected_mfa",)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return request.user.is_superuser
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def get_actions(self, request):
+        actions = super().get_actions(request)
+        if not request.user.is_superuser:
+            actions.pop("reset_selected_mfa", None)
+        return actions
+
+    @admin.action(description="Reset 2FA for selected staff users")
+    def reset_selected_mfa(self, request, queryset):
+        from allauth.mfa.models import Authenticator
+
+        user_ids = queryset.filter(user__is_staff=True).values_list("user_id", flat=True)
+        removed, _ = Authenticator.objects.filter(user_id__in=user_ids).delete()
+        queryset.filter(user__is_staff=True).update(mfa_required=True, updated_at=timezone.now())
+        self.message_user(request, f"Removed {removed} MFA record(s). Enrollment remains required.")
+
+    @admin.display(ordering="user__username", description="Username")
+    def username(self, profile):
+        return profile.user.get_username()
+
+    @admin.display(ordering="user__email", description="Email")
+    def email(self, profile):
+        return profile.user.email
+
+    @admin.display(boolean=True, ordering="user__is_staff", description="Staff")
+    def staff(self, profile):
+        return profile.user.is_staff
+
+    @admin.display(boolean=True, description="2FA enabled")
+    def mfa_enabled(self, profile):
+        return user_has_totp(profile.user)
 
 
 class CardInline(admin.TabularInline):

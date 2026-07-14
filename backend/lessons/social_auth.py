@@ -13,6 +13,7 @@ from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
 
 from .models import GoogleOAuthAllowedUser
+from .mfa_policy import user_requires_admin_mfa
 
 
 class GoogleIdentityError(ValueError):
@@ -133,8 +134,16 @@ class StagingSocialAccountAdapter(DefaultSocialAccountAdapter):
             )
         sociallogin.account.extra_data = safe_google_profile(data)
         if sociallogin.is_existing:
+            if sociallogin.user.is_staff and user_requires_admin_mfa(sociallogin.user):
+                raise ImmediateHttpResponse(
+                    HttpResponseForbidden("Protected staff accounts must use the secure Admin login.")
+                )
             return
         matches = list(get_user_model().objects.filter(email__iexact=email)[:2])
+        if len(matches) == 1 and matches[0].is_staff and user_requires_admin_mfa(matches[0]):
+            raise ImmediateHttpResponse(
+                HttpResponseForbidden("Protected staff accounts must use the secure Admin login.")
+            )
         if len(matches) == 1 and not SocialAccount.objects.filter(user=matches[0], provider="google").exists():
             sociallogin.connect(request, matches[0])
 

@@ -1,0 +1,23 @@
+{% extends "lessons/public_base.html" %}
+{% load i18n %}
+
+{% block title %}{% block head_title %}MurrLex Security{% endblock head_title %}{% endblock %}
+{% block body_class %}auth-page{% endblock %}
+
+{% block body %}
+<main class="auth-card panel">
+    <div class="auth-theme-row">{% include "lessons/theme_toggle.html" %}</div>
+    <div class="auth-logo">
+        <a class="brand" href="{% if user.is_staff %}{% url 'admin:index' %}{% else %}{% url 'home' %}{% endif %}">
+            <span class="brand-mark">ML</span><span>MurrLex Security</span>
+        </a>
+    </div>
+    {% if messages %}
+        <div class="stack">
+            {% for message in messages %}<div class="message {{ message.tags }}">{{ message }}</div>{% endfor %}
+        </div>
+    {% endif %}
+    <section>{% block content %}{% endblock content %}</section>
+    {% block extra_body %}{% endblock extra_body %}
+</main>
+{% endblock %}

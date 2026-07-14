@@ -33,7 +33,9 @@
 
     <div class="divider">or</div>
 
-    {% if form.errors %}
+    {% if form.non_field_errors %}
+        {% for error in form.non_field_errors %}<p class="errors">{{ error }}</p>{% endfor %}
+    {% elif form.errors %}
         <p class="errors">Invalid username, email, or password.</p>
     {% endif %}
 

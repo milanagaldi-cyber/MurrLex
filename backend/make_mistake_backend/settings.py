@@ -129,6 +129,7 @@ INSTALLED_APPS = [
     "allauth.account",
     "allauth.socialaccount",
     "allauth.socialaccount.providers.google",
+    "allauth.mfa",
 ]
 
 MIDDLEWARE = [
@@ -140,6 +141,7 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "lessons.social_auth.GoogleOAuthGuardMiddleware",
     "allauth.account.middleware.AccountMiddleware",
+    "lessons.middleware.StaffMFARequiredMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
@@ -161,6 +163,11 @@ SOCIALACCOUNT_PROVIDERS = {
         },
     }
 }
+
+MFA_SUPPORTED_TYPES = ["totp", "recovery_codes"]
+MFA_TOTP_ISSUER = "MurrLex"
+MFA_RECOVERY_CODE_COUNT = 10
+MFA_RECOVERY_CODES_SHOW_ONCE = True
 
 ROOT_URLCONF = "make_mistake_backend.urls"
 

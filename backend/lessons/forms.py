@@ -3,6 +3,7 @@ from django.contrib.auth import authenticate, get_user_model
 from django.contrib.auth.forms import AuthenticationForm, UserCreationForm
 
 from .models import Card, Lesson, ProviderCredential
+from .mfa_policy import user_requires_admin_mfa
 from .signup_access import is_registration_email_allowed
 
 
@@ -36,6 +37,14 @@ class UsernameOrEmailAuthenticationForm(AuthenticationForm):
             self.confirm_login_allowed(self.user_cache)
 
         return self.cleaned_data
+
+    def confirm_login_allowed(self, user):
+        super().confirm_login_allowed(user)
+        if user.is_staff and user_requires_admin_mfa(user):
+            raise forms.ValidationError(
+                "This staff account must sign in through the secure Admin login.",
+                code="staff_requires_mfa_login",
+            )
 
 
 class PublicRegistrationForm(UserCreationForm):

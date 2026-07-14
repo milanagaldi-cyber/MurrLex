@@ -18,8 +18,12 @@ Including another URLconf
 from django.contrib import admin
 from django.contrib.auth import views as auth_views
 from django.urls import include, path
+from django.views.generic import RedirectView
 from lessons.forms import UsernameOrEmailAuthenticationForm
 from lessons import views as lesson_views
+from lessons.mfa_admin import configure_secure_mfa_admin
+
+configure_secure_mfa_admin()
 
 admin.site.site_header = "MurrLex Admin"
 admin.site.site_title = "MurrLex Admin"
@@ -30,6 +34,11 @@ urlpatterns = [
     path("studio/", include("lexamora_studio.urls")),
     path("api/v1/studio/", include("lexamora_studio.api_urls")),
     path("accounts/", include("allauth.urls")),
+    path(
+        "admin/login/",
+        RedirectView.as_view(url="/accounts/login/?next=/admin/", permanent=False),
+        name="staff_admin_login",
+    ),
     path("admin/", admin.site.urls),
     path("register/", lesson_views.register, name="register"),
     path("account/", lesson_views.account, name="account"),

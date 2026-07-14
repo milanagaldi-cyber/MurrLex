@@ -4,6 +4,29 @@ from django.conf import settings
 from django.db import models
 
 
+class AdminMfaPolicy(models.Model):
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="admin_mfa_policy",
+    )
+    mfa_required = models.BooleanField(
+        default=False,
+        verbose_name="Require admin 2FA",
+        help_text="When enabled, this staff user must enroll and use TOTP to enter Django Admin.",
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "admin 2FA policy"
+        verbose_name_plural = "admin 2FA policies"
+        ordering = ["user__username"]
+        permissions = [("reset_staff_mfa", "Can reset staff MFA")]
+
+    def __str__(self) -> str:
+        return self.user.get_username()
+
+
 class UserApiAccess(models.Model):
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,

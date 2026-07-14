@@ -421,9 +421,15 @@ class AdminThemeTests(TestCase):
 
         response = self.client.get("/admin/login/")
 
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "data-admin-history-back", count=2)
-        self.assertContains(response, "&larr; Back", html=True)
+        self.assertRedirects(
+            response,
+            "/accounts/login/?next=/admin/",
+            fetch_redirect_response=False,
+        )
+        secure_login = self.client.get(response["Location"])
+        self.assertEqual(secure_login.status_code, 200)
+        self.assertContains(secure_login, "data-history-back")
+        self.assertContains(secure_login, "Back")
 
     def test_ai_access_is_managed_from_user_list(self):
         changelist = self.client.get("/admin/lessons/userapiaccess/")
