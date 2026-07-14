@@ -1719,6 +1719,7 @@ class StudioInlineEditingWorkflowTests(TestCase):
                 "location": "Room",
                 "actions": "Walks",
                 "performance_notes": "Quiet",
+                "scene_type": "ORIGINAL",
                 "status": "IN_REVIEW",
             },
         )
@@ -1737,6 +1738,74 @@ class StudioInlineEditingWorkflowTests(TestCase):
             [self.second_scene.id, self.first_scene.id],
         )
         self.assertTrue(AuditEvent.objects.filter(action="SCENES_DRAG_REORDERED").exists())
+
+    def test_scene_editor_updates_type_and_production_status(self):
+        self.client.force_login(self.owner)
+        response = self.client.post(
+            f"/studio/scenes/{self.first_scene.id}/",
+            {
+                "title": self.first_scene.title,
+                "hook": "",
+                "description": "Alternative production cut",
+                "location": "",
+                "actions": "",
+                "performance_notes": "",
+                "scene_type": "ALTERNATIVE",
+                "status": "PRODUCTION",
+            },
+        )
+        self.assertRedirects(response, f"/studio/scenes/{self.first_scene.id}/?focus=top#scene-navigation-top")
+        self.first_scene.refresh_from_db()
+        self.assertEqual(self.first_scene.scene_type, "ALTERNATIVE")
+        self.assertEqual(self.first_scene.status, "PRODUCTION")
+
+    def test_scene_copy_appends_deep_copy_and_delete_renumbers(self):
+        from .models import DialogueLine, Prompt, Scene
+
+        DialogueLine.objects.create(
+            scene=self.first_scene, speaker="Cat", text="Hello", position=0,
+            created_by=self.owner, updated_by=self.owner,
+        )
+        Prompt.objects.create(
+            scene=self.first_scene, ai_model=self.ai_model, prompt_type="IMAGE",
+            title="Frame", content="A ginger cat", position=0, needs_review=True,
+            created_by=self.owner, updated_by=self.owner,
+        )
+        self.first_scene.scene_type = Scene.Type.ALTERNATIVE
+        self.first_scene.save(update_fields=["scene_type", "updated_at"])
+        self.client.force_login(self.owner)
+
+        copied_response = self.client.post(f"/studio/scenes/{self.first_scene.id}/copy/")
+        copied = Scene.objects.get(episode=self.episode, number=3)
+        self.assertRedirects(copied_response, f"/studio/scenes/{copied.id}/")
+        self.assertEqual((copied.position, copied.scene_type, copied.status), (2, "ALTERNATIVE", "DRAFT"))
+        self.assertEqual(copied.dialogue_lines.get().text, "Hello")
+        self.assertTrue(copied.prompts.get().needs_review)
+
+        deleted_response = self.client.post(f"/studio/scenes/{self.second_scene.id}/delete/")
+        self.assertRedirects(deleted_response, f"/studio/scenes/{copied.id}/")
+        ordered = list(Scene.objects.filter(episode=self.episode).order_by("position"))
+        self.assertEqual([(scene.id, scene.number, scene.position) for scene in ordered], [
+            (self.first_scene.id, 1, 0), (copied.id, 2, 1),
+        ])
+
+    def test_scene_pages_show_full_path_actions_and_ordered_project_navigation(self):
+        self.client.force_login(self.owner)
+        page = self.client.get(f"/studio/scenes/{self.first_scene.id}/")
+        self.assertContains(page, "Full scene path")
+        self.assertContains(page, f"Project {self.project.title}")
+        self.assertContains(page, f'/studio/scenes/{self.first_scene.id}/copy/')
+        self.assertContains(page, f'/studio/scenes/{self.first_scene.id}/delete/')
+        content = page.content.decode()
+        self.assertLess(content.index("General View"), content.index("Master Document"))
+        self.assertLess(content.index("Master Document"), content.index("Scene Chain"))
+        self.assertLess(content.index("Scene Chain"), content.index("Translations"))
+
+        chain = self.client.get(f"/studio/projects/{self.project.id}/scene-chain/")
+        self.assertContains(chain, 'name="scene_type"')
+        self.assertContains(chain, "Production")
+        self.assertContains(chain, f'/studio/scenes/{self.first_scene.id}/copy/')
+        self.assertContains(chain, f'/studio/scenes/{self.first_scene.id}/delete/')
 
     def test_asset_api_can_attach_image_to_prompt(self):
         import tempfile

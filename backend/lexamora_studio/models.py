@@ -199,12 +199,17 @@ class Episode(SoftDeleteModel):
 
 
 class Scene(SoftDeleteModel):
+    class Type(models.TextChoices):
+        ORIGINAL = "ORIGINAL", "Original"
+        ALTERNATIVE = "ALTERNATIVE", "Alternative"
+        ADDITIONAL_GENERATION = "ADDITIONAL_GENERATION", "Additional generation"
+
     class Status(models.TextChoices):
         DRAFT = "DRAFT", "Draft"
         IN_REVIEW = "IN_REVIEW", "In review"
         APPROVED = "APPROVED", "Approved"
         NEEDS_CHANGES = "NEEDS_CHANGES", "Needs changes"
-        FINAL = "FINAL", "Final"
+        PRODUCTION = "PRODUCTION", "Production"
 
     episode = models.ForeignKey(Episode, on_delete=models.PROTECT, related_name="scenes")
     number = models.PositiveIntegerField(default=1)
@@ -214,6 +219,7 @@ class Scene(SoftDeleteModel):
     location = models.TextField(blank=True)
     actions = models.TextField(blank=True)
     performance_notes = models.TextField(blank=True)
+    scene_type = models.CharField(max_length=24, choices=Type.choices, default=Type.ORIGINAL)
     position = models.PositiveIntegerField(default=0)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
     reference_assets = models.ManyToManyField("Asset", related_name="referenced_by_scenes", blank=True)

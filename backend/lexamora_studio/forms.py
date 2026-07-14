@@ -165,10 +165,19 @@ class EpisodeForm(forms.ModelForm):
 
 
 class SceneForm(forms.ModelForm):
+    scene_type = forms.ChoiceField(
+        choices=Scene.Type.choices,
+        required=False,
+        initial=Scene.Type.ORIGINAL,
+    )
+
     class Meta:
         model = Scene
-        fields = ["title", "hook", "description", "location", "actions", "performance_notes", "status"]
+        fields = ["title", "scene_type", "hook", "description", "location", "actions", "performance_notes", "status"]
         widgets = {field: forms.Textarea(attrs={"rows": 2}) for field in ("hook", "description", "location", "actions", "performance_notes")}
+
+    def clean_scene_type(self):
+        return self.cleaned_data.get("scene_type") or self.instance.scene_type or Scene.Type.ORIGINAL
 
 
 class DialogueLineForm(forms.ModelForm):

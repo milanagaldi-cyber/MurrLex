@@ -29,7 +29,6 @@
 
 <div class="toolbar"><h2>Projects</h2><div><form method="get" class="inline-controls"><select name="sort" onchange="this.form.submit()"><option value="updated"{% if sort == 'updated' %} selected{% endif %}>Recently updated</option><option value="created"{% if sort == 'created' %} selected{% endif %}>Recently created</option><option value="title"{% if sort == 'title' %} selected{% endif %}>Title</option><option value="type"{% if sort == 'type' %} selected{% endif %}>Type</option></select></form><div class="view-switch" data-view-switch="projects"><button type="button" class="icon-button" data-view="large" title="Large cards">&#x25A6;</button><button type="button" class="icon-button" data-view="small" title="Small cards">&#x25A5;</button><button type="button" class="icon-button" data-view="list" title="List">&#x2630;</button></div></div></div>
 <div class="entity-grid large" data-view-container="projects">
-  {% if can_edit %}<a class="entity-add-tile" href="{% url 'studio:project_create' workspace.id %}" title="Create Project"><span>+</span><small>Create Project</small></a>{% endif %}
   {% for project in projects %}
   <article class="entity-card" id="project-{{ project.id }}">
     <div class="project-cover-area"><a class="entity-cover project-cover-link" href="{% url 'studio:project_detail' project.id %}">
@@ -46,6 +45,7 @@
     {% if project.can_edit %}{% url 'studio:project_image_upload' project.id as project_cover_upload_url %}{% include "studio/_image_picker.html" with picker_id=project.id|stringformat:"s"|add:"-cover-picker" picker_title="Project Cover" attach_scope="project_cover" owner_id=project.id upload_url=project_cover_upload_url upload_role="project_cover" picker_return=request.get_full_path picker_default_scope="project" hide_picker_trigger=True preserve_position=True upload_limit=1 project_assets=project.media_assets.all %}{% endif %}
   </article>
   {% endfor %}
+  {% if can_edit %}<a class="entity-add-tile" href="{% url 'studio:project_create' workspace.id %}" title="Create Project"><span>+</span><small>Create Project</small></a>{% endif %}
 </div>
 
 <div class="toolbar document-heading"><h2>DOCX imports</h2>{% if can_edit %}<a class="section-add-button" href="{% url 'studio:docx_import_create' workspace.id %}" title="Import Document" aria-label="Import Document">+</a>{% endif %}</div>

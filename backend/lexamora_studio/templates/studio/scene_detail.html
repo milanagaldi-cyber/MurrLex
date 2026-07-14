@@ -1,13 +1,14 @@
 {% extends "studio/base.html" %}
 {% block content %}
 {{ mention_characters|json_script:"mention-characters" }}
-<p class="muted"><a href="{% url 'studio:project_detail' scene.episode.project.id %}">{{ scene.episode.project.title }}</a> / Episode {{ scene.episode.number }}</p>
+<nav class="scene-path muted" aria-label="Full scene path"><a href="{% url 'home' %}">MurrLex</a><span>/</span><a href="{% url 'account' %}">User Cabinet</a><span>/</span><a href="{% url 'studio:dashboard' %}">Lexamora Studio</a><span>/</span><a href="{% url 'studio:workspace_detail' scene.episode.project.workspace_id %}">{{ scene.episode.project.workspace.name }}</a><span>/</span><a href="{% url 'studio:project_detail' scene.episode.project.id %}">Project {{ scene.episode.project.title }}</a><span>/</span><a href="{% url 'studio:project_detail' scene.episode.project.id %}#episode-{{ scene.episode.id }}">Episode {{ scene.episode.number }}</a><span>/</span><strong>Scene {{ scene.number }}</strong></nav>
+{% include "studio/_project_navigation.html" %}
 {% include "studio/_scene_navigation.html" with nav_position="top" %}
 <h2 id="images">Images</h2><div class="asset-grid scene-image-grid">{% for asset in scene_images %}{% if asset.thumbnail %}<figure class="asset" data-crop-url="{% url 'studio:asset_crop' asset.id %}"><a href="{% url 'studio_api:asset_view' asset.id %}"><img src="{% url 'studio_api:asset_thumbnail' asset.id %}" alt="{{ asset.original_filename }}"></a><figcaption><span class="asset-name">{{ asset.original_filename }}</span><span class="muted">{{ asset.width }}x{{ asset.height }}</span>{% include "studio/_asset_actions.html" with asset=asset attachment_scope='scene' attachment_id=scene.id %}</figcaption></figure>{% endif %}{% endfor %}{% if can_edit %}{% url 'studio:scene_image_upload' scene.id as image_upload_url %}{% include "studio/_image_picker.html" with picker_id="scene-image-picker" attach_scope="scene" owner_id=scene.id upload_url=image_upload_url picker_return=request.get_full_path %}{% endif %}</div>
 <form id="scene-editor-form" method="post" class="panel scene-full-editor" data-scene-editor>{% csrf_token %}
   <input type="hidden" name="navigation_focus" value="{{ request.GET.focus|default:'top' }}">
   <h1 class="block-heading">Scene {{ scene.number }}</h1>
-  <div class="scene-inline-fields"><label>Title{{ scene_form.title }}</label><label>Status{{ scene_form.status }}</label></div>
+  <div class="scene-inline-fields"><label>Title{{ scene_form.title }}</label><label>Type{{ scene_form.scene_type }}</label><label>Status{{ scene_form.status }}</label></div>
   <fieldset{% if not can_edit %} disabled{% endif %}>
     <div class="scene-edit-grid">
       <label class="wide">Hook{{ scene_form.hook }}</label><label class="wide">Description{{ scene_form.description }}</label>

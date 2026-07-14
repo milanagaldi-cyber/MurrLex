@@ -455,6 +455,144 @@ def scene_create(request, episode_id):
     return _create_entity(request, form_class=SceneForm, parent=episode, parent_field="episode", workspace=episode.project.workspace, title="New scene", success_url=lambda item: ("studio:scene_detail", item.id), position_manager=episode.scenes)
 
 
+def _renumber_episode_scenes(*, episode, user):
+    scenes = list(Scene.objects.select_for_update().filter(episode=episode).order_by("position", "number", "id"))
+    highest_number = max(
+        Scene.all_objects.filter(episode=episode).values_list("number", flat=True),
+        default=0,
+    )
+    temporary = highest_number + len(scenes) + 100
+    for offset, scene in enumerate(scenes):
+        scene.position = temporary + offset
+        scene.number = temporary + offset
+        scene.save(update_fields=["position", "number", "updated_at"])
+    for position, scene in enumerate(scenes):
+        scene.position = position
+        scene.number = position + 1
+        scene.updated_by = user
+        scene.save(update_fields=["position", "number", "updated_by", "updated_at"])
+    return scenes
+
+
+@login_required
+@transaction.atomic
+def scene_copy(request, scene_id):
+    source = get_object_or_404(
+        Scene.objects.select_related("episode__project__workspace").prefetch_related(
+            "dialogue_lines__translations", "prompts__blocks", "prompts__reference_assets",
+            "reference_assets", "additional_generations__outputs",
+        ).filter(episode__project__in=accessible_projects(request.user)),
+        id=scene_id,
+    )
+    if request.method != "POST" or not has_object_capability(request.user, source, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    episode = source.episode
+    position = episode.scenes.count()
+    copied = Scene.objects.create(
+        episode=episode, number=position + 1, title=f"{source.title} copy"[:240],
+        hook=source.hook, description=source.description, location=source.location,
+        actions=source.actions, performance_notes=source.performance_notes,
+        scene_type=source.scene_type, status=Scene.Status.DRAFT, position=position,
+        created_by=request.user, updated_by=request.user,
+    )
+    references = list(source.reference_assets.all())
+    if references:
+        copied.reference_assets.add(*references)
+        episode.project.media_assets.add(*references)
+
+    line_map = {}
+    for line in source.dialogue_lines.all():
+        new_line = DialogueLine.objects.create(
+            scene=copied, character=line.character, speaker=line.speaker, text=line.text, language=line.language,
+            delivery=line.delivery, position=line.position, status=line.status,
+            created_by=request.user, updated_by=request.user,
+        )
+        line_map[line.id] = new_line
+        for translated in line.translations.all():
+            TranslationUnit.objects.create(
+                dialogue_line=new_line, source_text=translated.source_text,
+                translated_text=translated.translated_text, target_language=translated.target_language,
+                source_revision=translated.source_revision, status=translated.status,
+                created_by=request.user, updated_by=request.user,
+            )
+
+    prompt_map = {}
+    ordered_prompts = sorted(source.prompts.select_related("source_prompt").all(), key=lambda item: bool(item.source_prompt_id))
+    for prompt in ordered_prompts:
+        new_prompt = Prompt.objects.create(
+            scene=copied, ai_model=prompt.ai_model, template=prompt.template,
+            source_prompt=prompt_map.get(prompt.source_prompt_id), original_language=prompt.original_language,
+            language=prompt.language, translation_scope=prompt.translation_scope, content=prompt.content,
+            prompt_type=prompt.prompt_type, title=prompt.title, status=prompt.status,
+            position=prompt.position, needs_review=prompt.needs_review,
+            created_by=request.user, updated_by=request.user,
+        )
+        prompt_map[prompt.id] = new_prompt
+        for block in prompt.blocks.all():
+            PromptBlock.objects.create(
+                prompt=new_prompt, block_type=block.block_type, content=block.content,
+                source_dialogue=line_map.get(block.source_dialogue_id),
+                translated_content=block.translated_content,
+                translation_language=block.translation_language,
+                translation_model=block.translation_model, position=block.position,
+                created_by=request.user, updated_by=request.user,
+            )
+        prompt_references = list(prompt.reference_assets.all())
+        if prompt_references:
+            new_prompt.reference_assets.add(*prompt_references)
+            episode.project.media_assets.add(*prompt_references)
+
+    for generation in source.additional_generations.all():
+        new_generation = AdditionalGeneration.objects.create(
+            scene=copied, reason=generation.reason, source_asset=generation.source_asset,
+            prompt=generation.prompt, position=generation.position, status=generation.status,
+            created_by=request.user, updated_by=request.user,
+        )
+        for output in generation.outputs.all():
+            GenerationOutput.objects.create(
+                generation=new_generation, asset=output.asset, model_metadata=output.model_metadata,
+                position=output.position, is_final=output.is_final,
+                created_by=request.user, updated_by=request.user,
+            )
+            episode.project.media_assets.add(output.asset)
+    record_revision(instance=copied, user=request.user, operation="COPY")
+    audit(
+        workspace=episode.project.workspace, actor=request.user, action="SCENE_COPIED",
+        instance=copied, metadata={"sourceSceneId": str(source.id)},
+    )
+    messages.success(request, f"Scene {copied.number} copied to the end of the episode.")
+    return redirect("studio:scene_detail", scene_id=copied.id)
+
+
+@login_required
+@transaction.atomic
+def scene_delete(request, scene_id):
+    scene = get_object_or_404(
+        Scene.objects.select_related("episode__project__workspace").filter(
+            episode__project__in=accessible_projects(request.user)
+        ), id=scene_id,
+    )
+    if request.method != "POST" or not has_object_capability(request.user, scene, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    episode = scene.episode
+    old_position = scene.position
+    scene.deleted_at = timezone.now()
+    scene.deleted_by = request.user
+    scene.updated_by = request.user
+    scene.number = max(Scene.all_objects.filter(episode=episode).values_list("number", flat=True), default=0) + 1000
+    scene.position = scene.number
+    scene.save(update_fields=["deleted_at", "deleted_by", "updated_by", "number", "position", "updated_at"])
+    remaining = _renumber_episode_scenes(episode=episode, user=request.user)
+    audit(
+        workspace=episode.project.workspace, actor=request.user, action="SCENE_DELETED",
+        instance=scene, metadata={"remainingSceneIds": [str(item.id) for item in remaining]},
+    )
+    messages.success(request, "Scene deleted and remaining scene numbers updated.")
+    if remaining:
+        return redirect("studio:scene_detail", scene_id=remaining[min(old_position, len(remaining) - 1)].id)
+    return redirect("studio:project_detail", project_id=episode.project_id)
+
+
 @login_required
 def dialogue_create(request, scene_id):
     scene = get_object_or_404(Scene.objects.filter(episode__project__in=accessible_projects(request.user)), id=scene_id)
@@ -1054,6 +1192,7 @@ def scene_detail(request, scene_id):
     project_assets, workspace_assets = _picker_assets(request.user, scene.episode.project)
     return render(request, "studio/scene_detail.html", {
         "scene": scene,
+        "project": scene.episode.project,
         "scene_form": form,
         "episode_scenes": episode_scenes,
         "previous_scene": episode_scenes[scene_index - 1] if scene_index else None,
@@ -1065,6 +1204,7 @@ def scene_detail(request, scene_id):
         "project_assets": project_assets,
         "workspace_assets": workspace_assets,
         "mention_characters": list(scene.episode.project.characters.values_list("name", flat=True)),
+        **_project_header_context(request.user, scene.episode.project),
         **_prompt_editor_context(request),
     })
 
@@ -1507,6 +1647,7 @@ def generation_create(request, scene_id):
                 episode=episode, number=last_number + 1, title=f"Догенерация {sequence}",
                 hook=f"Additional generation based on scene {scene.number}", description=form.cleaned_data["reason"],
                 position=episode.scenes.count(), status=Scene.Status.DRAFT,
+                scene_type=Scene.Type.ADDITIONAL_GENERATION,
                 created_by=request.user, updated_by=request.user,
             )
             item = form.save(commit=False)
@@ -1980,7 +2121,7 @@ def project_copy(request, project_id):
     for episode in source.episodes.prefetch_related("scenes__dialogue_lines", "scenes__prompts__blocks").all():
         new_episode = Episode.objects.create(project=copied, number=episode.number, title=episode.title, summary=episode.summary, position=episode.position, language=episode.language, created_by=request.user, updated_by=request.user)
         for scene in episode.scenes.all():
-            new_scene = Scene.objects.create(episode=new_episode, number=scene.number, title=scene.title, hook=scene.hook, description=scene.description, location=scene.location, actions=scene.actions, performance_notes=scene.performance_notes, status=scene.status, position=scene.position, created_by=request.user, updated_by=request.user)
+            new_scene = Scene.objects.create(episode=new_episode, number=scene.number, title=scene.title, hook=scene.hook, description=scene.description, location=scene.location, actions=scene.actions, performance_notes=scene.performance_notes, scene_type=scene.scene_type, status=scene.status, position=scene.position, created_by=request.user, updated_by=request.user)
             scene_map[scene.id] = new_scene
             line_map = {}
             for line in scene.dialogue_lines.all():
@@ -2497,10 +2638,15 @@ def episode_scene_reorder(request, episode_id):
         by_id = {str(scene.id): scene for scene in scenes}
         if len(ordered_ids) != len(scenes) or set(ordered_ids) != set(by_id):
             return JsonResponse({"error": "Every scene must be included exactly once."}, status=400)
+        highest_number = max(
+            Scene.all_objects.filter(episode=episode).values_list("number", flat=True),
+            default=0,
+        )
+        temporary = highest_number + len(scenes) + 100
         for offset, scene_id in enumerate(ordered_ids):
             scene = by_id[scene_id]
-            scene.position = 100000 + offset
-            scene.number = 100000 + offset
+            scene.position = temporary + offset
+            scene.number = temporary + offset
             scene.save(update_fields=["position", "number", "updated_at"])
         for position, scene_id in enumerate(ordered_ids):
             scene = by_id[scene_id]

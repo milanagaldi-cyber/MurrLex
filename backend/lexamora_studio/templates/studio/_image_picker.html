@@ -1,6 +1,6 @@
 {% if not hide_picker_trigger %}<button class="asset-add-tile" type="button" data-dialog-open="{{ picker_id }}" title="{{ picker_title|default:'Add Image' }}" aria-label="{{ picker_title|default:'Add Image' }}"><span>+</span><small>{{ picker_title|default:"Add Image" }}</small></button>{% endif %}
 <dialog id="{{ picker_id }}" class="asset-picker image-picker-dialog" data-default-scope="{{ picker_default_scope|default:'project' }}">
-  <div class="toolbar image-picker-head"><div><h2>{{ picker_title|default:"Add Image" }}</h2><p>Choose an existing image or upload a new one from disk.</p></div><button class="icon-button secondary" type="button" data-dialog-close aria-label="Close">&#x2715;</button></div>
+  <div class="toolbar image-picker-head"><div><h2>{{ picker_title|default:"Add Image" }} <span class="media-count" data-asset-picker-count>0</span></h2><p>Choose an existing image or upload a new one from disk.</p></div><button class="icon-button secondary" type="button" data-dialog-close aria-label="Close">&#x2715;</button></div>
   <div class="image-source-switch" role="tablist"><button type="button" class="active" data-asset-scope="project">Project</button><button type="button" class="secondary" data-asset-scope="workspace">Workspace</button></div>
   <div class="asset-picker-tabs"><button type="button" class="secondary active" data-asset-sort="project">Latest</button><button type="button" class="secondary" data-asset-sort="alpha">A-Z</button></div>
   <div class="asset-picker-grid" data-asset-picker-grid>
