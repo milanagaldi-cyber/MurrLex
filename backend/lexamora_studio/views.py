@@ -24,7 +24,7 @@ from .exports import ALL_SECTIONS, ExportError, generate_export
 from .docx_imports import accept_docx_import, parse_docx
 from .docx_exports import generate_docx_export
 from .docx_roundtrip import compare_docx_export
-from .forms import AdditionalGenerationForm, AssetEditForm, CharacterForm, DialogueLineForm, DocxImportUploadForm, EpisodeForm, GenerationOutputUploadForm, ImageUploadForm, ProjectForm, ProjectMembershipForm, PromptBlockForm, PromptForm, SceneForm, StudioTextModelForm, WorkspaceForm, WorkspaceMembershipForm
+from .forms import AdditionalGenerationForm, AiModelProfileForm, AssetEditForm, CharacterForm, DialogueLineForm, DocxImportUploadForm, EpisodeForm, GenerationOutputUploadForm, ImageUploadForm, ProjectForm, ProjectMembershipForm, PromptBlockForm, PromptForm, SceneForm, StudioTextModelForm, WorkspaceForm, WorkspaceMembershipForm
 from .models import AdditionalGeneration, AiModelProfile, AiSuggestion, Asset, Character, DialogueLine, DocxImport, Episode, ExportJob, GenerationOutput, Project, ProjectAccessExclusion, ProjectMembership, Prompt, PromptBlock, Scene, StudioTextModel, SubtitleTrack, TranslationUnit, Workspace, WorkspaceMembership
 from .notifications import notify_access_granted
 from .permissions import accessible_assets, accessible_projects, accessible_suggestions, accessible_workspaces, has_capability, has_object_capability, has_project_capability, is_workspace_owner_or_admin
@@ -157,13 +157,30 @@ def workspace_detail(request, workspace_id):
         project.can_edit = has_project_capability(request.user, project, "edit")
         project.can_manage = has_project_capability(request.user, project, "manage_project")
         project.can_administer = is_workspace_owner_or_admin(request.user, workspace)
-    return render(request, "studio/workspace_detail.html", {"workspace": workspace, "projects": projects, "sort": sort, "can_edit": has_capability(request.user, workspace, "edit"), "can_manage": has_capability(request.user, workspace, "manage_members"), "can_administer": is_workspace_owner_or_admin(request.user, workspace), "imports": workspace.docx_imports.select_related("project")[:10]})
+    recycle_count = Asset.all_objects.filter(workspace=workspace, deleted_at__isnull=False, purged_at__isnull=True).count()
+    return render(request, "studio/workspace_detail.html", {"workspace": workspace, "projects": projects, "sort": sort, "can_edit": has_capability(request.user, workspace, "edit"), "can_manage": has_capability(request.user, workspace, "manage_members"), "can_administer": is_workspace_owner_or_admin(request.user, workspace), "imports": workspace.docx_imports.select_related("project")[:10], "recycle_count": recycle_count})
 
 
 @login_required
 def workspace_edit(request, workspace_id):
-    workspace = get_object_or_404(accessible_workspaces(request.user), id=workspace_id)
-    return _edit_entity(request, item=workspace, form_class=WorkspaceForm, workspace=workspace, title="Edit workspace", success_url=lambda item: ("studio:workspace_detail", item.id))
+    workspace = get_object_or_404(accessible_workspaces(request.user).select_related("avatar_asset"), id=workspace_id)
+    if not has_capability(request.user, workspace, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    form = WorkspaceForm(request.POST or None, request.FILES or None, instance=workspace)
+    if request.method == "POST" and form.is_valid():
+        item = form.save(commit=False)
+        item.updated_by = request.user
+        avatar = form.cleaned_data.get("avatar")
+        if avatar:
+            item.avatar_asset = create_asset(user=request.user, workspace=workspace, uploaded=avatar, kind=Asset.Kind.OTHER)
+        item.save()
+        record_revision(instance=item, user=request.user, operation="UPDATE")
+        messages.success(request, "Workspace settings saved.")
+        return redirect("studio:workspace_detail", workspace_id=item.id)
+    return render(request, "studio/workspace_settings.html", {
+        "workspace": workspace, "form": form, "models": AiModelProfile.objects.all(),
+        "can_administer": is_workspace_owner_or_admin(request.user, workspace),
+    })
 
 
 @login_required
@@ -219,18 +236,15 @@ def workspace_media_models(request, workspace_id):
     workspace = get_object_or_404(accessible_workspaces(request.user), id=workspace_id)
     if not has_capability(request.user, workspace, "manage_project"):
         return HttpResponseForbidden("Workspace administrator permission is required.")
-    if request.method == "POST":
-        name = request.POST.get("name", "").strip()[:120]
-        provider = request.POST.get("provider", "").strip()[:80]
-        model_id = request.POST.get("model_id", "").strip()[:160]
-        media_type = request.POST.get("media_type", "")
-        if not name or not provider or not model_id or media_type not in AiModelProfile.MediaType.values:
-            messages.error(request, "Name, provider, model ID and media type are required.")
-        else:
-            AiModelProfile.objects.update_or_create(name=name, defaults={"provider": provider, "model_id": model_id, "media_type": media_type, "is_active": True})
-            messages.success(request, "Generation model saved.")
-            return redirect("studio:workspace_media_models", workspace_id=workspace.id)
-    return render(request, "studio/workspace_media_models.html", {"workspace": workspace, "models": AiModelProfile.objects.all()})
+    instance = None
+    if request.POST.get("model_pk"):
+        instance = get_object_or_404(AiModelProfile, id=request.POST.get("model_pk"))
+    form = AiModelProfileForm(request.POST or None, instance=instance)
+    if request.method == "POST" and form.is_valid():
+        form.save()
+        messages.success(request, "Generation model saved.")
+        return redirect("studio:workspace_media_models", workspace_id=workspace.id)
+    return render(request, "studio/workspace_media_models.html", {"workspace": workspace, "models": AiModelProfile.objects.all(), "form": form})
 
 
 def _unique_workspace_identity(name):
@@ -256,7 +270,13 @@ def workspace_copy(request, workspace_id):
     name, slug = _unique_workspace_identity(source.name)
     copied = create_workspace(user=request.user, name=name, slug=slug)
     copied.description = source.description
-    copied.save(update_fields=["description", "updated_at"])
+    copied.documentation_language = source.documentation_language
+    copied.dialogue_language = source.dialogue_language
+    copied.prompt_language = source.prompt_language
+    copied.image_prompt_template = source.image_prompt_template
+    copied.video_prompt_template = source.video_prompt_template
+    copied.audio_prompt_template = source.audio_prompt_template
+    copied.save(update_fields=["description", "documentation_language", "dialogue_language", "prompt_language", "image_prompt_template", "video_prompt_template", "audio_prompt_template", "updated_at"])
     messages.success(request, "Workspace copied. Projects can be copied into it individually.")
     return redirect("studio:workspace_detail", workspace_id=copied.id)
 
@@ -309,6 +329,8 @@ def _create_entity(request, *, form_class, parent, parent_field, workspace, titl
     if not has_object_capability(request.user, parent, "edit"):
         return HttpResponseForbidden("Edit permission is required.")
     form = form_class(request.POST or None)
+    if request.method != "POST" and isinstance(parent, Project) and form_class is EpisodeForm:
+        form.fields["language"].initial = parent.dialogue_language or parent.original_language or "EN"
     if request.method == "POST" and form.is_valid():
         item = form.save(commit=False)
         setattr(item, parent_field, parent)
@@ -333,7 +355,19 @@ def _create_entity(request, *, form_class, parent, parent_field, workspace, titl
 @login_required
 def project_create(request, workspace_id):
     workspace = get_object_or_404(accessible_workspaces(request.user), id=workspace_id)
-    return _create_entity(request, form_class=ProjectForm, parent=workspace, parent_field="workspace", workspace=workspace, title="New project", success_url=lambda item: ("studio:project_detail", item.id))
+    if not has_object_capability(request.user, workspace, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    initial = {
+        "original_language": workspace.dialogue_language, "documentation_language": workspace.documentation_language,
+        "dialogue_language": workspace.dialogue_language, "prompt_language": workspace.prompt_language,
+    }
+    form = ProjectForm(request.POST or None, initial=initial)
+    if request.method == "POST" and form.is_valid():
+        item = form.save(commit=False); item.workspace = workspace; item.created_by = request.user; item.updated_by = request.user
+        item.save(); record_revision(instance=item, user=request.user, operation="CREATE")
+        messages.success(request, "New project created.")
+        return redirect("studio:project_detail", project_id=item.id)
+    return render(request, "studio/entity_form.html", {"form": form, "title": "New project"})
 
 
 @login_required
@@ -458,6 +492,31 @@ def character_edit(request, character_id):
 
 
 @login_required
+def character_detail(request, character_id):
+    character = get_object_or_404(
+        Character.objects.select_related("project__workspace", "avatar_asset").prefetch_related("assets").filter(
+            project__in=accessible_projects(request.user)
+        ), id=character_id,
+    )
+    return render(request, "studio/character_detail.html", {
+        "character": character,
+        "can_edit": has_object_capability(request.user, character, "edit"),
+    })
+
+
+@login_required
+def character_set_avatar(request, character_id):
+    character = get_object_or_404(Character.objects.select_related("project__workspace").filter(project__in=accessible_projects(request.user)), id=character_id)
+    if request.method != "POST" or not has_object_capability(request.user, character, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    asset = get_object_or_404(Asset.objects.filter(character=character, content_type__startswith="image/"), id=request.POST.get("asset_id"))
+    character.avatar_asset = asset; character.updated_by = request.user
+    character.save(update_fields=["avatar_asset", "updated_by", "updated_at"])
+    messages.success(request, "Character avatar saved.")
+    return redirect("studio:character_detail", character_id=character.id)
+
+
+@login_required
 def episode_edit(request, episode_id):
     item = get_object_or_404(Episode.objects.select_related("project__workspace").filter(project__in=accessible_projects(request.user)), id=episode_id)
     return _edit_entity(request, item=item, form_class=EpisodeForm, workspace=item.project.workspace, title="Edit episode", success_url=lambda value: ("studio:project_detail", value.project_id))
@@ -508,7 +567,7 @@ def project_image_upload(request, project_id):
 @login_required
 def character_image_upload(request, character_id):
     character = get_object_or_404(Character.objects.select_related("project__workspace").filter(project__in=accessible_projects(request.user)), id=character_id)
-    return _image_upload(request, target=character, workspace=character.project.workspace, title="Upload character reference", success_url=lambda value: ("studio:project_detail", value.project_id), kind=Asset.Kind.CHARACTER_REFERENCE, project=character.project, character=character)
+    return _image_upload(request, target=character, workspace=character.project.workspace, title="Upload character reference", success_url=lambda value: ("studio:character_detail", value.id), kind=Asset.Kind.CHARACTER_REFERENCE, project=character.project, character=character)
 
 
 @login_required
@@ -641,7 +700,7 @@ def entity_move(request, entity_type, entity_id, direction):
 @login_required
 def project_detail(request, project_id):
     project = get_object_or_404(
-        accessible_projects(request.user).select_related("workspace", "created_by", "updated_by").prefetch_related("assets", "characters__assets", "episodes__scenes", "memberships__user"),
+        accessible_projects(request.user).select_related("workspace", "created_by", "updated_by").prefetch_related("assets", "characters__avatar_asset", "characters__assets", "episodes__scenes", "memberships__user"),
         id=project_id,
     )
     inherited = list(project.workspace.memberships.filter(status=WorkspaceMembership.Status.ACTIVE).exclude(user=project.workspace.owner).select_related("user"))
@@ -654,6 +713,7 @@ def project_detail(request, project_id):
         "can_edit": has_project_capability(request.user, project, "edit"),
         "can_manage_project": has_project_capability(request.user, project, "manage_project"),
         "can_administer": is_workspace_owner_or_admin(request.user, project.workspace),
+        "mention_characters": list(project.characters.values_list("name", flat=True)),
     })
 
 
@@ -744,6 +804,7 @@ def scene_detail(request, scene_id):
         "can_use_ai": has_object_capability(request.user, scene, "use_ai") and user_has_ai_access(request.user),
         "scene_images": scene.assets.filter(prompt__isnull=True),
         "project_assets": scene.episode.project.assets.filter(content_type__startswith="image/").order_by("-created_at"),
+        "mention_characters": list(scene.episode.project.characters.values_list("name", flat=True)),
         **_prompt_editor_context(request),
     })
 
@@ -1487,6 +1548,18 @@ def project_image_trash(request, project_id):
 
 
 @login_required
+def workspace_recycle_bin(request, workspace_id):
+    workspace = get_object_or_404(accessible_workspaces(request.user), id=workspace_id)
+    assets = Asset.all_objects.filter(
+        workspace=workspace, content_type__startswith="image/", deleted_at__isnull=False, purged_at__isnull=True,
+    ).select_related("project", "scene", "character").order_by("-deleted_at")
+    return render(request, "studio/workspace_recycle_bin.html", {
+        "workspace": workspace, "assets": assets,
+        "can_edit": has_capability(request.user, workspace, "edit"),
+    })
+
+
+@login_required
 def dialogue_translation_preview(request, line_id):
     line = DialogueLine.objects.select_related("scene__episode__project__workspace").filter(id=line_id).first()
     if line is None:
@@ -1539,7 +1612,8 @@ def project_copy(request, project_id):
     copied = Project.objects.create(
         workspace=source.workspace, project_type=source.project_type, title=_unique_project_title(source.workspace, source.title),
         concept=source.concept, original_language=source.original_language, translation_languages=source.translation_languages,
-        prompt_template=source.prompt_template,
+        prompt_template=source.prompt_template, documentation_language=source.documentation_language,
+        dialogue_language=source.dialogue_language, prompt_language=source.prompt_language,
         rights_holder=source.rights_holder, publication_info=source.publication_info, status=Project.Status.DRAFT,
         created_by=request.user, updated_by=request.user,
     )
@@ -1548,7 +1622,7 @@ def project_copy(request, project_id):
         character_map[character.id] = Character.objects.create(project=copied, name=character.name, description=character.description, visual_description=character.visual_description, position=character.position, created_by=request.user, updated_by=request.user)
     scene_map, prompt_map = {}, {}
     for episode in source.episodes.prefetch_related("scenes__dialogue_lines", "scenes__prompts__blocks").all():
-        new_episode = Episode.objects.create(project=copied, number=episode.number, title=episode.title, summary=episode.summary, position=episode.position, created_by=request.user, updated_by=request.user)
+        new_episode = Episode.objects.create(project=copied, number=episode.number, title=episode.title, summary=episode.summary, position=episode.position, language=episode.language, created_by=request.user, updated_by=request.user)
         for scene in episode.scenes.all():
             new_scene = Scene.objects.create(episode=new_episode, number=scene.number, title=scene.title, hook=scene.hook, description=scene.description, location=scene.location, actions=scene.actions, performance_notes=scene.performance_notes, status=scene.status, position=scene.position, created_by=request.user, updated_by=request.user)
             scene_map[scene.id] = new_scene
@@ -1577,6 +1651,11 @@ def project_copy(request, project_id):
         references = [asset_map[asset.id] for asset in Prompt.all_objects.get(id=old_prompt_id).reference_assets.all() if asset.id in asset_map]
         if references:
             new_prompt.reference_assets.add(*references)
+    for old_character_id, new_character in character_map.items():
+        old_avatar_id = Character.all_objects.get(id=old_character_id).avatar_asset_id
+        if old_avatar_id in asset_map:
+            new_character.avatar_asset = asset_map[old_avatar_id]
+            new_character.save(update_fields=["avatar_asset", "updated_at"])
     if request.POST.get("copy_access") == "1":
         ProjectMembership.objects.bulk_create([
             ProjectMembership(project=copied, user=item.user, role=item.role, is_active=item.is_active, invited_by=request.user)
@@ -1969,6 +2048,7 @@ def project_scene_chain(request, project_id):
         "project": project,
         "can_edit": has_project_capability(request.user, project, "edit"),
         "can_use_ai": has_project_capability(request.user, project, "use_ai") and user_has_ai_access(request.user),
+        "mention_characters": list(project.characters.values_list("name", flat=True)),
         **_prompt_editor_context(request),
     }
     return render(request, "studio/project_scene_chain.html", context)

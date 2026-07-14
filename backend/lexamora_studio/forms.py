@@ -3,14 +3,38 @@ from django import forms
 from lessons.ai_gateway import TEXT_MODELS
 
 from .ai_catalog import PROMPT_LANGUAGES, default_prompt_template
-from .models import AdditionalGeneration, Asset, Character, DialogueLine, Episode, Project, ProjectMembership, Prompt, PromptBlock, Scene, StudioTextModel, Workspace, WorkspaceMembership
+from .models import AdditionalGeneration, AiModelProfile, Asset, Character, DialogueLine, Episode, Project, ProjectMembership, Prompt, PromptBlock, Scene, StudioTextModel, Workspace, WorkspaceMembership
 
 
 class WorkspaceForm(forms.ModelForm):
+    avatar = forms.ImageField(required=False, label="Avatar")
+
     class Meta:
         model = Workspace
-        fields = ["name", "description"]
-        widgets = {"description": forms.Textarea(attrs={"rows": 4})}
+        fields = [
+            "name", "description", "documentation_language", "dialogue_language", "prompt_language",
+            "image_prompt_template", "video_prompt_template", "audio_prompt_template",
+        ]
+        widgets = {
+            "description": forms.Textarea(attrs={"rows": 4}),
+            "documentation_language": forms.Select(choices=PROMPT_LANGUAGES),
+            "dialogue_language": forms.Select(choices=PROMPT_LANGUAGES),
+            "prompt_language": forms.Select(choices=PROMPT_LANGUAGES),
+            "image_prompt_template": forms.Textarea(attrs={"rows": 3}),
+            "video_prompt_template": forms.Textarea(attrs={"rows": 3}),
+            "audio_prompt_template": forms.Textarea(attrs={"rows": 3}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for name in ("documentation_language", "dialogue_language", "prompt_language"):
+            self.fields[name].required = False
+
+    def clean(self):
+        cleaned = super().clean()
+        for name in ("documentation_language", "dialogue_language", "prompt_language"):
+            cleaned[name] = (cleaned.get(name) or getattr(self.instance, name, "") or "EN").upper()
+        return cleaned
 
 
 class ProjectForm(forms.ModelForm):
@@ -20,15 +44,20 @@ class ProjectForm(forms.ModelForm):
 
     class Meta:
         model = Project
-        fields = ["project_type", "title", "concept", "original_language", "translation_languages", "prompt_template", "rights_holder", "publication_info", "status"]
+        fields = ["project_type", "title", "concept", "original_language", "documentation_language", "dialogue_language", "prompt_language", "translation_languages", "prompt_template", "rights_holder", "publication_info", "status"]
         widgets = {
             "concept": forms.Textarea(attrs={"rows": 4}),
+            "documentation_language": forms.Select(choices=PROMPT_LANGUAGES),
+            "dialogue_language": forms.Select(choices=PROMPT_LANGUAGES),
+            "prompt_language": forms.Select(choices=PROMPT_LANGUAGES),
             "prompt_template": forms.Textarea(attrs={"rows": 4, "placeholder": "Text appended to every new prompt in this project"}),
         }
         labels = {"prompt_template": "Project prompt template"}
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        for name in ("documentation_language", "dialogue_language", "prompt_language"):
+            self.fields[name].required = False
         if self.instance and not self.instance._state.adding:
             self.initial["original_language"] = (self.instance.original_language or "EN").upper()
             self.fields["original_language"].widget.attrs["data-initial-language"] = self.initial["original_language"]
@@ -57,6 +86,8 @@ class ProjectForm(forms.ModelForm):
 
     def clean(self):
         cleaned = super().clean()
+        for name in ("documentation_language", "dialogue_language", "prompt_language"):
+            cleaned[name] = (cleaned.get(name) or getattr(self.instance, name, "") or self.initial.get(name) or "EN").upper()
         if self.instance and not self.instance._state.adding:
             old_language = (self.instance.original_language or "EN").strip().upper()
             new_language = (cleaned.get("original_language") or "").strip().upper()
@@ -120,7 +151,15 @@ class CharacterForm(forms.ModelForm):
 class EpisodeForm(forms.ModelForm):
     class Meta:
         model = Episode
-        fields = ["number", "title", "summary"]
+        fields = ["number", "title", "summary", "language"]
+        widgets = {"language": forms.Select(choices=PROMPT_LANGUAGES)}
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["language"].required = False
+
+    def clean_language(self):
+        return (self.cleaned_data.get("language") or getattr(self.instance, "language", "") or self.initial.get("language") or "EN").upper()
 
 
 class SceneForm(forms.ModelForm):
@@ -213,3 +252,9 @@ class StudioTextModelForm(forms.ModelForm):
     class Meta:
         model = StudioTextModel
         fields = ["name", "model_id", "is_active", "is_default"]
+
+
+class AiModelProfileForm(forms.ModelForm):
+    class Meta:
+        model = AiModelProfile
+        fields = ["name", "provider", "model_id", "media_type", "is_active"]

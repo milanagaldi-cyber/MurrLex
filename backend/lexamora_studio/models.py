@@ -35,6 +35,12 @@ class Workspace(SoftDeleteModel):
     description = models.TextField(blank=True)
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="owned_studio_workspaces")
     avatar_asset = models.ForeignKey("Asset", on_delete=models.SET_NULL, related_name="workspace_avatar_for", null=True, blank=True)
+    documentation_language = models.CharField(max_length=16, default="EN")
+    dialogue_language = models.CharField(max_length=16, default="EN")
+    prompt_language = models.CharField(max_length=16, default="EN")
+    image_prompt_template = models.TextField(blank=True)
+    video_prompt_template = models.TextField(blank=True)
+    audio_prompt_template = models.TextField(blank=True)
     purged_at = models.DateTimeField(null=True, blank=True)
     purged_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="purged_studio_workspaces", null=True, blank=True)
 
@@ -91,6 +97,9 @@ class Project(SoftDeleteModel):
     original_language = models.CharField(max_length=16, blank=True)
     translation_languages = models.JSONField(default=list, blank=True)
     prompt_template = models.TextField(blank=True)
+    documentation_language = models.CharField(max_length=16, default="EN")
+    dialogue_language = models.CharField(max_length=16, default="EN")
+    prompt_language = models.CharField(max_length=16, default="EN")
     rights_holder = models.TextField(blank=True)
     publication_info = models.TextField(blank=True)
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.DRAFT)
@@ -147,6 +156,7 @@ class Character(SoftDeleteModel):
     description = models.TextField(blank=True)
     visual_description = models.TextField(blank=True)
     position = models.PositiveIntegerField(default=0)
+    avatar_asset = models.ForeignKey("Asset", on_delete=models.SET_NULL, related_name="character_avatar_for", null=True, blank=True)
 
     class Meta:
         ordering = ["position", "id"]
@@ -159,6 +169,7 @@ class Episode(SoftDeleteModel):
     title = models.CharField(max_length=240)
     summary = models.TextField(blank=True)
     position = models.PositiveIntegerField(default=0)
+    language = models.CharField(max_length=16, default="EN")
 
     class Meta:
         ordering = ["position", "number", "id"]
@@ -191,8 +202,10 @@ class Scene(SoftDeleteModel):
 
 class AiModelProfile(models.Model):
     class MediaType(models.TextChoices):
-        IMAGE = "IMAGE", "Image"
+        IMAGE = "IMAGE", "Photo"
         VIDEO = "VIDEO", "Video"
+        AUDIO = "AUDIO", "Audio"
+        TEXT = "TEXT", "Text"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=120, unique=True)
@@ -235,9 +248,11 @@ class StudioTextModel(models.Model):
 
 class PromptTemplate(models.Model):
     class Scope(models.TextChoices):
-        ALL = "ALL", "Image and video"
-        IMAGE = "IMAGE", "Image"
+        ALL = "ALL", "All prompt types"
+        IMAGE = "IMAGE", "Photo"
         VIDEO = "VIDEO", "Video"
+        AUDIO = "AUDIO", "Audio"
+        TEXT = "TEXT", "Text"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=160, unique=True)
@@ -302,8 +317,10 @@ class Prompt(SoftDeleteModel):
         SELECTED = "SELECTED", "Selected text"
 
     class Type(models.TextChoices):
-        IMAGE = "IMAGE", "Image"
+        IMAGE = "IMAGE", "Photo"
         VIDEO = "VIDEO", "Video"
+        AUDIO = "AUDIO", "Audio"
+        TEXT = "TEXT", "Text"
 
     class Status(models.TextChoices):
         DRAFT = "DRAFT", "Draft"
@@ -344,11 +361,23 @@ class Prompt(SoftDeleteModel):
             if self.source_prompt_id:
                 self.original_language = self.source_prompt.original_language
             else:
-                project_language = (self.scene.episode.project.original_language or "").strip().upper()
+                project_language = (
+                    self.scene.episode.project.prompt_language
+                    or self.scene.episode.language
+                    or self.scene.episode.project.original_language
+                    or ""
+                ).strip().upper()
                 if project_language in self.Language.values:
                     self.original_language = project_language
                 self.language = self.original_language
-                project_template = (self.scene.episode.project.prompt_template or "").strip()
+                project = self.scene.episode.project
+                workspace = project.workspace
+                typed_templates = {
+                    self.Type.IMAGE: workspace.image_prompt_template,
+                    self.Type.VIDEO: workspace.video_prompt_template,
+                    self.Type.AUDIO: workspace.audio_prompt_template,
+                }
+                project_template = (project.prompt_template or typed_templates.get(self.prompt_type, "") or "").strip()
                 if project_template and not self.content.rstrip().endswith(project_template):
                     self.content = f"{self.content.rstrip()}\n\n{project_template}".strip()
         return super().save(*args, **kwargs)

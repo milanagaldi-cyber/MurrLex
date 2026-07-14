@@ -57,7 +57,7 @@ def selected_text_model(model_id):
 
 def active_prompt_templates(prompt_type=None):
     queryset = PromptTemplate.objects.filter(is_active=True)
-    if prompt_type in {"IMAGE", "VIDEO"}:
+    if prompt_type in {"IMAGE", "VIDEO", "AUDIO", "TEXT"}:
         queryset = queryset.filter(scope__in=[PromptTemplate.Scope.ALL, prompt_type])
     return queryset
 

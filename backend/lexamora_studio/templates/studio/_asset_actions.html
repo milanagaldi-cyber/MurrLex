@@ -2,8 +2,8 @@
   <a class="icon-button" href="{% url 'studio_api:asset_download' asset.id %}" title="Download" aria-label="Download"><span aria-hidden="true">&#x2913;</span></a>
   <button class="icon-button" type="button" data-copy-url="{% url 'studio_api:asset_view' asset.id %}" title="Copy URL" aria-label="Copy URL"><span aria-hidden="true">&#x1F517;</span></button>
   {% if can_edit %}{% if attachment_scope %}
-  <form method="post" action="{% url 'studio:asset_detach' asset.id attachment_scope attachment_id %}" onsubmit="return confirm('Detach this image here? It will remain in the project gallery.')">{% csrf_token %}<input type="hidden" name="next" value="{{ request.get_full_path }}#{{ return_anchor|default:'images' }}"><button class="icon-button" type="submit" title="Detach image" aria-label="Detach image"><span aria-hidden="true">&#x2715;</span></button></form>
+  <form method="post" action="{% url 'studio:asset_detach' asset.id attachment_scope attachment_id %}" data-confirm="Detach this image here? It will remain in the project gallery.">{% csrf_token %}<input type="hidden" name="next" value="{{ request.get_full_path }}#{{ return_anchor|default:'images' }}"><button class="icon-button" type="submit" title="Detach image" aria-label="Detach image"><span aria-hidden="true">&#x2715;</span></button></form>
   {% elif allow_trash %}
-  <form method="post" action="{% url 'studio:asset_trash' asset.id %}" onsubmit="return confirm('Move this image to trash for 30 days?')">{% csrf_token %}<input type="hidden" name="next" value="{{ request.get_full_path }}"><button class="icon-button" type="submit" title="Move to trash" aria-label="Move to trash"><span aria-hidden="true">&#x1F5D1;</span></button></form>
+  <form method="post" action="{% url 'studio:asset_trash' asset.id %}" data-confirm="Move this image to Recycle Bin?">{% csrf_token %}<input type="hidden" name="next" value="{{ request.get_full_path }}"><button class="icon-button" type="submit" title="Move to Recycle Bin" aria-label="Move to Recycle Bin"><span aria-hidden="true">&#x1F5D1;</span></button></form>
   {% endif %}{% endif %}
 </div>

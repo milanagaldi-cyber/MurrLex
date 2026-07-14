@@ -4,7 +4,7 @@
 <style>
 main{width:min(1600px,calc(100% - 32px))}
 .timeline-workspace{display:grid;gap:24px}.timeline-episode{min-width:0;padding:18px;border:1px solid var(--line);border-radius:8px;background:var(--panel)}
-.timeline-header{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:14px}.timeline-header h2{margin:0}.save-state{font-size:13px;color:var(--muted)}
+.timeline-header{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:14px}.timeline-header h2{margin:0}.save-state{font-size:13px;color:var(--muted)}.reorder-actions{display:flex;align-items:center;gap:8px}.reorder-actions[hidden]{display:none}
 .timeline-shell{display:grid;grid-template-columns:38px minmax(0,1fr) 38px;align-items:stretch;gap:8px;padding:10px;border:1px solid var(--line);border-radius:7px;background:var(--input-bg)}
 .timeline-scroll{width:38px;min-height:100%;padding:0;border-color:var(--line);background:var(--panel-2);color:var(--ink);font-size:22px}
 .timeline-track{display:flex;gap:10px;min-width:0;overflow-x:auto;overflow-y:hidden;padding:2px 2px 10px;scroll-behavior:smooth;scroll-snap-type:x proximity;overscroll-behavior-x:contain}
@@ -28,7 +28,7 @@ main{width:min(1600px,calc(100% - 32px))}
 <div class="timeline-workspace">
 {% for episode in project.episodes.all %}
 <section class="timeline-episode" id="episode-{{ episode.id }}" data-timeline-episode>
-  <div class="timeline-header"><h2>Episode {{ episode.number }}. {{ episode.title }}</h2>{% if can_edit %}<span class="save-state" data-reorder-state>Drag clips to reorder</span>{% endif %}</div>
+  <div class="timeline-header"><h2>Episode {{ episode.number }}. {{ episode.title }}</h2>{% if can_edit %}<div class="reorder-actions"><span class="save-state" data-reorder-state>Drag clips to reorder</span><span data-reorder-actions hidden><button type="button" data-reorder-save>Save</button><button class="secondary" type="button" data-reorder-cancel>Cancel</button></span></div>{% endif %}</div>
   <div class="timeline-shell">
     <button class="timeline-scroll secondary" type="button" data-scroll-direction="-1" title="Previous scenes" aria-label="Previous scenes">&#8249;</button>
     <div class="timeline-track" data-scene-list data-reorder-url="{% url 'studio:episode_scene_reorder' episode.id %}" role="tablist" aria-label="Episode {{ episode.number }} scenes">
@@ -59,7 +59,7 @@ main{width:min(1600px,calc(100% - 32px))}
         {% if can_edit %}
           <form method="post" action="{% url 'studio:scene_quick_save' scene.id %}">{% csrf_token %}
             <div class="scene-editor-grid">
-              <label>Number<input type="number" name="number" value="{{ scene.number }}" min="1"></label>
+              <label>Number<input value="{{ scene.number }}" readonly></label>
               <label>Title<input name="title" value="{{ scene.title }}"></label>
               <label>Status<select name="status">{% for value,label in scene.Status.choices %}<option value="{{ value }}"{% if value == scene.status %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
               <label class="full">Hook<textarea name="hook" rows="2">{{ scene.hook }}</textarea></label>
@@ -82,6 +82,7 @@ main{width:min(1600px,calc(100% - 32px))}
 </div>
 {% endblock %}
 {% block extra_script %}
+{{ mention_characters|json_script:"mention-characters" }}
 <script>
 (() => {
   const csrf=document.querySelector('input[name="csrfmiddlewaretoken"]')?.value;
@@ -98,6 +99,7 @@ main{width:min(1600px,calc(100% - 32px))}
   document.querySelectorAll("[data-timeline-episode]").forEach(episode=>{
     const list=episode.querySelector("[data-scene-list]");
     const clips=[...list.querySelectorAll(".timeline-clip")];
+    let savedOrder=clips.map(clip=>clip.dataset.sceneId);
     let dragged=null;
     clips.forEach(clip=>{
       clip.addEventListener("click",e=>{if(!e.target.closest(".asset")&&!e.target.closest(".drag-handle"))activate(episode,clip.dataset.sceneId)});
@@ -110,19 +112,18 @@ main{width:min(1600px,calc(100% - 32px))}
       clip.addEventListener("dragover",e=>{e.preventDefault();if(clip!==dragged){clip.classList.add("drag-target");const box=clip.getBoundingClientRect();list.insertBefore(dragged,e.clientX<box.left+box.width/2?clip:clip.nextSibling)}});
       clip.addEventListener("dragleave",()=>clip.classList.remove("drag-target"));
     });
-    list.addEventListener("drop",async e=>{
+    list.addEventListener("drop",e=>{
       e.preventDefault();
       list.querySelectorAll(".drag-target").forEach(item=>item.classList.remove("drag-target"));
       const state=episode.querySelector("[data-reorder-state]");
       if(!state)return;
-      state.textContent="Saving order...";
-      const sceneIds=[...list.querySelectorAll(".timeline-clip")].map(clip=>clip.dataset.sceneId);
-      const response=await fetch(list.dataset.reorderUrl,{method:"POST",headers:{"Content-Type":"application/json","X-CSRFToken":csrf},body:JSON.stringify({sceneIds})});
-      state.textContent=response.ok?"Order saved":"Could not save order";
-      if(response.ok)list.querySelectorAll(".clip-index").forEach((label,index)=>label.textContent=index+1);
+      state.textContent="Unsaved order";
+      episode.querySelector("[data-reorder-actions]").hidden=false;
     });
+    episode.querySelector("[data-reorder-save]")?.addEventListener("click",async()=>{const state=episode.querySelector("[data-reorder-state]");const sceneIds=[...list.querySelectorAll(".timeline-clip")].map(clip=>clip.dataset.sceneId);state.textContent="Saving order...";const response=await fetch(list.dataset.reorderUrl,{method:"POST",headers:{"Content-Type":"application/json","X-CSRFToken":csrf},body:JSON.stringify({sceneIds})});state.textContent=response.ok?"Order saved":"Could not save order";if(response.ok){savedOrder=sceneIds;episode.querySelector("[data-reorder-actions]").hidden=true;list.querySelectorAll(".clip-index").forEach((label,index)=>label.textContent=index+1)}});
+    episode.querySelector("[data-reorder-cancel]")?.addEventListener("click",()=>{savedOrder.forEach(id=>{const clip=list.querySelector(`[data-scene-id="${id}"]`);if(clip)list.appendChild(clip)});episode.querySelector("[data-reorder-state]").textContent="Order restored";episode.querySelector("[data-reorder-actions]").hidden=true;list.querySelectorAll(".clip-index").forEach((label,index)=>label.textContent=index+1)});
     episode.querySelectorAll("[data-scroll-direction]").forEach(button=>button.addEventListener("click",()=>list.scrollBy({left:Number(button.dataset.scrollDirection)*Math.max(300,list.clientWidth*.7),behavior:"smooth"})));
-    if(clips[0])activate(episode,clips[0].dataset.sceneId,false);
+    if(clips[0]){const clip=clips[0],editor=episode.querySelector(`.scene-editor-panel[data-scene-id="${clip.dataset.sceneId}"]`);clip.classList.add("is-selected");clip.setAttribute("aria-selected","true");if(editor)editor.hidden=false}
   });
 
   if(location.hash){

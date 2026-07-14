@@ -1,0 +1,12 @@
+{% extends "studio/base.html" %}
+{% block title %}{{ workspace.name }} / Settings{% endblock %}
+{% block content %}
+<p class="muted"><a href="{% url 'studio:workspace_detail' workspace.id %}">&larr; {{ workspace.name }}</a></p>
+<div class="toolbar"><div><h1>Workspace settings</h1><p>Central settings inherited by new projects and prompts.</p></div><a class="button secondary" href="{% url 'studio:workspace_media_models' workspace.id %}">Generation models</a></div>
+<form method="post" enctype="multipart/form-data" class="settings-grid">{% csrf_token %}
+  <section class="panel settings-section"><h2>Workspace</h2>{{ form.non_field_errors }}<div class="settings-form-grid"><label>Name{{ form.name }}</label><label>Description{{ form.description }}</label><label>Avatar{{ form.avatar }}{% if workspace.avatar_asset %}<img class="settings-avatar-preview" src="{% url 'studio_api:asset_thumbnail' workspace.avatar_asset.id %}" alt="Current avatar">{% endif %}</label></div></section>
+  <section class="panel settings-section"><h2>Languages</h2><div class="settings-language-grid"><label>Documentation{{ form.documentation_language }}</label><label>Dialogue{{ form.dialogue_language }}</label><label>Prompt generation{{ form.prompt_language }}</label></div></section>
+  <section class="panel settings-section"><h2>Prompt templates</h2><p class="muted">The matching template is appended to a newly created prompt.</p><label>Photo template{{ form.image_prompt_template }}</label><label>Video template{{ form.video_prompt_template }}</label><label>Audio template{{ form.audio_prompt_template }}</label></section>
+  <div><button type="submit">Save settings</button> <a class="button secondary" href="{% url 'studio:workspace_detail' workspace.id %}">Cancel</a></div>
+</form>
+{% endblock %}
