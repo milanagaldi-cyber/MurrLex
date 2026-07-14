@@ -208,6 +208,39 @@ class ImageUploadForm(forms.Form):
         return uploaded
 
 
+class MultipleFileInput(forms.ClearableFileInput):
+    allow_multiple_selected = True
+
+
+class MultipleImageField(forms.FileField):
+    widget = MultipleFileInput
+
+    def clean(self, data, initial=None):
+        files = data if isinstance(data, (list, tuple)) else [data]
+        return [super().clean(uploaded, initial) for uploaded in files]
+
+
+class MultipleImageUploadForm(forms.Form):
+    file = MultipleImageField(
+        help_text="JPG, PNG or WEBP.",
+        widget=MultipleFileInput(attrs={"accept": "image/jpeg,image/png,image/webp"}),
+    )
+
+    def __init__(self, *args, limit=10, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.limit = limit
+        self.fields["file"].widget.attrs["data-file-limit"] = str(limit)
+
+    def clean_file(self):
+        uploads = self.cleaned_data["file"]
+        if not uploads or len(uploads) > self.limit:
+            raise forms.ValidationError(f"Choose between 1 and {self.limit} images.")
+        for uploaded in uploads:
+            if (getattr(uploaded, "content_type", "") or "").lower() not in {"image/jpeg", "image/png", "image/webp"}:
+                raise forms.ValidationError("Choose JPG, PNG or WEBP images.")
+        return uploads
+
+
 class DocxImportUploadForm(forms.Form):
     file = forms.FileField(help_text="DOCX up to the configured Studio upload limit.")
 

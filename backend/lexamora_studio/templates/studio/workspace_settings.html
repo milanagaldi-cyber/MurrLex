@@ -14,7 +14,7 @@
       <div class="workspace-fields"><label>Name{{ form.name }}</label><label>Description{{ form.description }}</label></div>
       <label class="compact-avatar" title="{% if workspace.avatar_asset %}Change Avatar{% else %}Add Avatar{% endif %}">
         {{ form.avatar }}
-        {% if workspace.avatar_asset %}<img src="{% url 'studio_api:asset_thumbnail' workspace.avatar_asset.id %}" alt="Workspace avatar"><span>Change</span>{% else %}<b>+</b><span>Add Avatar</span>{% endif %}
+        {% if workspace.avatar_asset %}<img data-avatar-preview src="{% url 'studio_api:asset_thumbnail' workspace.avatar_asset.id %}" alt="Workspace avatar"><b data-avatar-placeholder hidden>+</b><span>Change Avatar</span>{% else %}<img data-avatar-preview hidden alt="Workspace avatar preview"><b data-avatar-placeholder>+</b><span>Add Avatar</span>{% endif %}
       </label>
     </div>
   </section>
@@ -26,7 +26,7 @@
     <h2>Prompt templates</h2><p class="muted">The matching template is appended to a newly created prompt.</p>
     <div class="template-grid"><label>Photo{{ form.image_prompt_template }}</label><label>Video{{ form.video_prompt_template }}</label><label>Audio{{ form.audio_prompt_template }}</label><label>Text{{ form.text_prompt_template }}</label></div>
   </section>
-  <div class="settings-actions"><button type="submit">Save settings</button><a class="button secondary" href="{% url 'studio:workspace_detail' workspace.id %}">Cancel</a></div>
+  <div class="settings-actions settings-form-actions"><button type="submit">Save settings</button><a class="button secondary" href="{% url 'studio:workspace_detail' workspace.id %}">Cancel</a></div>
 </form>
 {% if can_administer %}
 <section class="panel settings-section email-test" id="email-test"><h2>Test email delivery</h2><p class="muted">Send a diagnostic message to a current workspace member. Provider secrets are never included in the downloadable log.</p>

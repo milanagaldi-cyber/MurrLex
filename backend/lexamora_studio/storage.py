@@ -65,7 +65,7 @@ def validate_upload(uploaded):
 
 
 @transaction.atomic
-def create_asset(*, user, workspace, uploaded, kind, project=None, scene=None, character=None, prompt=None):
+def create_asset(*, user, workspace, uploaded, kind, project=None, scene=None, character=None, prompt=None, prevent_duplicate=False):
     for related in (project,):
         if related is not None and related.workspace_id != workspace.id:
             raise ValidationError("Related object belongs to another workspace.")
@@ -77,6 +77,17 @@ def create_asset(*, user, workspace, uploaded, kind, project=None, scene=None, c
         raise ValidationError("Prompt belongs to another workspace.")
     filename, content_type, image_data = validate_upload(uploaded)
     checksum = _hash_upload(uploaded)
+    duplicate_query = Asset.objects.filter(
+        workspace=workspace,
+        original_filename=filename,
+        size_bytes=uploaded.size,
+        content_type=content_type,
+    )
+    if image_data is not None:
+        duplicate_query = duplicate_query.filter(width=image_data[0], height=image_data[1])
+    if prevent_duplicate and duplicate_query.exists():
+        dimensions = f"{image_data[0]}x{image_data[1]}" if image_data else "unknown resolution"
+        raise ValidationError(f"{filename} ({uploaded.size} bytes, {dimensions}) is already uploaded in this workspace.")
     asset = Asset(
         workspace=workspace,
         project=project,

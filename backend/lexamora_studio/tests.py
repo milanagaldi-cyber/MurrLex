@@ -1052,14 +1052,14 @@ class StudioWebEditingAndImagesTests(TestCase):
         self.scene = Scene.objects.create(episode=self.episode, number=1, title="Opening", created_by=self.owner, updated_by=self.owner)
 
     @staticmethod
-    def image_file():
+    def image_file(name="reference.png", color="#36a889"):
         import io
         from PIL import Image
         from django.core.files.uploadedfile import SimpleUploadedFile
 
         buffer = io.BytesIO()
-        Image.new("RGB", (48, 36), "#36a889").save(buffer, "PNG")
-        return SimpleUploadedFile("reference.png", buffer.getvalue(), content_type="image/png")
+        Image.new("RGB", (48, 36), color).save(buffer, "PNG")
+        return SimpleUploadedFile(name, buffer.getvalue(), content_type="image/png")
 
     def test_owner_can_edit_project_and_revision_is_recorded(self):
         from .models import Revision
@@ -1163,6 +1163,28 @@ class StudioWebEditingAndImagesTests(TestCase):
                 self.assertEqual((asset.width, asset.height), (48, 36))
                 thumbnail = self.client.get(f"/api/v1/studio/assets/{asset.id}/thumbnail")
                 self.assertEqual(thumbnail.status_code, 200)
+
+    def test_scene_accepts_multiple_images_and_rejects_workspace_duplicate(self):
+        import tempfile
+        from pathlib import Path
+        from .models import Asset
+
+        self.client.force_login(self.owner)
+        with tempfile.TemporaryDirectory() as directory:
+            with self.settings(STUDIO_PRIVATE_MEDIA_ROOT=Path(directory)):
+                response = self.client.post(
+                    f"/studio/scenes/{self.scene.id}/images/new/",
+                    {"file": [self.image_file("one.png", "#113355"), self.image_file("two.png", "#557799")]},
+                )
+                self.assertEqual(response.status_code, 302)
+                self.assertEqual(Asset.objects.filter(scene=self.scene).count(), 2)
+                duplicate = self.client.post(
+                    f"/studio/scenes/{self.scene.id}/images/new/",
+                    {"file": self.image_file("one.png", "#113355")},
+                    follow=True,
+                )
+                self.assertContains(duplicate, "already uploaded in this workspace")
+                self.assertEqual(Asset.objects.filter(scene=self.scene).count(), 2)
 
     def test_outsider_cannot_open_scene_image_form(self):
         self.client.force_login(self.outsider)

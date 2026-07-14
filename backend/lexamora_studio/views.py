@@ -26,7 +26,7 @@ from .exports import ALL_SECTIONS, ExportError, generate_export
 from .docx_imports import accept_docx_import, parse_docx
 from .docx_exports import generate_docx_export
 from .docx_roundtrip import compare_docx_export
-from .forms import AdditionalGenerationForm, AiModelProfileForm, AssetEditForm, CharacterForm, DialogueLineForm, DocxImportUploadForm, EpisodeForm, GenerationOutputUploadForm, ImageUploadForm, ProjectForm, ProjectMembershipForm, PromptBlockForm, PromptForm, SceneForm, StudioTextModelForm, WorkspaceForm, WorkspaceMembershipForm
+from .forms import AdditionalGenerationForm, AiModelProfileForm, AssetEditForm, CharacterForm, DialogueLineForm, DocxImportUploadForm, EpisodeForm, GenerationOutputUploadForm, ImageUploadForm, MultipleImageUploadForm, ProjectForm, ProjectMembershipForm, PromptBlockForm, PromptForm, SceneForm, StudioTextModelForm, WorkspaceForm, WorkspaceMembershipForm
 from .models import AdditionalGeneration, AiModelProfile, AiSuggestion, Asset, Character, DialogueLine, DocxImport, EmailDeliveryLog, Episode, ExportJob, GenerationOutput, Project, ProjectAccessExclusion, ProjectMembership, Prompt, PromptBlock, Scene, StudioTextModel, SubtitleTrack, TranslationUnit, Workspace, WorkspaceMembership
 from .notifications import notify_access_granted
 from .permissions import accessible_assets, accessible_projects, accessible_suggestions, accessible_workspaces, has_capability, has_object_capability, has_project_capability, is_workspace_owner_or_admin
@@ -160,7 +160,8 @@ def workspace_detail(request, workspace_id):
         project.can_manage = has_project_capability(request.user, project, "manage_project")
         project.can_administer = is_workspace_owner_or_admin(request.user, workspace)
     recycle_count = Asset.all_objects.filter(workspace=workspace, deleted_at__isnull=False, purged_at__isnull=True).count()
-    return render(request, "studio/workspace_detail.html", {"workspace": workspace, "projects": projects, "sort": sort, "can_edit": has_capability(request.user, workspace, "edit"), "can_manage": has_capability(request.user, workspace, "manage_members"), "can_administer": is_workspace_owner_or_admin(request.user, workspace), "imports": workspace.docx_imports.select_related("project")[:10], "recycle_count": recycle_count})
+    archive_count = Project.all_objects.filter(workspace=workspace, deleted_at__isnull=False, purged_at__isnull=True).count()
+    return render(request, "studio/workspace_detail.html", {"workspace": workspace, "projects": projects, "sort": sort, "can_edit": has_capability(request.user, workspace, "edit"), "can_manage": has_capability(request.user, workspace, "manage_members"), "can_administer": is_workspace_owner_or_admin(request.user, workspace), "imports": workspace.docx_imports.select_related("project")[:10], "recycle_count": recycle_count, "archive_count": archive_count})
 
 
 @login_required
@@ -467,19 +468,34 @@ def _edit_entity(request, *, item, form_class, workspace, title, success_url):
 def _image_upload(request, *, target, workspace, title, success_url, kind, project=None, scene=None, character=None):
     if not has_object_capability(request.user, target, "edit"):
         return HttpResponseForbidden("Edit permission is required.")
-    form = ImageUploadForm(request.POST or None, request.FILES or None)
+    form = MultipleImageUploadForm(request.POST or None, request.FILES or None, limit=10)
     if request.method == "POST" and form.is_valid():
-        try:
-            create_asset(user=request.user, workspace=workspace, uploaded=form.cleaned_data["file"], kind=kind, project=project, scene=scene, character=character)
-        except ValidationError as exc:
-            form.add_error("file", exc)
-        else:
-            messages.success(request, "Image uploaded.")
+        uploaded_count = 0
+        for uploaded in form.cleaned_data["file"]:
+            try:
+                create_asset(user=request.user, workspace=workspace, uploaded=uploaded, kind=kind, project=project, scene=scene, character=character, prevent_duplicate=True)
+            except ValidationError as exc:
+                messages.warning(request, "; ".join(exc.messages))
+            else:
+                uploaded_count += 1
+        if uploaded_count:
+            messages.success(request, f"Uploaded {uploaded_count} image{'s' if uploaded_count != 1 else ''}.")
+        if uploaded_count or form.cleaned_data["file"]:
             requested = request.POST.get("next", "")
             if requested and url_has_allowed_host_and_scheme(requested, {request.get_host()}, require_https=request.is_secure()):
                 return HttpResponseRedirect(requested)
             return redirect(*success_url(target))
     return render(request, "studio/entity_form.html", {"form": form, "title": title, "submit_label": "Upload image", "multipart": True, "return_to": request.GET.get("next", "")})
+
+
+def _picker_assets(user, project):
+    images = Asset.objects.filter(content_type__startswith="image/")
+    project_assets = images.filter(project=project).order_by("-created_at")
+    workspace_assets = images.filter(
+        workspace=project.workspace,
+        project__in=accessible_projects(user),
+    ).exclude(project=project).select_related("project").order_by("-created_at")
+    return project_assets, workspace_assets
 
 
 @login_required
@@ -537,10 +553,25 @@ def character_detail(request, character_id):
             project__in=accessible_projects(request.user)
         ), id=character_id,
     )
+    can_edit = has_object_capability(request.user, character, "edit")
+    form = CharacterForm(request.POST or None, instance=character)
+    if request.method == "POST":
+        if not can_edit:
+            return HttpResponseForbidden("Edit permission is required.")
+        if form.is_valid():
+            character = form.save(commit=False)
+            character.updated_by = request.user
+            character.save()
+            record_revision(instance=character, user=request.user, operation="INLINE_UPDATE")
+            messages.success(request, "Character saved.")
+            return HttpResponseRedirect(reverse("studio:character_detail", kwargs={"character_id": character.id}) + "#character-editor")
+    project_assets, workspace_assets = _picker_assets(request.user, character.project)
     return render(request, "studio/character_detail.html", {
         "character": character,
-        "can_edit": has_object_capability(request.user, character, "edit"),
-        "project_assets": character.project.assets.filter(content_type__startswith="image/").order_by("-created_at"),
+        "character_form": form,
+        "can_edit": can_edit,
+        "project_assets": project_assets,
+        "workspace_assets": workspace_assets,
     })
 
 
@@ -565,9 +596,24 @@ def asset_attach(request, scope, owner_id):
     if request.method != "POST" or not has_object_capability(request.user, owner, "edit"):
         return HttpResponseForbidden("Edit permission is required.")
     asset = get_object_or_404(
-        Asset.objects.filter(project=project, content_type__startswith="image/"),
-        id=request.POST.get("asset_id"),
+        Asset.objects.filter(
+            workspace=project.workspace,
+            project__in=accessible_projects(request.user),
+            content_type__startswith="image/",
+        ), id=request.POST.get("asset_id"),
     )
+    if asset.project_id != project.id:
+        suffix = asset.original_filename.rsplit(".", 1)[-1] if "." in asset.original_filename else "jpg"
+        stem = asset.original_filename.rsplit(".", 1)[0]
+        clone_name = f"{stem}-{str(project.id)[:8]}.{suffix}"
+        clone = Asset.objects.filter(project=project, original_filename=clone_name, size_bytes=asset.size_bytes, width=asset.width, height=asset.height).first()
+        if clone:
+            asset = clone
+        else:
+            with asset.file.open("rb") as source:
+                uploaded = ContentFile(source.read(), name=clone_name)
+                uploaded.content_type = asset.content_type
+            asset = create_asset(user=request.user, workspace=project.workspace, uploaded=uploaded, kind=Asset.Kind.SCENE_IMAGE if scope == "scene" else Asset.Kind.CHARACTER_REFERENCE, project=project)
     if scope == "scene":
         asset.scene = owner
         asset.kind = Asset.Kind.SCENE_IMAGE
@@ -595,7 +641,10 @@ def character_set_avatar(request, character_id):
     character.avatar_asset = asset; character.updated_by = request.user
     character.save(update_fields=["avatar_asset", "updated_by", "updated_at"])
     messages.success(request, "Character avatar saved.")
-    return redirect("studio:character_detail", character_id=character.id)
+    requested = request.POST.get("next", "")
+    if requested and url_has_allowed_host_and_scheme(requested, {request.get_host()}, require_https=request.is_secure()):
+        return HttpResponseRedirect(requested)
+    return HttpResponseRedirect(reverse("studio:character_detail", kwargs={"character_id": character.id}) + "#references")
 
 
 @login_required
@@ -789,6 +838,7 @@ def project_detail(request, project_id):
     excluded_ids = set(project.access_exclusions.values_list("user_id", flat=True))
     direct_ids = set(project.memberships.filter(is_active=True).values_list("user_id", flat=True))
     inherited = [membership for membership in inherited if membership.user_id not in excluded_ids and membership.user_id not in direct_ids]
+    project_assets, workspace_assets = _picker_assets(request.user, project)
     return render(request, "studio/project_detail.html", {
         "project": project,
         "inherited_memberships": inherited,
@@ -796,6 +846,8 @@ def project_detail(request, project_id):
         "can_manage_project": has_project_capability(request.user, project, "manage_project"),
         "can_administer": is_workspace_owner_or_admin(request.user, project.workspace),
         "mention_characters": list(project.characters.values_list("name", flat=True)),
+        "project_assets": project_assets,
+        "workspace_assets": workspace_assets,
     })
 
 
@@ -875,6 +927,7 @@ def scene_detail(request, scene_id):
     scene_index = next(index for index, item in enumerate(episode_scenes) if item.id == scene.id)
     editor_prompts = [prompt for prompt in scene.prompts.all() if not prompt.source_prompt_id]
     _attach_prompt_ai_state(editor_prompts)
+    project_assets, workspace_assets = _picker_assets(request.user, scene.episode.project)
     return render(request, "studio/scene_detail.html", {
         "scene": scene,
         "scene_form": form,
@@ -885,7 +938,8 @@ def scene_detail(request, scene_id):
         "can_edit": can_edit,
         "can_use_ai": has_object_capability(request.user, scene, "use_ai") and user_has_ai_access(request.user),
         "scene_images": scene.assets.filter(prompt__isnull=True),
-        "project_assets": scene.episode.project.assets.filter(content_type__startswith="image/").order_by("-created_at"),
+        "project_assets": project_assets,
+        "workspace_assets": workspace_assets,
         "mention_characters": list(scene.episode.project.characters.values_list("name", flat=True)),
         **_prompt_editor_context(request),
     })
@@ -1778,6 +1832,9 @@ def project_restore(request, project_id):
     project.deleted_at = None; project.deleted_by = None; project.updated_by = request.user
     project.save(update_fields=["deleted_at", "deleted_by", "updated_by", "updated_at"])
     messages.success(request, "Project restored.")
+    requested = request.POST.get("next", "")
+    if requested and url_has_allowed_host_and_scheme(requested, {request.get_host()}, require_https=request.is_secure()):
+        return HttpResponseRedirect(requested)
     return redirect("studio:project_detail", project_id=project.id)
 
 
@@ -1793,6 +1850,9 @@ def project_purge(request, project_id):
     project.purged_at = timezone.now(); project.purged_by = request.user; project.updated_by = request.user
     project.save(update_fields=["purged_at", "purged_by", "updated_by", "updated_at"])
     messages.success(request, "Project permanently removed from the archive.")
+    requested = request.POST.get("next", "")
+    if requested and url_has_allowed_host_and_scheme(requested, {request.get_host()}, require_https=request.is_secure()):
+        return HttpResponseRedirect(requested)
     return redirect("studio:project_trash_view", workspace_id=project.workspace_id)
 
 
@@ -2063,22 +2123,22 @@ def prompt_image_upload(request, prompt_id):
     workspace = prompt.scene.episode.project.workspace
     if request.method != "POST" or not has_object_capability(request.user, prompt, "edit"):
         return HttpResponseForbidden("Edit permission is required.")
-    form = ImageUploadForm(request.POST, request.FILES)
+    form = MultipleImageUploadForm(request.POST, request.FILES, limit=3)
     if form.is_valid():
-        try:
-            create_asset(
-                user=request.user,
-                workspace=workspace,
-                uploaded=form.cleaned_data["file"],
-                kind=Asset.Kind.OTHER,
-                project=prompt.scene.episode.project,
-                scene=prompt.scene,
-                prompt=prompt,
-            )
-        except ValidationError as exc:
-            messages.error(request, "; ".join(exc.messages))
-        else:
-            messages.success(request, "Prompt image attached.")
+        uploaded_count = 0
+        for uploaded in form.cleaned_data["file"]:
+            try:
+                create_asset(
+                    user=request.user, workspace=workspace, uploaded=uploaded,
+                    kind=Asset.Kind.OTHER, project=prompt.scene.episode.project,
+                    scene=prompt.scene, prompt=prompt, prevent_duplicate=True,
+                )
+            except ValidationError as exc:
+                messages.warning(request, "; ".join(exc.messages))
+            else:
+                uploaded_count += 1
+        if uploaded_count:
+            messages.success(request, f"Attached {uploaded_count} prompt image{'s' if uploaded_count != 1 else ''}.")
     else:
         messages.error(request, "Choose a valid JPG, PNG or WEBP image.")
     if request.POST.get("return_to") == "chain":
@@ -2096,10 +2156,23 @@ def prompt_asset_attach(request, prompt_id):
     )
     if request.method != "POST" or not has_object_capability(request.user, prompt, "edit"):
         return HttpResponseForbidden("Edit permission is required.")
+    project = prompt.scene.episode.project
     asset = get_object_or_404(
-        Asset.objects.filter(project=prompt.scene.episode.project, content_type__startswith="image/"),
+        Asset.objects.filter(workspace=project.workspace, project__in=accessible_projects(request.user), content_type__startswith="image/"),
         id=request.POST.get("asset_id"),
     )
+    if asset.project_id != project.id:
+        suffix = asset.original_filename.rsplit(".", 1)[-1] if "." in asset.original_filename else "jpg"
+        stem = asset.original_filename.rsplit(".", 1)[0]
+        clone_name = f"{stem}-{str(project.id)[:8]}.{suffix}"
+        clone = Asset.objects.filter(project=project, original_filename=clone_name, size_bytes=asset.size_bytes, width=asset.width, height=asset.height).first()
+        if clone:
+            asset = clone
+        else:
+            with asset.file.open("rb") as source:
+                uploaded = ContentFile(source.read(), name=clone_name)
+                uploaded.content_type = asset.content_type
+            asset = create_asset(user=request.user, workspace=project.workspace, uploaded=uploaded, kind=Asset.Kind.OTHER, project=project)
     prompt.reference_assets.add(asset)
     prompt.updated_by = request.user
     prompt.save(update_fields=["updated_by", "updated_at"])
@@ -2127,12 +2200,14 @@ def project_scene_chain(request, project_id):
             scene.image_picker_id = f"scene-image-picker-{scene.id}"
             scene.editor_prompts = [prompt for prompt in scene.prompts.all() if not prompt.source_prompt_id]
             _attach_prompt_ai_state(scene.editor_prompts)
+    project_assets, workspace_assets = _picker_assets(request.user, project)
     context = {
         "project": project,
         "can_edit": has_project_capability(request.user, project, "edit"),
         "can_use_ai": has_project_capability(request.user, project, "use_ai") and user_has_ai_access(request.user),
         "mention_characters": list(project.characters.values_list("name", flat=True)),
-        "project_assets": project.assets.filter(content_type__startswith="image/").order_by("-created_at"),
+        "project_assets": project_assets,
+        "workspace_assets": workspace_assets,
         **_prompt_editor_context(request),
     }
     return render(request, "studio/project_scene_chain.html", context)
