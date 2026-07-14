@@ -519,6 +519,14 @@ def _picker_assets(user, project):
     return project_assets, workspace_assets
 
 
+def _project_header_context(user, project):
+    return {
+        "can_edit": has_project_capability(user, project, "edit"),
+        "can_manage_project": has_project_capability(user, project, "manage_project"),
+        "can_administer": is_workspace_owner_or_admin(user, project.workspace),
+    }
+
+
 @login_required
 def project_edit(request, project_id):
     item = get_object_or_404(accessible_projects(request.user), id=project_id)
@@ -819,7 +827,10 @@ def project_master(request, project_id):
             "episodes__scenes__additional_generations__outputs__asset",
         ).filter(id__in=accessible_projects(request.user)), id=project_id,
     )
-    return render(request, "studio/project_master.html", {"project": project, "can_edit": has_project_capability(request.user, project, "edit")})
+    return render(request, "studio/project_master.html", {
+        "project": project,
+        **_project_header_context(request.user, project),
+    })
 
 
 @login_required
@@ -874,16 +885,18 @@ def project_detail(request, project_id):
     direct_ids = set(project.memberships.filter(is_active=True).values_list("user_id", flat=True))
     inherited = [membership for membership in inherited if membership.user_id not in excluded_ids and membership.user_id not in direct_ids]
     project_assets, workspace_assets = _picker_assets(request.user, project)
+    recent_project_ids = set(project_assets.values_list("id", flat=True)[:10])
+    gallery_assets = list(workspace_assets)
+    for asset in gallery_assets:
+        asset.is_recent_project = asset.id in recent_project_ids
     return render(request, "studio/project_detail.html", {
         "project": project,
         "inherited_memberships": inherited,
-        "can_edit": has_project_capability(request.user, project, "edit"),
-        "can_manage_project": has_project_capability(request.user, project, "manage_project"),
-        "can_administer": is_workspace_owner_or_admin(request.user, project.workspace),
+        **_project_header_context(request.user, project),
         "mention_characters": list(project.characters.values_list("name", flat=True)),
         "project_assets": project_assets,
         "workspace_assets": workspace_assets,
-        "gallery_assets": project_assets,
+        "gallery_assets": gallery_assets,
         "gallery_projects": [project],
     })
 
@@ -1287,6 +1300,7 @@ def translation_workspace(request, project_id):
         "text_models": active_text_models(),
         "default_text_model": default_text_model_id(),
         "translation_statuses": [TranslationUnit.Status.DRAFT, TranslationUnit.Status.IN_REVIEW, TranslationUnit.Status.APPROVED],
+        **_project_header_context(request.user, project),
     })
 
 
@@ -1662,12 +1676,22 @@ def asset_detach(request, asset_id, scope, owner_id):
             asset.character = None
             asset.kind = Asset.Kind.OTHER
             detached = True
+    elif scope == "project":
+        project = get_object_or_404(accessible_projects(request.user), id=owner_id)
+        if asset.project_id == project.id:
+            asset.referenced_by_prompts.clear()
+            asset.project = None
+            asset.scene = None
+            asset.character = None
+            asset.prompt = None
+            asset.kind = Asset.Kind.OTHER
+            detached = True
     if not detached:
         return HttpResponseForbidden("This image is not attached here.")
     asset.updated_by = request.user
-    asset.save(update_fields=["scene", "prompt", "character", "kind", "updated_by", "updated_at"])
+    asset.save(update_fields=["project", "scene", "prompt", "character", "kind", "updated_by", "updated_at"])
     audit(workspace=asset.workspace, actor=request.user, action="ASSET_DETACHED", instance=asset, metadata={"scope": scope, "ownerId": str(owner_id)})
-    messages.success(request, "Image detached. It remains available in the project gallery.")
+    messages.success(request, "Image detached. It remains available in the Workspace library.")
     return _asset_action_redirect(request, asset)
 
 
@@ -2242,7 +2266,7 @@ def project_scene_chain(request, project_id):
     project_assets, workspace_assets = _picker_assets(request.user, project)
     context = {
         "project": project,
-        "can_edit": has_project_capability(request.user, project, "edit"),
+        **_project_header_context(request.user, project),
         "can_use_ai": has_project_capability(request.user, project, "use_ai") and user_has_ai_access(request.user),
         "mention_characters": list(project.characters.values_list("name", flat=True)),
         "project_assets": project_assets,

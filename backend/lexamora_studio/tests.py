@@ -2010,6 +2010,57 @@ class StudioInlineEditingWorkflowTests(TestCase):
                 self.assertIsNone(result.project)
                 self.assertEqual((result.width, result.height), (40, 30))
 
+    def test_project_image_detaches_but_only_workspace_gallery_offers_trash(self):
+        import tempfile
+        from pathlib import Path
+        from .models import Asset
+        from .storage import create_asset
+
+        self.client.force_login(self.owner)
+        with tempfile.TemporaryDirectory() as directory:
+            with self.settings(STUDIO_PRIVATE_MEDIA_ROOT=Path(directory)):
+                asset = create_asset(
+                    user=self.owner,
+                    workspace=self.workspace,
+                    project=self.project,
+                    scene=self.first_scene,
+                    uploaded=self.image_file("detachable.png"),
+                    kind=Asset.Kind.SCENE_IMAGE,
+                )
+                project_page = self.client.get(f"/studio/projects/{self.project.id}/")
+                self.assertContains(project_page, f"/studio/assets/{asset.id}/detach/project/{self.project.id}/")
+                self.assertNotContains(project_page, f"/studio/assets/{asset.id}/trash/")
+                workspace_page = self.client.get(f"/studio/workspaces/{self.workspace.id}/")
+                self.assertContains(workspace_page, f"/studio/assets/{asset.id}/trash/")
+
+                detached = self.client.post(
+                    f"/studio/assets/{asset.id}/detach/project/{self.project.id}/",
+                    {"next": f"/studio/projects/{self.project.id}/#images"},
+                )
+                self.assertRedirects(detached, f"/studio/projects/{self.project.id}/#images")
+                asset.refresh_from_db()
+                self.assertIsNone(asset.project)
+                self.assertIsNone(asset.scene)
+                self.assertIsNone(asset.deleted_at)
+
+    def test_project_header_is_shared_by_all_four_views(self):
+        self.client.force_login(self.owner)
+        urls = (
+            f"/studio/projects/{self.project.id}/",
+            f"/studio/projects/{self.project.id}/scene-chain/",
+            f"/studio/projects/{self.project.id}/master/",
+            f"/studio/projects/{self.project.id}/translations/",
+        )
+        for url in urls:
+            with self.subTest(url=url):
+                page = self.client.get(url)
+                self.assertEqual(page.status_code, 200)
+                self.assertContains(page, f"Project {self.project.title}")
+                self.assertContains(page, "General View")
+                self.assertContains(page, "Scene Chain")
+                self.assertContains(page, "Master Document")
+                self.assertContains(page, "Translations")
+
     def test_workspace_tiles_copy_trash_and_restore(self):
         self.client.force_login(self.owner)
         dashboard = self.client.get("/studio/")

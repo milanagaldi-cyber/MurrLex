@@ -1,7 +1,7 @@
 {% extends "studio/base.html" %}
 {% block title %}{{ project.title }} / Master Document{% endblock %}
 {% block content %}{% include "studio/_project_navigation.html" %}
-<div class="toolbar"><div><p class="muted"><a href="{% url 'studio:project_detail' project.id %}">{{ project.title }}</a></p><h1>Master Document</h1></div><div><a class="button secondary" href="{% url 'studio:project_scene_chain' project.id %}">Scene chain</a> {% if can_edit %}<a class="button secondary" href="{% url 'studio:project_edit' project.id %}">Edit project</a> {% endif %}<a class="button" href="{% url 'studio:project_exports' project.id %}">Export</a></div></div>
+<div class="view-heading"><h2>Master Document</h2></div>
 <div class="master-layout"><aside class="master-toc"><strong>Contents</strong><a href="#metadata">Project</a><a href="#characters">Characters</a>{% for episode in project.episodes.all %}<a href="#item-{{ episode.id }}">Episode {{ episode.number }}</a>{% for scene in episode.scenes.all %}<a class="toc-scene" href="#item-{{ scene.id }}">Scene {{ scene.number }}</a>{% endfor %}{% endfor %}</aside>
 <article class="master-document">
 <section id="metadata" class="master-section"><h2>{{ project.title }}</h2><p>{{ project.concept|default:"No concept yet."|linebreaksbr }}</p><dl class="metadata"><dt>Type</dt><dd>{{ project.get_project_type_display }}</dd><dt>Status</dt><dd>{{ project.get_status_display }}</dd><dt>Original language</dt><dd>{{ project.original_language|default:"-" }}</dd><dt>Translations</dt><dd>{{ project.translation_languages|join:", "|default:"-" }}</dd><dt>Rights</dt><dd>{{ project.rights_holder|default:"-" }}</dd><dt>Publication</dt><dd>{{ project.publication_info|default:"-" }}</dd></dl></section>
