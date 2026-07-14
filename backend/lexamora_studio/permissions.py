@@ -1,6 +1,6 @@
 from django.db.models import Q
 
-from .models import AdditionalGeneration, AiSuggestion, Asset, Character, DialogueLine, Episode, ExportJob, Project, ProjectMembership, Prompt, PromptBlock, Revision, Scene, Workspace, WorkspaceMembership
+from .models import AdditionalGeneration, AiSuggestion, Asset, Character, DialogueLine, Episode, ExportJob, Project, ProjectAccessExclusion, ProjectMembership, Prompt, PromptBlock, Revision, Scene, Workspace, WorkspaceMembership
 
 
 ROLE_CAPABILITIES = {
@@ -34,12 +34,12 @@ def accessible_projects(user):
         return Project.objects.none()
     if user.is_superuser:
         return Project.objects.filter(workspace__deleted_at__isnull=True)
-    return Project.objects.filter(
-        Q(
+    inherited = Q(
             workspace__memberships__user=user,
             workspace__memberships__status=WorkspaceMembership.Status.ACTIVE,
-        )
-        | Q(memberships__user=user, memberships__is_active=True),
+        ) & ~Q(access_exclusions__user=user)
+    return Project.objects.filter(
+        inherited | Q(memberships__user=user, memberships__is_active=True),
         workspace__deleted_at__isnull=True,
     ).distinct()
 
@@ -113,7 +113,8 @@ def has_capability(user, workspace, capability):
 def has_project_capability(user, project, capability):
     if getattr(user, "is_superuser", False):
         return True
-    if has_capability(user, project.workspace, capability):
+    explicitly_revoked = ProjectAccessExclusion.objects.filter(project=project, user=user).exists()
+    if not explicitly_revoked and has_capability(user, project.workspace, capability):
         return True
     membership = ProjectMembership.objects.filter(project=project, user=user, is_active=True).first()
     return membership is not None and capability in PROJECT_ROLE_CAPABILITIES.get(membership.role, set())

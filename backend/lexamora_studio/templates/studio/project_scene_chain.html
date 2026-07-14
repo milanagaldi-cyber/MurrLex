@@ -23,7 +23,7 @@ main{width:min(1600px,calc(100% - 32px))}
 @media(max-width:560px){.timeline-header,.scene-editor-head{align-items:flex-start;flex-direction:column}.timeline-clip{flex-basis:190px}.scene-editor-grid{grid-template-columns:1fr}.scene-editor-grid>label:nth-child(1),.scene-editor-grid>label:nth-child(2),.scene-editor-grid>label:nth-child(3){grid-column:auto}.timeline-episode{padding:10px}.scene-editor-panel{padding:14px}}
 </style>
 {% endblock %}
-{% block content %}
+{% block content %}{% include "studio/_project_navigation.html" %}
 <div class="toolbar"><div><p class="muted"><a href="{% url 'studio:project_detail' project.id %}">{{ project.title }}</a></p><h1>Scene chain</h1><p class="muted">Select a clip to edit it. Drag clips along the timeline to change scene order.</p></div><div><a class="button secondary" href="{% url 'studio:project_master' project.id %}">Master Document</a></div></div>
 <div class="timeline-workspace">
 {% for episode in project.episodes.all %}

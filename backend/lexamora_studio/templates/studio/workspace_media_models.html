@@ -1,0 +1,7 @@
+{% extends "studio/base.html" %}
+{% block content %}
+<p class="muted"><a href="{% url 'studio:workspace_detail' workspace.id %}">{{ workspace.name }}</a></p>
+<div class="toolbar"><div><h1>Generation models</h1><p class="muted">Central catalog for image and video prompt generation.</p></div></div>
+<section class="panel model-form"><form method="post">{% csrf_token %}<div class="model-form-grid"><label>Name<input name="name" required maxlength="120" placeholder="Nano Banana 2"></label><label>Provider<input name="provider" required maxlength="80" placeholder="Google"></label><label>Model ID<input name="model_id" required maxlength="160" placeholder="provider/model-id"></label><label>Type<select name="media_type"><option value="IMAGE">Image</option><option value="VIDEO">Video</option></select></label></div><button type="submit">Add model</button></form></section>
+<h2>Available models</h2><div class="list">{% for model in models %}<div class="row"><strong>{{ model.name }}</strong><span>{{ model.provider }} / {{ model.model_id }}</span><span>{{ model.get_media_type_display }}</span></div>{% endfor %}</div>
+{% endblock %}

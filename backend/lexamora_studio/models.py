@@ -34,6 +34,7 @@ class Workspace(SoftDeleteModel):
     slug = models.SlugField(max_length=180, unique=True)
     description = models.TextField(blank=True)
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="owned_studio_workspaces")
+    avatar_asset = models.ForeignKey("Asset", on_delete=models.SET_NULL, related_name="workspace_avatar_for", null=True, blank=True)
 
     class Meta:
         ordering = ["name", "id"]
@@ -125,6 +126,17 @@ class ProjectMembership(models.Model):
 
     def __str__(self):
         return f"{self.project}: {self.user} ({self.get_role_display()})"
+
+
+class ProjectAccessExclusion(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="access_exclusions")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="studio_project_access_exclusions")
+    revoked_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="revoked_studio_project_access")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["project", "user"], name="studio_unique_project_access_exclusion")]
 
 
 class Character(SoftDeleteModel):

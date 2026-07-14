@@ -1,0 +1,5 @@
+<nav class="project-view-navigation" aria-label="Project views">
+  <a class="button secondary{% if request.resolver_match.url_name == 'project_detail' %} active{% endif %}" href="{% url 'studio:project_detail' project.id %}">General View</a>
+  <a class="button secondary{% if request.resolver_match.url_name == 'project_scene_chain' %} active{% endif %}" href="{% url 'studio:project_scene_chain' project.id %}">Scene Chain</a>
+  <a class="button secondary{% if request.resolver_match.url_name == 'project_master' %} active{% endif %}" href="{% url 'studio:project_master' project.id %}">Master Document</a>
+</nav>

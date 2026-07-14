@@ -1,6 +1,6 @@
 {% extends "studio/base.html" %}
 {% block title %}{{ project.title }} / Master Document{% endblock %}
-{% block content %}
+{% block content %}{% include "studio/_project_navigation.html" %}
 <div class="toolbar"><div><p class="muted"><a href="{% url 'studio:project_detail' project.id %}">{{ project.title }}</a></p><h1>Master Document</h1></div><div><a class="button secondary" href="{% url 'studio:project_scene_chain' project.id %}">Scene chain</a> {% if can_edit %}<a class="button secondary" href="{% url 'studio:project_edit' project.id %}">Edit project</a> {% endif %}<a class="button" href="{% url 'studio:project_exports' project.id %}">Export</a></div></div>
 <div class="master-layout"><aside class="master-toc"><strong>Contents</strong><a href="#metadata">Project</a><a href="#characters">Characters</a>{% for episode in project.episodes.all %}<a href="#item-{{ episode.id }}">Episode {{ episode.number }}</a>{% for scene in episode.scenes.all %}<a class="toc-scene" href="#item-{{ scene.id }}">Scene {{ scene.number }}</a>{% endfor %}{% endfor %}</aside>
 <article class="master-document">

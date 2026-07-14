@@ -16,7 +16,7 @@
       <fieldset class="prompt-fieldset">
         <div class="prompt-meta-grid compact">
           <label>Title<input name="title" value="{{ prompt.title }}" data-prompt-title{% if not can_edit %} disabled{% endif %}></label>
-          <label>Generation model<select name="ai_model" data-prompt-model{% if not can_edit %} disabled{% endif %}>{% for model in ai_models %}<option value="{{ model.id }}"{% if model.id == prompt.ai_model_id %} selected{% endif %}>{{ model.name }}</option>{% endfor %}</select></label>
+          <label>Generation model<select name="ai_model" data-prompt-model data-model-settings-url="{% url 'studio:workspace_media_models' prompt.scene.episode.project.workspace_id %}"{% if not can_edit %} disabled{% endif %}>{% for model in ai_models %}<option value="{{ model.id }}"{% if model.id == prompt.ai_model_id %} selected{% endif %}>{{ model.name }}</option>{% endfor %}<option value="__add_media_model__">+ Add model...</option></select></label>
           <label>Type<select name="prompt_type" data-prompt-type{% if not can_edit %} disabled{% endif %}>{% for value,label in prompt_types %}<option value="{{ value }}"{% if value == prompt.prompt_type %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
           <label>Status<select name="status" data-prompt-status{% if not can_edit %} disabled{% endif %}>{% for value,label in prompt_statuses %}<option value="{{ value }}"{% if value == prompt.status %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
         </div>

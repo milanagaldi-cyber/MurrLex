@@ -23,8 +23,8 @@ from .exports import ALL_SECTIONS, ExportError, generate_export
 from .docx_imports import accept_docx_import, parse_docx
 from .docx_exports import generate_docx_export
 from .docx_roundtrip import compare_docx_export
-from .forms import AdditionalGenerationForm, AssetEditForm, CharacterForm, DialogueLineForm, DocxImportUploadForm, EpisodeForm, GenerationOutputUploadForm, ImageUploadForm, ProjectForm, ProjectMembershipForm, PromptBlockForm, PromptForm, SceneForm, StudioTextModelForm, WorkspaceForm
-from .models import AdditionalGeneration, AiModelProfile, AiSuggestion, Asset, Character, DialogueLine, DocxImport, Episode, ExportJob, GenerationOutput, Project, ProjectMembership, Prompt, PromptBlock, Scene, StudioTextModel, SubtitleTrack, TranslationUnit, Workspace
+from .forms import AdditionalGenerationForm, AssetEditForm, CharacterForm, DialogueLineForm, DocxImportUploadForm, EpisodeForm, GenerationOutputUploadForm, ImageUploadForm, ProjectForm, ProjectMembershipForm, PromptBlockForm, PromptForm, SceneForm, StudioTextModelForm, WorkspaceForm, WorkspaceMembershipForm
+from .models import AdditionalGeneration, AiModelProfile, AiSuggestion, Asset, Character, DialogueLine, DocxImport, Episode, ExportJob, GenerationOutput, Project, ProjectAccessExclusion, ProjectMembership, Prompt, PromptBlock, Scene, StudioTextModel, SubtitleTrack, TranslationUnit, Workspace, WorkspaceMembership
 from .permissions import accessible_assets, accessible_projects, accessible_suggestions, accessible_workspaces, has_capability, has_object_capability, has_project_capability
 from .revisions import audit, record_revision
 from .services import bulk_replace_subtitle_lines, create_workspace, propagate_project_original_language, reorder_subtitle_lines, save_translation
@@ -35,7 +35,7 @@ from .storage import create_asset, crop_asset, purge_asset, restore_asset, trash
 def dashboard(request):
     sort = request.GET.get("sort", "updated")
     orderings = {"name": "name", "created": "-created_at", "updated": "-updated_at", "projects": "name"}
-    workspaces = accessible_workspaces(request.user).select_related("owner", "created_by", "updated_by").prefetch_related("projects").order_by(orderings.get(sort, "-updated_at"), "name")
+    workspaces = accessible_workspaces(request.user).select_related("owner", "created_by", "updated_by", "avatar_asset").prefetch_related("projects").order_by(orderings.get(sort, "-updated_at"), "name")
     shared_projects = accessible_projects(request.user).exclude(workspace__in=workspaces).select_related("workspace")
     trashed_workspaces = Workspace.all_objects.filter(owner=request.user, deleted_at__isnull=False).order_by("-deleted_at")
     return render(request, "studio/dashboard.html", {"workspaces": workspaces, "shared_projects": shared_projects, "trashed_workspaces": trashed_workspaces, "sort": sort})
@@ -123,7 +123,7 @@ def workspace_create(request):
 
 @login_required
 def workspace_detail(request, workspace_id):
-    workspace = get_object_or_404(accessible_workspaces(request.user), id=workspace_id)
+    workspace = get_object_or_404(accessible_workspaces(request.user).select_related("avatar_asset"), id=workspace_id)
     sort = request.GET.get("sort", "updated")
     orderings = {"title": "title", "created": "-created_at", "updated": "-updated_at", "type": "project_type"}
     projects = list(workspace.projects.select_related("created_by", "updated_by").prefetch_related("assets", "memberships__user").order_by(orderings.get(sort, "-updated_at"), "title"))
@@ -131,13 +131,75 @@ def workspace_detail(request, workspace_id):
         project.cover_asset = min((asset for asset in project.assets.all() if asset.thumbnail), key=lambda asset: asset.created_at, default=None)
         project.can_edit = has_project_capability(request.user, project, "edit")
         project.can_manage = has_project_capability(request.user, project, "manage_project")
-    return render(request, "studio/workspace_detail.html", {"workspace": workspace, "projects": projects, "sort": sort, "can_edit": has_capability(request.user, workspace, "edit"), "imports": workspace.docx_imports.select_related("project")[:10]})
+    return render(request, "studio/workspace_detail.html", {"workspace": workspace, "projects": projects, "sort": sort, "can_edit": has_capability(request.user, workspace, "edit"), "can_manage": has_capability(request.user, workspace, "manage_members"), "imports": workspace.docx_imports.select_related("project")[:10]})
 
 
 @login_required
 def workspace_edit(request, workspace_id):
     workspace = get_object_or_404(accessible_workspaces(request.user), id=workspace_id)
     return _edit_entity(request, item=workspace, form_class=WorkspaceForm, workspace=workspace, title="Edit workspace", success_url=lambda item: ("studio:workspace_detail", item.id))
+
+
+@login_required
+def workspace_access(request, workspace_id):
+    workspace = get_object_or_404(accessible_workspaces(request.user).select_related("owner"), id=workspace_id)
+    if not has_capability(request.user, workspace, "manage_members"):
+        return HttpResponseForbidden("Workspace member management permission is required.")
+    form = WorkspaceMembershipForm(request.POST or None, workspace=workspace)
+    if request.method == "POST":
+        action = request.POST.get("action", "save")
+        if action == "remove":
+            membership = get_object_or_404(WorkspaceMembership, workspace=workspace, id=request.POST.get("membership_id"))
+            ProjectMembership.objects.filter(project__workspace=workspace, user=membership.user).delete()
+            ProjectAccessExclusion.objects.filter(project__workspace=workspace, user=membership.user).delete()
+            membership.delete()
+            messages.success(request, "Workspace access removed.")
+            return redirect("studio:workspace_access", workspace_id=workspace.id)
+        if form.is_valid():
+            WorkspaceMembership.objects.update_or_create(
+                workspace=workspace,
+                user=form.user,
+                defaults={"role": form.cleaned_data["role"], "status": WorkspaceMembership.Status.ACTIVE, "can_use_ai": form.cleaned_data["can_use_ai"]},
+            )
+            ProjectAccessExclusion.objects.filter(project__workspace=workspace, user=form.user).delete()
+            messages.success(request, "Workspace access saved and inherited by its projects.")
+            return redirect("studio:workspace_access", workspace_id=workspace.id)
+    return render(request, "studio/workspace_access.html", {"workspace": workspace, "form": form, "memberships": workspace.memberships.exclude(role=WorkspaceMembership.Role.OWNER).select_related("user")})
+
+
+@login_required
+def workspace_avatar_upload(request, workspace_id):
+    workspace = get_object_or_404(accessible_workspaces(request.user), id=workspace_id)
+    if not has_capability(request.user, workspace, "manage_members"):
+        return HttpResponseForbidden("Workspace administrator permission is required.")
+    form = ImageUploadForm(request.POST or None, request.FILES or None)
+    if request.method == "POST" and form.is_valid():
+        asset = create_asset(user=request.user, workspace=workspace, uploaded=form.cleaned_data["file"], kind=Asset.Kind.OTHER)
+        workspace.avatar_asset = asset
+        workspace.updated_by = request.user
+        workspace.save(update_fields=["avatar_asset", "updated_by", "updated_at"])
+        messages.success(request, "Workspace image updated.")
+        return redirect("studio:workspace_detail", workspace_id=workspace.id)
+    return render(request, "studio/entity_form.html", {"form": form, "title": "Workspace image", "return_to": reverse("studio:workspace_detail", kwargs={"workspace_id": workspace.id})})
+
+
+@login_required
+def workspace_media_models(request, workspace_id):
+    workspace = get_object_or_404(accessible_workspaces(request.user), id=workspace_id)
+    if not has_capability(request.user, workspace, "manage_project"):
+        return HttpResponseForbidden("Workspace administrator permission is required.")
+    if request.method == "POST":
+        name = request.POST.get("name", "").strip()[:120]
+        provider = request.POST.get("provider", "").strip()[:80]
+        model_id = request.POST.get("model_id", "").strip()[:160]
+        media_type = request.POST.get("media_type", "")
+        if not name or not provider or not model_id or media_type not in AiModelProfile.MediaType.values:
+            messages.error(request, "Name, provider, model ID and media type are required.")
+        else:
+            AiModelProfile.objects.update_or_create(name=name, defaults={"provider": provider, "model_id": model_id, "media_type": media_type, "is_active": True})
+            messages.success(request, "Generation model saved.")
+            return redirect("studio:workspace_media_models", workspace_id=workspace.id)
+    return render(request, "studio/workspace_media_models.html", {"workspace": workspace, "models": AiModelProfile.objects.all()})
 
 
 def _unique_workspace_identity(name):
@@ -533,8 +595,13 @@ def project_detail(request, project_id):
         accessible_projects(request.user).select_related("workspace", "created_by", "updated_by").prefetch_related("assets", "characters__assets", "episodes__scenes", "memberships__user"),
         id=project_id,
     )
+    inherited = list(project.workspace.memberships.filter(status=WorkspaceMembership.Status.ACTIVE).exclude(user=project.workspace.owner).select_related("user"))
+    excluded_ids = set(project.access_exclusions.values_list("user_id", flat=True))
+    direct_ids = set(project.memberships.filter(is_active=True).values_list("user_id", flat=True))
+    inherited = [membership for membership in inherited if membership.user_id not in excluded_ids and membership.user_id not in direct_ids]
     return render(request, "studio/project_detail.html", {
         "project": project,
+        "inherited_memberships": inherited,
         "can_edit": has_project_capability(request.user, project, "edit"),
         "can_manage_project": has_project_capability(request.user, project, "manage_project"),
     })
@@ -556,7 +623,15 @@ def project_access(request, project_id):
             if requested and url_has_allowed_host_and_scheme(requested, {request.get_host()}, require_https=request.is_secure()):
                 return HttpResponseRedirect(requested)
             return redirect("studio:project_access", project_id=project.id)
+        if action == "exclude":
+            user_id = request.POST.get("user_id")
+            membership = get_object_or_404(WorkspaceMembership, workspace=project.workspace, user_id=user_id, status=WorkspaceMembership.Status.ACTIVE)
+            ProjectMembership.objects.filter(project=project, user=membership.user).delete()
+            ProjectAccessExclusion.objects.update_or_create(project=project, user=membership.user, defaults={"revoked_by": request.user})
+            messages.success(request, "Inherited access revoked for this project.")
+            return redirect("studio:project_access", project_id=project.id)
         if form.is_valid():
+            ProjectAccessExclusion.objects.filter(project=project, user=form.user).delete()
             ProjectMembership.objects.update_or_create(
                 project=project,
                 user=form.user,
@@ -564,10 +639,12 @@ def project_access(request, project_id):
             )
             messages.success(request, "Project access and server AI access enabled.")
             return redirect("studio:project_access", project_id=project.id)
+    inherited = project.workspace.memberships.filter(status=WorkspaceMembership.Status.ACTIVE).exclude(user=project.workspace.owner).exclude(user_id__in=project.memberships.values("user_id")).exclude(user_id__in=project.access_exclusions.values("user_id")).select_related("user")
     return render(request, "studio/project_access.html", {
         "project": project,
         "form": form,
         "memberships": project.memberships.select_related("user"),
+        "inherited_memberships": inherited,
     })
 
 
@@ -869,6 +946,9 @@ def translation_workspace(request, project_id):
     project = get_object_or_404(accessible_projects(request.user), id=project_id)
     workspace = project.workspace
     target_language = (request.POST.get("target_language") or request.GET.get("target_language") or "en").strip().lower()[:16]
+    scene_id = request.GET.get("scene", "").strip()
+    prompt_language = request.GET.get("prompt_language", "").strip().upper()
+    sort_direction = request.GET.get("sort", "asc")
     if request.method == "POST" and request.POST.get("line_id"):
         if not has_project_capability(request.user, project, "translate"):
             messages.error(request, "Translation permission is required.")
@@ -884,12 +964,32 @@ def translation_workspace(request, project_id):
             messages.success(request, "Translation saved.")
         return redirect(f"{request.path}?target_language={target_language}")
     lines = DialogueLine.objects.filter(scene__episode__project=project).select_related("scene__episode").prefetch_related("translations")
+    if scene_id:
+        lines = lines.filter(scene_id=scene_id)
+    order_prefix = "-" if sort_direction == "desc" else ""
+    lines = lines.order_by(f"{order_prefix}scene__episode__position", f"{order_prefix}scene__position", f"{order_prefix}position")
     rows = []
     for line in lines:
         unit = next((item for item in line.translations.all() if item.target_language == target_language), None)
         rows.append({"line": line, "unit": unit})
+    original_prompts = Prompt.objects.filter(scene__episode__project=project, source_prompt__isnull=True).select_related("scene__episode", "ai_model").prefetch_related("translations")
+    if scene_id:
+        original_prompts = original_prompts.filter(scene_id=scene_id)
+    original_prompts = original_prompts.order_by(f"{order_prefix}scene__episode__position", f"{order_prefix}scene__position", f"{order_prefix}position")
+    prompt_rows = []
+    available_prompt_languages = set()
+    for prompt in original_prompts:
+        versions = list(prompt.translations.select_related("ai_model").order_by("language", "created_at"))
+        available_prompt_languages.update(version.language for version in versions if version.language)
+        if prompt_language:
+            versions = [version for version in versions if version.language == prompt_language]
+            if not versions:
+                continue
+        prompt_rows.append({"prompt": prompt, "versions": versions})
     return render(request, "studio/translations.html", {
         "project": project, "rows": rows, "target_language": target_language,
+        "prompt_rows": prompt_rows, "scenes": Scene.objects.filter(episode__project=project).select_related("episode").order_by("episode__position", "position"),
+        "scene_id": scene_id, "prompt_language": prompt_language, "available_prompt_languages": sorted(available_prompt_languages), "sort_direction": sort_direction,
         "can_translate": has_project_capability(request.user, project, "translate"),
         "can_use_ai": has_project_capability(request.user, project, "use_ai") and user_has_ai_access(request.user),
         "prompt_languages": PROMPT_LANGUAGES,
@@ -1420,6 +1520,11 @@ def project_copy(request, project_id):
         references = [asset_map[asset.id] for asset in Prompt.all_objects.get(id=old_prompt_id).reference_assets.all() if asset.id in asset_map]
         if references:
             new_prompt.reference_assets.add(*references)
+    if request.POST.get("copy_access") == "1":
+        ProjectMembership.objects.bulk_create([
+            ProjectMembership(project=copied, user=item.user, role=item.role, is_active=item.is_active, invited_by=request.user)
+            for item in source.memberships.filter(is_active=True).select_related("user")
+        ])
     audit(workspace=source.workspace, actor=request.user, action="PROJECT_COPIED", instance=copied, metadata={"sourceProjectId": str(source.id)})
     messages.success(request, "Project copied with its scenes, prompts, translations, characters and files.")
     return redirect("studio:project_detail", project_id=copied.id)

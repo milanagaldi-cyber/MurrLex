@@ -5,7 +5,7 @@ from cryptography.fernet import Fernet
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 
-from .models import Project, ProjectMembership, Prompt, WorkspaceMembership
+from .models import Project, ProjectAccessExclusion, ProjectMembership, Prompt, WorkspaceMembership
 from .permissions import accessible_projects, accessible_workspaces, has_capability, has_project_capability
 from .services import create_workspace
 
@@ -135,6 +135,33 @@ class ProjectSharingTests(TestCase):
     def test_viewer_cannot_manage_members_through_api(self):
         self.client.force_login(self.viewer)
         self.assertEqual(self.client.get(f"/api/v1/studio/projects/{self.project.id}/members").status_code, 403)
+
+    def test_workspace_share_is_inherited_and_can_be_revoked_per_project(self):
+        self.client.force_login(self.owner)
+        shared = self.client.post(
+            f"/studio/workspaces/{self.workspace.id}/access/",
+            {"email": self.outsider.email, "role": WorkspaceMembership.Role.EDITOR, "can_use_ai": "on"},
+        )
+        self.assertEqual(shared.status_code, 302)
+        self.assertTrue(accessible_projects(self.outsider).filter(id=self.project.id).exists())
+        self.assertTrue(accessible_projects(self.outsider).filter(id=self.other_project.id).exists())
+
+        revoked = self.client.post(
+            f"/studio/projects/{self.other_project.id}/access/",
+            {"action": "exclude", "user_id": str(self.outsider.id)},
+        )
+        self.assertEqual(revoked.status_code, 302)
+        self.assertTrue(ProjectAccessExclusion.objects.filter(project=self.other_project, user=self.outsider).exists())
+        self.assertFalse(accessible_projects(self.outsider).filter(id=self.other_project.id).exists())
+        self.assertTrue(accessible_projects(self.outsider).filter(id=self.project.id).exists())
+
+        direct = self.client.post(
+            f"/studio/projects/{self.other_project.id}/access/",
+            {"email": self.outsider.email, "role": ProjectMembership.Role.VIEWER},
+        )
+        self.assertEqual(direct.status_code, 302)
+        self.assertFalse(ProjectAccessExclusion.objects.filter(project=self.other_project, user=self.outsider).exists())
+        self.assertTrue(accessible_projects(self.outsider).filter(id=self.other_project.id).exists())
 
 class StudioApiTests(TestCase):
     def setUp(self):
@@ -1722,6 +1749,44 @@ class StudioInlineEditingWorkflowTests(TestCase):
         self.assertContains(page, "data-scene-cancel disabled", count=2)
         self.assertNotContains(page, 'name="number"')
         self.assertContains(page, 'id="scene-navigation-bottom"')
+        self.assertContains(page, "+ Add model...")
+
+    def test_workspace_avatar_and_manual_generation_model(self):
+        import tempfile
+        from pathlib import Path
+        from .models import AiModelProfile
+
+        self.client.force_login(self.owner)
+        with tempfile.TemporaryDirectory() as directory:
+            with self.settings(STUDIO_PRIVATE_MEDIA_ROOT=Path(directory)):
+                uploaded = self.client.post(f"/studio/workspaces/{self.workspace.id}/avatar/", {"file": self.image_file("workspace.png")})
+                self.assertRedirects(uploaded, f"/studio/workspaces/{self.workspace.id}/")
+                self.workspace.refresh_from_db()
+                self.assertIsNotNone(self.workspace.avatar_asset_id)
+        created = self.client.post(
+            f"/studio/workspaces/{self.workspace.id}/models/",
+            {"name": "Manual Motion", "provider": "Custom", "model_id": "custom/motion-v1", "media_type": "VIDEO"},
+        )
+        self.assertRedirects(created, f"/studio/workspaces/{self.workspace.id}/models/")
+        self.assertTrue(AiModelProfile.objects.filter(name="Manual Motion", model_id="custom/motion-v1").exists())
+
+    def test_translations_show_prompt_versions_as_separate_cards_and_filters(self):
+        translated = Prompt.objects.create(
+            scene=self.first_scene, ai_model=self.ai_model, source_prompt=None,
+            prompt_type="IMAGE", title="Original prompt", language="EN", original_language="EN",
+            content="Original", created_by=self.owner, updated_by=self.owner,
+        )
+        Prompt.objects.create(
+            scene=self.first_scene, ai_model=self.ai_model, source_prompt=translated,
+            prompt_type="IMAGE", title="Polish prompt", language="PL", original_language="EN",
+            content="Polski tekst", position=1, created_by=self.owner, updated_by=self.owner,
+        )
+        self.client.force_login(self.owner)
+        page = self.client.get(f"/studio/projects/{self.project.id}/translations/?scene={self.first_scene.id}&prompt_language=PL&sort=desc")
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, "Original prompt")
+        self.assertContains(page, "Polski tekst")
+        self.assertContains(page, "Saved translation")
 
     def test_scene_reorder_recomputes_display_numbers(self):
         from .models import Scene

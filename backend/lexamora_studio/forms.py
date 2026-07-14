@@ -3,7 +3,7 @@ from django import forms
 from lessons.ai_gateway import TEXT_MODELS
 
 from .ai_catalog import PROMPT_LANGUAGES, default_prompt_template
-from .models import AdditionalGeneration, Asset, Character, DialogueLine, Episode, Project, ProjectMembership, Prompt, PromptBlock, Scene, StudioTextModel, Workspace
+from .models import AdditionalGeneration, Asset, Character, DialogueLine, Episode, Project, ProjectMembership, Prompt, PromptBlock, Scene, StudioTextModel, Workspace, WorkspaceMembership
 
 
 class WorkspaceForm(forms.ModelForm):
@@ -84,6 +84,28 @@ class ProjectMembershipForm(forms.Form):
         if len(matches) != 1:
             raise forms.ValidationError("A single registered user with this email is required.")
         if matches[0] == self.project.workspace.owner:
+            raise forms.ValidationError("The workspace owner already has full access.")
+        self.user = matches[0]
+        return email
+
+
+class WorkspaceMembershipForm(forms.Form):
+    email = forms.EmailField(label="User email")
+    role = forms.ChoiceField(choices=[choice for choice in WorkspaceMembership.Role.choices if choice[0] != WorkspaceMembership.Role.OWNER])
+    can_use_ai = forms.BooleanField(required=False, initial=True, label="AI access")
+
+    def __init__(self, *args, workspace, **kwargs):
+        self.workspace = workspace
+        super().__init__(*args, **kwargs)
+
+    def clean_email(self):
+        from django.contrib.auth import get_user_model
+
+        email = self.cleaned_data["email"].strip().lower()
+        matches = list(get_user_model().objects.filter(email__iexact=email)[:2])
+        if len(matches) != 1:
+            raise forms.ValidationError("A single registered user with this email is required.")
+        if matches[0] == self.workspace.owner:
             raise forms.ValidationError("The workspace owner already has full access.")
         self.user = matches[0]
         return email

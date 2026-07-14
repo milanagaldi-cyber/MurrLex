@@ -1,6 +1,6 @@
 {% extends "studio/base.html" %}{% load studio_extras %}
 {% block content %}
-<div class="toolbar"><div><p class="muted"><a href="{% url 'studio:project_detail' project.id %}">{{ project.title }}</a></p><h1>Project access</h1><p class="muted">Share only this project. Other projects in {{ project.workspace.name }} remain private.</p><p class="muted">Invited users automatically receive access to Lexamora Studio and its server AI functions.</p></div></div>
+<div class="toolbar"><div><p class="muted"><a href="{% url 'studio:project_detail' project.id %}">{{ project.title }}</a></p><h1>Project access</h1><p class="muted">Workspace access is inherited. Add project-only users here or revoke inherited access to this project.</p><p class="muted">Invited users automatically receive access to Lexamora Studio and its server AI functions.</p></div></div>
 <section class="panel" style="padding:20px;max-width:760px">
   <h2>Add or update access</h2>
   <form method="post">{% csrf_token %}{{ form.as_p }}<button type="submit">Save access</button></form>
@@ -11,4 +11,5 @@
   <div class="row"><strong title="{{ membership.user|user_details }}">{{ membership.user|display_name }}</strong><span>{{ membership.get_role_display }}</span><form method="post">{% csrf_token %}<input type="hidden" name="action" value="remove"><input type="hidden" name="membership_id" value="{{ membership.id }}"><button class="danger" type="submit" onclick="return confirm('Are you sure you want to revoke this permission?')">Remove</button></form></div>
 {% empty %}<p class="empty">This project has not been shared yet.</p>{% endfor %}
 </div>
+{% if inherited_memberships %}<h2>Inherited from workspace</h2><div class="list">{% for membership in inherited_memberships %}<div class="row"><strong title="{{ membership.user|user_details }}">{{ membership.user|display_name }}</strong><span>{{ membership.get_role_display }}</span><form method="post" onsubmit="return confirm('Revoke inherited access to this project only?')">{% csrf_token %}<input type="hidden" name="action" value="exclude"><input type="hidden" name="user_id" value="{{ membership.user_id }}"><button class="secondary" type="submit">Revoke for project</button></form></div>{% endfor %}</div>{% endif %}
 {% endblock %}
