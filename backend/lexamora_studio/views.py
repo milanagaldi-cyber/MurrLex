@@ -30,7 +30,7 @@ from .models import AdditionalGeneration, AiModelProfile, AiSuggestion, Asset, C
 from .notifications import notify_access_granted
 from .permissions import accessible_assets, accessible_projects, accessible_suggestions, accessible_workspaces, has_capability, has_object_capability, has_project_capability, is_workspace_owner_or_admin
 from .revisions import audit, record_revision
-from .services import bulk_replace_subtitle_lines, create_workspace, propagate_project_original_language, reorder_subtitle_lines, save_translation
+from .services import bulk_replace_subtitle_lines, create_workspace, propagate_project_original_language, reorder_subtitle_lines, save_translation, update_dialogue_line
 from .storage import create_asset, crop_asset, purge_asset, restore_asset, trash_asset
 
 
@@ -1724,10 +1724,10 @@ def generation_create(request, scene_id):
     if request.method == "POST" and form.is_valid():
         with transaction.atomic():
             episode = scene.episode
-            sequence = Scene.objects.filter(episode=episode, title__startswith="Догенерация ").count() + 1
+            sequence = Scene.objects.filter(episode=episode, scene_type=Scene.Type.ADDITIONAL_GENERATION).count() + 1
             last_number = max(episode.scenes.values_list("number", flat=True), default=0)
             generated_scene = Scene.objects.create(
-                episode=episode, number=last_number + 1, title=f"Догенерация {sequence}",
+                episode=episode, number=last_number + 1, title=f"Additional generation {sequence}",
                 hook=f"Additional generation based on scene {scene.number}", description=form.cleaned_data["reason"],
                 position=episode.scenes.count(), status=Scene.Status.DRAFT,
                 scene_type=Scene.Type.ADDITIONAL_GENERATION,

@@ -1,0 +1,8 @@
+<div class="localized-language-headings" aria-hidden="true">
+  <span>Documentation Language <b class="language-badge">{{ project.documentation_language }}</b></span>
+  <span>Prompt Language <b class="language-badge">{{ project.prompt_language }}</b></span>
+  <span>{% if dialogue_labels %}Dialogue Language{% else %}Series Language{% endif %} <b class="language-badge">{{ project.dialogue_language }}</b></span>
+</div>
+<label class="localized-field" data-language-role="documentation" data-language-code="{{ project.documentation_language }}"><span class="visually-hidden">Documentation Language</span>{{ documentation_field }}</label>
+<label class="localized-field" data-language-role="prompt" data-language-code="{{ project.prompt_language }}"><span class="visually-hidden">Prompt Language</span>{{ prompt_field }}</label>
+<label class="localized-field" data-language-role="dialogue" data-language-code="{{ project.dialogue_language }}"><span class="visually-hidden">{% if dialogue_labels %}Dialogue Language{% else %}Series Language{% endif %}</span>{{ dialogue_field }}</label>

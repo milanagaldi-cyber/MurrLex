@@ -1457,6 +1457,28 @@ class StudioMasterDocumentTests(TestCase):
             [self.second_line.id, self.first_line.id],
         )
 
+    def test_dialogue_editor_saves_all_language_fields_without_server_error(self):
+        self.client.force_login(self.owner)
+        response = self.client.post(
+            f"/studio/dialogue/{self.first_line.id}/edit/",
+            {
+                "speaker_documentation": "Narrator", "speaker_prompt": "Narrator EN", "speaker": "Narrator PL",
+                "text_documentation": "Documentation copy", "text_prompt": "Prompt copy", "text": "Dialogue copy",
+                "delivery_documentation": "Calm", "delivery_prompt": "Calmly", "delivery": "Spokojnie",
+                "language": "PL", "status": "IN_REVIEW", "status_comment": "Translation checked",
+            },
+        )
+        self.assertRedirects(response, f"/studio/scenes/{self.first_scene.id}/")
+        self.first_line.refresh_from_db()
+        self.assertEqual(self.first_line.text_prompt, "Prompt copy")
+        self.assertEqual(self.first_line.text, "Dialogue copy")
+        self.assertEqual(self.first_line.status_comment, "Translation checked")
+
+        editor = self.client.get(f"/studio/dialogue/{self.first_line.id}/edit/")
+        self.assertContains(editor, "Documentation Language")
+        self.assertContains(editor, "Prompt Language")
+        self.assertContains(editor, "Dialogue Language")
+
     def test_viewer_cannot_reorder(self):
         self.client.force_login(self.viewer)
         response = self.client.post(f"/studio/move/scene/{self.second_scene.id}/up/")
@@ -1514,7 +1536,8 @@ class StudioImageGenerationWorkflowTests(TestCase):
         )
         generation = AdditionalGeneration.objects.exclude(scene=self.scene).get()
         generated_scene = generation.scene
-        self.assertEqual(generated_scene.title, "Догенерация 1")
+        self.assertEqual(generated_scene.title, "Additional generation 1")
+        self.assertEqual(generated_scene.scene_type, "ADDITIONAL_GENERATION")
         self.assertGreater(generated_scene.position, self.scene.position)
         self.assertRedirects(created, f"/studio/scenes/{generated_scene.id}/media/")
         self.assertTrue(Revision.objects.filter(entity_id=generation.id, operation="CREATE").exists())
