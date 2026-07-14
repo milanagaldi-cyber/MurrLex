@@ -14,6 +14,7 @@ class WorkspaceForm(forms.ModelForm):
         fields = [
             "name", "description", "documentation_language", "dialogue_language", "prompt_language",
             "image_prompt_template", "video_prompt_template", "audio_prompt_template",
+            "text_prompt_template",
         ]
         widgets = {
             "description": forms.Textarea(attrs={"rows": 4}),
@@ -23,6 +24,7 @@ class WorkspaceForm(forms.ModelForm):
             "image_prompt_template": forms.Textarea(attrs={"rows": 3}),
             "video_prompt_template": forms.Textarea(attrs={"rows": 3}),
             "audio_prompt_template": forms.Textarea(attrs={"rows": 3}),
+            "text_prompt_template": forms.Textarea(attrs={"rows": 3}),
         }
 
     def __init__(self, *args, **kwargs):

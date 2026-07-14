@@ -1,0 +1,26 @@
+<button class="icon-button" type="button" data-dialog-open="{{ picker_id }}" title="Add image" aria-label="Add image">+</button>
+<dialog id="{{ picker_id }}" class="asset-picker image-picker-dialog">
+  <div class="toolbar">
+    <div><h2>Add image</h2><p class="muted">Choose an existing project image or upload a new one.</p></div>
+    <button class="secondary" type="button" data-dialog-close aria-label="Close">&#x2715;</button>
+  </div>
+  {% if attach_scope %}
+  <div class="asset-picker-tabs" role="tablist">
+    <button type="button" class="secondary active" data-asset-sort="project">Latest</button>
+    <button type="button" class="secondary" data-asset-sort="alpha">A-Z</button>
+  </div>
+  <div class="asset-picker-grid" data-asset-picker-grid>
+    {% for asset in project_assets %}{% if asset.thumbnail %}
+    <form method="post" action="{% url 'studio:asset_attach' attach_scope owner_id %}" data-name="{{ asset.original_filename|lower }}" data-created="{{ asset.created_at|date:'U' }}">
+      {% csrf_token %}<input type="hidden" name="asset_id" value="{{ asset.id }}"><input type="hidden" name="next" value="{{ picker_return }}">
+      <button class="asset-choice" type="submit"><img src="{% url 'studio_api:asset_thumbnail' asset.id %}" alt=""><span>{{ asset.original_filename }}</span></button>
+    </form>
+    {% endif %}{% empty %}<p class="empty">No project images yet.</p>{% endfor %}
+  </div>
+  {% endif %}
+  <form class="prompt-image-upload" method="post" enctype="multipart/form-data" action="{{ upload_url }}">
+    {% csrf_token %}<input type="hidden" name="next" value="{{ picker_return }}">
+    <label>Upload new image<input type="file" name="file" accept="image/jpeg,image/png,image/webp" required></label>
+    <button type="submit">Upload image</button>
+  </form>
+</dialog>

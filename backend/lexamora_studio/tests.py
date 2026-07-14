@@ -1747,7 +1747,7 @@ class StudioInlineEditingWorkflowTests(TestCase):
         self.assertContains(page, 'id="scene-editor-form"')
         self.assertContains(page, "Create scene")
         self.assertContains(page, f'/studio/scenes/{self.second_scene.id}/')
-        self.assertContains(page, "data-scene-cancel disabled", count=2)
+        self.assertContains(page, "data-scene-cancel disabled", count=1)
         self.assertNotContains(page, 'name="number"')
         self.assertContains(page, 'id="scene-navigation-bottom"')
         self.assertContains(page, "+ Add model...")

@@ -1,14 +1,16 @@
 import json
 from datetime import timedelta
 
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core import signing
 from django.core.exceptions import ValidationError
 from django.core.files.base import ContentFile
+from django.core.mail import send_mail
 from django.db import transaction
 from django.db.models import Prefetch, Q
-from django.http import FileResponse, Http404, HttpResponseForbidden, HttpResponseRedirect, JsonResponse
+from django.http import FileResponse, Http404, HttpResponse, HttpResponseForbidden, HttpResponseRedirect, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
@@ -25,7 +27,7 @@ from .docx_imports import accept_docx_import, parse_docx
 from .docx_exports import generate_docx_export
 from .docx_roundtrip import compare_docx_export
 from .forms import AdditionalGenerationForm, AiModelProfileForm, AssetEditForm, CharacterForm, DialogueLineForm, DocxImportUploadForm, EpisodeForm, GenerationOutputUploadForm, ImageUploadForm, ProjectForm, ProjectMembershipForm, PromptBlockForm, PromptForm, SceneForm, StudioTextModelForm, WorkspaceForm, WorkspaceMembershipForm
-from .models import AdditionalGeneration, AiModelProfile, AiSuggestion, Asset, Character, DialogueLine, DocxImport, Episode, ExportJob, GenerationOutput, Project, ProjectAccessExclusion, ProjectMembership, Prompt, PromptBlock, Scene, StudioTextModel, SubtitleTrack, TranslationUnit, Workspace, WorkspaceMembership
+from .models import AdditionalGeneration, AiModelProfile, AiSuggestion, Asset, Character, DialogueLine, DocxImport, EmailDeliveryLog, Episode, ExportJob, GenerationOutput, Project, ProjectAccessExclusion, ProjectMembership, Prompt, PromptBlock, Scene, StudioTextModel, SubtitleTrack, TranslationUnit, Workspace, WorkspaceMembership
 from .notifications import notify_access_granted
 from .permissions import accessible_assets, accessible_projects, accessible_suggestions, accessible_workspaces, has_capability, has_object_capability, has_project_capability, is_workspace_owner_or_admin
 from .revisions import audit, record_revision
@@ -166,6 +168,28 @@ def workspace_edit(request, workspace_id):
     workspace = get_object_or_404(accessible_workspaces(request.user).select_related("avatar_asset"), id=workspace_id)
     if not has_capability(request.user, workspace, "edit"):
         return HttpResponseForbidden("Edit permission is required.")
+    if request.method == "POST" and request.POST.get("action") == "test_email":
+        recipient = request.POST.get("recipient", "").strip().lower()
+        allowed = {workspace.owner.email.lower() if workspace.owner.email else ""}
+        allowed.update(value.lower() for value in workspace.memberships.filter(status=WorkspaceMembership.Status.ACTIVE).values_list("user__email", flat=True) if value)
+        if recipient not in allowed:
+            return HttpResponseForbidden("Choose a current workspace member.")
+        backend = settings.EMAIL_BACKEND
+        diagnostic = f"backend={backend}\nhost={settings.EMAIL_HOST}\nport={settings.EMAIL_PORT}\ntls={settings.EMAIL_USE_TLS}\nssl={settings.EMAIL_USE_SSL}\nrecipient={recipient}\n"
+        try:
+            delivered = send_mail(
+                f"Lexamora Studio email test: {workspace.name}",
+                f"This is a test message from workspace {workspace.name}.\nSent by {request.user.get_full_name() or request.user.username}.",
+                settings.DEFAULT_FROM_EMAIL, [recipient], fail_silently=False,
+            )
+            success = delivered == 1
+            diagnostic += f"result={'delivered' if success else 'backend returned zero deliveries'}"
+        except Exception as exc:
+            success = False
+            diagnostic += f"result=error\nerror_type={exc.__class__.__name__}\nerror={exc}"
+        log = EmailDeliveryLog.objects.create(workspace=workspace, recipient=recipient, success=success, detail=diagnostic, created_by=request.user)
+        messages.success(request, "Test email sent." if success else "Test email failed. Download the diagnostic log.")
+        return HttpResponseRedirect(reverse("studio:workspace_edit", kwargs={"workspace_id": workspace.id}) + f"#email-test-{log.id}")
     form = WorkspaceForm(request.POST or None, request.FILES or None, instance=workspace)
     if request.method == "POST" and form.is_valid():
         item = form.save(commit=False)
@@ -180,7 +204,21 @@ def workspace_edit(request, workspace_id):
     return render(request, "studio/workspace_settings.html", {
         "workspace": workspace, "form": form, "models": AiModelProfile.objects.all(),
         "can_administer": is_workspace_owner_or_admin(request.user, workspace),
+        "email_recipients": [workspace.owner, *[item.user for item in workspace.memberships.filter(status=WorkspaceMembership.Status.ACTIVE).select_related("user") if item.user_id != workspace.owner_id]],
+        "email_logs": workspace.email_delivery_logs.select_related("created_by")[:10],
     })
+
+
+@login_required
+def workspace_email_log_download(request, workspace_id, log_id):
+    workspace = get_object_or_404(accessible_workspaces(request.user), id=workspace_id)
+    if not has_capability(request.user, workspace, "manage_members"):
+        return HttpResponseForbidden("Workspace administrator permission is required.")
+    log = get_object_or_404(EmailDeliveryLog, workspace=workspace, id=log_id)
+    content = f"Lexamora Studio email diagnostic\ncreated={log.created_at.isoformat()}\ncreated_by={log.created_by_id}\nsuccess={log.success}\n{log.detail}\n"
+    response = HttpResponse(content, content_type="text/plain; charset=utf-8")
+    response["Content-Disposition"] = f'attachment; filename="lexamora-email-{log.id}.txt"'
+    return response
 
 
 @login_required
@@ -276,7 +314,8 @@ def workspace_copy(request, workspace_id):
     copied.image_prompt_template = source.image_prompt_template
     copied.video_prompt_template = source.video_prompt_template
     copied.audio_prompt_template = source.audio_prompt_template
-    copied.save(update_fields=["description", "documentation_language", "dialogue_language", "prompt_language", "image_prompt_template", "video_prompt_template", "audio_prompt_template", "updated_at"])
+    copied.text_prompt_template = source.text_prompt_template
+    copied.save(update_fields=["description", "documentation_language", "dialogue_language", "prompt_language", "image_prompt_template", "video_prompt_template", "audio_prompt_template", "text_prompt_template", "updated_at"])
     messages.success(request, "Workspace copied. Projects can be copied into it individually.")
     return redirect("studio:workspace_detail", workspace_id=copied.id)
 
@@ -501,7 +540,50 @@ def character_detail(request, character_id):
     return render(request, "studio/character_detail.html", {
         "character": character,
         "can_edit": has_object_capability(request.user, character, "edit"),
+        "project_assets": character.project.assets.filter(content_type__startswith="image/").order_by("-created_at"),
     })
+
+
+@login_required
+def asset_attach(request, scope, owner_id):
+    if scope == "scene":
+        owner = get_object_or_404(
+            Scene.objects.select_related("episode__project__workspace").filter(
+                episode__project__in=accessible_projects(request.user)
+            ), id=owner_id,
+        )
+        project = owner.episode.project
+    elif scope == "character":
+        owner = get_object_or_404(
+            Character.objects.select_related("project__workspace").filter(
+                project__in=accessible_projects(request.user)
+            ), id=owner_id,
+        )
+        project = owner.project
+    else:
+        return HttpResponseForbidden("Unsupported image attachment scope.")
+    if request.method != "POST" or not has_object_capability(request.user, owner, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    asset = get_object_or_404(
+        Asset.objects.filter(project=project, content_type__startswith="image/"),
+        id=request.POST.get("asset_id"),
+    )
+    if scope == "scene":
+        asset.scene = owner
+        asset.kind = Asset.Kind.SCENE_IMAGE
+    else:
+        asset.character = owner
+        asset.kind = Asset.Kind.CHARACTER_REFERENCE
+    asset.updated_by = request.user
+    asset.save(update_fields=[scope, "kind", "updated_by", "updated_at"])
+    audit(workspace=project.workspace, actor=request.user, action="ASSET_ATTACHED", instance=asset, metadata={"scope": scope, "ownerId": str(owner.id)})
+    messages.success(request, "Project image attached.")
+    requested = request.POST.get("next", "")
+    if requested and url_has_allowed_host_and_scheme(requested, {request.get_host()}, require_https=request.is_secure()):
+        return HttpResponseRedirect(requested)
+    if scope == "scene":
+        return redirect("studio:scene_detail", scene_id=owner.id)
+    return redirect("studio:character_detail", character_id=owner.id)
 
 
 @login_required
@@ -2042,6 +2124,7 @@ def project_scene_chain(request, project_id):
     )
     for episode in project.episodes.all():
         for scene in episode.scenes.all():
+            scene.image_picker_id = f"scene-image-picker-{scene.id}"
             scene.editor_prompts = [prompt for prompt in scene.prompts.all() if not prompt.source_prompt_id]
             _attach_prompt_ai_state(scene.editor_prompts)
     context = {
@@ -2049,6 +2132,7 @@ def project_scene_chain(request, project_id):
         "can_edit": has_project_capability(request.user, project, "edit"),
         "can_use_ai": has_project_capability(request.user, project, "use_ai") and user_has_ai_access(request.user),
         "mention_characters": list(project.characters.values_list("name", flat=True)),
+        "project_assets": project.assets.filter(content_type__startswith="image/").order_by("-created_at"),
         **_prompt_editor_context(request),
     }
     return render(request, "studio/project_scene_chain.html", context)

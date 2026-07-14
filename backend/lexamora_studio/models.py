@@ -41,6 +41,7 @@ class Workspace(SoftDeleteModel):
     image_prompt_template = models.TextField(blank=True)
     video_prompt_template = models.TextField(blank=True)
     audio_prompt_template = models.TextField(blank=True)
+    text_prompt_template = models.TextField(blank=True)
     purged_at = models.DateTimeField(null=True, blank=True)
     purged_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="purged_studio_workspaces", null=True, blank=True)
 
@@ -77,6 +78,19 @@ class WorkspaceMembership(models.Model):
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=["workspace", "user"], name="studio_unique_workspace_member")]
+
+
+class EmailDeliveryLog(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name="email_delivery_logs")
+    recipient = models.EmailField()
+    success = models.BooleanField(default=False)
+    detail = models.TextField(blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="studio_email_tests")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
 
 
 class Project(SoftDeleteModel):
@@ -376,6 +390,7 @@ class Prompt(SoftDeleteModel):
                     self.Type.IMAGE: workspace.image_prompt_template,
                     self.Type.VIDEO: workspace.video_prompt_template,
                     self.Type.AUDIO: workspace.audio_prompt_template,
+                    self.Type.TEXT: workspace.text_prompt_template,
                 }
                 project_template = (project.prompt_template or typed_templates.get(self.prompt_type, "") or "").strip()
                 if project_template and not self.content.rstrip().endswith(project_template):

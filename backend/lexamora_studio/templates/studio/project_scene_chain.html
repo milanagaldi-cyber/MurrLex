@@ -24,7 +24,7 @@ main{width:min(1600px,calc(100% - 32px))}
 </style>
 {% endblock %}
 {% block content %}{% include "studio/_project_navigation.html" %}
-<div class="toolbar"><div><p class="muted"><a href="{% url 'studio:project_detail' project.id %}">{{ project.title }}</a></p><h1>Scene chain</h1><p class="muted">Select a clip to edit it. Drag clips along the timeline to change scene order.</p></div><div><a class="button secondary" href="{% url 'studio:project_master' project.id %}">Master Document</a></div></div>
+<div class="toolbar"><div><p class="muted"><a href="{% url 'studio:project_detail' project.id %}">{{ project.title }}</a></p><h1>Scene chain</h1><p class="muted">Select a clip to edit it. Drag clips along the timeline to change scene order.</p></div></div>
 <div class="timeline-workspace">
 {% for episode in project.episodes.all %}
 <section class="timeline-episode" id="episode-{{ episode.id }}" data-timeline-episode>
@@ -33,13 +33,13 @@ main{width:min(1600px,calc(100% - 32px))}
     <button class="timeline-scroll secondary" type="button" data-scroll-direction="-1" title="Previous scenes" aria-label="Previous scenes">&#8249;</button>
     <div class="timeline-track" data-scene-list data-reorder-url="{% url 'studio:episode_scene_reorder' episode.id %}" role="tablist" aria-label="Episode {{ episode.number }} scenes">
     {% for scene in episode.scenes.all %}
-      <article class="timeline-clip" data-scene-id="{{ scene.id }}" data-editor-id="scene-{{ scene.id }}" role="tab" tabindex="0" aria-controls="scene-{{ scene.id }}" aria-selected="false">
+      <article class="timeline-clip" data-scene-id="{{ scene.id }}" data-scene-title="{{ scene.title }}" data-editor-id="scene-{{ scene.id }}" role="tab" tabindex="0" aria-controls="scene-{{ scene.id }}" aria-selected="false">
         <div class="clip-preview">
           {% if can_edit %}<span class="drag-handle" title="Drag scene" aria-label="Drag scene">&#8942;&#8942;</span>{% endif %}
           {% for asset in scene.chain_images %}{% if asset.thumbnail %}<figure class="asset"><a href="{% url 'studio_api:asset_view' asset.id %}"><img src="{% url 'studio_api:asset_thumbnail' asset.id %}" alt="{{ asset.original_filename }}"></a></figure>{% endif %}{% empty %}<div class="clip-empty">No image</div>{% endfor %}
           <span class="clip-index">{{ forloop.counter }}</span>
         </div>
-        <div class="clip-copy"><strong>Scene {{ scene.number }}. {{ scene.title }}</strong><div class="clip-meta"><span>{{ scene.get_status_display }}</span><span>{{ scene.prompts.count }} prompts</span></div></div>
+        <div class="clip-copy"><strong data-clip-title>Scene {{ scene.number }}. {{ scene.title }}</strong><div class="clip-meta"><span>{{ scene.get_status_display }}</span><span>{{ scene.prompts.count }} prompts</span></div></div>
       </article>
     {% empty %}<p class="empty">No scenes.</p>{% endfor %}
     </div>
@@ -49,11 +49,11 @@ main{width:min(1600px,calc(100% - 32px))}
   <div class="scene-editor-deck">
   {% for scene in episode.scenes.all %}
     <section id="scene-{{ scene.id }}" class="scene-editor-panel" data-scene-editor data-scene-id="{{ scene.id }}" hidden>
-      <div class="scene-editor-head"><h3>Scene {{ scene.number }}. {{ scene.title }}</h3><a href="{% url 'studio:scene_detail' scene.id %}">Open full scene</a></div>
+      <div class="scene-editor-head"><h3 data-editor-title>Scene {{ scene.number }}. {{ scene.title }}</h3><a href="{% url 'studio:scene_detail' scene.id %}">Open full scene</a></div>
       <div class="scene-editor-layout">
         <aside class="selected-scene-image">
           {% for asset in scene.chain_images %}{% if asset.thumbnail %}<figure class="asset" data-crop-url="{% url 'studio:asset_crop' asset.id %}"><a href="{% url 'studio_api:asset_view' asset.id %}"><img src="{% url 'studio_api:asset_thumbnail' asset.id %}" alt="{{ asset.original_filename }}"></a><figcaption>{{ asset.original_filename }}{% include "studio/_asset_actions.html" with asset=asset attachment_scope='scene' attachment_id=scene.id %}</figcaption></figure>{% endif %}{% empty %}<div class="clip-empty panel" style="min-height:180px">No scene image</div>{% endfor %}
-          {% if can_edit %}<a class="button secondary" href="{% url 'studio:scene_image_upload' scene.id %}">Upload image</a>{% endif %}
+          {% if can_edit %}{% url 'studio:scene_image_upload' scene.id as image_upload_url %}{% include "studio/_image_picker.html" with picker_id=scene.image_picker_id attach_scope="scene" owner_id=scene.id upload_url=image_upload_url picker_return=request.get_full_path %}{% endif %}
         </aside>
         <div class="scene-editor-form">
         {% if can_edit %}
@@ -120,10 +120,10 @@ main{width:min(1600px,calc(100% - 32px))}
       state.textContent="Unsaved order";
       episode.querySelector("[data-reorder-actions]").hidden=false;
     });
-    episode.querySelector("[data-reorder-save]")?.addEventListener("click",async()=>{const state=episode.querySelector("[data-reorder-state]");const sceneIds=[...list.querySelectorAll(".timeline-clip")].map(clip=>clip.dataset.sceneId);state.textContent="Saving order...";const response=await fetch(list.dataset.reorderUrl,{method:"POST",headers:{"Content-Type":"application/json","X-CSRFToken":csrf},body:JSON.stringify({sceneIds})});state.textContent=response.ok?"Order saved":"Could not save order";if(response.ok){savedOrder=sceneIds;episode.querySelector("[data-reorder-actions]").hidden=true;list.querySelectorAll(".clip-index").forEach((label,index)=>label.textContent=index+1)}});
-    episode.querySelector("[data-reorder-cancel]")?.addEventListener("click",()=>{savedOrder.forEach(id=>{const clip=list.querySelector(`[data-scene-id="${id}"]`);if(clip)list.appendChild(clip)});episode.querySelector("[data-reorder-state]").textContent="Order restored";episode.querySelector("[data-reorder-actions]").hidden=true;list.querySelectorAll(".clip-index").forEach((label,index)=>label.textContent=index+1)});
+    const renumber=()=>[...list.querySelectorAll(".timeline-clip")].forEach((clip,index)=>{const number=index+1,title=`Scene ${number}. ${clip.dataset.sceneTitle}`;clip.querySelector(".clip-index").textContent=number;clip.querySelector("[data-clip-title]").textContent=title;const editor=episode.querySelector(`[data-scene-editor][data-scene-id="${clip.dataset.sceneId}"]`);if(editor){editor.querySelector("[data-editor-title]").textContent=title;editor.querySelector('input[readonly]').value=number}});
+    episode.querySelector("[data-reorder-save]")?.addEventListener("click",async()=>{const state=episode.querySelector("[data-reorder-state]");const sceneIds=[...list.querySelectorAll(".timeline-clip")].map(clip=>clip.dataset.sceneId);state.textContent="Saving order...";const response=await fetch(list.dataset.reorderUrl,{method:"POST",headers:{"Content-Type":"application/json","X-CSRFToken":csrf},body:JSON.stringify({sceneIds})});state.textContent=response.ok?"Order saved":"Could not save order";if(response.ok){savedOrder=sceneIds;episode.querySelector("[data-reorder-actions]").hidden=true;renumber()}});
+    episode.querySelector("[data-reorder-cancel]")?.addEventListener("click",()=>{savedOrder.forEach(id=>{const clip=list.querySelector(`[data-scene-id="${id}"]`);if(clip)list.appendChild(clip)});episode.querySelector("[data-reorder-state]").textContent="Order restored";episode.querySelector("[data-reorder-actions]").hidden=true;renumber()});
     episode.querySelectorAll("[data-scroll-direction]").forEach(button=>button.addEventListener("click",()=>list.scrollBy({left:Number(button.dataset.scrollDirection)*Math.max(300,list.clientWidth*.7),behavior:"smooth"})));
-    if(clips[0]){const clip=clips[0],editor=episode.querySelector(`.scene-editor-panel[data-scene-id="${clip.dataset.sceneId}"]`);clip.classList.add("is-selected");clip.setAttribute("aria-selected","true");if(editor)editor.hidden=false}
   });
 
   if(location.hash){

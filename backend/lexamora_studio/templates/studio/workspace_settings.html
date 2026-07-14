@@ -1,12 +1,37 @@
 {% extends "studio/base.html" %}
+{% load studio_extras %}
 {% block title %}{{ workspace.name }} / Settings{% endblock %}
 {% block content %}
 <p class="muted"><a href="{% url 'studio:workspace_detail' workspace.id %}">&larr; {{ workspace.name }}</a></p>
-<div class="toolbar"><div><h1>Workspace settings</h1><p>Central settings inherited by new projects and prompts.</p></div><a class="button secondary" href="{% url 'studio:workspace_media_models' workspace.id %}">Generation models</a></div>
+<div class="toolbar settings-heading">
+  <div><h1>Workspace settings</h1><p>Central settings inherited by new projects and prompts.</p></div>
+  <a class="button secondary" href="{% url 'studio:workspace_media_models' workspace.id %}">Generation models</a>
+</div>
 <form method="post" enctype="multipart/form-data" class="settings-grid">{% csrf_token %}
-  <section class="panel settings-section"><h2>Workspace</h2>{{ form.non_field_errors }}<div class="settings-form-grid"><label>Name{{ form.name }}</label><label>Description{{ form.description }}</label><label>Avatar{{ form.avatar }}{% if workspace.avatar_asset %}<img class="settings-avatar-preview" src="{% url 'studio_api:asset_thumbnail' workspace.avatar_asset.id %}" alt="Current avatar">{% endif %}</label></div></section>
-  <section class="panel settings-section"><h2>Languages</h2><div class="settings-language-grid"><label>Documentation{{ form.documentation_language }}</label><label>Dialogue{{ form.dialogue_language }}</label><label>Prompt generation{{ form.prompt_language }}</label></div></section>
-  <section class="panel settings-section"><h2>Prompt templates</h2><p class="muted">The matching template is appended to a newly created prompt.</p><label>Photo template{{ form.image_prompt_template }}</label><label>Video template{{ form.video_prompt_template }}</label><label>Audio template{{ form.audio_prompt_template }}</label></section>
-  <div><button type="submit">Save settings</button> <a class="button secondary" href="{% url 'studio:workspace_detail' workspace.id %}">Cancel</a></div>
+  <section class="panel settings-section workspace-primary-settings">
+    <h2>Workspace</h2>{{ form.non_field_errors }}
+    <div class="workspace-settings-layout">
+      <div class="workspace-fields"><label>Name{{ form.name }}</label><label>Description{{ form.description }}</label></div>
+      <label class="compact-avatar" title="{% if workspace.avatar_asset %}Change Avatar{% else %}Add Avatar{% endif %}">
+        {{ form.avatar }}
+        {% if workspace.avatar_asset %}<img src="{% url 'studio_api:asset_thumbnail' workspace.avatar_asset.id %}" alt="Workspace avatar"><span>Change</span>{% else %}<b>+</b><span>Add Avatar</span>{% endif %}
+      </label>
+    </div>
+  </section>
+  <section class="panel settings-section">
+    <h2>Languages</h2>
+    <div class="settings-language-grid"><label>Documentation{{ form.documentation_language }}</label><label>Dialogue{{ form.dialogue_language }}</label><label>Prompt generation{{ form.prompt_language }}</label></div>
+  </section>
+  <section class="panel settings-section prompt-template-settings">
+    <h2>Prompt templates</h2><p class="muted">The matching template is appended to a newly created prompt.</p>
+    <div class="template-grid"><label>Photo{{ form.image_prompt_template }}</label><label>Video{{ form.video_prompt_template }}</label><label>Audio{{ form.audio_prompt_template }}</label><label>Text{{ form.text_prompt_template }}</label></div>
+  </section>
+  <div class="settings-actions"><button type="submit">Save settings</button><a class="button secondary" href="{% url 'studio:workspace_detail' workspace.id %}">Cancel</a></div>
 </form>
+{% if can_administer %}
+<section class="panel settings-section email-test" id="email-test"><h2>Test email delivery</h2><p class="muted">Send a diagnostic message to a current workspace member. Provider secrets are never included in the downloadable log.</p>
+  <form method="post" class="email-test-form">{% csrf_token %}<input type="hidden" name="action" value="test_email"><label>Recipient<select name="recipient" required>{% for user in email_recipients %}{% if user.email %}<option value="{{ user.email }}">{{ user|display_name }} / {{ user.email }}</option>{% endif %}{% endfor %}</select></label><button type="submit">Send test email</button></form>
+  {% if email_logs %}<div class="email-log-list">{% for log in email_logs %}<div class="email-log-row" id="email-test-{{ log.id }}"><span class="status-dot {% if log.success %}success{% else %}failed{% endif %}"></span><span>{{ log.recipient }} / {{ log.created_at|date:"Y-m-d H:i" }}</span><strong>{% if log.success %}Delivered{% else %}Failed{% endif %}</strong><a href="{% url 'studio:workspace_email_log_download' workspace.id log.id %}">Download log</a></div>{% endfor %}</div>{% endif %}
+</section>
+{% endif %}
 {% endblock %}
