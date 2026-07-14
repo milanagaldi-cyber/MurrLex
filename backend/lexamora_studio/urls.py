@@ -17,6 +17,7 @@ urlpatterns = [
     path("workspaces/<uuid:workspace_id>/copy/", views.workspace_copy, name="workspace_copy"),
     path("workspaces/<uuid:workspace_id>/trash/", views.workspace_trash, name="workspace_trash"),
     path("workspaces/<uuid:workspace_id>/restore/", views.workspace_restore, name="workspace_restore"),
+    path("workspaces/<uuid:workspace_id>/purge/", views.workspace_purge, name="workspace_purge"),
     path("workspaces/<uuid:workspace_id>/imports/docx/new/", views.docx_import_create, name="docx_import_create"),
     path("imports/<uuid:import_id>/", views.docx_import_detail, name="docx_import_detail"),
     path("imports/<uuid:import_id>/accept/", views.docx_import_accept, name="docx_import_accept"),

@@ -234,6 +234,15 @@ STUDIO_AI_RATE_PER_MINUTE = max(1, int(os.environ.get("STUDIO_AI_RATE_PER_MINUTE
 STUDIO_EXPORT_RATE_PER_HOUR = max(1, int(os.environ.get("STUDIO_EXPORT_RATE_PER_HOUR", "10")))
 STUDIO_PDF_FONT_PATH = os.environ.get("STUDIO_PDF_FONT_PATH", "")
 
+EMAIL_BACKEND = os.environ.get("EMAIL_BACKEND", "django.core.mail.backends.smtp.EmailBackend")
+EMAIL_HOST = os.environ.get("EMAIL_HOST", "localhost")
+EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "25"))
+EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
+EMAIL_USE_TLS = env_bool("EMAIL_USE_TLS", False)
+EMAIL_USE_SSL = env_bool("EMAIL_USE_SSL", False)
+DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "Lexamora Studio <noreply@lexaailabs.com>")
+
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SECURE_SSL_REDIRECT = env_bool("SECURE_SSL_REDIRECT", not DEBUG)
 SECURE_HSTS_SECONDS = max(0, int(os.environ.get("SECURE_HSTS_SECONDS", "31536000" if not DEBUG else "0")))

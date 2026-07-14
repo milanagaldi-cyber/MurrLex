@@ -3,6 +3,7 @@ from datetime import timedelta
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.core import signing
 from django.core.exceptions import ValidationError
 from django.core.files.base import ContentFile
 from django.db import transaction
@@ -25,20 +26,44 @@ from .docx_exports import generate_docx_export
 from .docx_roundtrip import compare_docx_export
 from .forms import AdditionalGenerationForm, AssetEditForm, CharacterForm, DialogueLineForm, DocxImportUploadForm, EpisodeForm, GenerationOutputUploadForm, ImageUploadForm, ProjectForm, ProjectMembershipForm, PromptBlockForm, PromptForm, SceneForm, StudioTextModelForm, WorkspaceForm, WorkspaceMembershipForm
 from .models import AdditionalGeneration, AiModelProfile, AiSuggestion, Asset, Character, DialogueLine, DocxImport, Episode, ExportJob, GenerationOutput, Project, ProjectAccessExclusion, ProjectMembership, Prompt, PromptBlock, Scene, StudioTextModel, SubtitleTrack, TranslationUnit, Workspace, WorkspaceMembership
-from .permissions import accessible_assets, accessible_projects, accessible_suggestions, accessible_workspaces, has_capability, has_object_capability, has_project_capability
+from .notifications import notify_access_granted
+from .permissions import accessible_assets, accessible_projects, accessible_suggestions, accessible_workspaces, has_capability, has_object_capability, has_project_capability, is_workspace_owner_or_admin
 from .revisions import audit, record_revision
 from .services import bulk_replace_subtitle_lines, create_workspace, propagate_project_original_language, reorder_subtitle_lines, save_translation
 from .storage import create_asset, crop_asset, purge_asset, restore_asset, trash_asset
+
+
+ARCHIVE_PURGE_DELAY_SECONDS = 30
+
+
+def _archive_purge_token(*, kind, item_id, user):
+    return signing.dumps({"kind": kind, "id": str(item_id), "user": str(user.id), "issued": timezone.now().timestamp()}, salt="studio-archive-purge")
+
+
+def _archive_purge_allowed(*, token, kind, item_id, user):
+    try:
+        payload = signing.loads(token, salt="studio-archive-purge", max_age=3600)
+        age = timezone.now().timestamp() - float(payload["issued"])
+    except (signing.BadSignature, KeyError, TypeError, ValueError):
+        return False
+    return payload.get("kind") == kind and payload.get("id") == str(item_id) and payload.get("user") == str(user.id) and age >= ARCHIVE_PURGE_DELAY_SECONDS
 
 
 @login_required
 def dashboard(request):
     sort = request.GET.get("sort", "updated")
     orderings = {"name": "name", "created": "-created_at", "updated": "-updated_at", "projects": "name"}
-    workspaces = accessible_workspaces(request.user).select_related("owner", "created_by", "updated_by", "avatar_asset").prefetch_related("projects").order_by(orderings.get(sort, "-updated_at"), "name")
+    workspaces = list(accessible_workspaces(request.user).select_related("owner", "created_by", "updated_by", "avatar_asset").prefetch_related("projects").order_by(orderings.get(sort, "-updated_at"), "name"))
+    for workspace in workspaces:
+        workspace.can_administer = is_workspace_owner_or_admin(request.user, workspace)
     shared_projects = accessible_projects(request.user).exclude(workspace__in=workspaces).select_related("workspace")
-    trashed_workspaces = Workspace.all_objects.filter(owner=request.user, deleted_at__isnull=False).order_by("-deleted_at")
-    return render(request, "studio/dashboard.html", {"workspaces": workspaces, "shared_projects": shared_projects, "trashed_workspaces": trashed_workspaces, "sort": sort})
+    archived_query = Workspace.all_objects.filter(deleted_at__isnull=False, purged_at__isnull=True)
+    if not request.user.is_superuser:
+        archived_query = archived_query.filter(Q(owner=request.user) | Q(memberships__user=request.user, memberships__status=WorkspaceMembership.Status.ACTIVE, memberships__role__in=[WorkspaceMembership.Role.OWNER, WorkspaceMembership.Role.ADMIN]))
+    archived_workspaces = list(archived_query.select_related("owner").distinct().order_by("-deleted_at"))
+    for workspace in archived_workspaces:
+        workspace.purge_token = _archive_purge_token(kind="workspace", item_id=workspace.id, user=request.user)
+    return render(request, "studio/dashboard.html", {"workspaces": workspaces, "shared_projects": shared_projects, "archived_workspaces": archived_workspaces, "sort": sort, "purge_delay": ARCHIVE_PURGE_DELAY_SECONDS})
 
 
 def _set_single_default(model, instance):
@@ -131,7 +156,8 @@ def workspace_detail(request, workspace_id):
         project.cover_asset = min((asset for asset in project.assets.all() if asset.thumbnail), key=lambda asset: asset.created_at, default=None)
         project.can_edit = has_project_capability(request.user, project, "edit")
         project.can_manage = has_project_capability(request.user, project, "manage_project")
-    return render(request, "studio/workspace_detail.html", {"workspace": workspace, "projects": projects, "sort": sort, "can_edit": has_capability(request.user, workspace, "edit"), "can_manage": has_capability(request.user, workspace, "manage_members"), "imports": workspace.docx_imports.select_related("project")[:10]})
+        project.can_administer = is_workspace_owner_or_admin(request.user, workspace)
+    return render(request, "studio/workspace_detail.html", {"workspace": workspace, "projects": projects, "sort": sort, "can_edit": has_capability(request.user, workspace, "edit"), "can_manage": has_capability(request.user, workspace, "manage_members"), "can_administer": is_workspace_owner_or_admin(request.user, workspace), "imports": workspace.docx_imports.select_related("project")[:10]})
 
 
 @login_required
@@ -150,21 +176,26 @@ def workspace_access(request, workspace_id):
         action = request.POST.get("action", "save")
         if action == "remove":
             membership = get_object_or_404(WorkspaceMembership, workspace=workspace, id=request.POST.get("membership_id"))
+            if membership.user_id == workspace.owner_id or membership.role == WorkspaceMembership.Role.OWNER:
+                return HttpResponseForbidden("The workspace owner cannot be removed.")
             ProjectMembership.objects.filter(project__workspace=workspace, user=membership.user).delete()
             ProjectAccessExclusion.objects.filter(project__workspace=workspace, user=membership.user).delete()
             membership.delete()
             messages.success(request, "Workspace access removed.")
             return redirect("studio:workspace_access", workspace_id=workspace.id)
         if form.is_valid():
+            existed = WorkspaceMembership.objects.filter(workspace=workspace, user=form.user, status=WorkspaceMembership.Status.ACTIVE).exists()
             WorkspaceMembership.objects.update_or_create(
                 workspace=workspace,
                 user=form.user,
                 defaults={"role": form.cleaned_data["role"], "status": WorkspaceMembership.Status.ACTIVE, "can_use_ai": form.cleaned_data["can_use_ai"]},
             )
             ProjectAccessExclusion.objects.filter(project__workspace=workspace, user=form.user).delete()
+            if not existed:
+                notify_access_granted(user=form.user, entity_name=workspace.name, entity_kind="workspace", url=request.build_absolute_uri(reverse("studio:workspace_detail", kwargs={"workspace_id": workspace.id})), granted_by=request.user)
             messages.success(request, "Workspace access saved and inherited by its projects.")
             return redirect("studio:workspace_access", workspace_id=workspace.id)
-    return render(request, "studio/workspace_access.html", {"workspace": workspace, "form": form, "memberships": workspace.memberships.exclude(role=WorkspaceMembership.Role.OWNER).select_related("user")})
+    return render(request, "studio/workspace_access.html", {"workspace": workspace, "form": form, "owner_membership": workspace.memberships.filter(user=workspace.owner).select_related("user").first(), "memberships": workspace.memberships.exclude(user=workspace.owner).select_related("user")})
 
 
 @login_required
@@ -180,7 +211,7 @@ def workspace_avatar_upload(request, workspace_id):
         workspace.save(update_fields=["avatar_asset", "updated_by", "updated_at"])
         messages.success(request, "Workspace image updated.")
         return redirect("studio:workspace_detail", workspace_id=workspace.id)
-    return render(request, "studio/entity_form.html", {"form": form, "title": "Workspace image", "return_to": reverse("studio:workspace_detail", kwargs={"workspace_id": workspace.id})})
+    return render(request, "studio/entity_form.html", {"form": form, "title": "Workspace image", "multipart": True, "return_to": reverse("studio:workspace_detail", kwargs={"workspace_id": workspace.id})})
 
 
 @login_required
@@ -220,8 +251,8 @@ def _unique_workspace_identity(name):
 @transaction.atomic
 def workspace_copy(request, workspace_id):
     source = get_object_or_404(accessible_workspaces(request.user), id=workspace_id)
-    if request.method != "POST" or not has_capability(request.user, source, "edit"):
-        return HttpResponseForbidden("Edit permission is required.")
+    if request.method != "POST" or not is_workspace_owner_or_admin(request.user, source):
+        return HttpResponseForbidden("Workspace owner or administrator permission is required.")
     name, slug = _unique_workspace_identity(source.name)
     copied = create_workspace(user=request.user, name=name, slug=slug)
     copied.description = source.description
@@ -233,27 +264,45 @@ def workspace_copy(request, workspace_id):
 @login_required
 def workspace_trash(request, workspace_id):
     workspace = get_object_or_404(accessible_workspaces(request.user), id=workspace_id)
-    if request.method != "POST" or not has_capability(request.user, workspace, "manage_project"):
-        return HttpResponseForbidden("Full control permission is required.")
+    if request.method != "POST" or not is_workspace_owner_or_admin(request.user, workspace):
+        return HttpResponseForbidden("Workspace owner or administrator permission is required.")
     workspace.deleted_at = timezone.now()
     workspace.deleted_by = request.user
     workspace.updated_by = request.user
     workspace.save(update_fields=["deleted_at", "deleted_by", "updated_by", "updated_at"])
-    messages.success(request, "Workspace moved to trash for 30 days.")
+    messages.success(request, "Workspace archived. It remains available in Archive until explicitly deleted.")
     return redirect("studio:dashboard")
 
 
 @login_required
 def workspace_restore(request, workspace_id):
     workspace = get_object_or_404(Workspace.all_objects, id=workspace_id, deleted_at__isnull=False)
-    if request.method != "POST" or workspace.owner_id != request.user.id:
-        return HttpResponseForbidden("Workspace owner permission is required.")
+    if request.method != "POST" or not is_workspace_owner_or_admin(request.user, workspace):
+        return HttpResponseForbidden("Workspace owner or administrator permission is required.")
     workspace.deleted_at = None
     workspace.deleted_by = None
     workspace.updated_by = request.user
     workspace.save(update_fields=["deleted_at", "deleted_by", "updated_by", "updated_at"])
     messages.success(request, "Workspace restored.")
     return redirect("studio:workspace_detail", workspace_id=workspace.id)
+
+
+@login_required
+def workspace_purge(request, workspace_id):
+    workspace = get_object_or_404(Workspace.all_objects, id=workspace_id, deleted_at__isnull=False, purged_at__isnull=True)
+    if request.method != "POST" or not is_workspace_owner_or_admin(request.user, workspace):
+        return HttpResponseForbidden("Workspace owner or administrator permission is required.")
+    if not _archive_purge_allowed(token=request.POST.get("purge_token", ""), kind="workspace", item_id=workspace.id, user=request.user):
+        return HttpResponseForbidden("Wait 30 seconds on the archive confirmation before deleting permanently.")
+    for asset in Asset.all_objects.filter(workspace=workspace, purged_at__isnull=True):
+        purge_asset(asset=asset, user=request.user)
+    Project.all_objects.filter(workspace=workspace, purged_at__isnull=True).update(purged_at=timezone.now(), purged_by=request.user, updated_by=request.user)
+    workspace.purged_at = timezone.now()
+    workspace.purged_by = request.user
+    workspace.updated_by = request.user
+    workspace.save(update_fields=["purged_at", "purged_by", "updated_by", "updated_at"])
+    messages.success(request, "Workspace permanently removed from the archive.")
+    return redirect("studio:dashboard")
 
 
 def _create_entity(request, *, form_class, parent, parent_field, workspace, title, success_url, position_manager=None):
@@ -604,6 +653,7 @@ def project_detail(request, project_id):
         "inherited_memberships": inherited,
         "can_edit": has_project_capability(request.user, project, "edit"),
         "can_manage_project": has_project_capability(request.user, project, "manage_project"),
+        "can_administer": is_workspace_owner_or_admin(request.user, project.workspace),
     })
 
 
@@ -617,6 +667,8 @@ def project_access(request, project_id):
         action = request.POST.get("action", "save")
         if action == "remove":
             membership = get_object_or_404(ProjectMembership, project=project, id=request.POST.get("membership_id"))
+            if membership.user_id == project.workspace.owner_id:
+                return HttpResponseForbidden("The workspace owner cannot be removed from a project.")
             membership.delete()
             messages.success(request, "Project access removed.")
             requested = request.POST.get("next", "")
@@ -626,17 +678,22 @@ def project_access(request, project_id):
         if action == "exclude":
             user_id = request.POST.get("user_id")
             membership = get_object_or_404(WorkspaceMembership, workspace=project.workspace, user_id=user_id, status=WorkspaceMembership.Status.ACTIVE)
+            if membership.user_id == project.workspace.owner_id or membership.role == WorkspaceMembership.Role.OWNER:
+                return HttpResponseForbidden("The workspace owner cannot be removed from a project.")
             ProjectMembership.objects.filter(project=project, user=membership.user).delete()
             ProjectAccessExclusion.objects.update_or_create(project=project, user=membership.user, defaults={"revoked_by": request.user})
             messages.success(request, "Inherited access revoked for this project.")
             return redirect("studio:project_access", project_id=project.id)
         if form.is_valid():
+            existed = ProjectMembership.objects.filter(project=project, user=form.user, is_active=True).exists()
             ProjectAccessExclusion.objects.filter(project=project, user=form.user).delete()
             ProjectMembership.objects.update_or_create(
                 project=project,
                 user=form.user,
                 defaults={"role": form.cleaned_data["role"], "is_active": True, "invited_by": request.user},
             )
+            if not existed:
+                notify_access_granted(user=form.user, entity_name=project.title, entity_kind="project", url=request.build_absolute_uri(reverse("studio:project_detail", kwargs={"project_id": project.id})), granted_by=request.user)
             messages.success(request, "Project access and server AI access enabled.")
             return redirect("studio:project_access", project_id=project.id)
     inherited = project.workspace.memberships.filter(status=WorkspaceMembership.Status.ACTIVE).exclude(user=project.workspace.owner).exclude(user_id__in=project.memberships.values("user_id")).exclude(user_id__in=project.access_exclusions.values("user_id")).select_related("user")
@@ -1477,8 +1534,8 @@ def _unique_project_title(workspace, title):
 @transaction.atomic
 def project_copy(request, project_id):
     source = get_object_or_404(accessible_projects(request.user).select_related("workspace"), id=project_id)
-    if request.method != "POST" or not has_project_capability(request.user, source, "edit"):
-        return HttpResponseForbidden("Edit permission is required.")
+    if request.method != "POST" or not is_workspace_owner_or_admin(request.user, source.workspace):
+        return HttpResponseForbidden("Workspace owner or administrator permission is required.")
     copied = Project.objects.create(
         workspace=source.workspace, project_type=source.project_type, title=_unique_project_title(source.workspace, source.title),
         concept=source.concept, original_language=source.original_language, translation_languages=source.translation_languages,
@@ -1533,31 +1590,30 @@ def project_copy(request, project_id):
 @login_required
 def project_trash(request, project_id):
     project = get_object_or_404(accessible_projects(request.user), id=project_id)
-    if request.method != "POST" or not has_project_capability(request.user, project, "manage_project"):
-        return HttpResponseForbidden("Full control permission is required.")
+    if request.method != "POST" or not is_workspace_owner_or_admin(request.user, project.workspace):
+        return HttpResponseForbidden("Workspace owner or administrator permission is required.")
     project.deleted_at = timezone.now(); project.deleted_by = request.user; project.updated_by = request.user
     project.save(update_fields=["deleted_at", "deleted_by", "updated_by", "updated_at"])
-    messages.success(request, "Project moved to trash for 30 days.")
+    messages.success(request, "Project archived. It remains available in Archive until explicitly deleted.")
     return redirect("studio:workspace_detail", workspace_id=project.workspace_id)
 
 
 @login_required
 def project_trash_view(request, workspace_id):
     workspace = get_object_or_404(accessible_workspaces(request.user), id=workspace_id)
-    if has_capability(request.user, workspace, "manage_project"):
-        for project in Project.all_objects.filter(workspace=workspace, deleted_at__lt=timezone.now() - timedelta(days=30), purged_at__isnull=True):
-            for asset in Asset.all_objects.filter(project=project, purged_at__isnull=True, content_type__startswith="image/"):
-                purge_asset(asset=asset, user=request.user)
-            project.purged_at = timezone.now(); project.purged_by = request.user; project.updated_by = request.user
-            project.save(update_fields=["purged_at", "purged_by", "updated_by", "updated_at"])
-    return render(request, "studio/project_trash.html", {"workspace": workspace, "projects": Project.all_objects.filter(workspace=workspace, deleted_at__isnull=False, purged_at__isnull=True), "can_edit": has_capability(request.user, workspace, "manage_project")})
+    projects = list(Project.all_objects.filter(workspace=workspace, deleted_at__isnull=False, purged_at__isnull=True).order_by("-deleted_at"))
+    can_administer = is_workspace_owner_or_admin(request.user, workspace)
+    if can_administer:
+        for project in projects:
+            project.purge_token = _archive_purge_token(kind="project", item_id=project.id, user=request.user)
+    return render(request, "studio/project_trash.html", {"workspace": workspace, "projects": projects, "can_edit": can_administer, "purge_delay": ARCHIVE_PURGE_DELAY_SECONDS})
 
 
 @login_required
 def project_restore(request, project_id):
     project = get_object_or_404(Project.all_objects.select_related("workspace"), id=project_id, deleted_at__isnull=False, purged_at__isnull=True)
-    if request.method != "POST" or not has_capability(request.user, project.workspace, "manage_project"):
-        return HttpResponseForbidden("Full control permission is required.")
+    if request.method != "POST" or not is_workspace_owner_or_admin(request.user, project.workspace):
+        return HttpResponseForbidden("Workspace owner or administrator permission is required.")
     project.deleted_at = None; project.deleted_by = None; project.updated_by = request.user
     project.save(update_fields=["deleted_at", "deleted_by", "updated_by", "updated_at"])
     messages.success(request, "Project restored.")
@@ -1567,29 +1623,21 @@ def project_restore(request, project_id):
 @login_required
 def project_purge(request, project_id):
     project = get_object_or_404(Project.all_objects.select_related("workspace"), id=project_id, deleted_at__isnull=False, purged_at__isnull=True)
-    if request.method != "POST" or not has_capability(request.user, project.workspace, "manage_project"):
-        return HttpResponseForbidden("Full control permission is required.")
+    if request.method != "POST" or not is_workspace_owner_or_admin(request.user, project.workspace):
+        return HttpResponseForbidden("Workspace owner or administrator permission is required.")
+    if not _archive_purge_allowed(token=request.POST.get("purge_token", ""), kind="project", item_id=project.id, user=request.user):
+        return HttpResponseForbidden("Wait 30 seconds on the archive confirmation before deleting permanently.")
     for asset in Asset.all_objects.filter(project=project, purged_at__isnull=True, content_type__startswith="image/"):
         purge_asset(asset=asset, user=request.user)
     project.purged_at = timezone.now(); project.purged_by = request.user; project.updated_by = request.user
     project.save(update_fields=["purged_at", "purged_by", "updated_by", "updated_at"])
-    messages.success(request, "Project permanently removed.")
+    messages.success(request, "Project permanently removed from the archive.")
     return redirect("studio:project_trash_view", workspace_id=project.workspace_id)
 
 
 @login_required
 def project_trash_clear(request, workspace_id):
-    workspace = get_object_or_404(accessible_workspaces(request.user), id=workspace_id)
-    if request.method != "POST" or not has_capability(request.user, workspace, "manage_project"):
-        return HttpResponseForbidden("Full control permission is required.")
-    projects = list(Project.all_objects.filter(workspace=workspace, deleted_at__isnull=False, purged_at__isnull=True))
-    for project in projects:
-        for asset in Asset.all_objects.filter(project=project, purged_at__isnull=True, content_type__startswith="image/"):
-            purge_asset(asset=asset, user=request.user)
-        project.purged_at = timezone.now(); project.purged_by = request.user; project.updated_by = request.user
-        project.save(update_fields=["purged_at", "purged_by", "updated_by", "updated_at"])
-    messages.success(request, f"Permanently removed {len(projects)} project(s).")
-    return redirect("studio:project_trash_view", workspace_id=workspace.id)
+    return HttpResponseForbidden("Bulk permanent deletion is disabled. Delete archived projects individually after the confirmation delay.")
 
 
 @login_required

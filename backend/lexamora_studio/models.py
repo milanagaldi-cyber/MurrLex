@@ -35,6 +35,8 @@ class Workspace(SoftDeleteModel):
     description = models.TextField(blank=True)
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="owned_studio_workspaces")
     avatar_asset = models.ForeignKey("Asset", on_delete=models.SET_NULL, related_name="workspace_avatar_for", null=True, blank=True)
+    purged_at = models.DateTimeField(null=True, blank=True)
+    purged_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="purged_studio_workspaces", null=True, blank=True)
 
     class Meta:
         ordering = ["name", "id"]

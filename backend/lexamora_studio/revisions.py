@@ -17,10 +17,12 @@ from .models import (
     PromptBlock,
     Revision,
     Scene,
+    Workspace,
 )
 
 
 VERSIONED_MODELS = {
+    "lexamora_studio.workspace": (Workspace, ["name", "description", "avatar_asset"]),
     "lexamora_studio.project": (Project, ["title", "concept", "original_language", "translation_languages", "rights_holder", "publication_info", "status"]),
     "lexamora_studio.character": (Character, ["name", "description", "visual_description", "position"]),
     "lexamora_studio.episode": (Episode, ["number", "title", "summary", "position"]),
@@ -36,6 +38,8 @@ VERSIONED_MODELS = {
 
 
 def workspace_for(instance):
+    if isinstance(instance, Workspace):
+        return instance
     if isinstance(instance, Project):
         return instance.workspace
     if isinstance(instance, Character):

@@ -7,6 +7,7 @@
 </section>
 <h2>People with access</h2>
 <div class="list">
+  <div class="row"><strong title="{{ project.workspace.owner|user_details }}">{{ project.workspace.owner|display_name }}</strong><span>Workspace owner / full access</span><span class="muted">Cannot be removed</span></div>
 {% for membership in memberships %}
   <div class="row"><strong title="{{ membership.user|user_details }}">{{ membership.user|display_name }}</strong><span>{{ membership.get_role_display }}</span><form method="post">{% csrf_token %}<input type="hidden" name="action" value="remove"><input type="hidden" name="membership_id" value="{{ membership.id }}"><button class="danger" type="submit" onclick="return confirm('Are you sure you want to revoke this permission?')">Remove</button></form></div>
 {% empty %}<p class="empty">This project has not been shared yet.</p>{% endfor %}

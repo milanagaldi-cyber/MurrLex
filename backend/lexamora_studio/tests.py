@@ -1,4 +1,5 @@
 import json
+from datetime import timedelta
 from unittest.mock import patch
 
 from cryptography.fernet import Fernet
@@ -1757,6 +1758,8 @@ class StudioInlineEditingWorkflowTests(TestCase):
         from .models import AiModelProfile
 
         self.client.force_login(self.owner)
+        form_page = self.client.get(f"/studio/workspaces/{self.workspace.id}/avatar/")
+        self.assertContains(form_page, 'enctype="multipart/form-data"')
         with tempfile.TemporaryDirectory() as directory:
             with self.settings(STUDIO_PRIVATE_MEDIA_ROOT=Path(directory)):
                 uploaded = self.client.post(f"/studio/workspaces/{self.workspace.id}/avatar/", {"file": self.image_file("workspace.png")})
@@ -1769,6 +1772,106 @@ class StudioInlineEditingWorkflowTests(TestCase):
         )
         self.assertRedirects(created, f"/studio/workspaces/{self.workspace.id}/models/")
         self.assertTrue(AiModelProfile.objects.filter(name="Manual Motion", model_id="custom/motion-v1").exists())
+
+    def test_workspace_description_saves_revision_without_server_error(self):
+        from .models import Revision
+
+        self.client.force_login(self.owner)
+        response = self.client.post(
+            f"/studio/workspaces/{self.workspace.id}/edit/",
+            {"name": self.workspace.name, "description": "A fuller production workspace description."},
+        )
+        self.assertRedirects(response, f"/studio/workspaces/{self.workspace.id}/")
+        self.workspace.refresh_from_db()
+        self.assertEqual(self.workspace.description, "A fuller production workspace description.")
+        self.assertTrue(Revision.objects.filter(entity_type="lexamora_studio.workspace", entity_id=self.workspace.id).exists())
+
+    def test_owner_is_visible_and_cannot_be_excluded_from_project(self):
+        self.client.force_login(self.owner)
+        page = self.client.get(f"/studio/projects/{self.project.id}/access/")
+        self.assertContains(page, "Workspace owner / full access")
+        owner_membership = WorkspaceMembership.objects.get(workspace=self.workspace, user=self.owner)
+        denied = self.client.post(
+            f"/studio/projects/{self.project.id}/access/",
+            {"action": "exclude", "user_id": str(owner_membership.user_id)},
+        )
+        self.assertEqual(denied.status_code, 403)
+        self.assertTrue(accessible_projects(self.owner).filter(id=self.project.id).exists())
+
+    def test_only_workspace_owner_or_admin_can_copy_or_archive(self):
+        users = get_user_model()
+        editor = users.objects.create_user("archive-editor", email="archive-editor@example.com", password="strong-pass")
+        WorkspaceMembership.objects.create(workspace=self.workspace, user=editor, role=WorkspaceMembership.Role.EDITOR)
+        self.client.force_login(editor)
+        self.assertEqual(self.client.post(f"/studio/workspaces/{self.workspace.id}/copy/").status_code, 403)
+        self.assertEqual(self.client.post(f"/studio/workspaces/{self.workspace.id}/trash/").status_code, 403)
+        self.assertEqual(self.client.post(f"/studio/projects/{self.project.id}/copy/").status_code, 403)
+        self.assertEqual(self.client.post(f"/studio/projects/{self.project.id}/trash/").status_code, 403)
+
+    def test_archive_has_no_auto_expiry_and_purge_requires_30_seconds(self):
+        from django.core import signing
+        from django.utils import timezone
+        from .models import Project
+
+        self.client.force_login(self.owner)
+        archived = self.client.post(f"/studio/projects/{self.project.id}/trash/")
+        self.assertRedirects(archived, f"/studio/workspaces/{self.workspace.id}/")
+        Project.all_objects.filter(id=self.project.id).update(deleted_at=timezone.now() - timedelta(days=90))
+        archive_page = self.client.get(f"/studio/workspaces/{self.workspace.id}/projects/trash/")
+        self.assertContains(archive_page, "Project archive")
+        self.assertContains(archive_page, "data-purge-delay=\"30\"")
+        self.assertIsNone(Project.all_objects.get(id=self.project.id).purged_at)
+        immediate_token = archive_page.context["projects"][0].purge_token
+        self.assertEqual(self.client.post(f"/studio/projects/{self.project.id}/purge/", {"purge_token": immediate_token}).status_code, 403)
+        ready_token = signing.dumps(
+            {"kind": "project", "id": str(self.project.id), "user": str(self.owner.id), "issued": timezone.now().timestamp() - 31},
+            salt="studio-archive-purge",
+        )
+        purged = self.client.post(f"/studio/projects/{self.project.id}/purge/", {"purge_token": ready_token})
+        self.assertRedirects(purged, f"/studio/workspaces/{self.workspace.id}/projects/trash/")
+        self.assertIsNotNone(Project.all_objects.get(id=self.project.id).purged_at)
+
+    def test_workspace_archive_purge_uses_the_same_delay(self):
+        from django.core import signing
+        from django.utils import timezone
+        from .models import Workspace
+
+        self.client.force_login(self.owner)
+        archived = self.client.post(f"/studio/workspaces/{self.workspace.id}/trash/")
+        self.assertRedirects(archived, "/studio/")
+        archive_page = self.client.get("/studio/")
+        self.assertContains(archive_page, "Workspace archive")
+        immediate_token = archive_page.context["archived_workspaces"][0].purge_token
+        self.assertEqual(self.client.post(f"/studio/workspaces/{self.workspace.id}/purge/", {"purge_token": immediate_token}).status_code, 403)
+        ready_token = signing.dumps(
+            {"kind": "workspace", "id": str(self.workspace.id), "user": str(self.owner.id), "issued": timezone.now().timestamp() - 31},
+            salt="studio-archive-purge",
+        )
+        purged = self.client.post(f"/studio/workspaces/{self.workspace.id}/purge/", {"purge_token": ready_token})
+        self.assertRedirects(purged, "/studio/")
+        self.assertIsNotNone(Workspace.all_objects.get(id=self.workspace.id).purged_at)
+
+    def test_new_workspace_and_project_shares_send_email(self):
+        from django.core import mail
+
+        users = get_user_model()
+        workspace_guest = users.objects.create_user("workspace-guest", email="workspace-guest@example.com", password="strong-pass")
+        project_guest = users.objects.create_user("project-guest", email="project-guest@example.com", password="strong-pass")
+        self.client.force_login(self.owner)
+        with self.settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend"):
+            with self.captureOnCommitCallbacks(execute=True):
+                workspace_response = self.client.post(
+                    f"/studio/workspaces/{self.workspace.id}/access/",
+                    {"email": workspace_guest.email, "role": WorkspaceMembership.Role.VIEWER, "can_use_ai": "on"},
+                )
+            with self.captureOnCommitCallbacks(execute=True):
+                project_response = self.client.post(
+                    f"/studio/projects/{self.project.id}/access/",
+                    {"email": project_guest.email, "role": "VIEWER"},
+                )
+        self.assertRedirects(workspace_response, f"/studio/workspaces/{self.workspace.id}/access/")
+        self.assertRedirects(project_response, f"/studio/projects/{self.project.id}/access/")
+        self.assertEqual([message.to for message in mail.outbox[-2:]], [[workspace_guest.email], [project_guest.email]])
 
     def test_translations_show_prompt_versions_as_separate_cards_and_filters(self):
         translated = Prompt.objects.create(

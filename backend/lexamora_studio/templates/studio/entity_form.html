@@ -1,7 +1,7 @@
 {% extends "studio/base.html" %}
 {% block content %}
 <h1>{{ title }}</h1>
-<form method="post"{% if multipart %} enctype="multipart/form-data"{% endif %}{% if language_propagation %} data-language-propagation-form{% endif %}>{% csrf_token %}
+<form method="post"{% if multipart or form.is_multipart %} enctype="multipart/form-data"{% endif %}{% if language_propagation %} data-language-propagation-form{% endif %}>{% csrf_token %}
   {% if return_to %}<input type="hidden" name="next" value="{{ return_to }}">{% endif %}
   {{ form.as_p }}
   <button class="button" type="submit">{{ submit_label|default:"Save" }}</button>

@@ -39,7 +39,7 @@ def accessible_projects(user):
             workspace__memberships__status=WorkspaceMembership.Status.ACTIVE,
         ) & ~Q(access_exclusions__user=user)
     return Project.objects.filter(
-        inherited | Q(memberships__user=user, memberships__is_active=True),
+        Q(workspace__owner=user) | inherited | Q(memberships__user=user, memberships__is_active=True),
         workspace__deleted_at__isnull=True,
     ).distinct()
 
@@ -93,6 +93,19 @@ def membership_for(user, workspace):
         user=user,
         status=WorkspaceMembership.Status.ACTIVE,
     ).first()
+
+
+def is_workspace_owner_or_admin(user, workspace):
+    if getattr(user, "is_superuser", False):
+        return True
+    if workspace.owner_id == getattr(user, "id", None):
+        return True
+    return WorkspaceMembership.objects.filter(
+        workspace=workspace,
+        user=user,
+        status=WorkspaceMembership.Status.ACTIVE,
+        role__in=[WorkspaceMembership.Role.OWNER, WorkspaceMembership.Role.ADMIN],
+    ).exists()
 
 
 def has_capability(user, workspace, capability):
