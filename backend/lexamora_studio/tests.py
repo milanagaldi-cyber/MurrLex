@@ -4,7 +4,9 @@ from unittest.mock import patch
 
 from cryptography.fernet import Fernet
 from django.contrib.auth import get_user_model
+from django.db import connection
 from django.test import TestCase, override_settings
+from django.test.utils import CaptureQueriesContext
 
 from .models import Project, ProjectAccessExclusion, ProjectMembership, Prompt, WorkspaceMembership
 from .permissions import accessible_projects, accessible_workspaces, has_capability, has_project_capability
@@ -2013,6 +2015,96 @@ class StudioInlineEditingWorkflowTests(TestCase):
                 self.assertIsNone(result.project)
                 self.assertEqual((result.width, result.height), (40, 30))
 
+    def test_workspace_gallery_deduplicates_identical_files_and_keeps_project_links(self):
+        import tempfile
+        from pathlib import Path
+        from .models import Asset, Project
+        from .storage import create_asset
+
+        second_project = Project.objects.create(
+            workspace=self.workspace,
+            project_type=Project.Type.SERIES,
+            title="Second image project",
+            created_by=self.owner,
+            updated_by=self.owner,
+        )
+        self.client.force_login(self.owner)
+        with tempfile.TemporaryDirectory() as directory:
+            with self.settings(STUDIO_PRIVATE_MEDIA_ROOT=Path(directory)):
+                original = create_asset(
+                    user=self.owner,
+                    workspace=self.workspace,
+                    project=self.project,
+                    uploaded=self.image_file("original.png"),
+                    kind=Asset.Kind.OTHER,
+                )
+                duplicate = create_asset(
+                    user=self.owner,
+                    workspace=self.workspace,
+                    project=second_project,
+                    uploaded=self.image_file("duplicate.png"),
+                    kind=Asset.Kind.OTHER,
+                )
+                self.assertEqual(original.checksum_sha256, duplicate.checksum_sha256)
+
+                response = self.client.get(f"/studio/workspaces/{self.workspace.id}/")
+                gallery_assets = response.context["gallery_assets"]
+                self.assertEqual(len(gallery_assets), 1)
+                self.assertEqual(gallery_assets[0].id, original.id)
+                self.assertEqual(
+                    set(gallery_assets[0].gallery_project_ids.split(",")),
+                    {str(self.project.id), str(second_project.id)},
+                )
+
+    def test_workspace_gallery_query_count_does_not_grow_per_image(self):
+        import io
+        import tempfile
+        from pathlib import Path
+        from PIL import Image
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from .models import Asset
+        from .storage import create_asset
+
+        self.client.force_login(self.owner)
+        with tempfile.TemporaryDirectory() as directory:
+            with self.settings(STUDIO_PRIVATE_MEDIA_ROOT=Path(directory)):
+                first_output = io.BytesIO()
+                Image.new("RGB", (72, 54), (0, 100, 180)).save(first_output, "PNG")
+                create_asset(
+                    user=self.owner,
+                    workspace=self.workspace,
+                    project=self.project,
+                    uploaded=SimpleUploadedFile(
+                        "performance-0.png",
+                        first_output.getvalue(),
+                        content_type="image/png",
+                    ),
+                    kind=Asset.Kind.OTHER,
+                )
+                with CaptureQueriesContext(connection) as baseline_queries:
+                    baseline_response = self.client.get(f"/studio/workspaces/{self.workspace.id}/")
+                self.assertEqual(baseline_response.status_code, 200)
+
+                for index in range(1, 8):
+                    output = io.BytesIO()
+                    Image.new("RGB", (72, 54), (index * 20, 100, 180)).save(output, "PNG")
+                    create_asset(
+                        user=self.owner,
+                        workspace=self.workspace,
+                        project=self.project,
+                        uploaded=SimpleUploadedFile(
+                            f"performance-{index}.png",
+                            output.getvalue(),
+                            content_type="image/png",
+                        ),
+                        kind=Asset.Kind.OTHER,
+                    )
+
+                with CaptureQueriesContext(connection) as populated_queries:
+                    populated_response = self.client.get(f"/studio/workspaces/{self.workspace.id}/")
+                self.assertEqual(populated_response.status_code, 200)
+                self.assertLessEqual(len(populated_queries), len(baseline_queries) + 1)
+
     def test_project_image_detaches_but_only_workspace_gallery_offers_trash(self):
         import tempfile
         from pathlib import Path
@@ -2286,6 +2378,19 @@ class StudioInlineEditingWorkflowTests(TestCase):
                 self.assertEqual(copied.episodes.get().scenes.count(), 2)
                 self.assertTrue(copied.media_assets.filter(id=source_asset.id).exists())
                 self.assertEqual(Asset.objects.count(), 1)
+                changed_cover = self.client.post(
+                    f"/studio/assets/attach/project_cover/{copied.id}/",
+                    {
+                        "asset_id": str(source_asset.id),
+                        "next": f"/studio/workspaces/{self.workspace.id}/#project-{copied.id}",
+                    },
+                )
+                self.assertRedirects(
+                    changed_cover,
+                    f"/studio/workspaces/{self.workspace.id}/#project-{copied.id}",
+                )
+                copied.refresh_from_db()
+                self.assertEqual(copied.cover_asset_id, source_asset.id)
                 deleted = self.client.post(f"/studio/projects/{copied.id}/trash/")
                 self.assertRedirects(deleted, f"/studio/workspaces/{self.workspace.id}/")
                 self.assertFalse(Project.objects.filter(id=copied.id).exists())

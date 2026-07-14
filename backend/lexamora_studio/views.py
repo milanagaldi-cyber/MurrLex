@@ -169,8 +169,11 @@ def workspace_detail(request, workspace_id):
         project.can_administer = is_workspace_owner_or_admin(request.user, workspace)
     recycle_count = Asset.all_objects.filter(workspace=workspace, deleted_at__isnull=False, purged_at__isnull=True).count()
     archive_count = Project.all_objects.filter(workspace=workspace, deleted_at__isnull=False, purged_at__isnull=True).count()
-    workspace_assets = list(_accessible_workspace_images(request.user, workspace))
-    _decorate_gallery_assets(request.user, workspace_assets)
+    workspace_assets = _decorate_gallery_assets(
+        request.user,
+        list(_accessible_workspace_images(request.user, workspace)),
+        deduplicate=True,
+    )
     return render(request, "studio/workspace_detail.html", {
         "workspace": workspace,
         "projects": projects,
@@ -535,12 +538,27 @@ def _accessible_workspace_images(user, workspace):
     ).filter(
         Q(projects__in=projects)
         | Q(projects__isnull=True),
-    ).select_related("project").prefetch_related("projects").distinct().order_by("-created_at")
+    ).select_related("project").prefetch_related(
+        "projects",
+        Prefetch("referenced_by_scenes", queryset=Scene.objects.select_related("episode")),
+        Prefetch("referenced_by_characters", queryset=Character.objects.select_related("project")),
+        Prefetch("referenced_by_prompts", queryset=Prompt.objects.select_related("scene__episode")),
+        "project_cover_for",
+        Prefetch("character_avatar_for", queryset=Character.objects.select_related("project")),
+    ).distinct().order_by("-created_at")
 
 
 def _picker_assets(user, project):
-    workspace_assets = _accessible_workspace_images(user, project.workspace)
-    project_assets = workspace_assets.filter(projects=project).distinct()
+    workspace_assets = _decorate_gallery_assets(
+        user,
+        list(_accessible_workspace_images(user, project.workspace)),
+        deduplicate=True,
+    )
+    project_id = str(project.id)
+    project_assets = [
+        asset for asset in workspace_assets
+        if project_id in asset.gallery_project_ids.split(",")
+    ]
     return project_assets, workspace_assets
 
 
@@ -673,7 +691,7 @@ def asset_attach(request, scope, owner_id):
         ).filter(
             Q(projects__in=accessible_projects(request.user))
             | Q(projects__isnull=True),
-        ), id=request.POST.get("asset_id"),
+        ).distinct(), id=request.POST.get("asset_id"),
     )
     if project is not None:
         asset.projects.add(project)
@@ -940,9 +958,8 @@ def project_detail(request, project_id):
     direct_ids = set(project.memberships.filter(is_active=True).values_list("user_id", flat=True))
     inherited = [membership for membership in inherited if membership.user_id not in excluded_ids and membership.user_id not in direct_ids]
     project_assets, workspace_assets = _picker_assets(request.user, project)
-    recent_project_ids = set(project_assets.values_list("id", flat=True)[:10])
-    gallery_assets = list(workspace_assets)
-    _decorate_gallery_assets(request.user, gallery_assets)
+    recent_project_ids = {asset.id for asset in project_assets[:10]}
+    gallery_assets = workspace_assets
     for asset in gallery_assets:
         asset.is_recent_project = asset.id in recent_project_ids
         asset.is_current_project = str(project.id) in asset.gallery_project_ids.split(",")
@@ -1678,35 +1695,54 @@ def _asset_for_edit(request, asset_id, include_deleted=False):
 
 
 def _asset_usage_project_ids(asset):
-    project_ids = set(asset.projects.values_list("id", flat=True))
-    project_ids.update(asset.referenced_by_scenes.values_list("episode__project_id", flat=True))
-    project_ids.update(asset.referenced_by_characters.values_list("project_id", flat=True))
-    project_ids.update(asset.referenced_by_prompts.values_list("scene__episode__project_id", flat=True))
-    project_ids.update(asset.project_cover_for.values_list("id", flat=True))
-    project_ids.update(asset.character_avatar_for.values_list("project_id", flat=True))
+    project_ids = {project.id for project in asset.projects.all()}
+    project_ids.update(scene.episode.project_id for scene in asset.referenced_by_scenes.all())
+    project_ids.update(character.project_id for character in asset.referenced_by_characters.all())
+    project_ids.update(prompt.scene.episode.project_id for prompt in asset.referenced_by_prompts.all())
+    project_ids.update(project.id for project in asset.project_cover_for.all())
+    project_ids.update(character.project_id for character in asset.character_avatar_for.all())
     return {value for value in project_ids if value}
 
 
 def _asset_usage_count(asset):
     return (
-        asset.projects.count()
-        + asset.referenced_by_scenes.count()
-        + asset.referenced_by_characters.count()
-        + asset.referenced_by_prompts.count()
-        + asset.project_cover_for.count()
-        + asset.character_avatar_for.count()
+        len(asset.projects.all())
+        + len(asset.referenced_by_scenes.all())
+        + len(asset.referenced_by_characters.all())
+        + len(asset.referenced_by_prompts.all())
+        + len(asset.project_cover_for.all())
+        + len(asset.character_avatar_for.all())
     )
 
 
-def _decorate_gallery_assets(user, assets):
+def _decorate_gallery_assets(user, assets, *, deduplicate=False):
     accessible_ids = set(accessible_projects(user).values_list("id", flat=True))
     for asset in assets:
         usage_project_ids = _asset_usage_project_ids(asset)
+        asset._gallery_project_id_set = usage_project_ids
         asset.gallery_project_ids = ",".join(str(value) for value in sorted(usage_project_ids, key=str))
         asset.usage_count = _asset_usage_count(asset)
         asset.requires_usage_confirmation = asset.usage_count > 1
         asset.can_trash_from_workspace = usage_project_ids.issubset(accessible_ids)
-    return assets
+    if not deduplicate:
+        return assets
+
+    groups = {}
+    for asset in assets:
+        key = asset.checksum_sha256 or str(asset.id)
+        group = groups.setdefault(key, [])
+        group.append(asset)
+
+    result = []
+    for group in groups.values():
+        original = min(group, key=lambda item: (item.created_at, str(item.id)))
+        project_ids = set().union(*(item._gallery_project_id_set for item in group))
+        original.gallery_project_ids = ",".join(str(value) for value in sorted(project_ids, key=str))
+        original.usage_count = sum(item.usage_count for item in group)
+        original.requires_usage_confirmation = original.usage_count > 1
+        original.can_trash_from_workspace = all(item.can_trash_from_workspace for item in group)
+        result.append(original)
+    return result
 
 
 @login_required
