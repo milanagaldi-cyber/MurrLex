@@ -1,13 +1,13 @@
 {% extends "studio/base.html" %}{% load studio_extras %}{% block content %}
 <section class="workspace-overview">
-  {% if can_manage %}<a class="workspace-avatar-link" href="{% url 'studio:workspace_avatar_upload' workspace.id %}" title="Change Workspace avatar">{% endif %}
+  {% if can_manage %}<button class="workspace-avatar-link" type="button" data-dialog-open="workspace-avatar-picker" title="Change Workspace avatar" aria-label="Change Workspace avatar">{% endif %}
     {% if workspace.avatar_asset.thumbnail %}
       <img class="workspace-avatar-large" src="{% url 'studio_api:asset_thumbnail' workspace.avatar_asset.id %}" alt="{{ workspace.name }}">
     {% else %}
       <span class="workspace-avatar-large workspace-avatar-placeholder" aria-hidden="true">{{ workspace.name|first|upper }}</span>
     {% endif %}
     {% if can_manage %}<span class="avatar-change-label">Change avatar</span>{% endif %}
-  {% if can_manage %}</a>{% endif %}
+  {% if can_manage %}</button>{% endif %}
   <div class="workspace-summary">
     <div class="workspace-identity">
       <div><h1>{{ workspace.name }}</h1><p>{{ workspace.description|default:"Production workspace" }}</p></div>
@@ -25,12 +25,13 @@
     <a class="workspace-action-icon gear-button" href="{% url 'studio:workspace_edit' workspace.id %}" title="Workspace Settings" aria-label="Workspace Settings">&#9881;</a>
   </nav>{% else %}<span class="workspace-actions" aria-hidden="true"></span>{% endif %}
 </section>
+{% if can_manage %}{% url 'studio:workspace_image_upload' workspace.id as workspace_avatar_upload_url %}{% include "studio/_image_picker.html" with picker_id="workspace-avatar-picker" picker_title="Workspace Avatar" attach_scope="workspace_avatar" owner_id=workspace.id upload_url=workspace_avatar_upload_url upload_role="workspace_avatar" picker_return=request.get_full_path picker_default_scope="workspace" hide_picker_trigger=True preserve_position=True upload_limit=1 %}{% endif %}
 
 <div class="toolbar"><h2>Projects</h2><div><form method="get" class="inline-controls"><select name="sort" onchange="this.form.submit()"><option value="updated"{% if sort == 'updated' %} selected{% endif %}>Recently updated</option><option value="created"{% if sort == 'created' %} selected{% endif %}>Recently created</option><option value="title"{% if sort == 'title' %} selected{% endif %}>Title</option><option value="type"{% if sort == 'type' %} selected{% endif %}>Type</option></select></form><div class="view-switch" data-view-switch="projects"><button type="button" class="icon-button" data-view="large" title="Large cards">&#x25A6;</button><button type="button" class="icon-button" data-view="small" title="Small cards">&#x25A5;</button><button type="button" class="icon-button" data-view="list" title="List">&#x2630;</button></div></div></div>
 <div class="entity-grid large" data-view-container="projects">
   {% for project in projects %}
   <article class="entity-card" id="project-{{ project.id }}">
-    {% if project.can_edit %}<button class="entity-cover project-cover-trigger" type="button" data-dialog-open="cover-project-{{ project.id }}" title="Change project cover" aria-label="Change project cover">{% else %}<a class="entity-cover" href="{% url 'studio:project_detail' project.id %}">{% endif %}
+    {% if project.can_edit %}<button class="entity-cover project-cover-trigger" type="button" data-dialog-open="{{ project.id }}-cover-picker" title="Change project cover" aria-label="Change project cover">{% else %}<a class="entity-cover" href="{% url 'studio:project_detail' project.id %}">{% endif %}
       {% if project.display_cover_asset %}<img src="{% url 'studio_api:asset_thumbnail' project.display_cover_asset.id %}" alt="{{ project.title }}">{% else %}<span>{{ project.title|first|upper }}</span>{% endif %}
       {% if project.can_edit %}<span class="cover-change-label">Change cover</span>{% endif %}
     {% if project.can_edit %}</button>{% else %}</a>{% endif %}
@@ -42,7 +43,7 @@
       {% if project.can_administer %}<div class="entity-card-actions"><button type="button" class="icon-button secondary project-tile-action" data-dialog-open="copy-project-{{ project.id }}" title="Copy project" aria-label="Copy project">&#x29C9;</button><form method="post" action="{% url 'studio:project_trash' project.id %}" data-confirm="Archive this project? It will remain in Archive until explicitly deleted.">{% csrf_token %}<button class="icon-button secondary project-tile-action" title="Archive project" aria-label="Archive project">&#x25A3;</button></form></div>
       <dialog id="copy-project-{{ project.id }}" class="confirmation-dialog"><form method="post" action="{% url 'studio:project_copy' project.id %}">{% csrf_token %}<h2>Copy {{ project.title }}</h2><label class="checkbox-line"><input type="checkbox" name="copy_access" value="1"> Copy project access</label><div class="dialog-actions"><button class="secondary" type="button" data-dialog-close>Cancel</button><button type="submit">Copy project</button></div></form></dialog>{% endif %}
     </div>
-    {% if project.can_edit %}<dialog id="cover-project-{{ project.id }}" class="asset-picker project-cover-dialog"><div class="toolbar image-picker-head"><div><h2>Project cover</h2><p>Choose an image already attached to {{ project.title }}.</p></div><button class="icon-button secondary" type="button" data-dialog-close aria-label="Close">&#x2715;</button></div><div class="asset-picker-grid">{% for asset in project.assets.all %}{% if asset.thumbnail %}<form class="asset-picker-card" method="post" action="{% url 'studio:project_set_cover' project.id %}">{% csrf_token %}<input type="hidden" name="asset_id" value="{{ asset.id }}"><button class="asset-choice" type="submit"><img src="{% url 'studio_api:asset_thumbnail' asset.id %}" alt=""><span><b>{{ asset.original_filename }}</b><small>{{ asset.width }}x{{ asset.height }}{% if project.cover_asset_id == asset.id %} / Current cover{% endif %}</small></span></button></form>{% endif %}{% empty %}<p class="empty">Upload an image inside the project first.</p>{% endfor %}</div></dialog>{% endif %}
+    {% if project.can_edit %}{% url 'studio:project_image_upload' project.id as project_cover_upload_url %}{% include "studio/_image_picker.html" with picker_id=project.id|stringformat:"s"|add:"-cover-picker" picker_title="Project Cover" attach_scope="project_cover" owner_id=project.id upload_url=project_cover_upload_url upload_role="project_cover" picker_return=request.get_full_path picker_default_scope="project" hide_picker_trigger=True preserve_position=True upload_limit=1 project_assets=project.assets.all %}{% endif %}
   </article>
   {% endfor %}
   {% if can_edit %}<a class="entity-add-tile" href="{% url 'studio:project_create' workspace.id %}" title="Create Project"><span>+</span><small>Create Project</small></a>{% endif %}

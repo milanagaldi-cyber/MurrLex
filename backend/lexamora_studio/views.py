@@ -490,13 +490,28 @@ def _image_upload(request, *, target, workspace, title, success_url, kind, proje
     form = MultipleImageUploadForm(request.POST or None, request.FILES or None, limit=10)
     if request.method == "POST" and form.is_valid():
         uploaded_count = 0
+        first_asset = None
         for uploaded in form.cleaned_data["file"]:
             try:
-                create_asset(user=request.user, workspace=workspace, uploaded=uploaded, kind=kind, project=project, scene=scene, character=character, prevent_duplicate=True)
+                asset = create_asset(user=request.user, workspace=workspace, uploaded=uploaded, kind=kind, project=project, scene=scene, character=character, prevent_duplicate=True)
             except ValidationError as exc:
                 messages.warning(request, "; ".join(exc.messages))
             else:
                 uploaded_count += 1
+                first_asset = first_asset or asset
+        image_role = request.POST.get("image_role", "")
+        if first_asset and image_role == "workspace_avatar" and isinstance(target, Workspace):
+            target.avatar_asset = first_asset
+            target.updated_by = request.user
+            target.save(update_fields=["avatar_asset", "updated_by", "updated_at"])
+        elif first_asset and image_role == "character_avatar" and isinstance(target, Character):
+            target.avatar_asset = first_asset
+            target.updated_by = request.user
+            target.save(update_fields=["avatar_asset", "updated_by", "updated_at"])
+        elif first_asset and image_role == "project_cover" and isinstance(target, Project):
+            target.cover_asset = first_asset
+            target.updated_by = request.user
+            target.save(update_fields=["cover_asset", "updated_by", "updated_at"])
         if uploaded_count:
             messages.success(request, f"Uploaded {uploaded_count} image{'s' if uploaded_count != 1 else ''}.")
         if uploaded_count or form.cleaned_data["file"]:
@@ -610,33 +625,50 @@ def character_detail(request, character_id):
 
 @login_required
 def asset_attach(request, scope, owner_id):
-    if scope == "scene":
+    if scope == "workspace_avatar":
+        owner = get_object_or_404(accessible_workspaces(request.user), id=owner_id)
+        project = None
+        workspace = owner
+    elif scope == "project_cover":
+        owner = get_object_or_404(
+            accessible_projects(request.user).select_related("workspace"), id=owner_id
+        )
+        project = owner
+        workspace = owner.workspace
+    elif scope == "scene":
         owner = get_object_or_404(
             Scene.objects.select_related("episode__project__workspace").filter(
                 episode__project__in=accessible_projects(request.user)
             ), id=owner_id,
         )
         project = owner.episode.project
-    elif scope == "character":
+        workspace = project.workspace
+    elif scope in {"character", "character_avatar"}:
         owner = get_object_or_404(
             Character.objects.select_related("project__workspace").filter(
                 project__in=accessible_projects(request.user)
             ), id=owner_id,
         )
         project = owner.project
+        workspace = project.workspace
     else:
         return HttpResponseForbidden("Unsupported image attachment scope.")
-    if request.method != "POST" or not has_object_capability(request.user, owner, "edit"):
+    permitted = (
+        has_capability(request.user, owner, "manage_members")
+        if scope == "workspace_avatar"
+        else has_object_capability(request.user, owner, "edit")
+    )
+    if request.method != "POST" or not permitted:
         return HttpResponseForbidden("Edit permission is required.")
     asset = get_object_or_404(
         Asset.objects.filter(
-            workspace=project.workspace,
+            workspace=workspace,
             content_type__startswith="image/",
         ).filter(
             Q(project__isnull=True) | Q(project__in=accessible_projects(request.user)),
         ), id=request.POST.get("asset_id"),
     )
-    if asset.project_id != project.id:
+    if project is not None and asset.project_id != project.id:
         suffix = asset.original_filename.rsplit(".", 1)[-1] if "." in asset.original_filename else "jpg"
         stem = asset.original_filename.rsplit(".", 1)[0]
         clone_name = f"{stem}-{str(project.id)[:8]}.{suffix}"
@@ -647,20 +679,38 @@ def asset_attach(request, scope, owner_id):
             with asset.file.open("rb") as source:
                 uploaded = ContentFile(source.read(), name=clone_name)
                 uploaded.content_type = asset.content_type
-            asset = create_asset(user=request.user, workspace=project.workspace, uploaded=uploaded, kind=Asset.Kind.SCENE_IMAGE if scope == "scene" else Asset.Kind.CHARACTER_REFERENCE, project=project)
-    if scope == "scene":
+            clone_kind = Asset.Kind.SCENE_IMAGE if scope == "scene" else Asset.Kind.CHARACTER_REFERENCE if scope in {"character", "character_avatar"} else Asset.Kind.OTHER
+            asset = create_asset(user=request.user, workspace=project.workspace, uploaded=uploaded, kind=clone_kind, project=project)
+    if scope == "workspace_avatar":
+        owner.avatar_asset = asset
+        owner.updated_by = request.user
+        owner.save(update_fields=["avatar_asset", "updated_by", "updated_at"])
+    elif scope == "project_cover":
+        owner.cover_asset = asset
+        owner.updated_by = request.user
+        owner.save(update_fields=["cover_asset", "updated_by", "updated_at"])
+    elif scope == "scene":
         asset.scene = owner
         asset.kind = Asset.Kind.SCENE_IMAGE
     else:
         asset.character = owner
         asset.kind = Asset.Kind.CHARACTER_REFERENCE
-    asset.updated_by = request.user
-    asset.save(update_fields=[scope, "kind", "updated_by", "updated_at"])
-    audit(workspace=project.workspace, actor=request.user, action="ASSET_ATTACHED", instance=asset, metadata={"scope": scope, "ownerId": str(owner.id)})
-    messages.success(request, "Project image attached.")
+    if scope in {"scene", "character", "character_avatar"}:
+        asset.updated_by = request.user
+        asset.save(update_fields=["scene" if scope == "scene" else "character", "kind", "updated_by", "updated_at"])
+    if scope == "character_avatar":
+        owner.avatar_asset = asset
+        owner.updated_by = request.user
+        owner.save(update_fields=["avatar_asset", "updated_by", "updated_at"])
+    audit(workspace=workspace, actor=request.user, action="ASSET_ATTACHED", instance=asset, metadata={"scope": scope, "ownerId": str(owner.id)})
+    messages.success(request, "Image selection saved.")
     requested = request.POST.get("next", "")
     if requested and url_has_allowed_host_and_scheme(requested, {request.get_host()}, require_https=request.is_secure()):
         return HttpResponseRedirect(requested)
+    if scope == "workspace_avatar":
+        return redirect("studio:workspace_detail", workspace_id=owner.id)
+    if scope == "project_cover":
+        return redirect("studio:workspace_detail", workspace_id=workspace.id)
     if scope == "scene":
         return redirect("studio:scene_detail", scene_id=owner.id)
     return redirect("studio:character_detail", character_id=owner.id)

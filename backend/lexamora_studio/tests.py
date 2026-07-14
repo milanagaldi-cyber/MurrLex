@@ -2063,12 +2063,16 @@ class StudioInlineEditingWorkflowTests(TestCase):
                     kind=Asset.Kind.OTHER,
                 )
                 page = self.client.get(f"/studio/workspaces/{self.workspace.id}/")
-                self.assertContains(page, f'id="cover-project-{self.project.id}"')
-                self.assertContains(page, "Change project cover")
+                self.assertContains(page, f'id="{self.project.id}-cover-picker"')
+                self.assertContains(page, "Project Cover")
+                self.assertContains(page, "data-preserve-position")
 
                 selected = self.client.post(
-                    f"/studio/projects/{self.project.id}/cover/",
-                    {"asset_id": str(asset.id)},
+                    f"/studio/assets/attach/project_cover/{self.project.id}/",
+                    {
+                        "asset_id": str(asset.id),
+                        "next": f"/studio/workspaces/{self.workspace.id}/#project-{self.project.id}",
+                    },
                 )
                 self.assertRedirects(
                     selected,
@@ -2079,10 +2083,77 @@ class StudioInlineEditingWorkflowTests(TestCase):
 
                 self.client.force_login(self.viewer)
                 forbidden = self.client.post(
-                    f"/studio/projects/{self.project.id}/cover/",
+                    f"/studio/assets/attach/project_cover/{self.project.id}/",
                     {"asset_id": str(asset.id)},
                 )
                 self.assertEqual(forbidden.status_code, 403)
+
+    def test_workspace_and_character_avatars_use_shared_image_picker(self):
+        import tempfile
+        from pathlib import Path
+        from .models import Asset, Character
+        from .storage import create_asset
+
+        character = Character.objects.create(
+            project=self.project,
+            name="Murr",
+            description="Studio character",
+            created_by=self.owner,
+            updated_by=self.owner,
+        )
+        self.client.force_login(self.owner)
+        with tempfile.TemporaryDirectory() as directory:
+            with self.settings(STUDIO_PRIVATE_MEDIA_ROOT=Path(directory)):
+                workspace_asset = create_asset(
+                    user=self.owner,
+                    workspace=self.workspace,
+                    project=None,
+                    uploaded=self.image_file("workspace-avatar.png"),
+                    kind=Asset.Kind.OTHER,
+                )
+                character_asset = create_asset(
+                    user=self.owner,
+                    workspace=self.workspace,
+                    project=self.project,
+                    uploaded=self.image_file("character-avatar.png"),
+                    kind=Asset.Kind.CHARACTER_REFERENCE,
+                )
+
+                workspace_page = self.client.get(f"/studio/workspaces/{self.workspace.id}/")
+                self.assertContains(workspace_page, 'id="workspace-avatar-picker"')
+                self.assertContains(workspace_page, "Workspace Avatar")
+
+                project_page = self.client.get(f"/studio/projects/{self.project.id}/")
+                self.assertContains(project_page, f'id="{character.id}-avatar-picker"')
+                self.assertContains(project_page, "Character Avatar")
+                self.assertNotContains(project_page, "image-modal-footer")
+
+                workspace_selected = self.client.post(
+                    f"/studio/assets/attach/workspace_avatar/{self.workspace.id}/",
+                    {
+                        "asset_id": str(workspace_asset.id),
+                        "next": f"/studio/workspaces/{self.workspace.id}/",
+                    },
+                )
+                self.assertRedirects(workspace_selected, f"/studio/workspaces/{self.workspace.id}/")
+                self.workspace.refresh_from_db()
+                self.assertEqual(self.workspace.avatar_asset_id, workspace_asset.id)
+
+                character_selected = self.client.post(
+                    f"/studio/assets/attach/character_avatar/{character.id}/",
+                    {
+                        "asset_id": str(character_asset.id),
+                        "next": f"/studio/projects/{self.project.id}/#characters",
+                    },
+                )
+                self.assertRedirects(
+                    character_selected,
+                    f"/studio/projects/{self.project.id}/#characters",
+                )
+                character.refresh_from_db()
+                character_asset.refresh_from_db()
+                self.assertEqual(character.avatar_asset_id, character_asset.id)
+                self.assertEqual(character_asset.character_id, character.id)
 
     def test_project_header_is_shared_by_all_four_views(self):
         self.client.force_login(self.owner)
