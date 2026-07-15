@@ -59,6 +59,7 @@ urlpatterns = [
     path("projects/<uuid:project_id>/episodes/new/", views.episode_create, name="episode_create"),
     path("episodes/<uuid:episode_id>/edit/", views.episode_edit, name="episode_edit"),
     path("episodes/<uuid:episode_id>/images/new/", views.episode_image_upload, name="episode_image_upload"),
+    path("episode-covers/<uuid:cover_id>/update/", views.episode_cover_update, name="episode_cover_update"),
     path("episodes/<uuid:episode_id>/scenes/new/", views.scene_create, name="scene_create"),
     path("episodes/<uuid:episode_id>/scenes/reorder/", views.episode_scene_reorder, name="episode_scene_reorder"),
     path("scenes/<uuid:scene_id>/", views.scene_detail, name="scene_detail"),

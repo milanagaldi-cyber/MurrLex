@@ -1161,6 +1161,34 @@ class StudioWebEditingAndImagesTests(TestCase):
                 self.assertContains(page, "Episode covers")
                 self.assertContains(page, "episode-b.png")
 
+    def test_episode_cover_metadata_can_be_updated_inline(self):
+        import tempfile
+        from pathlib import Path
+        from .models import Asset, EpisodeCover
+        from .storage import create_asset
+
+        self.client.force_login(self.owner)
+        with tempfile.TemporaryDirectory() as directory:
+            with self.settings(STUDIO_PRIVATE_MEDIA_ROOT=Path(directory)):
+                asset = create_asset(
+                    user=self.owner, workspace=self.workspace, project=self.project,
+                    uploaded=self.image_file("episode-social.png"), kind=Asset.Kind.OTHER,
+                )
+                self.client.post(f"/studio/assets/attach/episode/{self.episode.id}/", {"asset_id": asset.id})
+                cover = EpisodeCover.objects.get(episode=self.episode, asset=asset)
+                response = self.client.post(
+                    f"/studio/episode-covers/{cover.id}/update/",
+                    {"language_code": "PL", "platform": "OTHER", "custom_platform": "Vimeo"},
+                    HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+                )
+                self.assertEqual(response.status_code, 200)
+                cover.refresh_from_db()
+                self.assertEqual((cover.language_code, cover.platform, cover.custom_platform), ("PL", "OTHER", "Vimeo"))
+                page = self.client.get(f"/studio/projects/{self.project.id}/")
+                self.assertContains(page, "data-episode-cover-form")
+                self.assertContains(page, "Vimeo")
+                self.assertContains(page, f'data-live-preview-target="#{self.episode.id}-cover-display"')
+
     def test_language_names_only_appear_for_scene_title_and_dialogue_speaker(self):
         from .models import DialogueLine
 

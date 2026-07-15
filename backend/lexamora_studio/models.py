@@ -226,6 +226,27 @@ class Episode(SoftDeleteModel):
         constraints = [models.UniqueConstraint(fields=["project", "number"], name="studio_unique_episode_number")]
 
 
+class EpisodeCover(SoftDeleteModel):
+    class Platform(models.TextChoices):
+        TIKTOK = "TIKTOK", "TikTok"
+        YOUTUBE = "YOUTUBE", "YouTube"
+        INSTAGRAM = "INSTAGRAM", "Insta"
+        FACEBOOK = "FACEBOOK", "Facebook"
+        OTHER = "OTHER", "Others"
+
+    episode = models.ForeignKey(Episode, on_delete=models.CASCADE, related_name="cover_entries")
+    asset = models.ForeignKey("Asset", on_delete=models.CASCADE, related_name="episode_cover_entries")
+    language_code = models.CharField(max_length=16, default="EN")
+    platform = models.CharField(max_length=16, choices=Platform.choices, default=Platform.OTHER)
+    custom_platform = models.CharField(max_length=120, blank=True)
+
+    class Meta:
+        ordering = ["created_at", "id"]
+        constraints = [
+            models.UniqueConstraint(fields=["episode", "asset"], name="studio_unique_episode_cover_asset"),
+        ]
+
+
 class Scene(SoftDeleteModel):
     class Type(models.TextChoices):
         ORIGINAL = "ORIGINAL", "Original"

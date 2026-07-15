@@ -27,7 +27,7 @@ from .docx_imports import accept_docx_import, parse_docx
 from .docx_exports import generate_docx_export
 from .docx_roundtrip import compare_docx_export
 from .forms import AdditionalGenerationForm, AiModelProfileForm, AssetEditForm, CharacterCreateForm, CharacterForm, DialogueLineForm, DocxImportUploadForm, EpisodeForm, GenerationOutputUploadForm, ImageUploadForm, MultipleImageUploadForm, ProjectForm, ProjectMembershipForm, ProjectSettingsForm, PromptBlockForm, PromptForm, RecommendedTrackForm, SceneForm, StudioTextModelForm, WorkspaceForm, WorkspaceMembershipForm
-from .models import AdditionalGeneration, AiModelProfile, AiSuggestion, Asset, Character, DialogueLine, DocxImport, EmailDeliveryLog, Episode, ExportJob, GenerationOutput, Project, ProjectAccessExclusion, ProjectMembership, Prompt, PromptBlock, RecommendedTrack, Scene, StudioTextModel, SubtitleTrack, TranslationUnit, Workspace, WorkspaceMembership
+from .models import AdditionalGeneration, AiModelProfile, AiSuggestion, Asset, Character, DialogueLine, DocxImport, EmailDeliveryLog, Episode, EpisodeCover, ExportJob, GenerationOutput, Project, ProjectAccessExclusion, ProjectMembership, Prompt, PromptBlock, RecommendedTrack, Scene, StudioTextModel, SubtitleTrack, TranslationUnit, Workspace, WorkspaceMembership
 from .notifications import notify_access_granted
 from .permissions import accessible_assets, accessible_projects, accessible_suggestions, accessible_workspaces, has_capability, has_object_capability, has_project_capability, is_workspace_owner_or_admin
 from .revisions import audit, record_revision
@@ -707,6 +707,19 @@ def _image_upload(request, *, target, workspace, title, success_url, kind, proje
                 first_asset = first_asset or asset
                 if episode is not None:
                     episode.cover_assets.add(asset)
+                    EpisodeCover.objects.get_or_create(
+                        episode=episode,
+                        asset=asset,
+                        defaults={
+                            "language_code": episode.language or episode.project.dialogue_language or "EN",
+                            "created_by": request.user,
+                            "updated_by": request.user,
+                        },
+                    )
+                    if not episode.avatar_asset_id:
+                        episode.avatar_asset = asset
+                        episode.updated_by = request.user
+                        episode.save(update_fields=["avatar_asset", "updated_by", "updated_at"])
         image_role = request.POST.get("image_role", "")
         if first_asset and image_role == "workspace_avatar" and isinstance(target, Workspace):
             target.avatar_asset = first_asset
@@ -960,8 +973,30 @@ def asset_attach(request, scope, owner_id):
         pass
     elif scope == "episode":
         owner.cover_assets.add(asset)
+        EpisodeCover.objects.get_or_create(
+            episode=owner,
+            asset=asset,
+            defaults={
+                "language_code": owner.language or owner.project.dialogue_language or "EN",
+                "created_by": request.user,
+                "updated_by": request.user,
+            },
+        )
+        if not owner.avatar_asset_id:
+            owner.avatar_asset = asset
+            owner.updated_by = request.user
+            owner.save(update_fields=["avatar_asset", "updated_by", "updated_at"])
     elif scope == "episode_avatar":
         owner.cover_assets.add(asset)
+        EpisodeCover.objects.get_or_create(
+            episode=owner,
+            asset=asset,
+            defaults={
+                "language_code": owner.language or owner.project.dialogue_language or "EN",
+                "created_by": request.user,
+                "updated_by": request.user,
+            },
+        )
         owner.avatar_asset = asset
         owner.updated_by = request.user
         owner.save(update_fields=["avatar_asset", "updated_by", "updated_at"])
@@ -1239,7 +1274,7 @@ def entity_move(request, entity_type, entity_id, direction):
 @login_required
 def project_detail(request, project_id):
     project = get_object_or_404(
-        accessible_projects(request.user).select_related("workspace", "created_by", "updated_by").prefetch_related("media_assets", "assets", "characters__avatar_asset", "characters__reference_assets", "episodes__avatar_asset", "episodes__cover_assets", "episodes__scenes", "memberships__user", "recommended_tracks"),
+        accessible_projects(request.user).select_related("workspace", "created_by", "updated_by").prefetch_related("media_assets", "assets", "characters__avatar_asset", "characters__reference_assets", "episodes__avatar_asset", "episodes__cover_assets", Prefetch("episodes__cover_entries", queryset=EpisodeCover.objects.select_related("asset")), "episodes__scenes", "memberships__user", "recommended_tracks"),
         id=project_id,
     )
     inherited = list(project.workspace.memberships.filter(status=WorkspaceMembership.Status.ACTIVE).exclude(user=project.workspace.owner).select_related("user"))
@@ -1261,6 +1296,8 @@ def project_detail(request, project_id):
         "workspace_assets": workspace_assets,
         "gallery_assets": gallery_assets,
         "gallery_projects": [project],
+        "cover_languages": PROMPT_LANGUAGES,
+        "cover_platforms": EpisodeCover.Platform.choices,
     })
 
 
@@ -2140,6 +2177,7 @@ def asset_detach(request, asset_id, scope, owner_id):
             prompt.reference_assets.remove(asset)
         for episode in Episode.objects.filter(project=project, cover_assets=asset):
             episode.cover_assets.remove(asset)
+            EpisodeCover.objects.filter(episode=episode, asset=asset).delete()
             if episode.avatar_asset_id == asset.id:
                 episode.avatar_asset = None
                 episode.updated_by = request.user
@@ -2164,6 +2202,7 @@ def asset_detach(request, asset_id, scope, owner_id):
         if not has_object_capability(request.user, episode, "edit"):
             return HttpResponseForbidden("Edit permission is required.")
         episode.cover_assets.remove(asset)
+        EpisodeCover.objects.filter(episode=episode, asset=asset).delete()
         if episode.avatar_asset_id == asset.id:
             episode.avatar_asset = None
             episode.updated_by = request.user
@@ -2176,6 +2215,43 @@ def asset_detach(request, asset_id, scope, owner_id):
     audit(workspace=asset.workspace, actor=request.user, action="ASSET_DETACHED", instance=asset, metadata={"scope": scope, "ownerId": str(owner_id)})
     messages.success(request, "Image detached. It remains available in the Workspace library.")
     return _asset_action_redirect(request, asset)
+
+
+@login_required
+def episode_cover_update(request, cover_id):
+    cover = get_object_or_404(
+        EpisodeCover.objects.select_related("episode__project__workspace").filter(
+            episode__project__in=accessible_projects(request.user)
+        ),
+        id=cover_id,
+    )
+    if request.method != "POST" or not has_object_capability(request.user, cover.episode, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    language_code = request.POST.get("language_code", "").strip().upper()
+    platform = request.POST.get("platform", "").strip().upper()
+    custom_platform = request.POST.get("custom_platform", "").strip()
+    if language_code not in dict(PROMPT_LANGUAGES):
+        return JsonResponse({"error": "Choose a supported cover language."}, status=400)
+    if platform not in EpisodeCover.Platform.values:
+        return JsonResponse({"error": "Choose a supported cover platform."}, status=400)
+    if platform == EpisodeCover.Platform.OTHER and not custom_platform:
+        return JsonResponse({"error": "Enter the custom platform name."}, status=400)
+    cover.language_code = language_code
+    cover.platform = platform
+    cover.custom_platform = custom_platform if platform == EpisodeCover.Platform.OTHER else ""
+    cover.updated_by = request.user
+    cover.save(update_fields=["language_code", "platform", "custom_platform", "updated_by", "updated_at"])
+    audit(
+        workspace=cover.episode.project.workspace,
+        actor=request.user,
+        action="EPISODE_COVER_UPDATED",
+        instance=cover,
+        metadata={"languageCode": language_code, "platform": cover.custom_platform or platform},
+    )
+    if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+        return JsonResponse({"ok": True, "languageCode": language_code, "platform": cover.custom_platform or cover.get_platform_display()})
+    messages.success(request, "Episode cover saved.")
+    return HttpResponseRedirect(reverse("studio:project_detail", kwargs={"project_id": cover.episode.project_id}) + f"#episode-{cover.episode_id}")
 
 
 @login_required
@@ -2425,6 +2501,18 @@ def project_copy(request, project_id):
         if old_episode.avatar_asset_id:
             new_episode.avatar_asset_id = old_episode.avatar_asset_id
             new_episode.save(update_fields=["avatar_asset", "updated_at"])
+        EpisodeCover.objects.bulk_create([
+            EpisodeCover(
+                episode=new_episode,
+                asset_id=cover.asset_id,
+                language_code=cover.language_code,
+                platform=cover.platform,
+                custom_platform=cover.custom_platform,
+                created_by=request.user,
+                updated_by=request.user,
+            )
+            for cover in old_episode.cover_entries.all()
+        ], ignore_conflicts=True)
     if source.cover_asset_id:
         copied.cover_asset_id = source.cover_asset_id
         copied.media_assets.add(source.cover_asset_id)
