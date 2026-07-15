@@ -3230,9 +3230,18 @@ def prompt_asset_attach(request, prompt_id):
         Asset.objects.filter(workspace=project.workspace, content_type__startswith="image/").filter(
             Q(projects__in=accessible_projects(request.user))
             | Q(projects__isnull=True),
-        ),
+        ).distinct(),
         id=request.POST.get("asset_id"),
     )
+    if (
+        not prompt.reference_assets.filter(id=asset.id).exists()
+        and prompt.generation_reference_count >= 3
+    ):
+        messages.warning(request, "A prompt can use up to three reference images")
+        return HttpResponseRedirect(
+            reverse("studio:scene_detail", kwargs={"scene_id": prompt.scene_id})
+            + f"#prompt-{prompt.id}"
+        )
     asset.projects.add(project)
     prompt.reference_assets.add(asset)
     prompt.updated_by = request.user

@@ -2825,6 +2825,13 @@ class StudioInlineEditingWorkflowTests(TestCase):
         with tempfile.TemporaryDirectory() as directory:
             with self.settings(STUDIO_PRIVATE_MEDIA_ROOT=Path(directory)):
                 asset = create_asset(user=self.owner, workspace=self.workspace, project=self.project, uploaded=self.image_file("library.png"), kind=Asset.Kind.OTHER)
+                other_project = Project.objects.create(
+                    workspace=self.workspace,
+                    title="Second accessible project",
+                    created_by=self.owner,
+                    updated_by=self.owner,
+                )
+                asset.projects.add(other_project)
                 response = self.client.post(f"/studio/prompts/{prompt.id}/images/attach/", {"asset_id": str(asset.id)})
                 self.assertRedirects(response, f"/studio/scenes/{self.first_scene.id}/#prompt-{prompt.id}")
                 self.assertTrue(prompt.reference_assets.filter(id=asset.id).exists())

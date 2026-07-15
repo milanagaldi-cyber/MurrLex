@@ -43,7 +43,6 @@
       <label>AI model<select data-ai-model>{% for model in text_models %}<option value="{{ model.model_id }}"{% if model.model_id == default_text_model %} selected{% endif %}>{{ model.name }}</option>{% endfor %}{% if can_manage_text_models %}<option value="__add_model__">+ Add model...</option>{% endif %}</select></label>
       <button type="button" data-ai-translate>Suggest translation</button>
       <button class="secondary" type="button" data-ai-improve-prompt>Improve prompt</button>
-      {% if prompt.prompt_type == "IMAGE" %}<div class="image-generation-control"><button class="secondary ai-generate-button" type="button" data-prompt-generate-image data-url="{% url 'studio:prompt_generate_image' prompt.id %}" title="Uses the displayed OpenAI model and up to 3 attached references">Generate image</button><small>{% if prompt.ai_model.provider|lower == 'openai' %}{{ prompt.ai_model.model_id }}{% elif prompt.scene.episode.project.workspace.default_image_model %}{{ prompt.scene.episode.project.workspace.default_image_model.model_id }}{% else %}Model not configured{% endif %} / {{ prompt.generation_reference_count }} refs</small></div>{% endif %}
       <span class="save-state" data-ai-state></span>
     </section>
     <section class="suggestion-inline prompt-ai-draft" data-ai-draft hidden>
@@ -60,7 +59,20 @@
     {% if can_manage_text_models %}<dialog class="confirmation-dialog quick-model-dialog" data-quick-model-dialog><form method="post" action="{% url 'studio:text_model_quick_create' %}" data-quick-model-form>{% csrf_token %}<h2>Add OpenAI model</h2><label>Name<input name="name" required maxlength="120"></label><label>Model<select name="model_id" required>{% for value,label in available_text_models %}<option value="{{ value }}">{{ label }}</option>{% endfor %}</select></label><div class="dialog-actions"><button class="secondary" type="button" data-quick-model-cancel>Cancel</button><button type="submit">Add model</button></div><span class="save-state" data-quick-model-state></span></form></dialog>{% endif %}
     {% endif %}
 
-    <div class="prompt-reference-heading"><strong>Reference images and outputs</strong><span class="muted">Attached references are sent to OpenAI image editing</span></div>
+    {% if prompt.prompt_type == "IMAGE" and can_use_ai %}
+    <section class="prompt-image-generation" aria-labelledby="prompt-image-generation-{{ prompt.id }}">
+      <div class="prompt-image-generation-copy">
+        <span class="accent-tag warning">AI IMAGE</span>
+        <div><h3 id="prompt-image-generation-{{ prompt.id }}">Generate image</h3><p>Выберите референсные фото для промта. Можно прикрепить до трех изображений; они будут переданы выбранной модели OpenAI.</p></div>
+      </div>
+      <div class="prompt-image-generation-actions">
+        {% if can_edit %}<button class="secondary" type="button" data-dialog-open="prompt-assets-{{ prompt.id }}">Choose references</button>{% endif %}
+        <button class="ai-generate-button" type="button" data-prompt-generate-image data-url="{% url 'studio:prompt_generate_image' prompt.id %}" title="Generate with the selected OpenAI model and attached references">Generate image</button>
+      </div>
+      <div class="prompt-image-generation-meta"><span><b>Model</b> {% if prompt.ai_model.provider|lower == 'openai' %}{{ prompt.ai_model.model_id }}{% elif prompt.scene.episode.project.workspace.default_image_model %}{{ prompt.scene.episode.project.workspace.default_image_model.model_id }}{% else %}Not configured{% endif %}</span><span><b>References</b> {{ prompt.generation_reference_count }} / 3</span></div>
+    </section>
+    {% endif %}
+    <div class="prompt-reference-heading"><strong>Reference images and generated outputs</strong><span class="muted">References are sent to OpenAI; generated outputs show their model</span></div>
     <div class="prompt-assets asset-grid">
       {% for asset in prompt.display_assets %}{% if asset.thumbnail %}<figure class="asset" data-crop-url="{% url 'studio:asset_crop' asset.id %}"><a href="{% url 'studio_api:asset_view' asset.id %}"><img src="{% url 'studio_api:asset_thumbnail' asset.id %}" alt="{{ asset.original_filename }}"></a><figcaption><span class="asset-name">{{ asset.original_filename }}</span><span class="muted">{{ asset.width }}x{{ asset.height }}</span>{% if asset.ai_metadata.model %}<span class="generation-model"><b>OpenAI</b> {{ asset.ai_metadata.model }}{% if asset.ai_metadata.referenceCount %} / {{ asset.ai_metadata.referenceCount }} refs{% endif %}</span>{% endif %}{% include "studio/_asset_actions.html" with asset=asset attachment_scope='prompt' attachment_id=prompt.id return_anchor=prompt.id %}</figcaption></figure>{% endif %}{% endfor %}
       {% if can_edit %}<button class="asset-add-tile" type="button" data-dialog-open="prompt-assets-{{ prompt.id }}" title="Add Image" aria-label="Add Image"><span>+</span><small>Add Image</small></button>{% endif %}
