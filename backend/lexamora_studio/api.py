@@ -49,6 +49,7 @@ def project_json(item):
         "workspaceId": str(item.workspace_id),
         "type": item.project_type,
         "title": item.title,
+        "description": item.description,
         "concept": item.concept,
         "originalLanguage": item.original_language,
         "translationLanguages": item.translation_languages,
@@ -102,6 +103,7 @@ def projects(request):
         workspace=workspace,
         project_type=project_type,
         title=title,
+        description=str(data.get("description", "")).strip(),
         concept=str(data.get("concept", "")).strip(),
         original_language=str(data.get("originalLanguage", "")).strip(),
         translation_languages=data.get("translationLanguages", []),
@@ -141,6 +143,7 @@ def project_detail(request, project_id):
     with transaction.atomic():
         for api_name, field_name in {
             "title": "title",
+            "description": "description",
             "concept": "concept",
             "originalLanguage": "original_language",
             "translationLanguages": "translation_languages",

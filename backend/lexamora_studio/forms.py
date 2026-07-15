@@ -3,7 +3,7 @@ from django import forms
 from lessons.ai_gateway import TEXT_MODELS
 
 from .ai_catalog import PROMPT_LANGUAGES, default_prompt_template
-from .models import AdditionalGeneration, AiModelProfile, Asset, Character, DialogueLine, Episode, Project, ProjectMembership, Prompt, PromptBlock, Scene, StudioTextModel, Workspace, WorkspaceMembership
+from .models import AdditionalGeneration, AiModelProfile, Asset, Character, DialogueLine, Episode, Project, ProjectMembership, Prompt, PromptBlock, RecommendedTrack, Scene, StudioTextModel, Workspace, WorkspaceMembership
 
 
 class WorkspaceForm(forms.ModelForm):
@@ -40,21 +40,30 @@ class WorkspaceForm(forms.ModelForm):
 
 
 class ProjectForm(forms.ModelForm):
+    class Meta:
+        model = Project
+        fields = ["project_type", "title", "description", "concept", "rights_holder", "publication_info", "status", "status_comment"]
+        widgets = {
+            "description": forms.Textarea(attrs={"rows": 3}),
+            "concept": forms.Textarea(attrs={"rows": 4}),
+        }
+
+
+class ProjectSettingsForm(forms.ModelForm):
     original_language = forms.CharField(widget=forms.Select(choices=PROMPT_LANGUAGES), initial="EN")
     translation_languages = forms.CharField(required=False, help_text="Comma-separated language codes, for example: en, pl, de")
     confirm_language_propagation = forms.BooleanField(required=False, widget=forms.HiddenInput)
 
     class Meta:
         model = Project
-        fields = ["project_type", "title", "concept", "original_language", "documentation_language", "dialogue_language", "prompt_language", "translation_languages", "prompt_template", "rights_holder", "publication_info", "status", "status_comment"]
+        fields = ["original_language", "documentation_language", "dialogue_language", "prompt_language", "translation_languages", "prompt_template"]
         widgets = {
-            "concept": forms.Textarea(attrs={"rows": 4}),
             "documentation_language": forms.Select(choices=PROMPT_LANGUAGES),
             "dialogue_language": forms.Select(choices=PROMPT_LANGUAGES),
             "prompt_language": forms.Select(choices=PROMPT_LANGUAGES),
             "prompt_template": forms.Textarea(attrs={"rows": 4, "placeholder": "Text appended to every new prompt in this project"}),
         }
-        labels = {"prompt_template": "Project prompt template"}
+        labels = {"prompt_template": "Project Prompt Template"}
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -73,8 +82,6 @@ class ProjectForm(forms.ModelForm):
                 f"The new language will be applied to {prompt_count} original prompts and "
                 f"{dialogue_count} dialogue lines. Saved translations remain translations."
             )
-        else:
-            self.fields.pop("confirm_language_propagation")
 
     def clean_original_language(self):
         value = self.cleaned_data["original_language"].strip().upper()
@@ -99,6 +106,14 @@ class ProjectForm(forms.ModelForm):
                     "Confirm that the new language will update every original prompt and dialogue line in this project.",
                 )
         return cleaned
+
+
+class RecommendedTrackForm(forms.ModelForm):
+    class Meta:
+        model = RecommendedTrack
+        fields = ["is_primary", "platform", "artist", "title", "url", "position"]
+        widgets = {"position": forms.HiddenInput()}
+        labels = {"is_primary": "Main"}
 
 
 class ProjectMembershipForm(forms.Form):

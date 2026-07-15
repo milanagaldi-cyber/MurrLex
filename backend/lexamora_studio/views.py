@@ -9,6 +9,7 @@ from django.core.exceptions import ValidationError
 from django.core.mail import send_mail
 from django.db import transaction
 from django.db.models import Prefetch, Q
+from django.forms import inlineformset_factory
 from django.http import FileResponse, Http404, HttpResponse, HttpResponseForbidden, HttpResponseRedirect, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
@@ -25,8 +26,8 @@ from .exports import ALL_SECTIONS, ExportError, generate_export
 from .docx_imports import accept_docx_import, parse_docx
 from .docx_exports import generate_docx_export
 from .docx_roundtrip import compare_docx_export
-from .forms import AdditionalGenerationForm, AiModelProfileForm, AssetEditForm, CharacterCreateForm, CharacterForm, DialogueLineForm, DocxImportUploadForm, EpisodeForm, GenerationOutputUploadForm, ImageUploadForm, MultipleImageUploadForm, ProjectForm, ProjectMembershipForm, PromptBlockForm, PromptForm, SceneForm, StudioTextModelForm, WorkspaceForm, WorkspaceMembershipForm
-from .models import AdditionalGeneration, AiModelProfile, AiSuggestion, Asset, Character, DialogueLine, DocxImport, EmailDeliveryLog, Episode, ExportJob, GenerationOutput, Project, ProjectAccessExclusion, ProjectMembership, Prompt, PromptBlock, Scene, StudioTextModel, SubtitleTrack, TranslationUnit, Workspace, WorkspaceMembership
+from .forms import AdditionalGenerationForm, AiModelProfileForm, AssetEditForm, CharacterCreateForm, CharacterForm, DialogueLineForm, DocxImportUploadForm, EpisodeForm, GenerationOutputUploadForm, ImageUploadForm, MultipleImageUploadForm, ProjectForm, ProjectMembershipForm, ProjectSettingsForm, PromptBlockForm, PromptForm, RecommendedTrackForm, SceneForm, StudioTextModelForm, WorkspaceForm, WorkspaceMembershipForm
+from .models import AdditionalGeneration, AiModelProfile, AiSuggestion, Asset, Character, DialogueLine, DocxImport, EmailDeliveryLog, Episode, ExportJob, GenerationOutput, Project, ProjectAccessExclusion, ProjectMembership, Prompt, PromptBlock, RecommendedTrack, Scene, StudioTextModel, SubtitleTrack, TranslationUnit, Workspace, WorkspaceMembership
 from .notifications import notify_access_granted
 from .permissions import accessible_assets, accessible_projects, accessible_suggestions, accessible_workspaces, has_capability, has_object_capability, has_project_capability, is_workspace_owner_or_admin
 from .revisions import audit, record_revision
@@ -424,13 +425,13 @@ def project_create(request, workspace_id):
     workspace = get_object_or_404(accessible_workspaces(request.user), id=workspace_id)
     if not has_object_capability(request.user, workspace, "edit"):
         return HttpResponseForbidden("Edit permission is required.")
-    initial = {
-        "original_language": workspace.dialogue_language, "documentation_language": workspace.documentation_language,
-        "dialogue_language": workspace.dialogue_language, "prompt_language": workspace.prompt_language,
-    }
-    form = ProjectForm(request.POST or None, initial=initial)
+    form = ProjectForm(request.POST or None)
     if request.method == "POST" and form.is_valid():
         item = form.save(commit=False); item.workspace = workspace; item.created_by = request.user; item.updated_by = request.user
+        item.original_language = workspace.dialogue_language
+        item.documentation_language = workspace.documentation_language
+        item.dialogue_language = workspace.dialogue_language
+        item.prompt_language = workspace.prompt_language
         item.save(); record_revision(instance=item, user=request.user, operation="CREATE")
         messages.success(request, "New project created.")
         return redirect("studio:project_detail", project_id=item.id)
@@ -772,23 +773,56 @@ def project_edit(request, project_id):
     item = get_object_or_404(accessible_projects(request.user), id=project_id)
     if not has_object_capability(request.user, item, "edit"):
         return HttpResponseForbidden("Edit permission is required.")
-    old_language = (item.original_language or "EN").strip().upper()
     form = ProjectForm(request.POST or None, instance=item)
     if request.method == "POST" and form.is_valid():
+        item = form.save(commit=False)
+        item.updated_by = request.user
+        item.full_clean()
+        item.save()
+        record_revision(instance=item, user=request.user, operation="UPDATE")
+        messages.success(request, "Project saved.")
+        return redirect("studio:project_detail", project_id=item.id)
+    return render(request, "studio/entity_form.html", {
+        "form": form,
+        "title": "Edit project",
+        "submit_label": "Save changes",
+    })
+
+
+@login_required
+def project_settings(request, project_id):
+    project = get_object_or_404(accessible_projects(request.user).select_related("workspace"), id=project_id)
+    if not has_project_capability(request.user, project, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    TrackFormSet = inlineformset_factory(
+        Project, RecommendedTrack, form=RecommendedTrackForm, extra=1, can_delete=True,
+    )
+    old_language = (project.original_language or "EN").strip().upper()
+    form = ProjectSettingsForm(request.POST or None, instance=project)
+    track_formset = TrackFormSet(request.POST or None, instance=project, prefix="tracks")
+    if request.method == "POST" and form.is_valid() and track_formset.is_valid():
         new_language = form.cleaned_data["original_language"]
         with transaction.atomic():
-            item = form.save(commit=False)
-            item.updated_by = request.user
-            item.full_clean()
-            item.save()
-            record_revision(instance=item, user=request.user, operation="UPDATE")
+            project = form.save(commit=False)
+            project.updated_by = request.user
+            project.full_clean()
+            project.save()
+            tracks = track_formset.save(commit=False)
+            for removed in track_formset.deleted_objects:
+                removed.delete()
+            for position, track in enumerate(tracks):
+                track.project = project
+                track.position = position
+                if not track.created_by_id:
+                    track.created_by = request.user
+                track.updated_by = request.user
+                track.save()
+            record_revision(instance=project, user=request.user, operation="SETTINGS_UPDATE")
             if new_language != old_language:
-                counts = propagate_project_original_language(project=item, language=new_language, user=request.user)
+                counts = propagate_project_original_language(project=project, language=new_language, user=request.user)
                 audit(
-                    workspace=item.workspace,
-                    actor=request.user,
-                    action="PROJECT_ORIGINAL_LANGUAGE_PROPAGATED",
-                    instance=item,
+                    workspace=project.workspace, actor=request.user,
+                    action="PROJECT_ORIGINAL_LANGUAGE_PROPAGATED", instance=project,
                     metadata={"from": old_language, "to": new_language, **counts},
                 )
         if new_language != old_language:
@@ -799,13 +833,11 @@ def project_edit(request, project_id):
                 f"and {counts['dialogueLines']} dialogue lines.",
             )
         else:
-            messages.success(request, "Project saved.")
-        return redirect("studio:project_detail", project_id=item.id)
-    return render(request, "studio/entity_form.html", {
-        "form": form,
-        "title": "Edit project",
-        "submit_label": "Save changes",
-        "language_propagation": True,
+            messages.success(request, "Project settings saved.")
+        return redirect("studio:project_settings", project_id=project.id)
+    return render(request, "studio/project_settings.html", {
+        "project": project, "form": form, "track_formset": track_formset,
+        **_project_header_context(request.user, project),
     })
 
 
@@ -1170,7 +1202,7 @@ def entity_move(request, entity_type, entity_id, direction):
 @login_required
 def project_detail(request, project_id):
     project = get_object_or_404(
-        accessible_projects(request.user).select_related("workspace", "created_by", "updated_by").prefetch_related("media_assets", "assets", "characters__avatar_asset", "characters__reference_assets", "episodes__scenes", "memberships__user"),
+        accessible_projects(request.user).select_related("workspace", "created_by", "updated_by").prefetch_related("media_assets", "assets", "characters__avatar_asset", "characters__reference_assets", "episodes__scenes", "memberships__user", "recommended_tracks"),
         id=project_id,
     )
     inherited = list(project.workspace.memberships.filter(status=WorkspaceMembership.Status.ACTIVE).exclude(user=project.workspace.owner).select_related("user"))
@@ -2241,13 +2273,19 @@ def project_copy(request, project_id):
         return HttpResponseForbidden("Workspace owner or administrator permission is required.")
     copied = Project.objects.create(
         workspace=source.workspace, project_type=source.project_type, title=_unique_project_title(source.workspace, source.title),
-        concept=source.concept, original_language=source.original_language, translation_languages=source.translation_languages,
+        description=source.description, concept=source.concept, original_language=source.original_language, translation_languages=source.translation_languages,
         prompt_template=source.prompt_template, documentation_language=source.documentation_language,
         dialogue_language=source.dialogue_language, prompt_language=source.prompt_language,
         rights_holder=source.rights_holder, publication_info=source.publication_info, status=Project.Status.DRAFT,
         status_comment=source.status_comment,
         created_by=request.user, updated_by=request.user,
     )
+    for track in source.recommended_tracks.all():
+        RecommendedTrack.objects.create(
+            project=copied, is_primary=track.is_primary, platform=track.platform,
+            artist=track.artist, title=track.title, url=track.url, position=track.position,
+            created_by=request.user, updated_by=request.user,
+        )
     character_map = {}
     for character in source.characters.all():
         character_map[character.id] = Character.objects.create(

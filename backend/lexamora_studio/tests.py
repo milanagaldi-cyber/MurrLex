@@ -1038,7 +1038,7 @@ class StudioWebCreationTests(TestCase):
         )
         project = Project.objects.get(title="Browser Project")
         self.assertRedirects(response, f"/studio/projects/{project.id}/")
-        self.assertEqual(project.translation_languages, ["en", "pl"])
+        self.assertEqual(project.translation_languages, [])
 
         response = self.client.post(
             f"/studio/projects/{project.id}/episodes/new/",
@@ -1094,8 +1094,36 @@ class StudioWebEditingAndImagesTests(TestCase):
         self.assertRedirects(response, f"/studio/projects/{self.project.id}/")
         self.project.refresh_from_db()
         self.assertEqual(self.project.title, "After")
-        self.assertEqual(self.project.translation_languages, ["en", "pl"])
+        self.assertEqual(self.project.translation_languages, ["en"])
         self.assertTrue(Revision.objects.filter(entity_id=self.project.id, operation="UPDATE").exists())
+
+    def test_project_settings_save_languages_template_and_recommended_track(self):
+        from .models import RecommendedTrack
+
+        self.client.force_login(self.owner)
+        response = self.client.post(
+            f"/studio/projects/{self.project.id}/settings/",
+            {
+                "original_language": "RU", "documentation_language": "RU",
+                "dialogue_language": "PL", "prompt_language": "EN",
+                "translation_languages": "pl, en", "prompt_template": "No music.",
+                "tracks-TOTAL_FORMS": "1", "tracks-INITIAL_FORMS": "0",
+                "tracks-MIN_NUM_FORMS": "0", "tracks-MAX_NUM_FORMS": "1000",
+                "tracks-0-is_primary": "on", "tracks-0-platform": "Spotify",
+                "tracks-0-artist": "Artist", "tracks-0-title": "Track",
+                "tracks-0-url": "https://example.com/track", "tracks-0-position": "0",
+            },
+        )
+        self.assertRedirects(response, f"/studio/projects/{self.project.id}/settings/")
+        self.project.refresh_from_db()
+        self.assertEqual((self.project.documentation_language, self.project.dialogue_language, self.project.prompt_language), ("RU", "PL", "EN"))
+        self.assertEqual(self.project.prompt_template, "No music.")
+        track = RecommendedTrack.objects.get(project=self.project)
+        self.assertTrue(track.is_primary)
+        self.assertEqual((track.platform, track.artist, track.title), ("Spotify", "Artist", "Track"))
+        detail = self.client.get(f"/studio/projects/{self.project.id}/")
+        self.assertContains(detail, "Recommended tracks")
+        self.assertContains(detail, "No description yet.")
 
     def test_project_language_change_requires_confirmation_and_propagates(self):
         from .models import AiModelProfile, DialogueLine, Prompt
@@ -1118,23 +1146,25 @@ class StudioWebEditingAndImagesTests(TestCase):
             created_by=self.owner, updated_by=self.owner,
         )
         payload = {
-            "project_type": "SERIES", "title": "Before", "original_language": "PL",
-            "translation_languages": "en", "status": "DRAFT",
+            "original_language": "PL", "documentation_language": "EN", "dialogue_language": "EN",
+            "prompt_language": "EN", "translation_languages": "en", "prompt_template": "",
+            "tracks-TOTAL_FORMS": "0", "tracks-INITIAL_FORMS": "0",
+            "tracks-MIN_NUM_FORMS": "0", "tracks-MAX_NUM_FORMS": "1000",
         }
         self.client.force_login(self.owner)
-        form_page = self.client.get(f"/studio/projects/{self.project.id}/edit/")
+        form_page = self.client.get(f"/studio/projects/{self.project.id}/settings/")
         self.assertContains(form_page, "data-language-propagation-dialog")
         self.assertNotContains(form_page, '<aside class="form-warning">')
 
-        rejected = self.client.post(f"/studio/projects/{self.project.id}/edit/", payload)
+        rejected = self.client.post(f"/studio/projects/{self.project.id}/settings/", payload)
         self.assertEqual(rejected.status_code, 200)
         self.assertContains(rejected, "Confirm that the new language")
         self.project.refresh_from_db()
         self.assertEqual(self.project.original_language, "ru")
 
         payload["confirm_language_propagation"] = "on"
-        saved = self.client.post(f"/studio/projects/{self.project.id}/edit/", payload, follow=True)
-        self.assertRedirects(saved, f"/studio/projects/{self.project.id}/")
+        saved = self.client.post(f"/studio/projects/{self.project.id}/settings/", payload, follow=True)
+        self.assertRedirects(saved, f"/studio/projects/{self.project.id}/settings/")
         self.assertContains(saved, "Updated 1 original prompts, 1 translations, and 1 dialogue lines")
         self.project.refresh_from_db()
         original.refresh_from_db()

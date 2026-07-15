@@ -114,6 +114,7 @@ class Project(SoftDeleteModel):
     )
     project_type = models.CharField(max_length=24, choices=Type.choices)
     title = models.CharField(max_length=240)
+    description = models.TextField(blank=True)
     concept = models.TextField(blank=True)
     original_language = models.CharField(max_length=16, blank=True)
     translation_languages = models.JSONField(default=list, blank=True)
@@ -134,6 +135,22 @@ class Project(SoftDeleteModel):
 
     def __str__(self):
         return self.title
+
+
+class RecommendedTrack(SoftDeleteModel):
+    project = models.ForeignKey(Project, on_delete=models.PROTECT, related_name="recommended_tracks")
+    is_primary = models.BooleanField(default=False)
+    platform = models.CharField(max_length=80, blank=True)
+    artist = models.CharField(max_length=180)
+    title = models.CharField(max_length=240)
+    url = models.URLField(max_length=500, blank=True)
+    position = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["position", "id"]
+
+    def __str__(self):
+        return f"{self.artist} - {self.title}"
 
 
 class ProjectMembership(models.Model):

@@ -1,0 +1,30 @@
+{% extends "studio/base.html" %}
+{% block content %}
+<p class="project-breadcrumb"><a href="{% url 'studio:project_detail' project.id %}">&larr; Project {{ project.title }}</a></p>
+<div class="view-heading"><h1>Project Settings</h1><p class="muted">Languages, the shared prompt template, and recommended tracks for this project.</p></div>
+<form method="post" class="project-settings-form" data-language-propagation-form>{% csrf_token %}
+  {{ form.confirm_language_propagation }}{{ form.confirm_language_propagation.errors }}
+  {% if form.non_field_errors %}{{ form.non_field_errors }}{% endif %}
+  <section class="panel settings-section">
+    <h2>Languages</h2>
+    <div class="settings-language-grid">
+      <label title="Language assigned to original imported or authored content.">{{ form.original_language.label }}{{ form.original_language }}{{ form.original_language.errors }}</label>
+      <label title="Primary authoring language for documentation and scene descriptions.">{{ form.documentation_language.label }}{{ form.documentation_language }}{{ form.documentation_language.errors }}</label>
+      <label title="Language used for dialogue and the target series text.">{{ form.dialogue_language.label }}{{ form.dialogue_language }}{{ form.dialogue_language.errors }}</label>
+      <label title="Language used to prepare generation prompts.">{{ form.prompt_language.label }}{{ form.prompt_language }}{{ form.prompt_language.errors }}</label>
+      <label>{{ form.translation_languages.label }}{{ form.translation_languages }}{{ form.translation_languages.errors }}<small class="muted">{{ form.translation_languages.help_text }}</small></label>
+    </div>
+  </section>
+  <section class="panel settings-section"><h2>Project Prompt Template</h2><p class="muted">This text can be appended to prompts created in this project.</p>{{ form.prompt_template }}{{ form.prompt_template.errors }}</section>
+  <section id="recommended-tracks" class="panel settings-section">
+    <h2>Recommended tracks</h2>
+    {{ track_formset.management_form }}
+    {% if track_formset.non_form_errors %}{{ track_formset.non_form_errors }}{% endif %}
+    <div class="track-editor track-row track-head"><span>Main</span><span>Platform</span><span>Artist</span><span>Track</span><span>Link</span><span>Remove</span></div>
+    {% for track_form in track_formset %}<div class="track-editor track-row">{{ track_form.id }}{{ track_form.position }}<span>{{ track_form.is_primary }}</span><span>{{ track_form.platform }}{{ track_form.platform.errors }}</span><span>{{ track_form.artist }}{{ track_form.artist.errors }}</span><span>{{ track_form.title }}{{ track_form.title.errors }}</span><span>{{ track_form.url }}{{ track_form.url.errors }}</span><span>{% if track_form.instance.pk %}{{ track_form.DELETE }}{% endif %}</span></div>{% endfor %}
+  </section>
+  <div class="settings-form-actions"><a class="button secondary" href="{% url 'studio:project_detail' project.id %}">Cancel</a><button type="submit">Save settings</button></div>
+</form>
+<dialog class="confirmation-dialog" data-language-propagation-dialog><h2>Change original language?</h2><p>{{ form.language_change_summary }}</p><p>This updates the language attribute of existing original prompts and dialogue lines. Saved translations remain translations.</p><div class="dialog-actions"><button class="secondary" type="button" data-language-cancel>Cancel</button><button type="button" data-language-confirm>Change language</button></div></dialog>
+<script>(()=>{const form=document.querySelector('[data-language-propagation-form]'),language=form?.querySelector('[name="original_language"]'),confirmation=form?.querySelector('[name="confirm_language_propagation"]'),dialog=document.querySelector('[data-language-propagation-dialog]');if(!form||!language||!confirmation||!dialog)return;form.addEventListener('submit',event=>{if(language.value!==language.dataset.initialLanguage&&confirmation.value!=='on'){event.preventDefault();dialog.showModal()}});dialog.querySelector('[data-language-cancel]').addEventListener('click',()=>dialog.close());dialog.querySelector('[data-language-confirm]').addEventListener('click',()=>{confirmation.value='on';dialog.close();form.requestSubmit()});language.addEventListener('change',()=>confirmation.value='')})();</script>
+{% endblock %}

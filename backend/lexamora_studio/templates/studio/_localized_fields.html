@@ -1,7 +1,7 @@
 <div class="localized-language-headings" aria-hidden="true">
-  <span>Documentation Language <b class="language-badge">{{ project.documentation_language }}</b></span>
-  <span>Prompt Language <b class="language-badge">{{ project.prompt_language }}</b></span>
-  <span>{% if dialogue_labels %}Dialogue Language{% else %}Series Language{% endif %} <b class="language-badge">{{ project.dialogue_language }}</b></span>
+  <span title="Primary authoring language for documentation and scene descriptions. Set in Project Settings.">Documentation Language <b class="language-badge">{{ project.documentation_language }}</b></span>
+  <span title="Language used to prepare generation prompts. Set in Project Settings.">Prompt Language <b class="language-badge">{{ project.prompt_language }}</b></span>
+  <span title="Language used for the series dialogue and target dialogue fields. Set in Project Settings.">{% if dialogue_labels %}Dialogue Language{% else %}Series Language{% endif %} <b class="language-badge">{{ project.dialogue_language }}</b></span>
 </div>
 <label class="localized-field" data-language-role="documentation" data-language-code="{{ project.documentation_language }}"><span class="visually-hidden">Documentation Language</span>{{ documentation_field }}</label>
 <label class="localized-field" data-language-role="prompt" data-language-code="{{ project.prompt_language }}"><span class="visually-hidden">Prompt Language</span>{{ prompt_field }}</label>
