@@ -3138,13 +3138,41 @@ def prompt_generate_image(request, prompt_id):
         return JsonResponse({"error": "Image generation is available only for Photo prompts."}, status=400)
     if not has_object_capability(request.user, prompt, "use_ai") or not user_has_ai_access(request.user):
         return JsonResponse({"error": "AI access is not enabled for this account."}, status=403)
-    image_model = prompt.ai_model if (
+    try:
+        payload = json.loads(request.body or b"{}")
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "The generation request is not valid JSON."}, status=400)
+    requested_profile = None
+    if payload.get("modelProfileId"):
+        requested_profile = AiModelProfile.objects.filter(
+            id=payload["modelProfileId"], workspace=project.workspace,
+            media_type=AiModelProfile.MediaType.IMAGE, active=True,
+            provider__iexact="openai",
+        ).first()
+    image_model = requested_profile or (prompt.ai_model if (
         prompt.ai_model.media_type == AiModelProfile.MediaType.IMAGE
         and prompt.ai_model.provider.strip().lower() == "openai"
-    ) else project.workspace.default_image_model
+    ) else project.workspace.default_image_model)
     if image_model is None:
         return JsonResponse({"error": "Choose a default OpenAI image model in Workspace settings."}, status=400)
     defaults = image_model.defaults if isinstance(image_model.defaults, dict) else {}
+    request_prompt = str(payload.get("prompt") or prompt.editor_content).strip()
+    if not request_prompt:
+        return JsonResponse({"error": "Copy a non-empty prompt into the generation request."}, status=400)
+    if len(request_prompt) > settings.AI_MAX_TEXT_CHARS:
+        return JsonResponse({"error": "The image prompt exceeds the server limit."}, status=400)
+    try:
+        output_compression = int(payload.get("outputCompression", defaults.get("output_compression", 100)))
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "Image compression must be a number from 0 to 100."}, status=400)
+    image_options = {
+        "size": str(payload.get("size") or defaults.get("size") or "1024x1024"),
+        "quality": str(payload.get("quality") or defaults.get("quality") or "low"),
+        "output_format": str(payload.get("outputFormat") or defaults.get("output_format") or "png"),
+        "output_compression": output_compression,
+        "background": str(payload.get("background") or defaults.get("background") or "auto"),
+        "moderation": str(payload.get("moderation") or defaults.get("moderation") or "auto"),
+    }
     reference_assets = list(
         prompt.reference_assets.filter(content_type__startswith="image/")
         .exclude(kind=Asset.Kind.GENERATION_OUTPUT)[:3]
@@ -3155,20 +3183,21 @@ def prompt_generate_image(request, prompt_id):
             references.append((reference.original_filename, source.read(), reference.content_type))
     usage = AiUsageLog.objects.create(
         workspace=project.workspace, user=request.user, prompt=prompt, action="GENERATE_IMAGE",
-        model=image_model.model_id, status="STARTED", input_chars=len(prompt.editor_content),
+        model=image_model.model_id, status="STARTED", input_chars=len(request_prompt),
     )
     try:
         image_bytes, model, provider_usage = _generate_provider_image(
-            prompt.editor_content,
+            request_prompt,
             model=image_model.model_id,
             reference_images=references,
-            size=str(defaults.get("size") or "1024x1024"),
-            quality=str(defaults.get("quality") or "low"),
+            **image_options,
         )
+        extension = image_options["output_format"]
+        content_type = {"png": "image/png", "jpeg": "image/jpeg", "webp": "image/webp"}[extension]
         uploaded = SimpleUploadedFile(
-            f"openai-{slugify(prompt.title or 'prompt') or 'prompt'}-{timezone.now():%Y%m%d-%H%M%S}.png",
+            f"openai-{slugify(prompt.title or 'prompt') or 'prompt'}-{timezone.now():%Y%m%d-%H%M%S}.{extension}",
             image_bytes,
-            content_type="image/png",
+            content_type=content_type,
         )
         asset = create_asset(
             user=request.user, workspace=project.workspace, uploaded=uploaded,
@@ -3177,6 +3206,8 @@ def prompt_generate_image(request, prompt_id):
         prompt.reference_assets.remove(asset)
         asset.ai_metadata = {
             "provider": "OpenAI", "model": model,
+            "requestPrompt": request_prompt,
+            "settings": image_options,
             "referenceAssetIds": [str(item.id) for item in reference_assets],
             "referenceCount": len(reference_assets),
         }
@@ -3205,11 +3236,13 @@ def prompt_generate_image(request, prompt_id):
         workspace=project.workspace, actor=request.user, action="PROMPT_IMAGE_GENERATED",
         instance=prompt, metadata={
             "assetId": str(asset.id), "model": model,
+            "requestPrompt": request_prompt, "settings": image_options,
             "referenceAssetIds": [str(item.id) for item in reference_assets],
         },
     )
     return JsonResponse({
         "assetId": str(asset.id), "model": model, "referenceCount": len(reference_assets),
+        "settings": image_options,
         "viewUrl": reverse("studio_api:asset_view", kwargs={"asset_id": asset.id}),
         "thumbnailUrl": reverse("studio_api:asset_thumbnail", kwargs={"asset_id": asset.id}),
     }, status=201)

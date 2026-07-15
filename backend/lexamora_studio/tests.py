@@ -641,7 +641,19 @@ class StudioAiSuggestionTests(TestCase):
                     user=self.editor, workspace=self.workspace, project=self.project,
                     prompt=self.prompt, uploaded=reference_file, kind=Asset.Kind.OTHER,
                 )
-                response = self.client.post(f"/studio/prompts/{self.prompt.id}/images/generate/")
+                response = self.client.post(
+                    f"/studio/prompts/{self.prompt.id}/images/generate/",
+                    data=json.dumps({
+                        "prompt": "An improved current prompt with exact lighting",
+                        "size": "1536x1024",
+                        "quality": "high",
+                        "outputFormat": "png",
+                        "outputCompression": 90,
+                        "background": "opaque",
+                        "moderation": "low",
+                    }),
+                    content_type="application/json",
+                )
         self.assertEqual(response.status_code, 201, response.content)
         self.assertEqual(response.json()["model"], "gpt-image-1")
         self.assertEqual(response.json()["referenceCount"], 1)
@@ -650,9 +662,18 @@ class StudioAiSuggestionTests(TestCase):
         generated = Asset.objects.get(id=response.json()["assetId"])
         self.assertEqual(generated.ai_metadata["model"], "gpt-image-1")
         self.assertEqual(generated.ai_metadata["referenceAssetIds"], [str(reference.id)])
+        self.assertEqual(generated.ai_metadata["requestPrompt"], "An improved current prompt with exact lighting")
+        self.assertEqual(generated.ai_metadata["settings"]["size"], "1536x1024")
+        self.assertEqual(generated.ai_metadata["settings"]["quality"], "high")
         call_kwargs = mocked_generate_image.call_args.kwargs
+        self.assertEqual(mocked_generate_image.call_args.args[0], "An improved current prompt with exact lighting")
         self.assertEqual(call_kwargs["model"], "gpt-image-1")
         self.assertEqual(call_kwargs["reference_images"][0][0], "reference.png")
+        self.assertEqual(call_kwargs["size"], "1536x1024")
+        self.assertEqual(call_kwargs["quality"], "high")
+        self.assertEqual(call_kwargs["output_format"], "png")
+        self.assertEqual(call_kwargs["background"], "opaque")
+        self.assertEqual(call_kwargs["moderation"], "low")
 
     @patch("lexamora_studio.ai.run_text")
     def test_selected_text_preview_preserves_unselected_prompt(self, mocked_run_text):

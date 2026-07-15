@@ -110,18 +110,52 @@ def generate_image_with_usage(
     reference_images: list[tuple[str, bytes, str]] | None = None,
     size: str = "1024x1024",
     quality: str = "low",
+    output_format: str = "png",
+    output_compression: int = 100,
+    background: str = "auto",
+    moderation: str = "auto",
 ) -> tuple[bytes, str, dict[str, int]]:
     clean_prompt = prompt.strip()
     if not clean_prompt or len(clean_prompt) > settings.AI_MAX_TEXT_CHARS:
         raise ProviderError("Image prompt is empty or exceeds the server limit.")
     selected_model = require_model(model, IMAGE_GENERATION_MODELS, "gpt-image-1")
     references = list(reference_images or [])[:3]
+    allowed_sizes = {
+        "auto", "1024x1024", "1536x1024", "1024x1536",
+        "2048x2048", "2048x1152", "3840x2160", "2160x3840",
+    }
+    if size not in allowed_sizes:
+        raise ProviderError("The selected image size is not supported.")
+    if size in {"2048x2048", "2048x1152", "3840x2160", "2160x3840"} and selected_model != "gpt-image-2":
+        raise ProviderError("The selected 2K or 4K size requires gpt-image-2.")
+    if quality not in {"auto", "low", "medium", "high"}:
+        raise ProviderError("The selected image quality is not supported.")
+    if output_format not in {"png", "jpeg", "webp"}:
+        raise ProviderError("The selected image format is not supported.")
+    if background not in {"auto", "opaque", "transparent"}:
+        raise ProviderError("The selected background is not supported.")
+    if selected_model == "gpt-image-2" and background == "transparent":
+        raise ProviderError("Transparent backgrounds are not supported by gpt-image-2.")
+    if moderation not in {"auto", "low"}:
+        raise ProviderError("The selected image moderation level is not supported.")
+    compression = max(0, min(int(output_compression), 100))
+    options = {
+        "model": selected_model,
+        "prompt": clean_prompt,
+        "size": size,
+        "quality": quality,
+        "output_format": output_format,
+        "background": background,
+        "moderation": moderation,
+    }
+    if output_format in {"jpeg", "webp"}:
+        options["output_compression"] = compression
     try:
         if references:
             response = requests.post(
                 f"{settings.OPENAI_BASE_URL}/images/edits",
                 headers=_openai_headers(),
-                data={"model": selected_model, "prompt": clean_prompt, "size": size, "quality": quality},
+                data=options,
                 files=[("image[]", (filename, content, content_type)) for filename, content, content_type in references],
                 timeout=180,
             )
@@ -129,7 +163,7 @@ def generate_image_with_usage(
             response = requests.post(
                 f"{settings.OPENAI_BASE_URL}/images/generations",
                 headers={**_openai_headers(), "Content-Type": "application/json"},
-                json={"model": selected_model, "prompt": clean_prompt, "size": size, "quality": quality},
+                json=options,
                 timeout=180,
             )
         _safe_response(response)

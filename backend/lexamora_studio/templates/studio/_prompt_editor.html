@@ -16,7 +16,7 @@
       <fieldset class="prompt-fieldset">
         <div class="prompt-meta-grid compact">
           <label>Title<input name="title" value="{{ prompt.title }}" data-prompt-title{% if not can_edit %} disabled{% endif %}></label>
-          <label>Generation model<select name="ai_model" data-prompt-model data-model-settings-url="{% url 'studio:workspace_media_models' prompt.scene.episode.project.workspace_id %}"{% if not can_edit %} disabled{% endif %}>{% for model in ai_models %}<option value="{{ model.id }}"{% if model.id == prompt.ai_model_id %} selected{% endif %}>{{ model.name }}</option>{% endfor %}<option value="__add_media_model__">+ Add model...</option></select></label>
+          <label>Generation model<select name="ai_model" data-prompt-model data-model-settings-url="{% url 'studio:workspace_media_models' prompt.scene.episode.project.workspace_id %}"{% if not can_edit %} disabled{% endif %}>{% for model in ai_models %}<option value="{{ model.id }}" data-model-id="{{ model.model_id }}" data-provider="{{ model.provider|lower }}" data-media-type="{{ model.media_type }}"{% if model.id == prompt.ai_model_id %} selected{% endif %}>{{ model.name }}</option>{% endfor %}<option value="__add_media_model__">+ Add model...</option></select></label>
           <label>Type<select name="prompt_type" data-prompt-type{% if not can_edit %} disabled{% endif %}>{% for value,label in prompt_types %}<option value="{{ value }}"{% if value == prompt.prompt_type %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
         </div>
         <div class="prompt-status-row"><label>Status<select name="status" data-prompt-status{% if not can_edit %} disabled{% endif %}>{% for value,label in prompt_statuses %}<option value="{{ value }}"{% if value == prompt.status %} selected{% endif %}>{{ label }}</option>{% endfor %}</select></label><label>Status Comment<textarea name="status_comment" rows="2" data-prompt-status-comment{% if not can_edit %} readonly{% endif %}>{{ prompt.status_comment }}</textarea></label></div>
@@ -60,17 +60,31 @@
     {% endif %}
 
     {% if prompt.prompt_type == "IMAGE" and can_use_ai %}
-    <section class="prompt-image-generation" aria-labelledby="prompt-image-generation-{{ prompt.id }}">
+    <section class="prompt-image-generation" aria-labelledby="prompt-image-generation-{{ prompt.id }}" data-image-generation-panel data-effective-model="{% if prompt.ai_model.provider|lower == 'openai' and prompt.ai_model.media_type == 'IMAGE' %}{{ prompt.ai_model.model_id }}{% elif prompt.scene.episode.project.workspace.default_image_model %}{{ prompt.scene.episode.project.workspace.default_image_model.model_id }}{% endif %}">
       <div class="prompt-image-generation-copy">
         <span class="accent-tag warning">AI IMAGE</span>
-        <div><h3 id="prompt-image-generation-{{ prompt.id }}">Generate image</h3><p>Выберите референсные фото для промта. Можно прикрепить до трех изображений; они будут переданы выбранной модели OpenAI.</p></div>
+        <div><h3 id="prompt-image-generation-{{ prompt.id }}">Generate image</h3><p>Choose reference images for the prompt. The exact current editor text and the settings below will be copied into a review window before anything is sent.</p></div>
       </div>
-      <div class="prompt-image-generation-actions">
-        {% if can_edit %}<button class="secondary" type="button" data-dialog-open="prompt-assets-{{ prompt.id }}">Choose references</button>{% endif %}
-        <button class="ai-generate-button" type="button" data-prompt-generate-image data-url="{% url 'studio:prompt_generate_image' prompt.id %}" title="Generate with the selected OpenAI model and attached references">Generate image</button>
+      <div class="prompt-image-settings">
+        <label>Frame<select data-image-frame><option value="auto">Auto</option><option value="square">Square</option><option value="landscape">Landscape</option><option value="portrait">Portrait</option></select></label>
+        <label>Resolution<select data-image-size><option value="auto">Auto</option><option value="1024x1024">1024 x 1024</option><option value="1536x1024">1536 x 1024</option><option value="1024x1536">1024 x 1536</option><option value="2048x2048">2048 x 2048 (2K)</option><option value="2048x1152">2048 x 1152 (2K)</option><option value="3840x2160">3840 x 2160 (4K)</option><option value="2160x3840">2160 x 3840 (4K)</option></select></label>
+        <label>Quality<select data-image-quality><option value="auto">Auto</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label>
+        <label>File format<select data-image-format><option value="png">PNG</option><option value="jpeg">JPEG</option><option value="webp">WebP</option></select></label>
+        <label>Compression<input type="number" min="0" max="100" value="90" data-image-compression></label>
+        <label>Background<select data-image-background><option value="auto">Auto</option><option value="opaque">Opaque</option><option value="transparent">Transparent</option></select></label>
+        <label>Moderation<select data-image-moderation><option value="auto">Standard</option><option value="low">Low</option></select></label>
       </div>
-      <div class="prompt-image-generation-meta"><span><b>Model</b> {% if prompt.ai_model.provider|lower == 'openai' %}{{ prompt.ai_model.model_id }}{% elif prompt.scene.episode.project.workspace.default_image_model %}{{ prompt.scene.episode.project.workspace.default_image_model.model_id }}{% else %}Not configured{% endif %}</span><span><b>References</b> {{ prompt.generation_reference_count }} / 3</span></div>
+      <div class="prompt-image-generation-footer"><div class="prompt-image-generation-meta"><span><b>Model</b> {% if prompt.ai_model.provider|lower == 'openai' and prompt.ai_model.media_type == 'IMAGE' %}{{ prompt.ai_model.model_id }}{% elif prompt.scene.episode.project.workspace.default_image_model %}{{ prompt.scene.episode.project.workspace.default_image_model.model_id }}{% else %}Not configured{% endif %}</span><span><b>References</b> {{ prompt.generation_reference_count }} / 3</span></div><div class="prompt-image-generation-actions">{% if can_edit %}<button class="secondary" type="button" data-dialog-open="prompt-assets-{{ prompt.id }}">Choose references</button>{% endif %}<button class="generate-image-review" type="button" data-image-review>Review request</button></div></div>
     </section>
+    <dialog class="confirmation-dialog image-generation-dialog" data-image-generation-dialog>
+      <div class="image-generation-dialog-head"><div><span class="accent-tag success">OPENAI REQUEST</span><h2>Review image generation</h2></div><button class="icon-button secondary" type="button" data-image-generation-cancel aria-label="Close">&#x2715;</button></div>
+      <p class="muted">This exact information will be sent to OpenAI. Confirm the prompt and reference images before continuing.</p>
+      <label>Exact prompt to send<textarea rows="8" data-image-request-prompt></textarea></label>
+      <button class="secondary copy-request-prompt" type="button" data-image-copy-prompt>Copy prompt</button>
+      <dl class="image-request-summary"><div><dt>Model</dt><dd data-image-request-model></dd></div><div><dt>Resolution</dt><dd data-image-request-size></dd></div><div><dt>Quality</dt><dd data-image-request-quality></dd></div><div><dt>Format</dt><dd data-image-request-format></dd></div><div><dt>Background</dt><dd data-image-request-background></dd></div><div><dt>Moderation</dt><dd data-image-request-moderation></dd></div></dl>
+      <div class="image-request-references"><strong>Attached reference images ({{ prompt.generation_reference_count }})</strong><div>{% for asset in prompt.reference_assets.all %}{% if asset.thumbnail and asset.kind != 'GENERATION_OUTPUT' %}<figure><img src="{% url 'studio_api:asset_thumbnail' asset.id %}" alt="{{ asset.original_filename }}"><figcaption>{{ asset.original_filename }}</figcaption></figure>{% endif %}{% empty %}<p class="muted">No reference images attached</p>{% endfor %}</div></div>
+      <div class="dialog-actions"><button class="secondary" type="button" data-image-generation-cancel>Cancel</button><button class="send-image-request" type="button" data-prompt-generate-image data-url="{% url 'studio:prompt_generate_image' prompt.id %}">Send to OpenAI</button></div>
+    </dialog>
     {% endif %}
     <div class="prompt-reference-heading"><strong>Reference images and generated outputs</strong><span class="muted">References are sent to OpenAI; generated outputs show their model</span></div>
     <div class="prompt-assets asset-grid">
