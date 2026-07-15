@@ -1140,13 +1140,21 @@ class StudioWebEditingAndImagesTests(TestCase):
 
     def test_project_sections_are_collapsible_and_can_be_hidden(self):
         self.client.force_login(self.owner)
+        self.project.description = "Description"
+        self.project.concept = "Concept"
+        self.project.publication_info = "Publication details"
+        self.project.save(update_fields=["description", "concept", "publication_info", "updated_at"])
         detail = self.client.get(f"/studio/projects/{self.project.id}/")
+        content = detail.content.decode()
         self.assertContains(detail, 'data-project-section="service"')
         self.assertContains(detail, 'data-project-section="music"')
         self.assertContains(detail, 'data-project-section="legal"')
         self.assertContains(detail, 'data-project-section="characters" open')
         self.assertContains(detail, 'data-project-section="episodes" open')
         self.assertContains(detail, "Add and edit tracks in Edit Project")
+        self.assertContains(detail, "Publication details")
+        self.assertLess(content.index("Concept"), content.index("Project information"))
+        self.assertLess(content.index("Recommended tracks"), content.index('data-media-library'))
         settings = self.client.get(f"/studio/projects/{self.project.id}/settings/")
         self.assertContains(settings, "Do not show these blocks")
         response = self.client.post(
@@ -1189,6 +1197,9 @@ class StudioWebEditingAndImagesTests(TestCase):
                 page = self.client.get(f"/studio/projects/{self.project.id}/")
                 self.assertContains(page, "episode-cover-strip")
                 self.assertContains(page, "episode-b.png")
+                self.assertContains(page, "episode-cover-add-tile")
+                self.assertContains(page, "data-image-preview")
+                self.assertContains(page, f'data-dialog-open="{self.episode.id}-cover-picker"')
 
     def test_episode_cover_metadata_can_be_updated_inline(self):
         import tempfile
@@ -1233,6 +1244,7 @@ class StudioWebEditingAndImagesTests(TestCase):
         self.assertContains(editor, "data-preserve-position")
         self.assertNotContains(editor, 'class="panel project-edit-form" data-stay-on-save')
         self.assertContains(editor, "data-remove-track")
+        self.assertContains(editor, "Track removed. Save to apply.")
         response = self.client.post(
             f"/studio/projects/{self.project.id}/edit/",
             {
