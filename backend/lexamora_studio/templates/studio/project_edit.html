@@ -1,0 +1,18 @@
+{% extends "studio/base.html" %}
+{% block content %}
+<p class="project-breadcrumb"><a href="{% url 'studio:project_detail' project.id %}">&larr; Project {{ project.title }}</a></p>
+<h1>Edit Project</h1>
+<form method="post" class="panel project-edit-form" data-stay-on-save>{% csrf_token %}
+  {{ form.non_field_errors }}
+  <div class="project-edit-grid">{% for field in form %}<label>{{ field.label }}{{ field }}{{ field.errors }}</label>{% endfor %}</div>
+  <section id="recommended-tracks" class="project-tracks-editor">
+    <div class="toolbar"><h2>Recommended tracks</h2><button class="icon-button secondary" type="button" data-add-track title="Add recommended track" aria-label="Add recommended track">+</button></div>
+    {{ track_formset.management_form }}{{ track_formset.non_form_errors }}
+    <div class="track-editor track-row track-head"><span>Main</span><span>Platform</span><span>Artist</span><span>Track</span><span>Link</span><span>Remove</span></div>
+    <div data-track-rows>{% for track_form in track_formset %}<div class="track-editor track-row">{{ track_form.id }}{{ track_form.position }}<span>{{ track_form.is_primary }}</span><span>{{ track_form.platform }}{{ track_form.platform.errors }}</span><span>{{ track_form.artist }}{{ track_form.artist.errors }}</span><span>{{ track_form.title }}{{ track_form.title.errors }}</span><span>{{ track_form.url }}{{ track_form.url.errors }}</span><span>{{ track_form.DELETE }}</span></div>{% endfor %}</div>
+    <template data-empty-track><div class="track-editor track-row">{{ track_formset.empty_form.id }}{{ track_formset.empty_form.position }}<span>{{ track_formset.empty_form.is_primary }}</span><span>{{ track_formset.empty_form.platform }}</span><span>{{ track_formset.empty_form.artist }}</span><span>{{ track_formset.empty_form.title }}</span><span>{{ track_formset.empty_form.url }}</span><span>{{ track_formset.empty_form.DELETE }}</span></div></template>
+  </section>
+  <div class="settings-form-actions"><a class="button secondary" href="{% url 'studio:project_detail' project.id %}">Cancel</a><button type="submit">Save</button></div>
+</form>
+<script>(()=>{const add=document.querySelector('[data-add-track]'),rows=document.querySelector('[data-track-rows]'),template=document.querySelector('[data-empty-track]'),total=document.querySelector('[name="tracks-TOTAL_FORMS"]');add?.addEventListener('click',()=>{const index=Number(total.value),html=template.innerHTML.replaceAll('__prefix__',String(index));rows.insertAdjacentHTML('beforeend',html);total.value=String(index+1);rows.lastElementChild?.querySelector('input:not([type=hidden]),select')?.focus()})})();</script>
+{% endblock %}

@@ -1089,15 +1089,19 @@ class StudioWebEditingAndImagesTests(TestCase):
         self.client.force_login(self.owner)
         response = self.client.post(
             f"/studio/projects/{self.project.id}/edit/",
-            {"project_type": "SERIES", "title": "After", "concept": "Updated", "original_language": "ru", "translation_languages": "en, pl", "status": "DRAFT"},
+            {
+                "project_type": "SERIES", "title": "After", "concept": "Updated", "status": "DRAFT",
+                "tracks-TOTAL_FORMS": "0", "tracks-INITIAL_FORMS": "0",
+                "tracks-MIN_NUM_FORMS": "0", "tracks-MAX_NUM_FORMS": "1000",
+            },
         )
-        self.assertRedirects(response, f"/studio/projects/{self.project.id}/")
+        self.assertRedirects(response, f"/studio/projects/{self.project.id}/edit/")
         self.project.refresh_from_db()
         self.assertEqual(self.project.title, "After")
         self.assertEqual(self.project.translation_languages, ["en"])
         self.assertTrue(Revision.objects.filter(entity_id=self.project.id, operation="UPDATE").exists())
 
-    def test_project_settings_save_languages_template_and_recommended_track(self):
+    def test_project_settings_save_languages_and_template(self):
         from .models import RecommendedTrack
 
         self.client.force_login(self.owner)
@@ -1107,6 +1111,18 @@ class StudioWebEditingAndImagesTests(TestCase):
                 "original_language": "RU", "documentation_language": "RU",
                 "dialogue_language": "PL", "prompt_language": "EN",
                 "translation_languages": "pl, en", "prompt_template": "No music.",
+            },
+        )
+        self.assertRedirects(response, f"/studio/projects/{self.project.id}/settings/")
+        self.project.refresh_from_db()
+        self.assertEqual((self.project.documentation_language, self.project.dialogue_language, self.project.prompt_language), ("RU", "PL", "EN"))
+        self.assertEqual(self.project.prompt_template, "No music.")
+        edit = self.client.post(
+            f"/studio/projects/{self.project.id}/edit/",
+            {
+                "project_type": "SERIES", "title": self.project.title, "description": "",
+                "concept": "", "rights_holder": "", "publication_info": "",
+                "status": "DRAFT", "status_comment": "",
                 "tracks-TOTAL_FORMS": "1", "tracks-INITIAL_FORMS": "0",
                 "tracks-MIN_NUM_FORMS": "0", "tracks-MAX_NUM_FORMS": "1000",
                 "tracks-0-is_primary": "on", "tracks-0-platform": "Spotify",
@@ -1114,16 +1130,51 @@ class StudioWebEditingAndImagesTests(TestCase):
                 "tracks-0-url": "https://example.com/track", "tracks-0-position": "0",
             },
         )
-        self.assertRedirects(response, f"/studio/projects/{self.project.id}/settings/")
-        self.project.refresh_from_db()
-        self.assertEqual((self.project.documentation_language, self.project.dialogue_language, self.project.prompt_language), ("RU", "PL", "EN"))
-        self.assertEqual(self.project.prompt_template, "No music.")
+        self.assertRedirects(edit, f"/studio/projects/{self.project.id}/edit/")
         track = RecommendedTrack.objects.get(project=self.project)
         self.assertTrue(track.is_primary)
         self.assertEqual((track.platform, track.artist, track.title), ("Spotify", "Artist", "Track"))
         detail = self.client.get(f"/studio/projects/{self.project.id}/")
         self.assertContains(detail, "Recommended tracks")
         self.assertContains(detail, "No description yet.")
+
+    def test_episode_supports_multiple_covers_and_one_avatar(self):
+        import tempfile
+        from pathlib import Path
+        from .models import Asset
+        from .storage import create_asset
+
+        self.client.force_login(self.owner)
+        with tempfile.TemporaryDirectory() as directory:
+            with self.settings(STUDIO_PRIVATE_MEDIA_ROOT=Path(directory)):
+                first = create_asset(user=self.owner, workspace=self.workspace, project=self.project, uploaded=self.image_file("episode-a.png"), kind=Asset.Kind.OTHER)
+                second = create_asset(user=self.owner, workspace=self.workspace, project=self.project, uploaded=self.image_file("episode-b.png", "#934fc4"), kind=Asset.Kind.OTHER)
+                for asset in (first, second):
+                    response = self.client.post(f"/studio/assets/attach/episode/{self.episode.id}/", {"asset_id": asset.id})
+                    self.assertEqual(response.status_code, 302)
+                avatar = self.client.post(f"/studio/assets/attach/episode_avatar/{self.episode.id}/", {"asset_id": second.id})
+                self.assertEqual(avatar.status_code, 302)
+                self.episode.refresh_from_db()
+                self.assertEqual(self.episode.cover_assets.count(), 2)
+                self.assertEqual(self.episode.avatar_asset_id, second.id)
+                page = self.client.get(f"/studio/projects/{self.project.id}/")
+                self.assertContains(page, "Episode covers")
+                self.assertContains(page, "episode-b.png")
+
+    def test_language_names_only_appear_for_scene_title_and_dialogue_speaker(self):
+        from .models import DialogueLine
+
+        line = DialogueLine.objects.create(
+            scene=self.scene, speaker="Hero", text="Hello",
+            created_by=self.owner, updated_by=self.owner,
+        )
+        self.client.force_login(self.owner)
+        scene_page = self.client.get(f"/studio/scenes/{self.scene.id}/")
+        self.assertEqual(scene_page.content.decode().count("Documentation Language <b"), 1)
+        self.assertContains(scene_page, f'/studio/dialogue/{line.id}/edit/')
+        dialogue_page = self.client.get(f"/studio/dialogue/{line.id}/edit/")
+        self.assertEqual(dialogue_page.content.decode().count("Documentation Language <b"), 1)
+        self.assertContains(dialogue_page, "Status Comment")
 
     def test_project_language_change_requires_confirmation_and_propagates(self):
         from .models import AiModelProfile, DialogueLine, Prompt
@@ -2724,6 +2775,12 @@ class StudioAssetLifecycleTests(TestCase):
                 self.assertTrue(Asset.objects.filter(id=asset.id, workspace=self.workspace).exists())
                 self.assertFalse(asset.projects.filter(id=self.project.id).exists())
                 self.assertIsNone(asset.project_id)
+
+                repeated = self.client.post(
+                    f"/studio/assets/{asset.id}/detach/project/{self.project.id}/",
+                    {"next": f"/studio/projects/{self.project.id}/#images"},
+                )
+                self.assertEqual(repeated.status_code, 302)
 
                 attached = self.client.post(
                     f"/studio/assets/attach/project/{self.project.id}/",

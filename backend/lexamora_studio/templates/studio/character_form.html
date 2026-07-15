@@ -2,7 +2,7 @@
 {% block content %}
 <p class="muted"><a href="{% url 'studio:project_detail' project.id %}">&larr; Project {{ project.title }}</a></p>
 <h1>{{ title }}</h1>
-<form method="post" enctype="multipart/form-data" class="panel localized-form">{% csrf_token %}
+<form method="post" enctype="multipart/form-data" class="panel localized-form" data-stay-on-save>{% csrf_token %}
   {{ form.non_field_errors }}
   <section class="localized-group" data-localized-group data-source-role="documentation" data-translate-url="{{ translate_url }}">
     <header><h2>Name</h2><button class="secondary" type="button" data-translate-dependent>Translate dependent fields</button><span class="save-state" data-translate-state></span></header>

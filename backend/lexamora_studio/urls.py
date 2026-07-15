@@ -58,6 +58,7 @@ urlpatterns = [
     path("characters/<uuid:character_id>/images/new/", views.character_image_upload, name="character_image_upload"),
     path("projects/<uuid:project_id>/episodes/new/", views.episode_create, name="episode_create"),
     path("episodes/<uuid:episode_id>/edit/", views.episode_edit, name="episode_edit"),
+    path("episodes/<uuid:episode_id>/images/new/", views.episode_image_upload, name="episode_image_upload"),
     path("episodes/<uuid:episode_id>/scenes/new/", views.scene_create, name="scene_create"),
     path("episodes/<uuid:episode_id>/scenes/reorder/", views.episode_scene_reorder, name="episode_scene_reorder"),
     path("scenes/<uuid:scene_id>/", views.scene_detail, name="scene_detail"),

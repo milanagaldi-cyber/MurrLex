@@ -690,7 +690,7 @@ def _edit_entity(request, *, item, form_class, workspace, title, success_url):
     return render(request, "studio/entity_form.html", {"form": form, "title": title, "submit_label": "Save changes"})
 
 
-def _image_upload(request, *, target, workspace, title, success_url, kind, project=None, scene=None, character=None):
+def _image_upload(request, *, target, workspace, title, success_url, kind, project=None, scene=None, character=None, episode=None):
     if not has_object_capability(request.user, target, "edit"):
         return HttpResponseForbidden("Edit permission is required.")
     form = MultipleImageUploadForm(request.POST or None, request.FILES or None, limit=10)
@@ -705,6 +705,8 @@ def _image_upload(request, *, target, workspace, title, success_url, kind, proje
             else:
                 uploaded_count += 1
                 first_asset = first_asset or asset
+                if episode is not None:
+                    episode.cover_assets.add(asset)
         image_role = request.POST.get("image_role", "")
         if first_asset and image_role == "workspace_avatar" and isinstance(target, Workspace):
             target.avatar_asset = first_asset
@@ -718,6 +720,10 @@ def _image_upload(request, *, target, workspace, title, success_url, kind, proje
             target.cover_asset = first_asset
             target.updated_by = request.user
             target.save(update_fields=["cover_asset", "updated_by", "updated_at"])
+        elif first_asset and image_role == "episode_avatar" and isinstance(target, Episode):
+            target.avatar_asset = first_asset
+            target.updated_by = request.user
+            target.save(update_fields=["avatar_asset", "updated_by", "updated_at"])
         if uploaded_count:
             messages.success(request, f"Uploaded {uploaded_count} image{'s' if uploaded_count != 1 else ''}.")
         if uploaded_count or form.cleaned_data["file"]:
@@ -743,6 +749,8 @@ def _accessible_workspace_images(user, workspace):
         Prefetch("referenced_by_prompts", queryset=Prompt.objects.select_related("scene__episode")),
         "project_cover_for",
         Prefetch("character_avatar_for", queryset=Character.objects.select_related("project")),
+        Prefetch("cover_for_episodes", queryset=Episode.objects.select_related("project")),
+        Prefetch("episode_avatar_for", queryset=Episode.objects.select_related("project")),
     ).distinct().order_by("-created_at")
 
 
@@ -773,19 +781,33 @@ def project_edit(request, project_id):
     item = get_object_or_404(accessible_projects(request.user), id=project_id)
     if not has_object_capability(request.user, item, "edit"):
         return HttpResponseForbidden("Edit permission is required.")
+    TrackFormSet = inlineformset_factory(
+        Project, RecommendedTrack, form=RecommendedTrackForm, extra=0, can_delete=True,
+    )
     form = ProjectForm(request.POST or None, instance=item)
-    if request.method == "POST" and form.is_valid():
-        item = form.save(commit=False)
-        item.updated_by = request.user
-        item.full_clean()
-        item.save()
-        record_revision(instance=item, user=request.user, operation="UPDATE")
+    track_formset = TrackFormSet(request.POST or None, instance=item, prefix="tracks")
+    if request.method == "POST" and form.is_valid() and track_formset.is_valid():
+        with transaction.atomic():
+            item = form.save(commit=False)
+            item.updated_by = request.user
+            item.full_clean()
+            item.save()
+            tracks = track_formset.save(commit=False)
+            for removed in track_formset.deleted_objects:
+                removed.delete()
+            for position, track in enumerate(tracks):
+                track.project = item
+                track.position = position
+                if not track.created_by_id:
+                    track.created_by = request.user
+                track.updated_by = request.user
+                track.save()
+            record_revision(instance=item, user=request.user, operation="UPDATE")
         messages.success(request, "Project saved.")
-        return redirect("studio:project_detail", project_id=item.id)
-    return render(request, "studio/entity_form.html", {
-        "form": form,
-        "title": "Edit project",
-        "submit_label": "Save changes",
+        return redirect("studio:project_edit", project_id=item.id)
+    return render(request, "studio/project_edit.html", {
+        "project": item, "form": form, "track_formset": track_formset,
+        **_project_header_context(request.user, item),
     })
 
 
@@ -794,29 +816,15 @@ def project_settings(request, project_id):
     project = get_object_or_404(accessible_projects(request.user).select_related("workspace"), id=project_id)
     if not has_project_capability(request.user, project, "edit"):
         return HttpResponseForbidden("Edit permission is required.")
-    TrackFormSet = inlineformset_factory(
-        Project, RecommendedTrack, form=RecommendedTrackForm, extra=1, can_delete=True,
-    )
     old_language = (project.original_language or "EN").strip().upper()
     form = ProjectSettingsForm(request.POST or None, instance=project)
-    track_formset = TrackFormSet(request.POST or None, instance=project, prefix="tracks")
-    if request.method == "POST" and form.is_valid() and track_formset.is_valid():
+    if request.method == "POST" and form.is_valid():
         new_language = form.cleaned_data["original_language"]
         with transaction.atomic():
             project = form.save(commit=False)
             project.updated_by = request.user
             project.full_clean()
             project.save()
-            tracks = track_formset.save(commit=False)
-            for removed in track_formset.deleted_objects:
-                removed.delete()
-            for position, track in enumerate(tracks):
-                track.project = project
-                track.position = position
-                if not track.created_by_id:
-                    track.created_by = request.user
-                track.updated_by = request.user
-                track.save()
             record_revision(instance=project, user=request.user, operation="SETTINGS_UPDATE")
             if new_language != old_language:
                 counts = propagate_project_original_language(project=project, language=new_language, user=request.user)
@@ -836,7 +844,7 @@ def project_settings(request, project_id):
             messages.success(request, "Project settings saved.")
         return redirect("studio:project_settings", project_id=project.id)
     return render(request, "studio/project_settings.html", {
-        "project": project, "form": form, "track_formset": track_formset,
+        "project": project, "form": form,
         **_project_header_context(request.user, project),
     })
 
@@ -912,6 +920,14 @@ def asset_attach(request, scope, owner_id):
         )
         project = owner.project
         workspace = project.workspace
+    elif scope in {"episode", "episode_avatar"}:
+        owner = get_object_or_404(
+            Episode.objects.select_related("project__workspace").filter(
+                project__in=accessible_projects(request.user)
+            ), id=owner_id,
+        )
+        project = owner.project
+        workspace = project.workspace
     else:
         return HttpResponseForbidden("Unsupported image attachment scope.")
     permitted = (
@@ -942,6 +958,13 @@ def asset_attach(request, scope, owner_id):
         owner.save(update_fields=["cover_asset", "updated_by", "updated_at"])
     elif scope == "project":
         pass
+    elif scope == "episode":
+        owner.cover_assets.add(asset)
+    elif scope == "episode_avatar":
+        owner.cover_assets.add(asset)
+        owner.avatar_asset = asset
+        owner.updated_by = request.user
+        owner.save(update_fields=["avatar_asset", "updated_by", "updated_at"])
     elif scope == "scene":
         owner.reference_assets.add(asset)
     else:
@@ -1073,6 +1096,20 @@ def character_image_upload(request, character_id):
 def scene_image_upload(request, scene_id):
     scene = get_object_or_404(Scene.objects.select_related("episode__project__workspace").filter(episode__project__in=accessible_projects(request.user)), id=scene_id)
     return _image_upload(request, target=scene, workspace=scene.episode.project.workspace, title="Upload scene image", success_url=lambda value: ("studio:scene_detail", value.id), kind=Asset.Kind.SCENE_IMAGE, project=scene.episode.project, scene=scene)
+
+
+@login_required
+def episode_image_upload(request, episode_id):
+    episode = get_object_or_404(
+        Episode.objects.select_related("project__workspace").filter(
+            project__in=accessible_projects(request.user)
+        ), id=episode_id,
+    )
+    return _image_upload(
+        request, target=episode, workspace=episode.project.workspace,
+        title="Upload episode covers", success_url=lambda value: ("studio:project_detail", value.project_id),
+        kind=Asset.Kind.OTHER, project=episode.project, episode=episode,
+    )
 @login_required
 def docx_import_create(request, workspace_id):
     workspace = get_object_or_404(accessible_workspaces(request.user), id=workspace_id)
@@ -1202,7 +1239,7 @@ def entity_move(request, entity_type, entity_id, direction):
 @login_required
 def project_detail(request, project_id):
     project = get_object_or_404(
-        accessible_projects(request.user).select_related("workspace", "created_by", "updated_by").prefetch_related("media_assets", "assets", "characters__avatar_asset", "characters__reference_assets", "episodes__scenes", "memberships__user", "recommended_tracks"),
+        accessible_projects(request.user).select_related("workspace", "created_by", "updated_by").prefetch_related("media_assets", "assets", "characters__avatar_asset", "characters__reference_assets", "episodes__avatar_asset", "episodes__cover_assets", "episodes__scenes", "memberships__user", "recommended_tracks"),
         id=project_id,
     )
     inherited = list(project.workspace.memberships.filter(status=WorkspaceMembership.Status.ACTIVE).exclude(user=project.workspace.owner).select_related("user"))
@@ -1957,6 +1994,8 @@ def _asset_usage_project_ids(asset):
     project_ids.update(prompt.scene.episode.project_id for prompt in asset.referenced_by_prompts.all())
     project_ids.update(project.id for project in asset.project_cover_for.all())
     project_ids.update(character.project_id for character in asset.character_avatar_for.all())
+    project_ids.update(episode.project_id for episode in asset.cover_for_episodes.all())
+    project_ids.update(episode.project_id for episode in asset.episode_avatar_for.all())
     return {value for value in project_ids if value}
 
 
@@ -1968,6 +2007,8 @@ def _asset_usage_count(asset):
         + len(asset.referenced_by_prompts.all())
         + len(asset.project_cover_for.all())
         + len(asset.character_avatar_for.all())
+        + len(asset.cover_for_episodes.all())
+        + len(asset.episode_avatar_for.all())
     )
 
 
@@ -2091,28 +2132,43 @@ def asset_detach(request, asset_id, scope, owner_id):
         project = get_object_or_404(accessible_projects(request.user), id=owner_id)
         if not has_project_capability(request.user, project, "edit"):
             return HttpResponseForbidden("Edit permission is required.")
-        if asset.projects.filter(id=project.id).exists() or asset.project_id == project.id:
-            for scene in Scene.objects.filter(episode__project=project, reference_assets=asset):
-                scene.reference_assets.remove(asset)
-            for character in Character.objects.filter(project=project, reference_assets=asset):
-                character.reference_assets.remove(asset)
-            for prompt in Prompt.objects.filter(scene__episode__project=project, reference_assets=asset):
-                prompt.reference_assets.remove(asset)
-            if project.cover_asset_id == asset.id:
-                project.cover_asset = None
-                project.updated_by = request.user
-                project.save(update_fields=["cover_asset", "updated_by", "updated_at"])
-            asset.projects.remove(project)
-            if asset.project_id == project.id:
-                asset.project = None
-            if asset.scene_id and asset.scene.episode.project_id == project.id:
-                asset.scene = None
-            if asset.character_id and asset.character.project_id == project.id:
-                asset.character = None
-            if asset.prompt_id and asset.prompt.scene.episode.project_id == project.id:
-                asset.prompt = None
-            asset.kind = Asset.Kind.OTHER
-            detached = True
+        for scene in Scene.objects.filter(episode__project=project, reference_assets=asset):
+            scene.reference_assets.remove(asset)
+        for character in Character.objects.filter(project=project, reference_assets=asset):
+            character.reference_assets.remove(asset)
+        for prompt in Prompt.objects.filter(scene__episode__project=project, reference_assets=asset):
+            prompt.reference_assets.remove(asset)
+        for episode in Episode.objects.filter(project=project, cover_assets=asset):
+            episode.cover_assets.remove(asset)
+            if episode.avatar_asset_id == asset.id:
+                episode.avatar_asset = None
+                episode.updated_by = request.user
+                episode.save(update_fields=["avatar_asset", "updated_by", "updated_at"])
+        if project.cover_asset_id == asset.id:
+            project.cover_asset = None
+            project.updated_by = request.user
+            project.save(update_fields=["cover_asset", "updated_by", "updated_at"])
+        asset.projects.remove(project)
+        if asset.project_id == project.id:
+            asset.project = None
+        if asset.scene_id and asset.scene.episode.project_id == project.id:
+            asset.scene = None
+        if asset.character_id and asset.character.project_id == project.id:
+            asset.character = None
+        if asset.prompt_id and asset.prompt.scene.episode.project_id == project.id:
+            asset.prompt = None
+        asset.kind = Asset.Kind.OTHER
+        detached = True
+    elif scope == "episode":
+        episode = get_object_or_404(Episode.objects.filter(project__in=accessible_projects(request.user)), id=owner_id)
+        if not has_object_capability(request.user, episode, "edit"):
+            return HttpResponseForbidden("Edit permission is required.")
+        episode.cover_assets.remove(asset)
+        if episode.avatar_asset_id == asset.id:
+            episode.avatar_asset = None
+            episode.updated_by = request.user
+            episode.save(update_fields=["avatar_asset", "updated_by", "updated_at"])
+        detached = True
     if not detached:
         return HttpResponseForbidden("This image is not attached here.")
     asset.updated_by = request.user
@@ -2296,9 +2352,10 @@ def project_copy(request, project_id):
             visual_description_dialogue=character.visual_description_dialogue, position=character.position,
             created_by=request.user, updated_by=request.user,
         )
-    scene_map, prompt_map = {}, {}
+    episode_map, scene_map, prompt_map = {}, {}, {}
     for episode in source.episodes.prefetch_related("scenes__dialogue_lines", "scenes__prompts__blocks").all():
         new_episode = Episode.objects.create(project=copied, number=episode.number, title=episode.title, summary=episode.summary, position=episode.position, language=episode.language, created_by=request.user, updated_by=request.user)
+        episode_map[episode.id] = new_episode
         for scene in episode.scenes.all():
             new_scene = Scene.objects.create(
                 episode=new_episode, number=scene.number, title=scene.title, title_prompt=scene.title_prompt,
@@ -2359,6 +2416,15 @@ def project_copy(request, project_id):
         if old_avatar_id:
             new_character.avatar_asset_id = old_avatar_id
             new_character.save(update_fields=["avatar_asset", "updated_at"])
+    for old_episode_id, new_episode in episode_map.items():
+        old_episode = Episode.all_objects.get(id=old_episode_id)
+        covers = list(old_episode.cover_assets.all())
+        if covers:
+            new_episode.cover_assets.add(*covers)
+            copied.media_assets.add(*covers)
+        if old_episode.avatar_asset_id:
+            new_episode.avatar_asset_id = old_episode.avatar_asset_id
+            new_episode.save(update_fields=["avatar_asset", "updated_at"])
     if source.cover_asset_id:
         copied.cover_asset_id = source.cover_asset_id
         copied.media_assets.add(source.cover_asset_id)

@@ -9,11 +9,12 @@
       <a class="button secondary{% if request.resolver_match.url_name == 'translations' %} active{% endif %}" href="{% url 'studio:translations' project.id %}">Translations</a>
     </nav>
     {% if request.resolver_match.url_name == 'project_detail' %}<div class="project-command-bar">
-      {% if can_edit %}<a class="button secondary" href="{% url 'studio:project_edit' project.id %}" title="Edit Project">Edit</a><a class="icon-button secondary project-settings-link" href="{% url 'studio:project_settings' project.id %}" title="Project Settings" aria-label="Project Settings">&#9881;</a>{% endif %}
+      {% if can_edit %}<a class="button secondary" href="{% url 'studio:project_edit' project.id %}" title="Edit Project">Edit</a>{% endif %}
       {% if can_administer %}<button class="secondary" type="button" data-dialog-open="copy-project-dialog" title="Copy Project">Copy</button>{% endif %}
       {% if can_manage_project %}<a class="button secondary" href="{% url 'studio:project_access' project.id %}" title="Share Project">Share</a>{% endif %}
       {% if can_administer %}<form method="post" action="{% url 'studio:project_trash' project.id %}" data-confirm="Archive this project? It will remain in Archive until explicitly deleted.">{% csrf_token %}<button class="secondary" title="Archive Project">Archive</button></form>{% endif %}
       <details class="export-menu"><summary class="button secondary" title="Export Project">Export</summary><div class="export-menu-list"><a href="{% url 'studio:project_exports' project.id %}?format=pdf">Export PDF</a><a href="{% url 'studio:project_exports' project.id %}?format=docx">Export DOCX</a></div></details>
+      {% if can_edit %}<a class="icon-button secondary project-settings-link" href="{% url 'studio:project_settings' project.id %}" title="Project Settings" aria-label="Project Settings">&#9881;</a>{% endif %}
     </div>{% endif %}
   </div>
 </header>

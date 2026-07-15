@@ -7,7 +7,7 @@
   <div><h1>Workspace settings</h1><p>Central settings inherited by new projects and prompts.</p></div>
   <a class="button secondary" href="{% url 'studio:workspace_media_models' workspace.id %}">Generation models</a>
 </div>
-<form method="post" enctype="multipart/form-data" class="settings-grid">{% csrf_token %}
+<form method="post" enctype="multipart/form-data" class="settings-grid" data-stay-on-save>{% csrf_token %}
   <section class="panel settings-section workspace-primary-settings">
     <h2>Workspace</h2>{{ form.non_field_errors }}
     <div class="workspace-settings-layout">

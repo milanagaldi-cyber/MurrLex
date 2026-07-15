@@ -211,6 +211,10 @@ class Character(SoftDeleteModel):
 
 class Episode(SoftDeleteModel):
     project = models.ForeignKey(Project, on_delete=models.PROTECT, related_name="episodes")
+    avatar_asset = models.ForeignKey(
+        "Asset", on_delete=models.SET_NULL, related_name="episode_avatar_for", null=True, blank=True,
+    )
+    cover_assets = models.ManyToManyField("Asset", related_name="cover_for_episodes", blank=True)
     number = models.PositiveIntegerField(default=1)
     title = models.CharField(max_length=240)
     summary = models.TextField(blank=True)

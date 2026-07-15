@@ -25,7 +25,7 @@ VERSIONED_MODELS = {
     "lexamora_studio.workspace": (Workspace, ["name", "description", "avatar_asset"]),
     "lexamora_studio.project": (Project, ["title", "description", "concept", "original_language", "documentation_language", "dialogue_language", "prompt_language", "translation_languages", "prompt_template", "rights_holder", "publication_info", "status", "status_comment"]),
     "lexamora_studio.character": (Character, ["name", "name_prompt", "name_dialogue", "description", "description_prompt", "description_dialogue", "visual_description", "visual_description_prompt", "visual_description_dialogue", "position"]),
-    "lexamora_studio.episode": (Episode, ["number", "title", "summary", "position"]),
+    "lexamora_studio.episode": (Episode, ["number", "title", "summary", "position", "avatar_asset"]),
     "lexamora_studio.scene": (Scene, ["number", "title", "title_prompt", "title_dialogue", "hook", "hook_prompt", "hook_dialogue", "description", "description_prompt", "description_dialogue", "location", "location_prompt", "location_dialogue", "actions", "actions_prompt", "actions_dialogue", "performance_notes", "performance_notes_prompt", "performance_notes_dialogue", "position", "status", "status_comment"]),
     "lexamora_studio.dialogueline": (DialogueLine, ["speaker", "speaker_documentation", "speaker_prompt", "text", "text_documentation", "text_prompt", "language", "delivery", "delivery_documentation", "delivery_prompt", "position", "status", "status_comment"]),
     "lexamora_studio.prompt": (Prompt, [
