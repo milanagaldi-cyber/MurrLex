@@ -634,6 +634,10 @@ class StudioAiSuggestionTests(TestCase):
         self.prompt.content = "A production still"
         self.prompt.save(update_fields=["prompt_type", "content", "updated_at"])
         self.client.force_login(self.editor)
+        editor_page = self.client.get(f"/studio/scenes/{self.prompt.scene_id}/")
+        self.assertContains(editor_page, "data-image-request-status")
+        self.assertContains(editor_page, "1536 x 1024 - Landscape")
+        self.assertContains(editor_page, "1024 x 1536 - Portrait")
         with tempfile.TemporaryDirectory() as directory:
             with self.settings(STUDIO_PRIVATE_MEDIA_ROOT=Path(directory)):
                 reference_file = SimpleUploadedFile("reference.png", output.getvalue(), content_type="image/png")
