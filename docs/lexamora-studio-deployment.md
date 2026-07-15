@@ -30,6 +30,12 @@ settings remain authoritative. Real values stay on the server.
 8. Poll health, readiness and authenticated `/studio/`.
 9. Verify unauthenticated access redirects to login and cross-workspace IDs leak no data.
 
+The tracked service and reverse-proxy templates live in `deploy/systemd/` and
+`deploy/nginx/`. Image generation can legitimately take several minutes, so the
+Gunicorn worker and Nginx upstream read/send timeouts are aligned at 300 seconds.
+After changing either template, install it in `/etc`, run `systemctl daemon-reload`,
+validate Nginx with `nginx -t`, then restart Gunicorn and reload Nginx.
+
 ## Rollback
 
 Application rollback uses the previous Git commit only when migrations are

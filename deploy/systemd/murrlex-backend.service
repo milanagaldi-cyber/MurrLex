@@ -1,0 +1,16 @@
+[Unit]
+Description=MurrLex Django backend
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/MurrLex/backend
+EnvironmentFile=/opt/MurrLex/.env
+ExecStart=/opt/MurrLex/backend/.venv/bin/gunicorn make_mistake_backend.wsgi:application --bind 127.0.0.1:8001 --workers 2 --worker-class gthread --threads 4 --timeout 300
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
