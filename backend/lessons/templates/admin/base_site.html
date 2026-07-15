@@ -6,7 +6,8 @@
 {% block extrastyle %}
 {{ block.super }}
 <style>
-    :root {
+    :root,
+    html[data-theme="dark"] {
         color-scheme: dark;
         --primary: #111821;
         --secondary: #151e29;
@@ -607,8 +608,8 @@
             display: grid !important;
             grid-template-columns: minmax(0, 1fr);
             align-items: start;
-            height: max-content !important;
-            min-height: 170px !important;
+            height: auto !important;
+            min-height: 300px !important;
             box-sizing: border-box;
         }
         #branding {
@@ -655,7 +656,7 @@
         .murrlex-admin-subtitle { display: none; }
     }
     @media (max-width: 480px) {
-        #header { min-height: 295px !important; }
+        #header { height: auto !important; min-height: 400px !important; }
     }
     html[data-theme="light"] {
         color-scheme: light;
@@ -706,8 +707,368 @@
 
 {% block extrahead %}
 {{ block.super }}
+<style>
+    /* Loaded after Django's page-specific styles so changelists stay consistent. */
+    .change-list #content {
+        width: 100%;
+    }
+    .change-list #content-main {
+        position: relative;
+    }
+    .change-list .object-tools {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        min-height: 40px;
+        margin: -58px 0 18px;
+        z-index: 2;
+    }
+    .change-list .object-tools li {
+        margin: 0;
+    }
+    .change-list .object-tools a,
+    .change-list .object-tools a:link,
+    .change-list .object-tools a:visited {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 40px;
+        box-sizing: border-box;
+        padding: 0 14px;
+        border: 1px solid var(--accent);
+        border-radius: 8px;
+        background: var(--button-bg);
+        color: var(--button-fg) !important;
+        font-size: 12px;
+        font-weight: 850;
+    }
+    .change-list #changelist,
+    .change-list #changelist.filtered {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 268px;
+        align-items: start;
+        gap: 16px;
+        min-height: 0;
+        padding: 0;
+        overflow: visible;
+        border: 0;
+        border-radius: 0;
+        background: transparent;
+    }
+    .change-list #changelist .changelist-form-container {
+        display: grid;
+        gap: 12px;
+        min-width: 0;
+    }
+    .change-list #toolbar {
+        margin: 0;
+        padding: 10px;
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        background: var(--primary);
+    }
+    .change-list #changelist-search {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .change-list #changelist-search > div {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+        min-width: 0;
+    }
+    .change-list #changelist-search img {
+        flex: 0 0 18px;
+        width: 18px;
+        height: 18px;
+        margin: 0 2px;
+        opacity: 0.65;
+    }
+    .change-list #toolbar #searchbar {
+        flex: 1 1 320px;
+        width: min(520px, 100%);
+        max-width: 520px;
+        height: 40px;
+        box-sizing: border-box;
+        padding: 8px 11px;
+        margin: 0;
+        border-radius: 7px;
+        background: var(--admin-input-bg);
+    }
+    .change-list #toolbar form input[type="submit"] {
+        min-height: 40px;
+        padding: 0 14px;
+        border: 1px solid var(--border-color);
+        border-radius: 7px;
+        background: var(--secondary);
+        box-shadow: none;
+        color: var(--body-fg);
+        font-weight: 800;
+    }
+    .change-list #changelist-form {
+        min-width: 0;
+        overflow: hidden;
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        background: var(--primary);
+    }
+    .change-list #changelist .actions,
+    .change-list #changelist .filtered .actions {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 8px;
+        width: auto;
+        box-sizing: border-box;
+        padding: 10px 12px;
+        border: 0;
+        border-bottom: 1px solid var(--border-color);
+        background: var(--secondary);
+    }
+    .change-list #changelist .actions label {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        margin: 0;
+        color: var(--body-quiet-color);
+    }
+    .change-list #changelist .actions label:has(input[type="text"]) {
+        flex: 1 1 260px;
+    }
+    .change-list #changelist .actions input[type="text"] {
+        flex: 1 1 180px;
+        min-width: 120px;
+        height: 36px;
+        box-sizing: border-box;
+        padding: 0 9px;
+        border-radius: 7px;
+        background: var(--admin-input-bg);
+    }
+    .change-list #changelist .actions select {
+        min-width: 230px;
+        height: 36px;
+        margin: 0;
+        padding: 0 9px;
+        border-radius: 7px;
+        background: var(--admin-input-bg);
+    }
+    .change-list #changelist .actions .button {
+        height: 36px;
+        padding: 0 12px;
+        border-radius: 7px;
+        background: var(--admin-input-bg);
+        box-shadow: none;
+    }
+    .change-list #changelist .actions .action-counter {
+        margin: 0;
+        color: var(--body-quiet-color);
+    }
+    .change-list #changelist-form .results {
+        width: 100%;
+        margin: 0;
+        overflow-x: auto;
+        background: var(--primary);
+    }
+    .change-list #changelist table {
+        min-width: 820px;
+        margin: 0;
+        border: 0;
+        border-radius: 0;
+    }
+    .change-list #changelist table thead th {
+        height: 42px;
+        border-bottom: 1px solid var(--border-color);
+        background: var(--secondary);
+    }
+    .change-list #changelist table tbody tr:nth-child(odd) {
+        background: var(--admin-stripe-bg);
+    }
+    .change-list #changelist table tbody tr:nth-child(even) {
+        background: var(--primary);
+    }
+    .change-list #changelist table tbody tr:hover {
+        background: var(--admin-filter-hover-bg);
+    }
+    .change-list #changelist .paginator {
+        margin: 0;
+        padding: 11px 12px;
+        border: 0;
+        border-top: 1px solid var(--border-color);
+        border-radius: 0;
+        background: var(--primary);
+    }
+    .change-list #changelist-filter {
+        position: sticky;
+        top: 16px;
+        order: initial;
+        width: auto;
+        max-height: calc(100vh - 32px);
+        margin: 0;
+        overflow: auto;
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+        background: var(--primary);
+    }
+    .change-list #changelist-filter h2 {
+        position: sticky;
+        top: 0;
+        z-index: 1;
+        margin: 0;
+        padding: 12px 13px;
+        border-bottom: 1px solid var(--border-color);
+        background: var(--secondary);
+    }
+    .change-list #changelist-filter #changelist-filter-extra-actions {
+        margin: 0;
+        padding: 8px 10px;
+        border-bottom: 1px solid var(--border-color);
+    }
+    .change-list #changelist-filter #changelist-filter-extra-actions h3 {
+        margin: 0;
+        padding: 0;
+    }
+    .change-list #changelist-filter #changelist-filter-extra-actions a {
+        min-height: 32px;
+        padding: 4px 8px;
+    }
+    .change-list #changelist-filter details {
+        border-bottom: 1px solid var(--border-color);
+    }
+    .change-list #changelist-filter details:last-of-type {
+        border-bottom: 0;
+    }
+    .change-list #changelist-filter details > summary {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        min-height: 42px;
+        box-sizing: border-box;
+        margin: 0;
+        padding: 9px 11px;
+        color: var(--body-fg);
+        font-size: 13px;
+        font-weight: 800;
+        cursor: pointer;
+    }
+    .change-list #changelist-filter details > summary::before {
+        content: "+";
+        order: 2;
+        display: grid;
+        place-items: center;
+        flex: 0 0 22px;
+        width: 22px;
+        height: 22px;
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        color: var(--body-quiet-color);
+        font: 800 15px/1 var(--font-family-monospace);
+    }
+    .change-list #changelist-filter details[open] > summary::before {
+        content: "-";
+        border-color: var(--accent);
+        color: var(--link-fg);
+    }
+    .change-list #changelist-filter ul,
+    .change-list #changelist-filter ul:last-child {
+        display: grid;
+        gap: 3px;
+        margin: 0;
+        padding: 0 9px 10px;
+        border: 0;
+    }
+    .change-list #changelist-filter li,
+    .change-list #changelist-filter li.selected {
+        margin: 0;
+        padding: 0;
+        border: 0;
+        list-style: none;
+    }
+    .change-list #changelist-filter a,
+    .change-list #changelist-filter a:link,
+    .change-list #changelist-filter a:visited {
+        display: flex;
+        align-items: center;
+        min-height: 32px;
+        box-sizing: border-box;
+        padding: 5px 9px;
+        border: 1px solid transparent;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--body-quiet-color) !important;
+        font-size: 13px;
+        font-weight: 700;
+    }
+    .change-list #changelist-filter a:hover,
+    .change-list #changelist-filter a:focus-visible {
+        border-color: var(--border-color);
+        background: var(--admin-filter-hover-bg);
+        color: var(--body-loud-color) !important;
+        outline: none;
+    }
+    .change-list #changelist-filter li.selected a,
+    .change-list #changelist-filter li.selected a:link,
+    .change-list #changelist-filter li.selected a:visited {
+        border-color: var(--accent);
+        background: var(--admin-filter-active-bg);
+        color: var(--body-loud-color) !important;
+        box-shadow: inset 3px 0 0 var(--accent);
+    }
+    @media (max-width: 1100px) {
+        .change-list #changelist,
+        .change-list #changelist.filtered {
+            grid-template-columns: minmax(0, 1fr);
+        }
+        .change-list #changelist-filter {
+            position: static;
+            width: 100%;
+            max-height: none;
+            box-sizing: border-box;
+        }
+    }
+    @media (max-width: 700px) {
+        .change-list .object-tools {
+            justify-content: flex-start;
+            margin: 0 0 14px;
+        }
+        .change-list #changelist-search {
+            flex-wrap: wrap;
+        }
+        .change-list #changelist-search > div {
+            flex-wrap: wrap;
+        }
+        .change-list #toolbar #searchbar {
+            flex-basis: calc(100% - 30px);
+            width: calc(100% - 30px);
+            max-width: none;
+        }
+        .change-list #toolbar form input[type="submit"] {
+            margin-left: 30px;
+        }
+        .change-list #changelist .actions {
+            align-items: stretch;
+        }
+        .change-list #changelist .actions label {
+            flex: 1 1 100%;
+            flex-wrap: wrap;
+        }
+        .change-list #changelist .actions select {
+            flex: 1 1 220px;
+            min-width: 0;
+        }
+    }
+</style>
 <script>
     window.addEventListener("DOMContentLoaded", () => {
+        document.querySelectorAll("#changelist-filter details").forEach((section) => {
+            const selectedLabel = section.querySelector("li.selected a")?.textContent.trim().toLowerCase();
+            if (!selectedLabel || selectedLabel === "all") {
+                section.removeAttribute("open");
+            }
+        });
+
         const backButton = document.querySelector("[data-admin-history-back]");
         if (backButton) {
             backButton.addEventListener("click", () => {
