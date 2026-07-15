@@ -50,6 +50,8 @@
         --admin-input-bg: #0e141c;
         --admin-stripe-bg: #0f151d;
         --admin-focus-ring: rgba(24, 183, 255, 0.35);
+        --admin-filter-active-bg: rgba(24, 183, 255, 0.12);
+        --admin-filter-hover-bg: rgba(147, 164, 184, 0.08);
         --font-family-primary: Inter, Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         --font-family-monospace: "JetBrains Mono", "Fira Code", Consolas, monospace;
     }
@@ -359,6 +361,118 @@
         border-radius: 8px;
         overflow: hidden;
     }
+    #changelist-filter {
+        align-self: start;
+        width: auto;
+        min-width: 0;
+        margin: 0;
+        overflow: hidden;
+        border: 1px solid var(--border-color);
+        background: var(--primary);
+    }
+    #changelist-filter h2 {
+        margin: 0;
+        padding: 13px 14px;
+        border-bottom: 1px solid var(--border-color);
+        background: var(--secondary);
+        color: var(--primary-fg);
+        font-size: 12px;
+        font-weight: 850;
+        letter-spacing: 0;
+        text-transform: uppercase;
+    }
+    #changelist-filter details {
+        border-bottom: 1px solid var(--border-color);
+    }
+    #changelist-filter details:last-of-type {
+        border-bottom: 0;
+    }
+    #changelist-filter details > summary {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        min-height: 42px;
+        box-sizing: border-box;
+        margin: 0;
+        padding: 9px 12px;
+        color: var(--body-fg);
+        font-size: 13px;
+        font-weight: 800;
+        line-height: 1.3;
+        cursor: pointer;
+    }
+    #changelist-filter details > summary:hover,
+    #changelist-filter details > summary:focus-visible {
+        background: var(--admin-filter-hover-bg);
+        color: var(--body-loud-color);
+        outline: none;
+    }
+    #changelist-filter details > summary::before {
+        content: "+";
+        order: 2;
+        display: grid;
+        place-items: center;
+        flex: 0 0 22px;
+        width: 22px;
+        height: 22px;
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        color: var(--body-quiet-color);
+        font: 800 15px/1 var(--font-family-monospace);
+    }
+    #changelist-filter details[open] > summary::before {
+        content: "-";
+        color: var(--link-fg);
+        border-color: var(--accent);
+    }
+    #changelist-filter ul,
+    #changelist-filter ul:last-child {
+        display: grid;
+        gap: 4px;
+        margin: 0;
+        padding: 0 10px 12px;
+        border-bottom: 0;
+    }
+    #changelist-filter li,
+    #changelist-filter li.selected {
+        margin: 0;
+        padding: 0;
+        border: 0;
+        list-style: none;
+    }
+    #changelist-filter a,
+    #changelist-filter a:link,
+    #changelist-filter a:visited {
+        display: flex;
+        align-items: center;
+        min-height: 34px;
+        box-sizing: border-box;
+        padding: 6px 10px;
+        border: 1px solid transparent;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--body-quiet-color) !important;
+        font-size: 13px;
+        font-weight: 700;
+        line-height: 1.35;
+        word-break: break-word;
+    }
+    #changelist-filter a:hover,
+    #changelist-filter a:focus-visible {
+        border-color: var(--border-color);
+        background: var(--admin-filter-hover-bg);
+        color: var(--body-loud-color) !important;
+        outline: none;
+    }
+    #changelist-filter li.selected a,
+    #changelist-filter li.selected a:link,
+    #changelist-filter li.selected a:visited {
+        border-color: var(--accent);
+        background: var(--admin-filter-active-bg);
+        color: var(--body-loud-color) !important;
+        box-shadow: inset 3px 0 0 var(--accent);
+    }
     #nav-sidebar {
         width: 300px;
         margin-right: 24px;
@@ -527,6 +641,14 @@
             width: 100%;
             margin-right: 0;
         }
+        .change-list #changelist #changelist-filter {
+            display: block;
+            flex: 0 0 auto;
+            width: 100%;
+            max-width: none;
+            margin: 16px 0 0;
+            box-sizing: border-box;
+        }
     }
     @media (max-width: 360px) {
         #user-tools a, #user-tools button, #logout-form button { flex: 1 1 auto; }
@@ -576,6 +698,8 @@
         --admin-input-bg: #ffffff;
         --admin-stripe-bg: #f7fafc;
         --admin-focus-ring: rgba(8, 126, 175, 0.28);
+        --admin-filter-active-bg: rgba(8, 126, 175, 0.1);
+        --admin-filter-hover-bg: rgba(83, 101, 122, 0.08);
     }
 </style>
 {% endblock %}

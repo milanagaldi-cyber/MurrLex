@@ -4,6 +4,12 @@ server {
 
     add_header X-Robots-Tag "noindex, nofollow, noarchive" always;
 
+    location ^~ /static/ {
+        alias /opt/MurrLex/backend/staticfiles/;
+        access_log off;
+        expires 1h;
+    }
+
     location / {
         proxy_pass http://127.0.0.1:8001;
         proxy_set_header Host $host;
