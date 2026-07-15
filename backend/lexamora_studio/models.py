@@ -407,7 +407,7 @@ class DialogueLine(SoftDeleteModel):
 
 class Prompt(SoftDeleteModel):
     class Language(models.TextChoices):
-        BL = "BL", "BL"
+        BY = "BY", "BY"
         DE = "DE", "DE"
         EN = "EN", "EN"
         ES = "ES", "ES"

@@ -255,15 +255,12 @@ class DialogueLineForm(forms.ModelForm):
     def __init__(self, *args, project=None, **kwargs):
         super().__init__(*args, **kwargs)
         names = list(project.characters.order_by("position", "name").values_list("name", flat=True)) if project else []
-        current = [
-            getattr(self.instance, "speaker_documentation", ""),
-            getattr(self.instance, "speaker_prompt", ""),
-            getattr(self.instance, "speaker", ""),
-        ]
+        current = getattr(self.instance, "speaker_documentation", "")
         choices = [("", "Select character")]
-        choices.extend((name, name) for name in dict.fromkeys([*names, *filter(None, current)]))
-        for field_name in ("speaker_documentation", "speaker_prompt", "speaker"):
-            self.fields[field_name].widget = forms.Select(choices=choices)
+        choices.extend((name, name) for name in dict.fromkeys([*names, *([current] if current else [])]))
+        self.fields["speaker_documentation"].widget = forms.Select(choices=choices)
+        self.fields["speaker_prompt"].widget = forms.TextInput(attrs={"readonly": True})
+        self.fields["speaker"].widget = forms.TextInput(attrs={"readonly": True})
 
 
 class PromptForm(forms.ModelForm):

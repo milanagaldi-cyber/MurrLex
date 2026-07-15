@@ -183,7 +183,12 @@ def workspace_detail(request, workspace_id):
         "can_edit": has_capability(request.user, workspace, "edit"),
         "can_manage": has_capability(request.user, workspace, "manage_members"),
         "can_administer": is_workspace_owner_or_admin(request.user, workspace),
-        "imports": workspace.docx_imports.select_related("project")[:10],
+        "imports": workspace.docx_imports.filter(
+            archived_at__isnull=True, source_asset__deleted_at__isnull=True,
+        ).select_related("project", "source_asset", "requested_by"),
+        "archived_imports": workspace.docx_imports.filter(
+            archived_at__isnull=False, source_asset__deleted_at__isnull=True,
+        ).select_related("project", "source_asset", "archived_by"),
         "recycle_count": recycle_count,
         "archive_count": archive_count,
         "gallery_assets": workspace_assets,
@@ -259,8 +264,8 @@ def workspace_access(request, workspace_id):
     form = WorkspaceMembershipForm(request.POST or None, workspace=workspace)
     if request.method == "POST":
         action = request.POST.get("action", "save")
-        if action in {"remove", "exclude"} and not is_workspace_owner_or_admin(request.user, project.workspace):
-            return HttpResponseForbidden("Only a project owner or administrator can remove project access.")
+        if action in {"remove", "exclude"} and request.user.id != workspace.owner_id:
+            return HttpResponseForbidden("Only the workspace owner can remove workspace access.")
         if action == "remove":
             membership = get_object_or_404(WorkspaceMembership, workspace=workspace, id=request.POST.get("membership_id"))
             if membership.user_id == workspace.owner_id or membership.role == WorkspaceMembership.Role.OWNER:
@@ -282,7 +287,13 @@ def workspace_access(request, workspace_id):
                 notify_access_granted(user=form.user, entity_name=workspace.name, entity_kind="workspace", url=request.build_absolute_uri(reverse("studio:workspace_detail", kwargs={"workspace_id": workspace.id})), granted_by=request.user)
             messages.success(request, "Workspace access saved and inherited by its projects.")
             return redirect("studio:workspace_access", workspace_id=workspace.id)
-    return render(request, "studio/workspace_access.html", {"workspace": workspace, "form": form, "owner_membership": workspace.memberships.filter(user=workspace.owner).select_related("user").first(), "memberships": workspace.memberships.exclude(user=workspace.owner).select_related("user")})
+    return render(request, "studio/workspace_access.html", {
+        "workspace": workspace,
+        "form": form,
+        "owner_membership": workspace.memberships.filter(user=workspace.owner).select_related("user").first(),
+        "memberships": workspace.memberships.exclude(user=workspace.owner).select_related("user"),
+        "can_remove_access": request.user.id == workspace.owner_id,
+    })
 
 
 @login_required
@@ -799,7 +810,7 @@ def _project_header_context(user, project):
         "can_edit": has_project_capability(user, project, "edit"),
         "can_manage_project": has_project_capability(user, project, "manage_project"),
         "can_administer": is_workspace_owner_or_admin(user, project.workspace),
-        "can_remove_project_access": is_workspace_owner_or_admin(user, project.workspace),
+        "can_remove_project_access": user.id == project.workspace.owner_id,
     }
 
 
@@ -1080,7 +1091,7 @@ def episode_edit(request, episode_id):
         item.full_clean()
         item.save()
         record_revision(instance=item, user=request.user, operation="UPDATE")
-        messages.success(request, "Episode saved.")
+        messages.success(request, "Episode saved")
         return redirect("studio:episode_edit", episode_id=item.id)
     project_assets, workspace_assets = _picker_assets(request.user, item.project)
     return render(request, "studio/episode_edit.html", {
@@ -1255,6 +1266,57 @@ def docx_import_accept(request, import_id):
     project = accept_docx_import(draft=draft, user=request.user)
     messages.success(request, "DOCX accepted. Review and edit the imported project.")
     return redirect("studio:project_detail", project_id=project.id)
+
+
+@login_required
+def docx_import_archive(request, import_id):
+    document = get_object_or_404(
+        DocxImport.objects.select_related("workspace", "source_asset").filter(
+            workspace__in=accessible_workspaces(request.user),
+        ),
+        id=import_id,
+    )
+    if request.method != "POST" or not has_capability(request.user, document.workspace, "edit"):
+        return HttpResponseForbidden("Edit permission is required")
+    restore = request.POST.get("action") == "restore"
+    document.archived_at = None if restore else timezone.now()
+    document.archived_by = None if restore else request.user
+    document.save(update_fields=["archived_at", "archived_by"])
+    audit(
+        workspace=document.workspace,
+        actor=request.user,
+        action="DOCUMENT_RESTORED" if restore else "DOCUMENT_ARCHIVED",
+        instance=document.source_asset,
+        metadata={"importId": str(document.id)},
+    )
+    messages.success(request, "Document restored" if restore else "Document archived")
+    return HttpResponseRedirect(
+        reverse("studio:workspace_detail", kwargs={"workspace_id": document.workspace_id}) + "#documents"
+    )
+
+
+@login_required
+def docx_import_trash(request, import_id):
+    document = get_object_or_404(
+        DocxImport.objects.select_related("workspace", "source_asset").filter(
+            workspace__in=accessible_workspaces(request.user),
+        ),
+        id=import_id,
+    )
+    if request.method != "POST" or not has_capability(request.user, document.workspace, "edit"):
+        return HttpResponseForbidden("Edit permission is required")
+    trash_asset(asset=document.source_asset, user=request.user)
+    audit(
+        workspace=document.workspace,
+        actor=request.user,
+        action="DOCUMENT_TRASHED",
+        instance=document.source_asset,
+        metadata={"importId": str(document.id)},
+    )
+    messages.success(request, "Document moved to Recycle Bin")
+    return HttpResponseRedirect(
+        reverse("studio:workspace_detail", kwargs={"workspace_id": document.workspace_id}) + "#documents"
+    )
 @login_required
 def project_master(request, project_id):
     project = get_object_or_404(
@@ -1338,14 +1400,6 @@ def project_detail(request, project_id):
         "workspace_assets": workspace_assets,
         "gallery_assets": gallery_assets,
         "gallery_projects": [project],
-        "project_documents": project.source_imports.filter(
-            archived_at__isnull=True,
-            source_asset__deleted_at__isnull=True,
-        ).select_related("source_asset", "requested_by"),
-        "archived_documents": project.source_imports.filter(
-            archived_at__isnull=False,
-            source_asset__deleted_at__isnull=True,
-        ).select_related("source_asset", "archived_by"),
     })
 
 
@@ -1396,6 +1450,8 @@ def project_access(request, project_id):
     form = ProjectMembershipForm(request.POST or None, project=project)
     if request.method == "POST":
         action = request.POST.get("action", "save")
+        if action in {"remove", "exclude"} and request.user.id != project.workspace.owner_id:
+            return HttpResponseForbidden("Only the workspace owner can remove project access.")
         if action == "remove":
             membership = get_object_or_404(ProjectMembership, project=project, id=request.POST.get("membership_id"))
             if membership.user_id == project.workspace.owner_id:
@@ -1433,7 +1489,7 @@ def project_access(request, project_id):
         "form": form,
         "memberships": project.memberships.select_related("user"),
         "inherited_memberships": inherited,
-        "can_remove_access": is_workspace_owner_or_admin(request.user, project.workspace),
+        "can_remove_access": request.user.id == project.workspace.owner_id,
     })
 
 
@@ -3039,6 +3095,8 @@ def prompt_generate_image(request, prompt_id):
     except (ProviderError, ValidationError) as exc:
         message = "; ".join(exc.messages) if isinstance(exc, ValidationError) else str(exc)
         return JsonResponse({"error": message}, status=400)
+    except Exception:
+        return JsonResponse({"error": "Image generation returned an unexpected error"}, status=500)
     audit(
         workspace=project.workspace, actor=request.user, action="PROMPT_IMAGE_GENERATED",
         instance=prompt, metadata={"assetId": str(asset.id), "model": model},

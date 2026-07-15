@@ -92,8 +92,16 @@ def generate_image(prompt: str) -> tuple[bytes, str]:
         )
         _safe_response(response)
         payload = response.json()
-        encoded = str((payload.get("data") or [{}])[0].get("b64_json") or "")
-        image_bytes = base64.b64decode(encoded, validate=True)
+        result = (payload.get("data") or [{}])[0]
+        encoded = str(result.get("b64_json") or "")
+        if encoded:
+            image_bytes = base64.b64decode(encoded, validate=True)
+        elif result.get("url"):
+            download = requests.get(str(result["url"]), timeout=60)
+            _safe_response(download)
+            image_bytes = download.content
+        else:
+            image_bytes = b""
     except (requests.RequestException, ValueError, KeyError, IndexError) as exc:
         raise ProviderError("Image generation is unavailable.") from exc
     if not image_bytes:

@@ -2,7 +2,7 @@
 {% block content %}
 <p class="project-breadcrumb"><a href="{% url 'studio:project_detail' project.id %}">&larr; Project {{ project.title }}</a></p>
 <h1>Edit Project</h1>
-<form method="post" class="panel project-edit-form" data-preserve-position>{% csrf_token %}
+<form method="post" class="panel project-edit-form" data-preserve-position data-stay-on-save>{% csrf_token %}
   {{ form.non_field_errors }}
   <div class="project-edit-grid">{% for field in form %}<label>{{ field.label }}{{ field }}{{ field.errors }}</label>{% endfor %}</div>
   <section id="recommended-tracks" class="project-tracks-editor">
@@ -14,5 +14,5 @@
   </section>
   <div class="settings-form-actions"><a class="button secondary" href="{% url 'studio:project_detail' project.id %}">Cancel</a><button type="submit">Save</button></div>
 </form>
-<script>(()=>{const add=document.querySelector('[data-add-track]'),rows=document.querySelector('[data-track-rows]'),template=document.querySelector('[data-empty-track]'),total=document.querySelector('[name="tracks-TOTAL_FORMS"]');add?.addEventListener('click',()=>{const index=Number(total.value),html=template.innerHTML.replaceAll('__prefix__',String(index));rows.insertAdjacentHTML('beforeend',html);total.value=String(index+1);rows.lastElementChild?.querySelector('input:not([type=hidden]),select')?.focus()});rows?.addEventListener('click',event=>{const button=event.target.closest('[data-remove-track]');if(!button)return;const row=button.closest('.track-row'),remove=row?.querySelector('[name$="-DELETE"]');if(remove)remove.checked=true;if(row){row.hidden=true;row.setAttribute('aria-hidden','true')}window.studioToast?.('Track removed. Save to apply.')})})();</script>
+<script>(()=>{const add=document.querySelector('[data-add-track]'),rows=document.querySelector('[data-track-rows]'),template=document.querySelector('[data-empty-track]'),total=document.querySelector('[name="tracks-TOTAL_FORMS"]');add?.addEventListener('click',()=>{const index=Number(total.value),html=template.innerHTML.replaceAll('__prefix__',String(index));rows.insertAdjacentHTML('beforeend',html);total.value=String(index+1);rows.lastElementChild?.querySelector('input:not([type=hidden]),select')?.focus()});rows?.addEventListener('click',event=>{const button=event.target.closest('[data-remove-track]');if(!button)return;const row=button.closest('.track-row'),remove=row?.querySelector('[name$="-DELETE"]');if(remove)remove.checked=true;if(row){row.hidden=true;row.setAttribute('aria-hidden','true')}window.studioToast?.('Track removed - save to apply')})})();</script>
 {% endblock %}

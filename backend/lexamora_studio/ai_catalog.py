@@ -7,7 +7,7 @@ from .models import PromptTemplate, StudioTextModel
 
 
 PROMPT_LANGUAGES = (
-    ("BL", "BL"),
+    ("BY", "BY"),
     ("DE", "DE"),
     ("EN", "EN"),
     ("ES", "ES"),
@@ -17,7 +17,7 @@ PROMPT_LANGUAGES = (
     ("UA", "UA"),
 )
 PROMPT_LANGUAGE_NAMES = {
-    "BL": "Belarusian",
+    "BY": "Belarusian",
     "DE": "German",
     "EN": "English",
     "ES": "Spanish",

@@ -119,7 +119,7 @@ def preview_prompt_translation(
         before, supplied, after = source[:start], source[start:end], source[end:]
 
     task = (
-        f"Improve the supplied production prompt in {PROMPT_LANGUAGE_NAMES[target]} ({target}) without translating it."
+        "Improve the supplied production prompt in its original language without translating it."
         if prompt_improvement else
         f"Improve the supplied translation in {PROMPT_LANGUAGE_NAMES[target]} ({target})."
         if improve else
@@ -135,6 +135,7 @@ def preview_prompt_translation(
             "Make the prompt precise, coherent and useful for media generation.",
             "Correct grammar, punctuation and awkward phrasing without changing factual constraints.",
             "Return the complete improved prompt in the original language.",
+            "Never translate the prompt, even when project or prompt language metadata differs from the supplied text.",
         ])
     if scope == Prompt.TranslationScope.DIALOGUE:
         task = (

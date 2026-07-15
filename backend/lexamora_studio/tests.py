@@ -552,7 +552,7 @@ class StudioAiSuggestionTests(TestCase):
         self.assertContains(response, "Apply Translation")
         self.assertContains(response, "Improve Translation")
         self.assertContains(response, "data-prompt-toggle")
-        self.assertContains(response, '<option value="BL">BL</option>', html=True)
+        self.assertContains(response, '<option value="BY">BY</option>', html=True)
         self.assertContains(response, "gpt-5.4-mini")
         self.assertNotContains(response, "Mandatory template")
         self.assertNotContains(response, "Improve action")
@@ -600,6 +600,27 @@ class StudioAiSuggestionTests(TestCase):
         self.assertEqual(response.json()["content"], "A precise cinematic room.")
         provider_payload = json.loads(mocked_run_text.call_args.args[1])
         self.assertIn("without translating", provider_payload["task"])
+
+    @patch("lexamora_studio.views.generate_image")
+    def test_photo_prompt_generation_returns_asset_json(self, mocked_generate_image):
+        import io
+        import tempfile
+        from pathlib import Path
+        from PIL import Image
+
+        output = io.BytesIO()
+        Image.new("RGB", (48, 48), "#2a8b69").save(output, "PNG")
+        mocked_generate_image.return_value = (output.getvalue(), "gpt-image-1")
+        self.prompt.prompt_type = Prompt.Type.IMAGE
+        self.prompt.content = "A production still"
+        self.prompt.save(update_fields=["prompt_type", "content", "updated_at"])
+        self.client.force_login(self.editor)
+        with tempfile.TemporaryDirectory() as directory:
+            with self.settings(STUDIO_PRIVATE_MEDIA_ROOT=Path(directory)):
+                response = self.client.post(f"/studio/prompts/{self.prompt.id}/images/generate/")
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(response.json()["model"], "gpt-image-1")
+        self.assertTrue(response.json()["thumbnailUrl"])
 
     @patch("lexamora_studio.ai.run_text")
     def test_selected_text_preview_preserves_unselected_prompt(self, mocked_run_text):
@@ -1264,9 +1285,9 @@ class StudioWebEditingAndImagesTests(TestCase):
         self.client.force_login(self.owner)
         editor = self.client.get(f"/studio/projects/{self.project.id}/edit/")
         self.assertContains(editor, "data-preserve-position")
-        self.assertNotContains(editor, 'class="panel project-edit-form" data-stay-on-save')
+        self.assertContains(editor, 'class="panel project-edit-form" data-preserve-position data-stay-on-save')
         self.assertContains(editor, "data-remove-track")
-        self.assertContains(editor, "Track removed. Save to apply.")
+        self.assertContains(editor, "Track removed - save to apply")
         response = self.client.post(
             f"/studio/projects/{self.project.id}/edit/",
             {
@@ -1296,6 +1317,9 @@ class StudioWebEditingAndImagesTests(TestCase):
         self.assertEqual(scene_page.content.decode().count("Documentation Language <b"), 1)
         self.assertContains(scene_page, f'/studio/dialogue/{line.id}/edit/')
         dialogue_page = self.client.get(f"/studio/dialogue/{line.id}/edit/")
+        self.assertContains(dialogue_page, '<select name="speaker_documentation"', html=False)
+        self.assertTrue(dialogue_page.context["form"].fields["speaker_prompt"].widget.attrs["readonly"])
+        self.assertTrue(dialogue_page.context["form"].fields["speaker"].widget.attrs["readonly"])
         self.assertEqual(dialogue_page.content.decode().count("Documentation Language <b"), 1)
         self.assertContains(dialogue_page, "Status Comment")
 
@@ -1483,7 +1507,7 @@ class StudioDocxImportTests(TestCase):
         self.assertEqual(DialogueLine.objects.filter(scene__episode__project=draft.project).count(), 1)
         self.assertEqual(Asset.objects.filter(project=draft.project, content_type="image/png").count(), 1)
 
-    def test_project_document_can_be_archived_and_moved_to_recycle_bin(self):
+    def test_workspace_document_can_be_archived_and_moved_to_recycle_bin(self):
         from .models import Asset, DocxImport
 
         self.client.force_login(self.owner)
@@ -1492,21 +1516,23 @@ class StudioDocxImportTests(TestCase):
         self.client.post(f"/studio/imports/{draft.id}/accept/")
         draft.refresh_from_db()
 
-        archived = self.client.post(f"/studio/projects/{draft.project_id}/documents/{draft.id}/archive/")
-        self.assertRedirects(archived, f"/studio/projects/{draft.project_id}/#documents")
+        workspace_page = self.client.get(f"/studio/workspaces/{self.workspace.id}/")
+        self.assertContains(workspace_page, "master.docx")
+        archived = self.client.post(f"/studio/imports/{draft.id}/archive/")
+        self.assertRedirects(archived, f"/studio/workspaces/{self.workspace.id}/#documents")
         draft.refresh_from_db()
         self.assertIsNotNone(draft.archived_at)
 
         restored = self.client.post(
-            f"/studio/projects/{draft.project_id}/documents/{draft.id}/archive/",
+            f"/studio/imports/{draft.id}/archive/",
             {"action": "restore"},
         )
-        self.assertRedirects(restored, f"/studio/projects/{draft.project_id}/#documents")
+        self.assertRedirects(restored, f"/studio/workspaces/{self.workspace.id}/#documents")
         draft.refresh_from_db()
         self.assertIsNone(draft.archived_at)
 
-        trashed = self.client.post(f"/studio/projects/{draft.project_id}/documents/{draft.id}/trash/")
-        self.assertRedirects(trashed, f"/studio/projects/{draft.project_id}/#documents")
+        trashed = self.client.post(f"/studio/imports/{draft.id}/trash/")
+        self.assertRedirects(trashed, f"/studio/workspaces/{self.workspace.id}/#documents")
         self.assertIsNotNone(Asset.all_objects.get(id=draft.source_asset_id).deleted_at)
         recycle = self.client.get(f"/studio/workspaces/{self.workspace.id}/recycle-bin/")
         self.assertContains(recycle, "master.docx")
@@ -2215,6 +2241,25 @@ class StudioInlineEditingWorkflowTests(TestCase):
         )
         self.assertEqual(denied.status_code, 403)
         self.assertTrue(accessible_projects(self.owner).filter(id=self.project.id).exists())
+
+    def test_workspace_admin_cannot_remove_access(self):
+        users = get_user_model()
+        admin = users.objects.create_user("workspace-admin", password="strong-pass")
+        WorkspaceMembership.objects.create(
+            workspace=self.workspace, user=admin, role=WorkspaceMembership.Role.ADMIN,
+        )
+        viewer_membership = WorkspaceMembership.objects.get(workspace=self.workspace, user=self.viewer)
+        self.client.force_login(admin)
+        workspace_response = self.client.post(
+            f"/studio/workspaces/{self.workspace.id}/access/",
+            {"action": "remove", "membership_id": str(viewer_membership.id)},
+        )
+        project_response = self.client.post(
+            f"/studio/projects/{self.project.id}/access/",
+            {"action": "exclude", "user_id": str(self.viewer.id)},
+        )
+        self.assertEqual(workspace_response.status_code, 403)
+        self.assertEqual(project_response.status_code, 403)
 
     def test_only_workspace_owner_or_admin_can_copy_or_archive(self):
         users = get_user_model()
