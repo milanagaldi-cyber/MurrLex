@@ -1138,6 +1138,35 @@ class StudioWebEditingAndImagesTests(TestCase):
         self.assertContains(detail, "Recommended tracks")
         self.assertContains(detail, "No description yet.")
 
+    def test_project_sections_are_collapsible_and_can_be_hidden(self):
+        self.client.force_login(self.owner)
+        detail = self.client.get(f"/studio/projects/{self.project.id}/")
+        self.assertContains(detail, 'data-project-section="service"')
+        self.assertContains(detail, 'data-project-section="music"')
+        self.assertContains(detail, 'data-project-section="legal"')
+        self.assertContains(detail, 'data-project-section="characters" open')
+        self.assertContains(detail, 'data-project-section="episodes" open')
+        self.assertContains(detail, "Add and edit tracks in Edit Project")
+        settings = self.client.get(f"/studio/projects/{self.project.id}/settings/")
+        self.assertContains(settings, "Do not show these blocks")
+        response = self.client.post(
+            f"/studio/projects/{self.project.id}/settings/",
+            {
+                "original_language": self.project.original_language,
+                "documentation_language": self.project.documentation_language,
+                "dialogue_language": self.project.dialogue_language,
+                "prompt_language": self.project.prompt_language,
+                "translation_languages": "", "prompt_template": "",
+                "hidden_sections": ["music", "legal"],
+            },
+        )
+        self.assertRedirects(response, f"/studio/projects/{self.project.id}/settings/")
+        self.project.refresh_from_db()
+        self.assertEqual(self.project.hidden_sections, ["music", "legal"])
+        hidden_detail = self.client.get(f"/studio/projects/{self.project.id}/")
+        self.assertNotContains(hidden_detail, 'data-project-section="music"')
+        self.assertNotContains(hidden_detail, 'data-project-section="legal"')
+
     def test_episode_supports_multiple_covers_and_one_avatar(self):
         import tempfile
         from pathlib import Path

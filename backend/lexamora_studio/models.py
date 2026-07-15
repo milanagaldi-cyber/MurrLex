@@ -122,6 +122,7 @@ class Project(SoftDeleteModel):
     documentation_language = models.CharField(max_length=16, default="EN")
     dialogue_language = models.CharField(max_length=16, default="EN")
     prompt_language = models.CharField(max_length=16, default="EN")
+    hidden_sections = models.JSONField(default=list, blank=True)
     rights_holder = models.TextField(blank=True)
     publication_info = models.TextField(blank=True)
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.DRAFT)

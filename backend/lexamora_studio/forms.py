@@ -50,13 +50,27 @@ class ProjectForm(forms.ModelForm):
 
 
 class ProjectSettingsForm(forms.ModelForm):
+    SECTION_CHOICES = (
+        ("service", "Service information"),
+        ("music", "Recommended music"),
+        ("legal", "Legal information"),
+        ("images", "Images"),
+        ("characters", "Characters"),
+        ("episodes", "Episodes"),
+    )
     original_language = forms.CharField(widget=forms.Select(choices=PROMPT_LANGUAGES), initial="EN")
     translation_languages = forms.CharField(required=False, help_text="Comma-separated language codes, for example: en, pl, de")
     confirm_language_propagation = forms.BooleanField(required=False, widget=forms.HiddenInput)
+    hidden_sections = forms.MultipleChoiceField(
+        choices=SECTION_CHOICES,
+        required=False,
+        widget=forms.CheckboxSelectMultiple,
+        label="Do not show these blocks",
+    )
 
     class Meta:
         model = Project
-        fields = ["original_language", "documentation_language", "dialogue_language", "prompt_language", "translation_languages", "prompt_template"]
+        fields = ["original_language", "documentation_language", "dialogue_language", "prompt_language", "translation_languages", "prompt_template", "hidden_sections"]
         widgets = {
             "documentation_language": forms.Select(choices=PROMPT_LANGUAGES),
             "dialogue_language": forms.Select(choices=PROMPT_LANGUAGES),

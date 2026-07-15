@@ -16,6 +16,7 @@
     </div>
   </section>
   <section class="panel settings-section"><h2>Project Prompt Template</h2><p class="muted">This text can be appended to prompts created in this project.</p>{{ form.prompt_template }}{{ form.prompt_template.errors }}</section>
+  <section class="panel settings-section"><h2>Visible blocks</h2><p class="muted">Selected blocks are completely hidden from General View. Other blocks can still be collapsed directly on the project screen.</p><label>{{ form.hidden_sections.label }}</label><div class="section-visibility-options">{{ form.hidden_sections }}{{ form.hidden_sections.errors }}</div></section>
   <div class="settings-form-actions"><a class="button secondary" href="{% url 'studio:project_detail' project.id %}">Cancel</a><button type="submit">Save settings</button></div>
 </form>
 <dialog class="confirmation-dialog" data-language-propagation-dialog><h2>Change original language?</h2><p>{{ form.language_change_summary }}</p><p>This updates the language attribute of existing original prompts and dialogue lines. Saved translations remain translations.</p><div class="dialog-actions"><button class="secondary" type="button" data-language-cancel>Cancel</button><button type="button" data-language-confirm>Change language</button></div></dialog>

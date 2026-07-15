@@ -2432,6 +2432,7 @@ def project_copy(request, project_id):
         description=source.description, concept=source.concept, original_language=source.original_language, translation_languages=source.translation_languages,
         prompt_template=source.prompt_template, documentation_language=source.documentation_language,
         dialogue_language=source.dialogue_language, prompt_language=source.prompt_language,
+        hidden_sections=list(source.hidden_sections or []),
         rights_holder=source.rights_holder, publication_info=source.publication_info, status=Project.Status.DRAFT,
         status_comment=source.status_comment,
         created_by=request.user, updated_by=request.user,
