@@ -1,8 +1,8 @@
 {% extends "studio/base.html" %}
 {% block content %}
-<p class="muted"><a href="{% url 'studio:scene_detail' scene.id %}">&larr; Scene {{ scene.number }}</a></p>
+<p class="muted"><a href="{{ return_to }}">&larr; Scene {{ scene.number }}</a></p>
 <h1>{{ title }}</h1>
-<form method="post" class="panel localized-form" data-stay-on-save>{% csrf_token %}
+<form method="post" class="panel localized-form" data-stay-on-save>{% csrf_token %}<input type="hidden" name="return_to" value="{{ return_to }}">
   {{ form.non_field_errors }}{{ form.language.as_hidden }}
   <section class="localized-group" data-localized-group data-source-role="dialogue" data-translate-url="{{ translate_url }}">
     <header><h2>Speaker</h2><button class="secondary" type="button" data-translate-dependent>Translate dependent fields</button><span class="save-state" data-translate-state></span></header>
@@ -17,6 +17,6 @@
     {% include "studio/_localized_fields.html" with documentation_field=form.delivery_documentation prompt_field=form.delivery_prompt dialogue_field=form.delivery dialogue_labels=True %}
   </section>
   <div class="status-editor"><label>Status{{ form.status }}</label><label>Status Comment{{ form.status_comment }}</label></div>
-  <div class="dialog-actions"><a class="button secondary" href="{% url 'studio:scene_detail' scene.id %}">Cancel</a><button type="submit">Save dialogue line</button></div>
+  <div class="dialog-actions"><a class="button secondary" href="{{ return_to }}">Cancel</a><button type="submit">Save dialogue line</button></div>
 </form>
 {% endblock %}

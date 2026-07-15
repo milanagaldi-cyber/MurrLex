@@ -84,6 +84,7 @@ urlpatterns = [
     path("prompts/<uuid:prompt_id>/ai-preview/", views.prompt_ai_preview, name="prompt_ai_preview"),
     path("prompts/<uuid:prompt_id>/apply-translation/", views.prompt_apply_translation, name="prompt_apply_translation"),
     path("prompts/<uuid:prompt_id>/images/new/", views.prompt_image_upload, name="prompt_image_upload"),
+    path("prompts/<uuid:prompt_id>/images/generate/", views.prompt_generate_image, name="prompt_generate_image"),
     path("prompts/<uuid:prompt_id>/images/attach/", views.prompt_asset_attach, name="prompt_asset_attach"),
     path("prompts/<uuid:prompt_id>/blocks/new/", views.prompt_block_create, name="prompt_block_create"),
     path("prompt-blocks/<uuid:block_id>/edit/", views.prompt_block_edit, name="prompt_block_edit"),

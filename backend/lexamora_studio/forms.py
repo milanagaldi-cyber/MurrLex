@@ -246,6 +246,19 @@ class DialogueLineForm(forms.ModelForm):
             "text_documentation", "text_prompt", "text", "delivery_documentation", "delivery_prompt", "delivery", "status_comment",
         )}
 
+    def __init__(self, *args, project=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        names = list(project.characters.order_by("position", "name").values_list("name", flat=True)) if project else []
+        current = [
+            getattr(self.instance, "speaker_documentation", ""),
+            getattr(self.instance, "speaker_prompt", ""),
+            getattr(self.instance, "speaker", ""),
+        ]
+        choices = [("", "Select character")]
+        choices.extend((name, name) for name in dict.fromkeys([*names, *filter(None, current)]))
+        for field_name in ("speaker_documentation", "speaker_prompt", "speaker"):
+            self.fields[field_name].widget = forms.Select(choices=choices)
+
 
 class PromptForm(forms.ModelForm):
     class Meta:

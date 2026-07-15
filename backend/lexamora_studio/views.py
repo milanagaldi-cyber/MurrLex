@@ -6,6 +6,7 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core import signing
 from django.core.exceptions import ValidationError
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.mail import send_mail
 from django.db import transaction
 from django.db.models import Prefetch, Q
@@ -17,7 +18,7 @@ from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils.text import slugify
 
-from lessons.ai_gateway import ProviderError, TEXT_MODELS, run_text
+from lessons.ai_gateway import ProviderError, TEXT_MODELS, generate_image, run_text
 from lessons.provider_credentials import user_has_ai_access
 
 from .ai import StudioAiError, accept_suggestion, improve_prompt, preview_prompt_translation, reject_suggestion, translate_prompt, translate_prompt_dialogue, undo_suggestion
@@ -258,6 +259,8 @@ def workspace_access(request, workspace_id):
     form = WorkspaceMembershipForm(request.POST or None, workspace=workspace)
     if request.method == "POST":
         action = request.POST.get("action", "save")
+        if action in {"remove", "exclude"} and not is_workspace_owner_or_admin(request.user, project.workspace):
+            return HttpResponseForbidden("Only a project owner or administrator can remove project access.")
         if action == "remove":
             membership = get_object_or_404(WorkspaceMembership, workspace=workspace, id=request.POST.get("membership_id"))
             if membership.user_id == workspace.owner_id or membership.role == WorkspaceMembership.Role.OWNER:
@@ -634,6 +637,14 @@ def scene_delete(request, scene_id):
     return redirect("studio:project_detail", project_id=episode.project_id)
 
 
+def _dialogue_return_to(request, scene, line=None):
+    requested = request.POST.get("return_to") or request.GET.get("return_to") or ""
+    if requested and url_has_allowed_host_and_scheme(requested, {request.get_host()}, require_https=request.is_secure()):
+        return requested
+    anchor = f"dialogue-{line.id}" if line else "dialogue"
+    return f"{reverse('studio:scene_detail', kwargs={'scene_id': scene.id})}#{anchor}"
+
+
 @login_required
 def dialogue_create(request, scene_id):
     scene = get_object_or_404(Scene.objects.filter(episode__project__in=accessible_projects(request.user)), id=scene_id)
@@ -641,7 +652,8 @@ def dialogue_create(request, scene_id):
         return HttpResponseForbidden("Edit permission is required.")
     project = scene.episode.project
     initial = {"language": project.dialogue_language}
-    form = DialogueLineForm(request.POST or None, initial=initial)
+    return_to = _dialogue_return_to(request, scene)
+    form = DialogueLineForm(request.POST or None, initial=initial, project=project)
     if request.method == "POST" and form.is_valid():
         line = form.save(commit=False)
         line.scene = scene
@@ -652,10 +664,11 @@ def dialogue_create(request, scene_id):
         line.save()
         record_revision(instance=line, user=request.user, operation="CREATE")
         messages.success(request, "Dialogue line created.")
-        return redirect("studio:scene_detail", scene_id=scene.id)
+        return HttpResponseRedirect(return_to)
     return render(request, "studio/dialogue_form.html", {
         "form": form, "project": project, "scene": scene, "title": "New dialogue line",
         "translate_url": reverse("studio:localized_translate", kwargs={"project_id": project.id}),
+        "return_to": return_to,
     })
 
 
@@ -786,6 +799,7 @@ def _project_header_context(user, project):
         "can_edit": has_project_capability(user, project, "edit"),
         "can_manage_project": has_project_capability(user, project, "manage_project"),
         "can_administer": is_workspace_owner_or_admin(user, project.workspace),
+        "can_remove_project_access": is_workspace_owner_or_admin(user, project.workspace),
     }
 
 
@@ -1093,7 +1107,8 @@ def dialogue_edit(request, line_id):
     workspace = item.scene.episode.project.workspace
     if not has_object_capability(request.user, item, "edit"):
         return HttpResponseForbidden("Edit permission is required.")
-    form = DialogueLineForm(request.POST or None, instance=item)
+    return_to = _dialogue_return_to(request, item.scene, line=item)
+    form = DialogueLineForm(request.POST or None, instance=item, project=item.scene.episode.project)
     if request.method == "POST" and form.is_valid():
         update_dialogue_line(
             line=item, user=request.user, text=form.cleaned_data["text"],
@@ -1108,11 +1123,12 @@ def dialogue_edit(request, line_id):
             status_comment=form.cleaned_data["status_comment"],
         )
         messages.success(request, "Dialogue line saved.")
-        return redirect("studio:scene_detail", scene_id=item.scene_id)
+        return HttpResponseRedirect(return_to)
     return render(request, "studio/dialogue_form.html", {
         "form": form, "title": "Edit dialogue line", "project": item.scene.episode.project,
         "scene": item.scene,
         "translate_url": reverse("studio:localized_translate", kwargs={"project_id": item.scene.episode.project_id}),
+        "return_to": return_to,
     })
 
 
@@ -1370,6 +1386,7 @@ def project_access(request, project_id):
         "form": form,
         "memberships": project.memberships.select_related("user"),
         "inherited_memberships": inherited,
+        "can_remove_access": is_workspace_owner_or_admin(request.user, project.workspace),
     })
 
 
@@ -2337,6 +2354,7 @@ def localized_translate(request, project_id):
         data = json.loads(request.body or b"{}")
         source = str(data.get("source", "")).strip()
         source_language = str(data.get("sourceLanguage", "")).strip().upper()
+        action = str(data.get("action", "translate")).strip().lower()
         targets = {
             str(role): str(language).strip().upper()
             for role, language in dict(data.get("targets") or {}).items()
@@ -2344,11 +2362,31 @@ def localized_translate(request, project_id):
         }
         if not source:
             raise ValidationError("Enter source text first.")
-        if source_language not in PROMPT_LANGUAGE_NAMES or not targets:
+        if source_language not in PROMPT_LANGUAGE_NAMES or (action != "improve" and not targets):
             raise ValidationError("Choose supported source and target languages.")
         if any(language not in PROMPT_LANGUAGE_NAMES for language in targets.values()):
             raise ValidationError("Choose supported target languages.")
         model = selected_text_model(data.get("textModel"))
+        if action == "improve":
+            instruction = json.dumps({
+                "task": "Improve the supplied production phrase in the same language.",
+                "language": PROMPT_LANGUAGE_NAMES[source_language],
+                "content": source,
+                "rules": [
+                    "Correct grammar, spelling, punctuation and awkward phrasing.",
+                    "Make the phrase polished and literary without changing its meaning.",
+                    "Return JSON only with shape {\"improved\": \"...\"}.",
+                    "Do not translate or add explanations.",
+                ],
+            }, ensure_ascii=False)
+            raw, used_model = run_text(model, instruction)
+            clean = raw.strip()
+            if clean.startswith("```"):
+                clean = clean.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+            improved = str(json.loads(clean).get("improved", "")).strip()
+            if not improved:
+                raise ValidationError("AI returned an empty improved phrase.")
+            return JsonResponse({"improved": improved, "model": used_model})
         response_shape = {role: "translated text" for role in targets}
         instruction = json.dumps({
             "task": "Translate one production text into each requested language.",
@@ -2920,6 +2958,44 @@ def prompt_image_upload(request, prompt_id):
     if request.POST.get("return_to") == "chain":
         return HttpResponseRedirect(reverse("studio:project_scene_chain", kwargs={"project_id": prompt.scene.episode.project_id}) + f"#prompt-{prompt.id}")
     return HttpResponseRedirect(reverse("studio:scene_detail", kwargs={"scene_id": prompt.scene_id}) + f"#prompt-{prompt.id}")
+
+
+@login_required
+def prompt_generate_image(request, prompt_id):
+    prompt = get_object_or_404(
+        Prompt.objects.select_related("scene__episode__project__workspace").filter(
+            scene__episode__project__in=accessible_projects(request.user)
+        ),
+        id=prompt_id,
+    )
+    project = prompt.scene.episode.project
+    if request.method != "POST" or prompt.prompt_type != Prompt.Type.IMAGE:
+        return JsonResponse({"error": "Image generation is available only for Photo prompts."}, status=400)
+    if not has_object_capability(request.user, prompt, "use_ai") or not user_has_ai_access(request.user):
+        return JsonResponse({"error": "AI access is not enabled for this account."}, status=403)
+    try:
+        image_bytes, model = generate_image(prompt.editor_content)
+        uploaded = SimpleUploadedFile(
+            f"openai-{slugify(prompt.title or 'prompt') or 'prompt'}-{timezone.now():%Y%m%d-%H%M%S}.png",
+            image_bytes,
+            content_type="image/png",
+        )
+        asset = create_asset(
+            user=request.user, workspace=project.workspace, uploaded=uploaded,
+            kind=Asset.Kind.GENERATION_OUTPUT, project=project, prompt=prompt,
+        )
+    except (ProviderError, ValidationError) as exc:
+        message = "; ".join(exc.messages) if isinstance(exc, ValidationError) else str(exc)
+        return JsonResponse({"error": message}, status=400)
+    audit(
+        workspace=project.workspace, actor=request.user, action="PROMPT_IMAGE_GENERATED",
+        instance=prompt, metadata={"assetId": str(asset.id), "model": model},
+    )
+    return JsonResponse({
+        "assetId": str(asset.id), "model": model,
+        "viewUrl": reverse("studio_api:asset_view", kwargs={"asset_id": asset.id}),
+        "thumbnailUrl": reverse("studio_api:asset_thumbnail", kwargs={"asset_id": asset.id}),
+    }, status=201)
 
 
 @login_required

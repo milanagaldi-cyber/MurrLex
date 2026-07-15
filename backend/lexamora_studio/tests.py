@@ -1152,7 +1152,7 @@ class StudioWebEditingAndImagesTests(TestCase):
         self.assertContains(detail, 'data-project-section="characters" open')
         self.assertContains(detail, 'data-project-section="episodes" open')
         self.assertContains(detail, "Add and edit tracks in Edit Project")
-        self.assertContains(detail, "Publication details")
+        self.assertNotContains(detail, "Publication details")
         self.assertLess(content.index("Concept"), content.index("Project information"))
         self.assertLess(content.index("Recommended tracks"), content.index('data-media-library'))
         settings = self.client.get(f"/studio/projects/{self.project.id}/settings/")

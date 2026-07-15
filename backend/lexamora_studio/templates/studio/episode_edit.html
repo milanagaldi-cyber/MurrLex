@@ -11,7 +11,7 @@
 <form method="post" class="panel episode-settings-form" data-preserve-position>{% csrf_token %}
   {{ form.non_field_errors }}
   {% for field in form %}<label>{{ field.label }}{{ field }}{{ field.errors }}</label>{% endfor %}
-  <div class="settings-form-actions"><a class="button secondary" href="{% url 'studio:project_detail' project.id %}#episode-{{ episode.id }}">Cancel</a><button type="submit">Save episode</button></div>
+  <div class="settings-form-actions episode-save-actions"><a class="button secondary" href="{% url 'studio:project_detail' project.id %}#episode-{{ episode.id }}">Cancel</a><button type="submit">Save episode</button></div>
 </form>
 
 <div class="toolbar"><h2>Episode covers</h2><button class="icon-button secondary" type="button" data-dialog-open="episode-cover-picker" title="Add cover" aria-label="Add cover">+</button></div>

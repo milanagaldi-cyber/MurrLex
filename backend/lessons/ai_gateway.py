@@ -78,6 +78,29 @@ def run_text(model: str, prompt: str) -> tuple[str, str]:
     return output, selected_model
 
 
+def generate_image(prompt: str) -> tuple[bytes, str]:
+    clean_prompt = prompt.strip()
+    if not clean_prompt or len(clean_prompt) > settings.AI_MAX_TEXT_CHARS:
+        raise ProviderError("Image prompt is empty or exceeds the server limit.")
+    model = "gpt-image-1"
+    try:
+        response = requests.post(
+            f"{settings.OPENAI_BASE_URL}/images/generations",
+            headers={**_openai_headers(), "Content-Type": "application/json"},
+            json={"model": model, "prompt": clean_prompt, "size": "1024x1024", "quality": "low"},
+            timeout=180,
+        )
+        _safe_response(response)
+        payload = response.json()
+        encoded = str((payload.get("data") or [{}])[0].get("b64_json") or "")
+        image_bytes = base64.b64decode(encoded, validate=True)
+    except (requests.RequestException, ValueError, KeyError, IndexError) as exc:
+        raise ProviderError("Image generation is unavailable.") from exc
+    if not image_bytes:
+        raise ProviderError("The AI provider returned an empty image.")
+    return image_bytes, model
+
+
 def transcribe(model: str, language: str, audio_file) -> tuple[str, str]:
     selected_model = require_model(model, SPEECH_MODELS, "gpt-4o-mini-transcribe")
     if audio_file.size > settings.AI_MAX_AUDIO_BYTES:

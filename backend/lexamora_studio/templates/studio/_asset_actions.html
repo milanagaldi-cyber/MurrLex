@@ -1,4 +1,4 @@
-<div class="asset-actions" aria-label="Image actions" data-asset-info="{{ asset.original_filename }} | {{ asset.width }}x{{ asset.height }}">
+{% load studio_extras %}<div class="asset-actions" aria-label="Image actions" data-asset-info="{{ asset.original_filename }} | {{ asset.width }}x{{ asset.height }} | {{ asset.size_bytes|filesizeformat }} | Added to project {{ asset.created_at|date:'Y-m-d H:i' }} by {{ asset.created_by|display_name }}">
   <a class="icon-button asset-action-icon" href="{% url 'studio_api:asset_download' asset.id %}" title="Download" aria-label="Download"><span aria-hidden="true">&#8595;</span></a>
   <button class="icon-button asset-action-icon" type="button" data-copy-url="{% url 'studio_api:asset_view' asset.id %}" title="Copy URL" aria-label="Copy URL"><span aria-hidden="true">&#x29C9;</span></button>
   {% if can_edit %}{% if attachment_scope %}
