@@ -60,7 +60,7 @@
     {% endif %}
 
     {% if prompt.prompt_type == "IMAGE" and can_use_ai %}
-    <section class="prompt-image-generation" aria-labelledby="prompt-image-generation-{{ prompt.id }}" data-image-generation-panel data-effective-model="{% if prompt.ai_model.provider|lower == 'openai' and prompt.ai_model.media_type == 'IMAGE' %}{{ prompt.ai_model.model_id }}{% elif prompt.scene.episode.project.workspace.default_image_model %}{{ prompt.scene.episode.project.workspace.default_image_model.model_id }}{% endif %}">
+    <section class="prompt-image-generation" aria-labelledby="prompt-image-generation-{{ prompt.id }}" data-image-generation-panel data-jobs-url="{% url 'studio:prompt_image_jobs' prompt.id %}" data-effective-model="{% if prompt.ai_model.provider|lower == 'openai' and prompt.ai_model.media_type == 'IMAGE' %}{{ prompt.ai_model.model_id }}{% elif prompt.scene.episode.project.workspace.default_image_model %}{{ prompt.scene.episode.project.workspace.default_image_model.model_id }}{% endif %}">
       <div class="prompt-image-generation-copy">
         <span class="accent-tag warning">AI IMAGE</span>
         <div><h3 id="prompt-image-generation-{{ prompt.id }}">Generate image</h3><p>Choose reference images for the prompt. The exact current editor text and the settings below will be copied into a review window before anything is sent.</p></div>

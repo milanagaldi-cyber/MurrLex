@@ -36,6 +36,11 @@ Gunicorn worker and Nginx upstream read/send timeouts are aligned at 300 seconds
 After changing either template, install it in `/etc`, run `systemctl daemon-reload`,
 validate Nginx with `nginx -t`, then restart Gunicorn and reload Nginx.
 
+Image generation itself is queued in the database and processed by the tracked
+`murrlex-image-worker.service`. Its five worker threads are independent of browser
+connections and authenticated page sessions. Deployments must migrate the database,
+install/enable this unit and restart it after the Django web service.
+
 ## Rollback
 
 Application rollback uses the previous Git commit only when migrations are

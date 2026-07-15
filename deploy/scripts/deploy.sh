@@ -25,3 +25,5 @@ DEBUG=true GOOGLE_OAUTH_ENABLED=false GOOGLE_OAUTH_CLIENT_ID= GOOGLE_OAUTH_CLIEN
 
 sudo /usr/bin/systemctl restart murrlex-backend.service
 sudo /usr/bin/systemctl is-active --quiet murrlex-backend.service
+sudo /usr/bin/systemctl restart murrlex-image-worker.service
+sudo /usr/bin/systemctl is-active --quiet murrlex-image-worker.service

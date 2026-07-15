@@ -7,6 +7,7 @@ from django.contrib.auth import get_user_model
 from django.db import connection
 from django.test import TestCase, override_settings
 from django.test.utils import CaptureQueriesContext
+from django.utils import timezone
 
 from .models import Project, ProjectAccessExclusion, ProjectMembership, Prompt, WorkspaceMembership
 from .permissions import accessible_projects, accessible_workspaces, has_capability, has_project_capability
@@ -617,19 +618,20 @@ class StudioAiSuggestionTests(TestCase):
         provider_payload = json.loads(mocked_run_text.call_args.args[1])
         self.assertIn("without translating", provider_payload["task"])
 
-    @patch("lexamora_studio.views.generate_image")
+    @patch("lexamora_studio.image_jobs.generate_image_with_usage")
     def test_photo_prompt_generation_returns_asset_json(self, mocked_generate_image):
         import io
         import tempfile
         from pathlib import Path
         from PIL import Image
         from django.core.files.uploadedfile import SimpleUploadedFile
-        from .models import Asset
+        from .image_jobs import execute_image_generation_job
+        from .models import Asset, ImageGenerationJob
         from .storage import create_asset
 
         output = io.BytesIO()
         Image.new("RGB", (48, 48), "#2a8b69").save(output, "PNG")
-        mocked_generate_image.return_value = (output.getvalue(), "gpt-image-1")
+        mocked_generate_image.return_value = (output.getvalue(), "gpt-image-1", {"total_tokens": 42})
         self.prompt.prompt_type = Prompt.Type.IMAGE
         self.prompt.content = "A production still"
         self.prompt.save(update_fields=["prompt_type", "content", "updated_at"])
@@ -659,12 +661,22 @@ class StudioAiSuggestionTests(TestCase):
                     }),
                     content_type="application/json",
                 )
-        self.assertEqual(response.status_code, 201, response.content)
-        self.assertEqual(response.json()["model"], "gpt-image-1")
-        self.assertEqual(response.json()["referenceCount"], 1)
-        self.assertTrue(response.json()["thumbnailUrl"])
+                self.assertEqual(response.status_code, 202, response.content)
+                self.assertEqual(response.json()["status"], "QUEUED")
+                jobs_response = self.client.get(f"/studio/prompts/{self.prompt.id}/images/jobs/")
+                self.assertEqual(jobs_response.json()["jobs"][0]["jobId"], response.json()["jobId"])
+                job = ImageGenerationJob.objects.get(id=response.json()["jobId"])
+                self.assertEqual(job.request_prompt, "An improved current prompt with exact lighting")
+                job.status = ImageGenerationJob.Status.RUNNING
+                job.started_at = timezone.now()
+                job.save(update_fields=["status", "started_at", "updated_at"])
+                execute_image_generation_job(job.id)
+                status_response = self.client.get(response.json()["statusUrl"])
+                self.assertEqual(status_response.status_code, 200)
+                self.assertEqual(status_response.json()["status"], "SUCCESS")
+                self.assertTrue(status_response.json()["thumbnailUrl"])
         self.assertTrue(self.prompt.reference_assets.filter(id=reference.id).exists())
-        generated = Asset.objects.get(id=response.json()["assetId"])
+        generated = Asset.objects.get(id=status_response.json()["assetId"])
         self.assertEqual(generated.ai_metadata["model"], "gpt-image-1")
         self.assertEqual(generated.ai_metadata["referenceAssetIds"], [str(reference.id)])
         self.assertEqual(generated.ai_metadata["requestPrompt"], "An improved current prompt with exact lighting")
@@ -679,6 +691,32 @@ class StudioAiSuggestionTests(TestCase):
         self.assertEqual(call_kwargs["output_format"], "png")
         self.assertEqual(call_kwargs["background"], "opaque")
         self.assertEqual(call_kwargs["moderation"], "low")
+        self.client.force_login(self.viewer)
+        self.assertEqual(self.client.get(response.json()["statusUrl"]).status_code, 404)
+
+    def test_image_worker_claims_five_distinct_jobs(self):
+        from .management.commands.run_image_generation_worker import Command
+        from .models import AiModelProfile, ImageGenerationJob
+
+        image_model = AiModelProfile.objects.filter(media_type=AiModelProfile.MediaType.IMAGE).first()
+        jobs = [
+            ImageGenerationJob.objects.create(
+                workspace=self.workspace,
+                prompt=self.prompt,
+                requested_by=self.editor,
+                model_profile=image_model,
+                request_prompt=f"Image request {index}",
+                options={"size": "1024x1024", "quality": "low", "output_format": "png"},
+            )
+            for index in range(5)
+        ]
+        claimed = [Command._claim_next_job() for _ in range(5)]
+        self.assertEqual(len(set(claimed)), 5)
+        self.assertEqual(set(claimed), {job.id for job in jobs})
+        self.assertEqual(
+            ImageGenerationJob.objects.filter(status=ImageGenerationJob.Status.RUNNING).count(),
+            5,
+        )
 
     @patch("lexamora_studio.ai.run_text")
     def test_selected_text_preview_preserves_unselected_prompt(self, mocked_run_text):

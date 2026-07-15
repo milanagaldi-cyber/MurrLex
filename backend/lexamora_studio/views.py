@@ -28,7 +28,7 @@ from .docx_imports import accept_docx_import, parse_docx
 from .docx_exports import generate_docx_export
 from .docx_roundtrip import compare_docx_export
 from .forms import AdditionalGenerationForm, AiModelProfileForm, AssetEditForm, CharacterCreateForm, CharacterForm, DialogueLineForm, DocxImportUploadForm, EpisodeForm, GenerationOutputUploadForm, ImageUploadForm, MultipleImageUploadForm, ProjectForm, ProjectMembershipForm, ProjectSettingsForm, PromptBlockForm, PromptForm, RecommendedTrackForm, SceneForm, StudioTextModelForm, WorkspaceForm, WorkspaceMembershipForm
-from .models import AdditionalGeneration, AiModelProfile, AiSuggestion, AiUsageLog, Asset, Character, DialogueLine, DocxImport, EmailDeliveryLog, Episode, EpisodeCover, ExportJob, GenerationOutput, Project, ProjectAccessExclusion, ProjectMembership, Prompt, PromptBlock, RecommendedTrack, Scene, StudioTextModel, SubtitleTrack, TranslationUnit, Workspace, WorkspaceMembership
+from .models import AdditionalGeneration, AiModelProfile, AiSuggestion, AiUsageLog, Asset, Character, DialogueLine, DocxImport, EmailDeliveryLog, Episode, EpisodeCover, ExportJob, GenerationOutput, ImageGenerationJob, Project, ProjectAccessExclusion, ProjectMembership, Prompt, PromptBlock, RecommendedTrack, Scene, StudioTextModel, SubtitleTrack, TranslationUnit, Workspace, WorkspaceMembership
 from .notifications import notify_access_granted
 from .permissions import accessible_assets, accessible_projects, accessible_suggestions, accessible_workspaces, has_capability, has_object_capability, has_project_capability, is_workspace_owner_or_admin
 from .revisions import audit, record_revision
@@ -3145,8 +3145,8 @@ def prompt_generate_image(request, prompt_id):
     requested_profile = None
     if payload.get("modelProfileId"):
         requested_profile = AiModelProfile.objects.filter(
-            id=payload["modelProfileId"], workspace=project.workspace,
-            media_type=AiModelProfile.MediaType.IMAGE, active=True,
+            id=payload["modelProfileId"],
+            media_type=AiModelProfile.MediaType.IMAGE, is_active=True,
             provider__iexact="openai",
         ).first()
     image_model = requested_profile or (prompt.ai_model if (
@@ -3177,75 +3177,71 @@ def prompt_generate_image(request, prompt_id):
         prompt.reference_assets.filter(content_type__startswith="image/")
         .exclude(kind=Asset.Kind.GENERATION_OUTPUT)[:3]
     )
-    references = []
-    for reference in reference_assets:
-        with reference.file.open("rb") as source:
-            references.append((reference.original_filename, source.read(), reference.content_type))
-    usage = AiUsageLog.objects.create(
-        workspace=project.workspace, user=request.user, prompt=prompt, action="GENERATE_IMAGE",
-        model=image_model.model_id, status="STARTED", input_chars=len(request_prompt),
+    job = ImageGenerationJob.objects.create(
+        workspace=project.workspace,
+        prompt=prompt,
+        requested_by=request.user,
+        model_profile=image_model,
+        request_prompt=request_prompt,
+        options=image_options,
+        reference_asset_ids=[str(item.id) for item in reference_assets],
     )
-    try:
-        image_bytes, model, provider_usage = _generate_provider_image(
-            request_prompt,
-            model=image_model.model_id,
-            reference_images=references,
-            **image_options,
-        )
-        extension = image_options["output_format"]
-        content_type = {"png": "image/png", "jpeg": "image/jpeg", "webp": "image/webp"}[extension]
-        uploaded = SimpleUploadedFile(
-            f"openai-{slugify(prompt.title or 'prompt') or 'prompt'}-{timezone.now():%Y%m%d-%H%M%S}.{extension}",
-            image_bytes,
-            content_type=content_type,
-        )
-        asset = create_asset(
-            user=request.user, workspace=project.workspace, uploaded=uploaded,
-            kind=Asset.Kind.GENERATION_OUTPUT, project=project, prompt=prompt,
-        )
-        prompt.reference_assets.remove(asset)
-        asset.ai_metadata = {
-            "provider": "OpenAI", "model": model,
-            "requestPrompt": request_prompt,
-            "settings": image_options,
-            "referenceAssetIds": [str(item.id) for item in reference_assets],
-            "referenceCount": len(reference_assets),
-        }
-        asset.save(update_fields=["ai_metadata", "updated_at"])
-    except (ProviderError, ValidationError) as exc:
-        usage.status = "ERROR"
-        usage.error_code = "provider_error"
-        usage.save(update_fields=["status", "error_code"])
-        message = "; ".join(exc.messages) if isinstance(exc, ValidationError) else str(exc)
-        return JsonResponse({"error": message}, status=400)
-    except Exception:
-        usage.status = "ERROR"
-        usage.error_code = "unexpected_error"
-        usage.save(update_fields=["status", "error_code"])
-        return JsonResponse({"error": "Image generation returned an unexpected error"}, status=500)
-    usage.model = model
-    usage.status = "SUCCESS"
-    usage.output_chars = len(image_bytes)
-    usage.input_tokens = provider_usage.get("input_tokens", 0)
-    usage.output_tokens = provider_usage.get("output_tokens", 0)
-    usage.total_tokens = provider_usage.get("total_tokens", 0)
-    usage.save(update_fields=[
-        "model", "status", "output_chars", "input_tokens", "output_tokens", "total_tokens",
-    ])
     audit(
-        workspace=project.workspace, actor=request.user, action="PROMPT_IMAGE_GENERATED",
+        workspace=project.workspace, actor=request.user, action="PROMPT_IMAGE_QUEUED",
         instance=prompt, metadata={
-            "assetId": str(asset.id), "model": model,
+            "jobId": str(job.id), "model": image_model.model_id,
             "requestPrompt": request_prompt, "settings": image_options,
             "referenceAssetIds": [str(item.id) for item in reference_assets],
         },
     )
-    return JsonResponse({
-        "assetId": str(asset.id), "model": model, "referenceCount": len(reference_assets),
-        "settings": image_options,
-        "viewUrl": reverse("studio_api:asset_view", kwargs={"asset_id": asset.id}),
-        "thumbnailUrl": reverse("studio_api:asset_thumbnail", kwargs={"asset_id": asset.id}),
-    }, status=201)
+    return JsonResponse(_image_generation_job_payload(job), status=202)
+
+
+@login_required
+def prompt_image_jobs(request, prompt_id):
+    prompt = get_object_or_404(
+        Prompt.objects.filter(scene__episode__project__in=accessible_projects(request.user)),
+        id=prompt_id,
+    )
+    jobs = ImageGenerationJob.objects.select_related("result_asset", "model_profile").filter(
+        prompt=prompt,
+        requested_by=request.user,
+    )[:10]
+    return JsonResponse({"jobs": [_image_generation_job_payload(job) for job in jobs]})
+
+
+@login_required
+def image_generation_job_status(request, job_id):
+    job = get_object_or_404(
+        ImageGenerationJob.objects.select_related("result_asset", "model_profile").filter(
+            prompt__scene__episode__project__in=accessible_projects(request.user),
+            requested_by=request.user,
+        ),
+        id=job_id,
+    )
+    return JsonResponse(_image_generation_job_payload(job))
+
+
+def _image_generation_job_payload(job):
+    payload = {
+        "jobId": str(job.id),
+        "status": job.status,
+        "model": job.provider_model or job.model_profile.model_id,
+        "referenceCount": len(job.reference_asset_ids),
+        "settings": job.options,
+        "error": job.error_message,
+        "createdAt": job.created_at.isoformat(),
+        "startedAt": job.started_at.isoformat() if job.started_at else None,
+        "finishedAt": job.finished_at.isoformat() if job.finished_at else None,
+        "statusUrl": reverse("studio:image_generation_job_status", kwargs={"job_id": job.id}),
+    }
+    if job.result_asset_id:
+        payload.update({
+            "assetId": str(job.result_asset_id),
+            "viewUrl": reverse("studio_api:asset_view", kwargs={"asset_id": job.result_asset_id}),
+            "thumbnailUrl": reverse("studio_api:asset_thumbnail", kwargs={"asset_id": job.result_asset_id}),
+        })
+    return payload
 
 
 @login_required

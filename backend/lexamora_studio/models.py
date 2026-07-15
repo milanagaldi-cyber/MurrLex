@@ -728,6 +728,39 @@ class AiUsageLog(models.Model):
         ordering = ["-created_at", "id"]
 
 
+class ImageGenerationJob(models.Model):
+    class Status(models.TextChoices):
+        QUEUED = "QUEUED", "Queued"
+        RUNNING = "RUNNING", "Running"
+        SUCCESS = "SUCCESS", "Success"
+        ERROR = "ERROR", "Error"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    workspace = models.ForeignKey(Workspace, on_delete=models.PROTECT, related_name="image_generation_jobs")
+    prompt = models.ForeignKey(Prompt, on_delete=models.PROTECT, related_name="image_generation_jobs")
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="studio_image_generation_jobs",
+    )
+    model_profile = models.ForeignKey(AiModelProfile, on_delete=models.PROTECT, related_name="image_generation_jobs")
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.QUEUED)
+    request_prompt = models.TextField()
+    options = models.JSONField(default=dict)
+    reference_asset_ids = models.JSONField(default=list)
+    result_asset = models.ForeignKey(
+        Asset, on_delete=models.PROTECT, related_name="generation_jobs", null=True, blank=True,
+    )
+    provider_model = models.CharField(max_length=160, blank=True)
+    error_message = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at", "id"]
+        indexes = [models.Index(fields=["status", "created_at"], name="studio_img_job_queue")]
+
+
 class SubtitleTrack(SoftDeleteModel):
     class Kind(models.TextChoices):
         WORKING = "WORKING", "Working"

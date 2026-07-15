@@ -1,0 +1,16 @@
+[Unit]
+Description=MurrLex persistent image generation worker
+After=network.target murrlex-backend.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/MurrLex/backend
+EnvironmentFile=/opt/MurrLex/.env
+ExecStart=/opt/MurrLex/backend/.venv/bin/python manage.py run_image_generation_worker --concurrency 5 --poll-interval 0.5
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
