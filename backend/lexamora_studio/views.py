@@ -22,7 +22,7 @@ from lessons.ai_gateway import ProviderError, TEXT_MODELS, generate_image, run_t
 from lessons.provider_credentials import user_has_ai_access
 
 from .ai import StudioAiError, accept_suggestion, improve_prompt, preview_prompt_translation, reject_suggestion, translate_prompt, translate_prompt_dialogue, undo_suggestion
-from .ai_catalog import PROMPT_LANGUAGES, PROMPT_LANGUAGE_NAMES, active_text_models, default_prompt_template, default_text_model_id, selected_text_model
+from .ai_catalog import PROMPT_LANGUAGES, PROMPT_LANGUAGE_NAMES, active_text_models, default_prompt_template, default_text_model_id, project_text_model_id, selected_text_model
 from .exports import ALL_SECTIONS, ExportError, generate_export
 from .docx_imports import accept_docx_import, parse_docx
 from .docx_exports import generate_docx_export
@@ -1338,7 +1338,54 @@ def project_detail(request, project_id):
         "workspace_assets": workspace_assets,
         "gallery_assets": gallery_assets,
         "gallery_projects": [project],
+        "project_documents": project.source_imports.filter(
+            archived_at__isnull=True,
+            source_asset__deleted_at__isnull=True,
+        ).select_related("source_asset", "requested_by"),
+        "archived_documents": project.source_imports.filter(
+            archived_at__isnull=False,
+            source_asset__deleted_at__isnull=True,
+        ).select_related("source_asset", "archived_by"),
     })
+
+
+@login_required
+def project_document_archive(request, project_id, import_id):
+    project = get_object_or_404(accessible_projects(request.user).select_related("workspace"), id=project_id)
+    document = get_object_or_404(DocxImport.objects.select_related("source_asset"), id=import_id, project=project)
+    if request.method != "POST" or not has_project_capability(request.user, project, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    restore = request.POST.get("action") == "restore"
+    document.archived_at = None if restore else timezone.now()
+    document.archived_by = None if restore else request.user
+    document.save(update_fields=["archived_at", "archived_by"])
+    audit(
+        workspace=project.workspace,
+        actor=request.user,
+        action="PROJECT_DOCUMENT_RESTORED" if restore else "PROJECT_DOCUMENT_ARCHIVED",
+        instance=document.source_asset,
+        metadata={"importId": str(document.id), "projectId": str(project.id)},
+    )
+    messages.success(request, "Document restored from archive." if restore else "Document archived.")
+    return HttpResponseRedirect(reverse("studio:project_detail", kwargs={"project_id": project.id}) + "#documents")
+
+
+@login_required
+def project_document_trash(request, project_id, import_id):
+    project = get_object_or_404(accessible_projects(request.user).select_related("workspace"), id=project_id)
+    document = get_object_or_404(DocxImport.objects.select_related("source_asset"), id=import_id, project=project)
+    if request.method != "POST" or not has_project_capability(request.user, project, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    trash_asset(asset=document.source_asset, user=request.user)
+    audit(
+        workspace=project.workspace,
+        actor=request.user,
+        action="PROJECT_DOCUMENT_TRASHED",
+        instance=document.source_asset,
+        metadata={"importId": str(document.id), "projectId": str(project.id)},
+    )
+    messages.success(request, "Document moved to Recycle Bin.")
+    return HttpResponseRedirect(reverse("studio:project_detail", kwargs={"project_id": project.id}) + "#documents")
 
 
 @login_required
@@ -1435,7 +1482,7 @@ def scene_detail(request, scene_id):
         "mention_characters": list(scene.episode.project.characters.values_list("name", flat=True)),
         "translate_url": reverse("studio:localized_translate", kwargs={"project_id": scene.episode.project_id}),
         **_project_header_context(request.user, scene.episode.project),
-        **_prompt_editor_context(request),
+        **_prompt_editor_context(request, scene.episode.project),
     })
 
 @login_required
@@ -1452,7 +1499,7 @@ def prompt_detail(request, prompt_id):
         "prompt": prompt,
         "can_edit": has_object_capability(request.user, prompt, "edit"),
         "can_use_ai": has_object_capability(request.user, prompt, "use_ai") and user_has_ai_access(request.user),
-        **_prompt_editor_context(request),
+        **_prompt_editor_context(request, prompt.scene.episode.project),
     })
 
 
@@ -1471,7 +1518,7 @@ def prompt_improve(request, prompt_id):
         messages.error(request, "AI access is not enabled for this account and workspace.")
         return _prompt_action_redirect(request, prompt)
     try:
-        model_id = selected_text_model(request.POST.get("text_model"))
+        model_id = selected_text_model(request.POST.get("text_model") or project_text_model_id(prompt.scene.episode.project))
         improve_prompt(
             prompt=prompt, user=request.user, mode="improve_translate_en",
             selected_block_ids=request.POST.getlist("selected_blocks"),
@@ -1497,7 +1544,7 @@ def prompt_translate_dialogue(request, prompt_id):
         messages.error(request, "AI access is not enabled for this account and workspace.")
         return _prompt_action_redirect(request, prompt)
     try:
-        model_id = selected_text_model(request.POST.get("text_model"))
+        model_id = selected_text_model(request.POST.get("text_model") or project_text_model_id(prompt.scene.episode.project))
         translated_prompt, count, _ = translate_prompt_dialogue(
             prompt=prompt,
             user=request.user,
@@ -1526,7 +1573,7 @@ def prompt_ai_action(request, prompt_id):
         return _prompt_action_redirect(request, prompt)
     action = request.POST.get("action")
     try:
-        model_id = selected_text_model(request.POST.get("text_model"))
+        model_id = selected_text_model(request.POST.get("text_model") or project_text_model_id(prompt.scene.episode.project))
         if action == "improve":
             improve_prompt(
                 prompt=prompt, user=request.user, mode="improve_translate_en",
@@ -1573,7 +1620,7 @@ def prompt_ai_preview(request, prompt_id):
         return JsonResponse({"error": "AI access is not enabled for this account."}, status=403)
     try:
         data = json.loads(request.body or b"{}")
-        model_id = selected_text_model(data.get("textModel"))
+        model_id = selected_text_model(data.get("textModel") or project_text_model_id(prompt.scene.episode.project))
         scope = str(data.get("scope", Prompt.TranslationScope.FULL)).upper()
         content, used_model = preview_prompt_translation(
             prompt=prompt,
@@ -1585,14 +1632,20 @@ def prompt_ai_preview(request, prompt_id):
             selection_start=data.get("selectionStart"),
             selection_end=data.get("selectionEnd"),
             improve=data.get("action") == "improve_translation",
+            prompt_improvement=data.get("action") == "improve_prompt",
         )
     except (json.JSONDecodeError, StudioAiError, ProviderError, ValidationError) as exc:
         return JsonResponse({"error": str(exc)}, status=400)
     except Exception:
         return JsonResponse({"error": "The translation service returned an unexpected error. Please retry."}, status=500)
+    response_language = (
+        prompt.language or prompt.original_language
+        if data.get("action") == "improve_prompt"
+        else data.get("targetLanguage", "")
+    )
     return JsonResponse({
         "content": content,
-        "language": str(data.get("targetLanguage", "")).upper(),
+        "language": str(response_language).upper(),
         "scope": scope,
         "model": used_model,
     })
@@ -1751,7 +1804,7 @@ def translation_workspace(request, project_id):
         "can_use_ai": has_project_capability(request.user, project, "use_ai") and user_has_ai_access(request.user),
         "prompt_languages": PROMPT_LANGUAGES,
         "text_models": active_text_models(),
-        "default_text_model": default_text_model_id(),
+        "default_text_model": project_text_model_id(project),
         "translation_statuses": [TranslationUnit.Status.DRAFT, TranslationUnit.Status.IN_REVIEW, TranslationUnit.Status.APPROVED],
         **_project_header_context(request.user, project),
     })
@@ -2059,8 +2112,7 @@ def _asset_action_redirect(request, asset):
 def _asset_for_edit(request, asset_id, include_deleted=False):
     return get_object_or_404(
         accessible_assets(request.user, include_deleted=include_deleted)
-        .select_related("workspace", "project", "scene", "character", "prompt")
-        .filter(content_type__startswith="image/"),
+        .select_related("workspace", "project", "scene", "character", "prompt"),
         id=asset_id,
     )
 
@@ -2138,7 +2190,7 @@ def asset_trash(request, asset_id):
         messages.error(request, "; ".join(exc.messages))
     else:
         Project.all_objects.filter(cover_asset=asset).update(cover_asset=None)
-        messages.success(request, "Image moved to trash.")
+        messages.success(request, "File moved to Recycle Bin.")
     return _asset_action_redirect(request, asset)
 
 
@@ -2305,7 +2357,7 @@ def asset_restore(request, asset_id):
     except ValidationError as exc:
         messages.error(request, "; ".join(exc.messages))
     else:
-        messages.success(request, "Image restored.")
+        messages.success(request, "File restored.")
     return _asset_action_redirect(request, asset)
 
 
@@ -2319,7 +2371,7 @@ def asset_purge(request, asset_id):
     except ValidationError as exc:
         messages.error(request, "; ".join(exc.messages))
     else:
-        messages.success(request, "Image file permanently deleted.")
+        messages.success(request, "File permanently deleted.")
     return _asset_action_redirect(request, asset)
 
 
@@ -2337,7 +2389,7 @@ def project_image_trash(request, project_id):
 def workspace_recycle_bin(request, workspace_id):
     workspace = get_object_or_404(accessible_workspaces(request.user), id=workspace_id)
     assets = Asset.all_objects.filter(
-        workspace=workspace, content_type__startswith="image/", deleted_at__isnull=False, purged_at__isnull=True,
+        workspace=workspace, deleted_at__isnull=False, purged_at__isnull=True,
     ).select_related("project", "scene", "character").order_by("-deleted_at")
     return render(request, "studio/workspace_recycle_bin.html", {
         "workspace": workspace, "assets": assets,
@@ -2366,7 +2418,7 @@ def localized_translate(request, project_id):
             raise ValidationError("Choose supported source and target languages.")
         if any(language not in PROMPT_LANGUAGE_NAMES for language in targets.values()):
             raise ValidationError("Choose supported target languages.")
-        model = selected_text_model(data.get("textModel"))
+        model = selected_text_model(data.get("textModel") or project_text_model_id(project))
         if action == "improve":
             instruction = json.dumps({
                 "task": "Improve the supplied production phrase in the same language.",
@@ -2428,7 +2480,7 @@ def dialogue_translation_preview(request, line_id):
         target = str(data.get("targetLanguage", "")).strip().upper()
         if target not in Prompt.Language.values:
             raise ValidationError("Choose a supported target language.")
-        model = selected_text_model(data.get("textModel"))
+        model = selected_text_model(data.get("textModel") or project_text_model_id(project))
         instruction = json.dumps({
             "task": f"Translate this dialogue into {target}.",
             "rules": ["Return JSON only with shape {\"content\": \"...\"}.", "Preserve meaning, names, tone, punctuation and speaker intent.", "Do not add explanations."],
@@ -2470,6 +2522,7 @@ def project_copy(request, project_id):
         description=source.description, concept=source.concept, original_language=source.original_language, translation_languages=source.translation_languages,
         prompt_template=source.prompt_template, documentation_language=source.documentation_language,
         dialogue_language=source.dialogue_language, prompt_language=source.prompt_language,
+        default_translation_model=source.default_translation_model,
         hidden_sections=list(source.hidden_sections or []),
         rights_holder=source.rights_holder, publication_info=source.publication_info, status=Project.Status.DRAFT,
         status_comment=source.status_comment,
@@ -2689,7 +2742,6 @@ def project_image_trash_clear(request, project_id):
 def trashed_asset_file(request, asset_id, thumbnail=False):
     asset = get_object_or_404(
         accessible_assets(request.user, include_deleted=True).select_related("workspace").filter(
-            content_type__startswith="image/",
             deleted_at__isnull=False,
             purged_at__isnull=True,
         ),
@@ -2697,7 +2749,7 @@ def trashed_asset_file(request, asset_id, thumbnail=False):
     )
     field = asset.thumbnail if thumbnail and asset.thumbnail.name else asset.file
     if not field.name:
-        raise Http404("Image file not found.")
+        raise Http404("File not found.")
     audit(workspace=asset.workspace, actor=request.user, action="ASSET_TRASH_VIEW", instance=asset)
     return FileResponse(field.open("rb"), content_type="image/jpeg" if thumbnail else asset.content_type)
 
@@ -2731,11 +2783,11 @@ def docx_roundtrip(request, job_id):
         "can_export": has_object_capability(request.user, job, "export"),
     })
 
-def _prompt_editor_context(request):
+def _prompt_editor_context(request, project=None):
     return {
         "ai_models": AiModelProfile.objects.filter(is_active=True),
         "text_models": active_text_models(),
-        "default_text_model": default_text_model_id(),
+        "default_text_model": project_text_model_id(project) if project else default_text_model_id(),
         "prompt_languages": PROMPT_LANGUAGES,
         "prompt_addition": default_prompt_template(),
         "prompt_types": Prompt.Type.choices,

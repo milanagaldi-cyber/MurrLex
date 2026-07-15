@@ -47,6 +47,13 @@ def default_text_model_id():
     return fallback.model_id if fallback else "gpt-5.4-mini"
 
 
+def project_text_model_id(project):
+    profile = getattr(project, "default_translation_model", None)
+    if profile and active_text_models().filter(pk=profile.pk).exists():
+        return profile.model_id
+    return default_text_model_id()
+
+
 def selected_text_model(model_id):
     clean = (model_id or "").strip() or default_text_model_id()
     profile = active_text_models().filter(model_id=clean).first()

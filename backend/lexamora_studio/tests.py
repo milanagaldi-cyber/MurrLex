@@ -545,6 +545,7 @@ class StudioAiSuggestionTests(TestCase):
         self.assertContains(response, "Paste")
         self.assertContains(response, "Clear")
         self.assertContains(response, "Suggest translation")
+        self.assertContains(response, "Improve prompt")
         self.assertContains(response, "Entire prompt")
         self.assertContains(response, "Dialogue only")
         self.assertContains(response, "Selected text")
@@ -581,6 +582,24 @@ class StudioAiSuggestionTests(TestCase):
         self.assertEqual(translated.content, "Filmowy pokoj")
         self.assertEqual(translated.blocks.get().content, "Filmowy pokoj")
         self.assertEqual({row["language"] for row in applied.json()["versions"]}, {"EN", "PL"})
+
+    @patch("lexamora_studio.ai.run_text")
+    def test_prompt_improvement_preview_keeps_original_language(self, mocked_run_text):
+        mocked_run_text.return_value = (json.dumps({"content": "A precise cinematic room."}), "gpt-5.4-mini")
+        self.client.force_login(self.editor)
+        response = self.client.post(
+            f"/studio/prompts/{self.prompt.id}/ai-preview/",
+            data=json.dumps({
+                "action": "improve_prompt", "content": "Room cinematic", "targetLanguage": "PL",
+                "scope": "FULL", "textModel": "gpt-5.4-mini",
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["language"], "EN")
+        self.assertEqual(response.json()["content"], "A precise cinematic room.")
+        provider_payload = json.loads(mocked_run_text.call_args.args[1])
+        self.assertIn("without translating", provider_payload["task"])
 
     @patch("lexamora_studio.ai.run_text")
     def test_selected_text_preview_preserves_unselected_prompt(self, mocked_run_text):
@@ -1102,21 +1121,24 @@ class StudioWebEditingAndImagesTests(TestCase):
         self.assertTrue(Revision.objects.filter(entity_id=self.project.id, operation="UPDATE").exists())
 
     def test_project_settings_save_languages_and_template(self):
-        from .models import RecommendedTrack
+        from .models import RecommendedTrack, StudioTextModel
 
         self.client.force_login(self.owner)
+        translation_model = StudioTextModel.objects.get(model_id="gpt-5.4-nano")
         response = self.client.post(
             f"/studio/projects/{self.project.id}/settings/",
             {
                 "original_language": "RU", "documentation_language": "RU",
                 "dialogue_language": "PL", "prompt_language": "EN",
                 "translation_languages": "pl, en", "prompt_template": "No music.",
+                "default_translation_model": translation_model.id,
             },
         )
         self.assertRedirects(response, f"/studio/projects/{self.project.id}/settings/")
         self.project.refresh_from_db()
         self.assertEqual((self.project.documentation_language, self.project.dialogue_language, self.project.prompt_language), ("RU", "PL", "EN"))
         self.assertEqual(self.project.prompt_template, "No music.")
+        self.assertEqual(self.project.default_translation_model, translation_model)
         edit = self.client.post(
             f"/studio/projects/{self.project.id}/edit/",
             {
@@ -1460,6 +1482,34 @@ class StudioDocxImportTests(TestCase):
         self.assertEqual(Scene.objects.filter(episode__project=draft.project).count(), 1)
         self.assertEqual(DialogueLine.objects.filter(scene__episode__project=draft.project).count(), 1)
         self.assertEqual(Asset.objects.filter(project=draft.project, content_type="image/png").count(), 1)
+
+    def test_project_document_can_be_archived_and_moved_to_recycle_bin(self):
+        from .models import Asset, DocxImport
+
+        self.client.force_login(self.owner)
+        self.client.post(f"/studio/workspaces/{self.workspace.id}/imports/docx/new/", {"file": self.docx_file()})
+        draft = DocxImport.objects.get()
+        self.client.post(f"/studio/imports/{draft.id}/accept/")
+        draft.refresh_from_db()
+
+        archived = self.client.post(f"/studio/projects/{draft.project_id}/documents/{draft.id}/archive/")
+        self.assertRedirects(archived, f"/studio/projects/{draft.project_id}/#documents")
+        draft.refresh_from_db()
+        self.assertIsNotNone(draft.archived_at)
+
+        restored = self.client.post(
+            f"/studio/projects/{draft.project_id}/documents/{draft.id}/archive/",
+            {"action": "restore"},
+        )
+        self.assertRedirects(restored, f"/studio/projects/{draft.project_id}/#documents")
+        draft.refresh_from_db()
+        self.assertIsNone(draft.archived_at)
+
+        trashed = self.client.post(f"/studio/projects/{draft.project_id}/documents/{draft.id}/trash/")
+        self.assertRedirects(trashed, f"/studio/projects/{draft.project_id}/#documents")
+        self.assertIsNotNone(Asset.all_objects.get(id=draft.source_asset_id).deleted_at)
+        recycle = self.client.get(f"/studio/workspaces/{self.workspace.id}/recycle-bin/")
+        self.assertContains(recycle, "master.docx")
 
     def test_import_edit_export_docx_round_trip_uses_current_project_data(self):
         from docx import Document

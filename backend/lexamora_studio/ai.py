@@ -92,11 +92,11 @@ def _check_rate(user):
 
 def preview_prompt_translation(
     *, prompt, user, content, target_language, text_model, scope,
-    selection_start=None, selection_end=None, improve=False,
+    selection_start=None, selection_end=None, improve=False, prompt_improvement=False,
 ):
     from .ai_catalog import PROMPT_LANGUAGE_NAMES
 
-    target = (target_language or "").strip().upper()
+    target = ((prompt.language or prompt.original_language) if prompt_improvement else target_language or "").strip().upper()
     if target not in Prompt.Language.values:
         raise StudioAiError("invalid_target_language", "Choose a target language from the list.")
     if scope not in {Prompt.TranslationScope.FULL, Prompt.TranslationScope.DIALOGUE, Prompt.TranslationScope.SELECTED}:
@@ -119,6 +119,8 @@ def preview_prompt_translation(
         before, supplied, after = source[:start], source[start:end], source[end:]
 
     task = (
+        f"Improve the supplied production prompt in {PROMPT_LANGUAGE_NAMES[target]} ({target}) without translating it."
+        if prompt_improvement else
         f"Improve the supplied translation in {PROMPT_LANGUAGE_NAMES[target]} ({target})."
         if improve else
         f"Translate the supplied text into {PROMPT_LANGUAGE_NAMES[target]} ({target})."
@@ -128,6 +130,12 @@ def preview_prompt_translation(
         "Preserve meaning, names, formatting, tone, punctuation, and production terminology.",
         "Do not add explanations or information absent from the source.",
     ]
+    if prompt_improvement:
+        rules.extend([
+            "Make the prompt precise, coherent and useful for media generation.",
+            "Correct grammar, punctuation and awkward phrasing without changing factual constraints.",
+            "Return the complete improved prompt in the original language.",
+        ])
     if scope == Prompt.TranslationScope.DIALOGUE:
         task = (
             f"Improve only the translated direct speech in {PROMPT_LANGUAGE_NAMES[target]} ({target}); keep all non-dialogue text unchanged."
@@ -148,7 +156,7 @@ def preview_prompt_translation(
     request_text = json.dumps(instruction, ensure_ascii=False)
     usage = AiUsageLog.objects.create(
         workspace=workspace_for(prompt), user=user, prompt=prompt,
-        action="IMPROVE_TRANSLATION" if improve else f"TRANSLATE_PREVIEW_{scope}",
+        action="IMPROVE_PROMPT_PREVIEW" if prompt_improvement else ("IMPROVE_TRANSLATION" if improve else f"TRANSLATE_PREVIEW_{scope}"),
         model=text_model, status="STARTED", input_chars=len(request_text),
     )
     try:

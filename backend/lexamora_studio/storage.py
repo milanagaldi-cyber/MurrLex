@@ -170,10 +170,8 @@ def crop_asset(*, asset, user, x, y, width, height):
 @transaction.atomic
 def trash_asset(*, asset, user):
     locked = Asset.all_objects.select_for_update().get(pk=asset.pk)
-    if not locked.content_type.startswith("image/"):
-        raise ValidationError("Only uploaded images can be moved to the image trash.")
     if locked.purged_at is not None:
-        raise ValidationError("This image has already been permanently deleted.")
+        raise ValidationError("This file has already been permanently deleted.")
     locked.deleted_at = timezone.now()
     locked.deleted_by = user
     locked.updated_by = user
@@ -186,7 +184,7 @@ def trash_asset(*, asset, user):
 def restore_asset(*, asset, user):
     locked = Asset.all_objects.select_for_update().get(pk=asset.pk)
     if locked.purged_at is not None:
-        raise ValidationError("A permanently deleted image cannot be restored.")
+        raise ValidationError("A permanently deleted file cannot be restored.")
     locked.deleted_at = None
     locked.deleted_by = None
     locked.updated_by = user
@@ -198,8 +196,6 @@ def restore_asset(*, asset, user):
 @transaction.atomic
 def purge_asset(*, asset, user):
     locked = Asset.all_objects.select_for_update().get(pk=asset.pk)
-    if not locked.content_type.startswith("image/"):
-        raise ValidationError("Only uploaded images can be permanently deleted here.")
     if locked.purged_at is not None:
         return locked
     storage = locked.file.storage

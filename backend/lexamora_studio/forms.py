@@ -2,7 +2,7 @@ from django import forms
 
 from lessons.ai_gateway import TEXT_MODELS
 
-from .ai_catalog import PROMPT_LANGUAGES, default_prompt_template
+from .ai_catalog import PROMPT_LANGUAGES, active_text_models, default_prompt_template
 from .models import AdditionalGeneration, AiModelProfile, Asset, Character, DialogueLine, Episode, Project, ProjectMembership, Prompt, PromptBlock, RecommendedTrack, Scene, StudioTextModel, Workspace, WorkspaceMembership
 
 
@@ -70,17 +70,23 @@ class ProjectSettingsForm(forms.ModelForm):
 
     class Meta:
         model = Project
-        fields = ["original_language", "documentation_language", "dialogue_language", "prompt_language", "translation_languages", "prompt_template", "hidden_sections"]
+        fields = ["original_language", "documentation_language", "dialogue_language", "prompt_language", "translation_languages", "default_translation_model", "prompt_template", "hidden_sections"]
         widgets = {
             "documentation_language": forms.Select(choices=PROMPT_LANGUAGES),
             "dialogue_language": forms.Select(choices=PROMPT_LANGUAGES),
             "prompt_language": forms.Select(choices=PROMPT_LANGUAGES),
             "prompt_template": forms.Textarea(attrs={"rows": 4, "placeholder": "Text appended to every new prompt in this project"}),
         }
-        labels = {"prompt_template": "Project Prompt Template"}
+        labels = {
+            "default_translation_model": "Default translation model",
+            "prompt_template": "Project Prompt Template",
+        }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.fields["default_translation_model"].queryset = active_text_models()
+        self.fields["default_translation_model"].required = False
+        self.fields["default_translation_model"].empty_label = "Use Studio default"
         for name in ("documentation_language", "dialogue_language", "prompt_language"):
             self.fields[name].required = False
         if self.instance and not self.instance._state.adding:

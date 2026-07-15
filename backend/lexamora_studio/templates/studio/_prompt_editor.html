@@ -42,11 +42,12 @@
       <label>Translate<select data-ai-scope><option value="FULL">Entire prompt</option><option value="DIALOGUE">Dialogue only</option><option value="SELECTED">Selected text</option></select></label>
       <label>AI model<select data-ai-model>{% for model in text_models %}<option value="{{ model.model_id }}"{% if model.model_id == default_text_model %} selected{% endif %}>{{ model.name }}</option>{% endfor %}{% if can_manage_text_models %}<option value="__add_model__">+ Add model...</option>{% endif %}</select></label>
       <button type="button" data-ai-translate>Suggest translation</button>
+      <button class="secondary" type="button" data-ai-improve-prompt>Improve prompt</button>
       {% if prompt.prompt_type == "IMAGE" %}<button class="secondary" type="button" data-prompt-generate-image data-url="{% url 'studio:prompt_generate_image' prompt.id %}">Generate image</button>{% endif %}
       <span class="save-state" data-ai-state></span>
     </section>
     <section class="suggestion-inline prompt-ai-draft" data-ai-draft hidden>
-      <div class="suggestion-title"><strong>Translation draft</strong><span class="language-badge" data-ai-draft-language></span></div>
+      <div class="suggestion-title"><strong data-ai-draft-title>Translation draft</strong><span class="language-badge" data-ai-draft-language></span></div>
       <textarea rows="9" data-ai-draft-content></textarea>
       <div class="suggestion-actions">
         <button type="button" data-ai-apply>Apply Translation</button>

@@ -13,6 +13,7 @@
       <label title="Language used for dialogue and the target series text.">{{ form.dialogue_language.label }}{{ form.dialogue_language }}{{ form.dialogue_language.errors }}</label>
       <label title="Language used to prepare generation prompts.">{{ form.prompt_language.label }}{{ form.prompt_language }}{{ form.prompt_language.errors }}</label>
       <label>{{ form.translation_languages.label }}{{ form.translation_languages }}{{ form.translation_languages.errors }}<small class="muted">{{ form.translation_languages.help_text }}</small></label>
+      <label title="Used by prompt, dialogue and centralized translation when no model is chosen manually.">{{ form.default_translation_model.label }}{{ form.default_translation_model }}{{ form.default_translation_model.errors }}</label>
     </div>
   </section>
   <section class="panel settings-section"><h2>Project Prompt Template</h2><p class="muted">This text can be appended to prompts created in this project.</p>{{ form.prompt_template }}{{ form.prompt_template.errors }}</section>

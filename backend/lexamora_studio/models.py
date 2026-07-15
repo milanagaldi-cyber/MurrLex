@@ -122,6 +122,13 @@ class Project(SoftDeleteModel):
     documentation_language = models.CharField(max_length=16, default="EN")
     dialogue_language = models.CharField(max_length=16, default="EN")
     prompt_language = models.CharField(max_length=16, default="EN")
+    default_translation_model = models.ForeignKey(
+        "StudioTextModel",
+        on_delete=models.SET_NULL,
+        related_name="default_for_projects",
+        null=True,
+        blank=True,
+    )
     hidden_sections = models.JSONField(default=list, blank=True)
     rights_holder = models.TextField(blank=True)
     publication_info = models.TextField(blank=True)
@@ -793,6 +800,14 @@ class DocxImport(models.Model):
     accepted_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="studio_accepted_docx_imports", null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     accepted_at = models.DateTimeField(null=True, blank=True)
+    archived_at = models.DateTimeField(null=True, blank=True)
+    archived_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="archived_studio_docx_imports",
+        null=True,
+        blank=True,
+    )
 
     class Meta:
         ordering = ["-created_at", "id"]
