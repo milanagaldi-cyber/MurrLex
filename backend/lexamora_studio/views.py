@@ -9,7 +9,7 @@ from django.core.exceptions import ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.mail import send_mail
 from django.db import transaction
-from django.db.models import Prefetch, Q
+from django.db.models import Prefetch, Q, Sum
 from django.forms import inlineformset_factory
 from django.http import FileResponse, Http404, HttpResponse, HttpResponseForbidden, HttpResponseRedirect, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -18,7 +18,7 @@ from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils.text import slugify
 
-from lessons.ai_gateway import ProviderError, TEXT_MODELS, generate_image, run_text
+from lessons.ai_gateway import ProviderError, TEXT_MODELS, generate_image as _gateway_generate_image, generate_image_with_usage as _gateway_generate_image_with_usage, run_text as _gateway_run_text, run_text_with_usage as _gateway_run_text_with_usage
 from lessons.provider_credentials import user_has_ai_access
 
 from .ai import StudioAiError, accept_suggestion, improve_prompt, preview_prompt_translation, reject_suggestion, translate_prompt, translate_prompt_dialogue, undo_suggestion
@@ -28,7 +28,7 @@ from .docx_imports import accept_docx_import, parse_docx
 from .docx_exports import generate_docx_export
 from .docx_roundtrip import compare_docx_export
 from .forms import AdditionalGenerationForm, AiModelProfileForm, AssetEditForm, CharacterCreateForm, CharacterForm, DialogueLineForm, DocxImportUploadForm, EpisodeForm, GenerationOutputUploadForm, ImageUploadForm, MultipleImageUploadForm, ProjectForm, ProjectMembershipForm, ProjectSettingsForm, PromptBlockForm, PromptForm, RecommendedTrackForm, SceneForm, StudioTextModelForm, WorkspaceForm, WorkspaceMembershipForm
-from .models import AdditionalGeneration, AiModelProfile, AiSuggestion, Asset, Character, DialogueLine, DocxImport, EmailDeliveryLog, Episode, EpisodeCover, ExportJob, GenerationOutput, Project, ProjectAccessExclusion, ProjectMembership, Prompt, PromptBlock, RecommendedTrack, Scene, StudioTextModel, SubtitleTrack, TranslationUnit, Workspace, WorkspaceMembership
+from .models import AdditionalGeneration, AiModelProfile, AiSuggestion, AiUsageLog, Asset, Character, DialogueLine, DocxImport, EmailDeliveryLog, Episode, EpisodeCover, ExportJob, GenerationOutput, Project, ProjectAccessExclusion, ProjectMembership, Prompt, PromptBlock, RecommendedTrack, Scene, StudioTextModel, SubtitleTrack, TranslationUnit, Workspace, WorkspaceMembership
 from .notifications import notify_access_granted
 from .permissions import accessible_assets, accessible_projects, accessible_suggestions, accessible_workspaces, has_capability, has_object_capability, has_project_capability, is_workspace_owner_or_admin
 from .revisions import audit, record_revision
@@ -37,6 +37,43 @@ from .storage import create_asset, crop_asset, purge_asset, restore_asset, trash
 
 
 ARCHIVE_PURGE_DELAY_SECONDS = 30
+run_text = _gateway_run_text
+generate_image = _gateway_generate_image
+
+
+def _run_logged_text(*, workspace, user, action, model, text, prompt=None):
+    usage = AiUsageLog.objects.create(
+        workspace=workspace, user=user, prompt=prompt, action=action,
+        model=model, status="STARTED", input_chars=len(text),
+    )
+    try:
+        if run_text is not _gateway_run_text:
+            output, selected_model = run_text(model, text)
+            provider_usage = {}
+        else:
+            output, selected_model, provider_usage = _gateway_run_text_with_usage(model, text)
+    except Exception:
+        usage.status = "ERROR"
+        usage.error_code = "provider_error"
+        usage.save(update_fields=["status", "error_code"])
+        raise
+    usage.model = selected_model
+    usage.status = "SUCCESS"
+    usage.output_chars = len(output)
+    usage.input_tokens = provider_usage.get("input_tokens", 0)
+    usage.output_tokens = provider_usage.get("output_tokens", 0)
+    usage.total_tokens = provider_usage.get("total_tokens", 0)
+    usage.save(update_fields=[
+        "model", "status", "output_chars", "input_tokens", "output_tokens", "total_tokens",
+    ])
+    return output, selected_model
+
+
+def _generate_provider_image(prompt, **kwargs):
+    if generate_image is not _gateway_generate_image:
+        image_bytes, selected_model = generate_image(prompt, **kwargs)
+        return image_bytes, selected_model, {}
+    return _gateway_generate_image_with_usage(prompt, **kwargs)
 
 
 def _archive_purge_token(*, kind, item_id, user):
@@ -200,7 +237,10 @@ def workspace_detail(request, workspace_id):
 
 @login_required
 def workspace_edit(request, workspace_id):
-    workspace = get_object_or_404(accessible_workspaces(request.user).select_related("avatar_asset"), id=workspace_id)
+    workspace = get_object_or_404(
+        accessible_workspaces(request.user).select_related("avatar_asset", "default_image_model"),
+        id=workspace_id,
+    )
     if not has_capability(request.user, workspace, "edit"):
         return HttpResponseForbidden("Edit permission is required.")
     if request.method == "POST" and request.POST.get("action") == "test_email":
@@ -236,11 +276,17 @@ def workspace_edit(request, workspace_id):
         record_revision(instance=item, user=request.user, operation="UPDATE")
         messages.success(request, "Workspace settings saved.")
         return redirect("studio:workspace_detail", workspace_id=item.id)
+    ai_usage = workspace.ai_usage.select_related("user", "prompt").order_by("-created_at")
+    ai_totals = ai_usage.aggregate(
+        input_tokens=Sum("input_tokens"), output_tokens=Sum("output_tokens"), total_tokens=Sum("total_tokens"),
+    )
     return render(request, "studio/workspace_settings.html", {
         "workspace": workspace, "form": form, "models": AiModelProfile.objects.all(),
         "can_administer": is_workspace_owner_or_admin(request.user, workspace),
         "email_recipients": [workspace.owner, *[item.user for item in workspace.memberships.filter(status=WorkspaceMembership.Status.ACTIVE).select_related("user") if item.user_id != workspace.owner_id]],
         "email_logs": workspace.email_delivery_logs.select_related("created_by")[:10],
+        "ai_usage": ai_usage[:250],
+        "ai_totals": {key: value or 0 for key, value in ai_totals.items()},
     })
 
 
@@ -2487,7 +2533,10 @@ def localized_translate(request, project_id):
                     "Do not translate or add explanations.",
                 ],
             }, ensure_ascii=False)
-            raw, used_model = run_text(model, instruction)
+            raw, used_model = _run_logged_text(
+                workspace=project.workspace, user=request.user, action="IMPROVE_LOCALIZED_TEXT",
+                model=model, text=instruction,
+            )
             clean = raw.strip()
             if clean.startswith("```"):
                 clean = clean.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
@@ -2507,7 +2556,10 @@ def localized_translate(request, project_id):
                 "Do not add explanations or information absent from the source.",
             ],
         }, ensure_ascii=False)
-        raw, used_model = run_text(model, instruction)
+        raw, used_model = _run_logged_text(
+            workspace=project.workspace, user=request.user, action="TRANSLATE_LOCALIZED_TEXT",
+            model=model, text=instruction,
+        )
         clean = raw.strip()
         if clean.startswith("```"):
             clean = clean.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
@@ -2543,7 +2595,10 @@ def dialogue_translation_preview(request, line_id):
             "source_language": (line.language or project.original_language or "").upper(),
             "content": line.text,
         }, ensure_ascii=False)
-        raw, used_model = run_text(model, instruction)
+        raw, used_model = _run_logged_text(
+            workspace=project.workspace, user=request.user, action="TRANSLATE_DIALOGUE_PREVIEW",
+            model=model, text=instruction,
+        )
         clean = raw.strip()
         if clean.startswith("```"):
             clean = clean.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
@@ -3071,7 +3126,9 @@ def prompt_image_upload(request, prompt_id):
 @login_required
 def prompt_generate_image(request, prompt_id):
     prompt = get_object_or_404(
-        Prompt.objects.select_related("scene__episode__project__workspace").filter(
+        Prompt.objects.select_related(
+            "ai_model", "scene__episode__project__workspace__default_image_model",
+        ).prefetch_related("reference_assets").filter(
             scene__episode__project__in=accessible_projects(request.user)
         ),
         id=prompt_id,
@@ -3081,8 +3138,33 @@ def prompt_generate_image(request, prompt_id):
         return JsonResponse({"error": "Image generation is available only for Photo prompts."}, status=400)
     if not has_object_capability(request.user, prompt, "use_ai") or not user_has_ai_access(request.user):
         return JsonResponse({"error": "AI access is not enabled for this account."}, status=403)
+    image_model = prompt.ai_model if (
+        prompt.ai_model.media_type == AiModelProfile.MediaType.IMAGE
+        and prompt.ai_model.provider.strip().lower() == "openai"
+    ) else project.workspace.default_image_model
+    if image_model is None:
+        return JsonResponse({"error": "Choose a default OpenAI image model in Workspace settings."}, status=400)
+    defaults = image_model.defaults if isinstance(image_model.defaults, dict) else {}
+    reference_assets = list(
+        prompt.reference_assets.filter(content_type__startswith="image/")
+        .exclude(kind=Asset.Kind.GENERATION_OUTPUT)[:3]
+    )
+    references = []
+    for reference in reference_assets:
+        with reference.file.open("rb") as source:
+            references.append((reference.original_filename, source.read(), reference.content_type))
+    usage = AiUsageLog.objects.create(
+        workspace=project.workspace, user=request.user, prompt=prompt, action="GENERATE_IMAGE",
+        model=image_model.model_id, status="STARTED", input_chars=len(prompt.editor_content),
+    )
     try:
-        image_bytes, model = generate_image(prompt.editor_content)
+        image_bytes, model, provider_usage = _generate_provider_image(
+            prompt.editor_content,
+            model=image_model.model_id,
+            reference_images=references,
+            size=str(defaults.get("size") or "1024x1024"),
+            quality=str(defaults.get("quality") or "low"),
+        )
         uploaded = SimpleUploadedFile(
             f"openai-{slugify(prompt.title or 'prompt') or 'prompt'}-{timezone.now():%Y%m%d-%H%M%S}.png",
             image_bytes,
@@ -3092,17 +3174,42 @@ def prompt_generate_image(request, prompt_id):
             user=request.user, workspace=project.workspace, uploaded=uploaded,
             kind=Asset.Kind.GENERATION_OUTPUT, project=project, prompt=prompt,
         )
+        prompt.reference_assets.remove(asset)
+        asset.ai_metadata = {
+            "provider": "OpenAI", "model": model,
+            "referenceAssetIds": [str(item.id) for item in reference_assets],
+            "referenceCount": len(reference_assets),
+        }
+        asset.save(update_fields=["ai_metadata", "updated_at"])
     except (ProviderError, ValidationError) as exc:
+        usage.status = "ERROR"
+        usage.error_code = "provider_error"
+        usage.save(update_fields=["status", "error_code"])
         message = "; ".join(exc.messages) if isinstance(exc, ValidationError) else str(exc)
         return JsonResponse({"error": message}, status=400)
     except Exception:
+        usage.status = "ERROR"
+        usage.error_code = "unexpected_error"
+        usage.save(update_fields=["status", "error_code"])
         return JsonResponse({"error": "Image generation returned an unexpected error"}, status=500)
+    usage.model = model
+    usage.status = "SUCCESS"
+    usage.output_chars = len(image_bytes)
+    usage.input_tokens = provider_usage.get("input_tokens", 0)
+    usage.output_tokens = provider_usage.get("output_tokens", 0)
+    usage.total_tokens = provider_usage.get("total_tokens", 0)
+    usage.save(update_fields=[
+        "model", "status", "output_chars", "input_tokens", "output_tokens", "total_tokens",
+    ])
     audit(
         workspace=project.workspace, actor=request.user, action="PROMPT_IMAGE_GENERATED",
-        instance=prompt, metadata={"assetId": str(asset.id), "model": model},
+        instance=prompt, metadata={
+            "assetId": str(asset.id), "model": model,
+            "referenceAssetIds": [str(item.id) for item in reference_assets],
+        },
     )
     return JsonResponse({
-        "assetId": str(asset.id), "model": model,
+        "assetId": str(asset.id), "model": model, "referenceCount": len(reference_assets),
         "viewUrl": reverse("studio_api:asset_view", kwargs={"asset_id": asset.id}),
         "thumbnailUrl": reverse("studio_api:asset_thumbnail", kwargs={"asset_id": asset.id}),
     }, status=201)

@@ -42,6 +42,13 @@ class Workspace(SoftDeleteModel):
     video_prompt_template = models.TextField(blank=True)
     audio_prompt_template = models.TextField(blank=True)
     text_prompt_template = models.TextField(blank=True)
+    default_image_model = models.ForeignKey(
+        "AiModelProfile",
+        on_delete=models.SET_NULL,
+        related_name="default_for_workspaces",
+        null=True,
+        blank=True,
+    )
     purged_at = models.DateTimeField(null=True, blank=True)
     purged_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="purged_studio_workspaces", null=True, blank=True)
 
@@ -317,6 +324,9 @@ class AiModelProfile(models.Model):
     class Meta:
         ordering = ["media_type", "name"]
 
+    def __str__(self):
+        return f"{self.name} ({self.model_id})"
+
 
 class StudioTextModel(models.Model):
     class Provider(models.TextChoices):
@@ -496,6 +506,12 @@ class Prompt(SoftDeleteModel):
             return self.content
         return "\n\n".join(self.blocks.values_list("content", flat=True))
 
+    @property
+    def generation_reference_count(self):
+        return self.reference_assets.filter(content_type__startswith="image/").exclude(
+            kind=Asset.Kind.GENERATION_OUTPUT,
+        ).count()
+
     def language_versions(self):
         root_id = self.source_prompt_id or self.id
         return Prompt.objects.filter(models.Q(id=root_id) | models.Q(source_prompt_id=root_id)).order_by("language", "created_at")
@@ -555,6 +571,7 @@ class Asset(SoftDeleteModel):
     checksum_sha256 = models.CharField(max_length=64)
     width = models.PositiveIntegerField(null=True, blank=True)
     height = models.PositiveIntegerField(null=True, blank=True)
+    ai_metadata = models.JSONField(default=dict, blank=True)
     purged_at = models.DateTimeField(null=True, blank=True)
     purged_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -695,12 +712,15 @@ class AiUsageLog(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     workspace = models.ForeignKey(Workspace, on_delete=models.PROTECT, related_name="ai_usage")
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="studio_ai_usage")
-    prompt = models.ForeignKey(Prompt, on_delete=models.PROTECT, related_name="ai_usage")
+    prompt = models.ForeignKey(Prompt, on_delete=models.PROTECT, related_name="ai_usage", null=True, blank=True)
     action = models.CharField(max_length=40)
     model = models.CharField(max_length=80)
     status = models.CharField(max_length=20)
     input_chars = models.PositiveIntegerField(default=0)
     output_chars = models.PositiveIntegerField(default=0)
+    input_tokens = models.PositiveIntegerField(default=0)
+    output_tokens = models.PositiveIntegerField(default=0)
+    total_tokens = models.PositiveIntegerField(default=0)
     error_code = models.CharField(max_length=80, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 

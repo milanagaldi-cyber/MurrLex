@@ -511,6 +511,22 @@ class StudioAiSuggestionTests(TestCase):
             source_dialogue=self.source_dialogue, position=1, created_by=self.editor, updated_by=self.editor,
         )
 
+    def test_workspace_settings_show_image_model_and_token_usage(self):
+        from .models import AiUsageLog
+
+        AiUsageLog.objects.create(
+            workspace=self.workspace, user=self.editor, prompt=self.prompt,
+            action="GENERATE_IMAGE", model="gpt-image-1", status="SUCCESS",
+            input_tokens=17, output_tokens=29, total_tokens=46,
+        )
+        self.client.force_login(self.editor)
+        response = self.client.get(f"/studio/workspaces/{self.workspace.id}/edit/")
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertContains(response, "OpenAI image generation")
+        self.assertContains(response, "gpt-image-1")
+        self.assertContains(response, "AI token usage")
+        self.assertContains(response, "46")
+
     def provider_response(self):
         return json.dumps({"blocks": [
             {"id": str(self.narrative.id), "content": "Cinematic room with precise lighting"},
@@ -607,6 +623,9 @@ class StudioAiSuggestionTests(TestCase):
         import tempfile
         from pathlib import Path
         from PIL import Image
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from .models import Asset
+        from .storage import create_asset
 
         output = io.BytesIO()
         Image.new("RGB", (48, 48), "#2a8b69").save(output, "PNG")
@@ -617,10 +636,23 @@ class StudioAiSuggestionTests(TestCase):
         self.client.force_login(self.editor)
         with tempfile.TemporaryDirectory() as directory:
             with self.settings(STUDIO_PRIVATE_MEDIA_ROOT=Path(directory)):
+                reference_file = SimpleUploadedFile("reference.png", output.getvalue(), content_type="image/png")
+                reference = create_asset(
+                    user=self.editor, workspace=self.workspace, project=self.project,
+                    prompt=self.prompt, uploaded=reference_file, kind=Asset.Kind.OTHER,
+                )
                 response = self.client.post(f"/studio/prompts/{self.prompt.id}/images/generate/")
         self.assertEqual(response.status_code, 201, response.content)
         self.assertEqual(response.json()["model"], "gpt-image-1")
+        self.assertEqual(response.json()["referenceCount"], 1)
         self.assertTrue(response.json()["thumbnailUrl"])
+        self.assertTrue(self.prompt.reference_assets.filter(id=reference.id).exists())
+        generated = Asset.objects.get(id=response.json()["assetId"])
+        self.assertEqual(generated.ai_metadata["model"], "gpt-image-1")
+        self.assertEqual(generated.ai_metadata["referenceAssetIds"], [str(reference.id)])
+        call_kwargs = mocked_generate_image.call_args.kwargs
+        self.assertEqual(call_kwargs["model"], "gpt-image-1")
+        self.assertEqual(call_kwargs["reference_images"][0][0], "reference.png")
 
     @patch("lexamora_studio.ai.run_text")
     def test_selected_text_preview_preserves_unselected_prompt(self, mocked_run_text):

@@ -15,6 +15,7 @@ class WorkspaceForm(forms.ModelForm):
             "name", "description", "documentation_language", "dialogue_language", "prompt_language",
             "image_prompt_template", "video_prompt_template", "audio_prompt_template",
             "text_prompt_template",
+            "default_image_model",
         ]
         widgets = {
             "description": forms.Textarea(attrs={"rows": 4}),
@@ -29,6 +30,13 @@ class WorkspaceForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.fields["default_image_model"].queryset = AiModelProfile.objects.filter(
+            is_active=True,
+            media_type=AiModelProfile.MediaType.IMAGE,
+            provider__iexact="OpenAI",
+        )
+        self.fields["default_image_model"].required = False
+        self.fields["default_image_model"].empty_label = "Choose OpenAI image model"
         for name in ("documentation_language", "dialogue_language", "prompt_language"):
             self.fields[name].required = False
 

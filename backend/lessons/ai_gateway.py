@@ -11,6 +11,7 @@ TEXT_MODELS = {"gpt-5.4-nano", "gpt-5.4-mini", "gpt-5.4", "gpt-5.5"}
 SPEECH_MODELS = {"gpt-4o-mini-transcribe", "gpt-4o-transcribe", "whisper-1", "gpt-4o-transcribe-diarize"}
 TTS_MODELS = {"gpt-4o-mini-tts", "tts-1", "tts-1-hd"}
 IMAGE_MODELS = {"gpt-4o-mini", "gpt-4.1-mini", "gpt-4.1", "gpt-4o", "gpt-5.4-mini", "gpt-5.4"}
+IMAGE_GENERATION_MODELS = {"gpt-image-2", "gpt-image-1"}
 TTS_VOICES = {"alloy", "ash", "ballad", "coral", "echo", "fable", "nova", "onyx", "sage", "shimmer", "verse", "marin", "cedar"}
 
 
@@ -58,7 +59,24 @@ def _extract_response_text(payload: dict) -> str:
     return "".join(parts).strip()
 
 
+def _extract_usage(payload: dict) -> dict[str, int]:
+    usage = payload.get("usage") if isinstance(payload, dict) else None
+    usage = usage if isinstance(usage, dict) else {}
+    input_tokens = int(usage.get("input_tokens") or 0)
+    output_tokens = int(usage.get("output_tokens") or 0)
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": int(usage.get("total_tokens") or input_tokens + output_tokens),
+    }
+
+
 def run_text(model: str, prompt: str) -> tuple[str, str]:
+    output, selected_model, _ = run_text_with_usage(model, prompt)
+    return output, selected_model
+
+
+def run_text_with_usage(model: str, prompt: str) -> tuple[str, str, dict[str, int]]:
     selected_model = require_model(model, TEXT_MODELS, "gpt-5.4-mini")
     if not prompt.strip() or len(prompt) > settings.AI_MAX_TEXT_CHARS:
         raise ProviderError("Text is empty or exceeds the server limit.")
@@ -70,28 +88,53 @@ def run_text(model: str, prompt: str) -> tuple[str, str]:
             timeout=60,
         )
         _safe_response(response)
-        output = _extract_response_text(response.json())
+        payload = response.json()
+        output = _extract_response_text(payload)
+        usage = _extract_usage(payload)
     except (requests.RequestException, ValueError) as exc:
         raise ProviderError("The AI provider is unavailable.") from exc
     if not output:
         raise ProviderError("The AI provider returned an empty response.")
-    return output, selected_model
+    return output, selected_model, usage
 
 
 def generate_image(prompt: str) -> tuple[bytes, str]:
+    image_bytes, model, _ = generate_image_with_usage(prompt)
+    return image_bytes, model
+
+
+def generate_image_with_usage(
+    prompt: str,
+    *,
+    model: str = "gpt-image-1",
+    reference_images: list[tuple[str, bytes, str]] | None = None,
+    size: str = "1024x1024",
+    quality: str = "low",
+) -> tuple[bytes, str, dict[str, int]]:
     clean_prompt = prompt.strip()
     if not clean_prompt or len(clean_prompt) > settings.AI_MAX_TEXT_CHARS:
         raise ProviderError("Image prompt is empty or exceeds the server limit.")
-    model = "gpt-image-1"
+    selected_model = require_model(model, IMAGE_GENERATION_MODELS, "gpt-image-1")
+    references = list(reference_images or [])[:3]
     try:
-        response = requests.post(
-            f"{settings.OPENAI_BASE_URL}/images/generations",
-            headers={**_openai_headers(), "Content-Type": "application/json"},
-            json={"model": model, "prompt": clean_prompt, "size": "1024x1024", "quality": "low"},
-            timeout=180,
-        )
+        if references:
+            response = requests.post(
+                f"{settings.OPENAI_BASE_URL}/images/edits",
+                headers=_openai_headers(),
+                data={"model": selected_model, "prompt": clean_prompt, "size": size, "quality": quality},
+                files=[("image[]", (filename, content, content_type)) for filename, content, content_type in references],
+                timeout=180,
+            )
+        else:
+            response = requests.post(
+                f"{settings.OPENAI_BASE_URL}/images/generations",
+                headers={**_openai_headers(), "Content-Type": "application/json"},
+                json={"model": selected_model, "prompt": clean_prompt, "size": size, "quality": quality},
+                timeout=180,
+            )
         _safe_response(response)
         payload = response.json()
+        usage = _extract_usage(payload)
         result = (payload.get("data") or [{}])[0]
         encoded = str(result.get("b64_json") or "")
         if encoded:
@@ -106,7 +149,7 @@ def generate_image(prompt: str) -> tuple[bytes, str]:
         raise ProviderError("Image generation is unavailable.") from exc
     if not image_bytes:
         raise ProviderError("The AI provider returned an empty image.")
-    return image_bytes, model
+    return image_bytes, selected_model, usage
 
 
 def transcribe(model: str, language: str, audio_file) -> tuple[str, str]:

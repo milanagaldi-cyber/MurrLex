@@ -6,7 +6,7 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
-from lessons.ai_gateway import ProviderError, run_text
+from lessons.ai_gateway import ProviderError, run_text as _gateway_run_text, run_text_with_usage as _gateway_run_text_with_usage
 
 from .models import AiSuggestion, AiUsageLog, Prompt, PromptBlock, Revision, TranslationUnit
 from .revisions import audit, record_revision, workspace_for
@@ -26,11 +26,33 @@ MODES = {
     "improve_translate_en": "Translate the supplied non-dialogue prompt content into natural production English and improve it for generation.",
 }
 
+# Kept as a patch point for the existing provider-isolated test suite.
+run_text = _gateway_run_text
+
+
+def _run_provider_text(model, text):
+    if run_text is not _gateway_run_text:
+        output, selected_model = run_text(model, text)
+        return output, selected_model, {}
+    return _gateway_run_text_with_usage(model, text)
+
 
 class StudioAiError(Exception):
     def __init__(self, code, message):
         self.code = code
         super().__init__(message)
+
+
+def _finish_usage(usage, *, raw_text, selected_model, provider_usage):
+    usage.model = selected_model
+    usage.status = "SUCCESS"
+    usage.output_chars = len(raw_text)
+    usage.input_tokens = provider_usage.get("input_tokens", 0)
+    usage.output_tokens = provider_usage.get("output_tokens", 0)
+    usage.total_tokens = provider_usage.get("total_tokens", 0)
+    usage.save(update_fields=[
+        "model", "status", "output_chars", "input_tokens", "output_tokens", "total_tokens",
+    ])
 
 
 def _editable_blocks(prompt, selected_ids=None):
@@ -161,17 +183,14 @@ def preview_prompt_translation(
         model=text_model, status="STARTED", input_chars=len(request_text),
     )
     try:
-        raw_text, selected_model = run_text(text_model, request_text)
+        raw_text, selected_model, provider_usage = _run_provider_text(text_model, request_text)
         result = _parse_content(raw_text)
     except (ProviderError, StudioAiError) as exc:
         usage.status = "ERROR"
         usage.error_code = exc.code if isinstance(exc, StudioAiError) else "provider_error"
         usage.save(update_fields=["status", "error_code"])
         raise
-    usage.model = selected_model
-    usage.status = "SUCCESS"
-    usage.output_chars = len(raw_text)
-    usage.save(update_fields=["model", "status", "output_chars"])
+    _finish_usage(usage, raw_text=raw_text, selected_model=selected_model, provider_usage=provider_usage)
     if scope == Prompt.TranslationScope.DIALOGUE:
         language_names = "|".join(re.escape(value) for value in PROMPT_LANGUAGE_NAMES.values())
         result = re.sub(
@@ -224,17 +243,14 @@ def improve_prompt(*, prompt, user, mode, selected_block_ids, text_model):
         model=text_model, status="STARTED", input_chars=len(prompt_text),
     )
     try:
-        raw_text, selected_model = run_text(text_model, prompt_text)
+        raw_text, selected_model, provider_usage = _run_provider_text(text_model, prompt_text)
         suggested = _parse_blocks(raw_text, {str(block.id) for block in blocks})
     except (ProviderError, StudioAiError) as exc:
         usage.status = "ERROR"
         usage.error_code = exc.code if isinstance(exc, StudioAiError) else "provider_error"
         usage.save(update_fields=["status", "error_code"])
         raise
-    usage.model = selected_model
-    usage.status = "SUCCESS"
-    usage.output_chars = len(raw_text)
-    usage.save(update_fields=["model", "status", "output_chars"])
+    _finish_usage(usage, raw_text=raw_text, selected_model=selected_model, provider_usage=provider_usage)
     AiSuggestion.objects.filter(prompt=prompt, status=AiSuggestion.Status.PENDING).update(
         status=AiSuggestion.Status.REJECTED, decided_by=user, decided_at=timezone.now(),
     )
@@ -284,7 +300,7 @@ def translate_prompt(*, prompt, user, target_language, text_model, scope):
         model=text_model, status="STARTED", input_chars=len(prompt_text),
     )
     try:
-        raw_text, selected_model = run_text(text_model, prompt_text)
+        raw_text, selected_model, provider_usage = _run_provider_text(text_model, prompt_text)
         translated = _parse_blocks(raw_text, {str(block.id) for block in blocks})
     except (ProviderError, StudioAiError) as exc:
         usage.status = "ERROR"
@@ -336,10 +352,7 @@ def translate_prompt(*, prompt, user, target_language, text_model, scope):
             "scope": scope, "model": selected_model, "blockCount": len(translated),
         },
     )
-    usage.model = selected_model
-    usage.status = "SUCCESS"
-    usage.output_chars = len(raw_text)
-    usage.save(update_fields=["model", "status", "output_chars"])
+    _finish_usage(usage, raw_text=raw_text, selected_model=selected_model, provider_usage=provider_usage)
     return translated_prompt, len(translated), selected_model
 
 

@@ -1,17 +1,22 @@
 from django.db import transaction
 from django.utils import timezone
 
-from .models import DialogueLine, Prompt, Revision, SubtitleLine, TranslationUnit, Workspace, WorkspaceMembership
+from .models import AiModelProfile, DialogueLine, Prompt, Revision, SubtitleLine, TranslationUnit, Workspace, WorkspaceMembership
 from .revisions import record_revision
 
 
 @transaction.atomic
 def create_workspace(*, user, name, slug, description=""):
+    default_image_model = AiModelProfile.objects.filter(
+        provider__iexact="OpenAI", media_type=AiModelProfile.MediaType.IMAGE,
+        model_id="gpt-image-1", is_active=True,
+    ).first()
     workspace = Workspace.objects.create(
         name=name,
         slug=slug,
         description=description,
         owner=user,
+        default_image_model=default_image_model,
         created_by=user,
         updated_by=user,
     )

@@ -22,12 +22,22 @@
     <h2>Languages</h2>
     <div class="settings-language-grid"><label>Documentation{{ form.documentation_language }}</label><label>Dialogue{{ form.dialogue_language }}</label><label>Prompt generation{{ form.prompt_language }}</label></div>
   </section>
+  <section class="panel settings-section ai-image-settings">
+    <div class="section-title-row"><div><h2>OpenAI image generation</h2><p class="muted">This exact model generates Photo prompt images. Prompt reference images are sent with the request.</p></div><span class="accent-tag warning">AI IMAGE</span></div>
+    <div class="settings-language-grid"><label>Default image model{{ form.default_image_model }}</label></div>
+    <p class="muted">Models and their provider IDs are managed in <a href="{% url 'studio:workspace_media_models' workspace.id %}">Generation models</a>.</p>
+  </section>
   <section class="panel settings-section prompt-template-settings">
     <h2>Prompt templates</h2><p class="muted">The matching template is appended to a newly created prompt.</p>
     <div class="template-grid"><label>Photo{{ form.image_prompt_template }}</label><label>Video{{ form.video_prompt_template }}</label><label>Audio{{ form.audio_prompt_template }}</label><label>Text{{ form.text_prompt_template }}</label></div>
   </section>
   <div class="settings-actions settings-form-actions"><button type="submit">Save settings</button><a class="button secondary" href="{% url 'studio:workspace_detail' workspace.id %}">Cancel</a></div>
 </form>
+<section class="panel settings-section ai-usage-section">
+  <div class="section-title-row"><div><h2>AI token usage</h2><p class="muted">Provider-reported token usage for this workspace. Image requests include the selected model and reference count in their asset metadata.</p></div><span class="accent-tag success">LIVE LOG</span></div>
+  <div class="ai-usage-summary"><div><span>Input</span><strong>{{ ai_totals.input_tokens }}</strong></div><div><span>Output</span><strong>{{ ai_totals.output_tokens }}</strong></div><div><span>Total</span><strong>{{ ai_totals.total_tokens }}</strong></div></div>
+  <div class="table-scroll"><table class="ai-usage-table"><thead><tr><th>Time</th><th>User</th><th>Action</th><th>Model</th><th>Input</th><th>Output</th><th>Total</th><th>Status</th></tr></thead><tbody>{% for row in ai_usage %}<tr><td>{{ row.created_at|date:"Y-m-d H:i" }}</td><td>{{ row.user|display_name }}</td><td>{{ row.action }}</td><td><code>{{ row.model }}</code></td><td>{{ row.input_tokens }}</td><td>{{ row.output_tokens }}</td><td><strong>{{ row.total_tokens }}</strong></td><td><span class="status-dot {% if row.status == 'SUCCESS' %}success{% elif row.status == 'ERROR' %}failed{% endif %}"></span>{{ row.status }}</td></tr>{% empty %}<tr><td colspan="8" class="muted">No AI requests have been recorded yet</td></tr>{% endfor %}</tbody></table></div>
+</section>
 {% if can_administer %}
 <section class="panel settings-section email-test" id="email-test"><h2>Test email delivery</h2><p class="muted">Send a diagnostic message to a current workspace member. Provider secrets are never included in the downloadable log.</p>
   <form method="post" class="email-test-form">{% csrf_token %}<input type="hidden" name="action" value="test_email"><label>Recipient<select name="recipient" required>{% for user in email_recipients %}{% if user.email %}<option value="{{ user.email }}">{{ user|display_name }} / {{ user.email }}</option>{% endif %}{% endfor %}</select></label><button type="submit">Send test email</button></form>
