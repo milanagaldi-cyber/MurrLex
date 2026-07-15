@@ -2,7 +2,7 @@
 {% block content %}
 <p class="project-breadcrumb"><a href="{% url 'studio:project_detail' project.id %}">&larr; Project {{ project.title }}</a></p>
 <h1>Edit Project</h1>
-<form method="post" class="panel project-edit-form" data-stay-on-save>{% csrf_token %}
+<form method="post" class="panel project-edit-form" data-preserve-position>{% csrf_token %}
   {{ form.non_field_errors }}
   <div class="project-edit-grid">{% for field in form %}<label>{{ field.label }}{{ field }}{{ field.errors }}</label>{% endfor %}</div>
   <section id="recommended-tracks" class="project-tracks-editor">

@@ -1,0 +1,35 @@
+{% extends "studio/base.html" %}
+{% block content %}
+<p class="project-breadcrumb"><a href="{% url 'studio:project_detail' project.id %}#episode-{{ episode.id }}">&larr; Project {{ project.title }}</a></p>
+<div class="episode-settings-heading">
+  <button id="episode-settings-cover-display" class="character-avatar character-avatar-trigger episode-settings-avatar" type="button" data-dialog-open="episode-cover-picker" title="Change episode cover" aria-label="Change episode cover">{% if episode.avatar_asset %}<img src="{% url 'studio_api:asset_thumbnail' episode.avatar_asset.id %}" alt="{{ episode.title }}">{% else %}<small>{{ episode.title }}</small>{% endif %}<span class="avatar-change-label">Change cover</span></button>
+  <div><h1>Edit Episode {{ episode.number }}</h1><p>{{ episode.title }}</p></div>
+</div>
+{% url 'studio:episode_image_upload' episode.id as episode_upload_url %}
+{% include "studio/_image_picker.html" with picker_id="episode-cover-picker" picker_title="Episode Covers" attach_scope="episode" owner_id=episode.id upload_url=episode_upload_url upload_role="episode_avatar" picker_return=request.get_full_path hide_picker_trigger=True preserve_position=True upload_limit=10 live_preview_id="episode-settings-cover-display" %}
+
+<form method="post" class="panel episode-settings-form" data-preserve-position>{% csrf_token %}
+  {{ form.non_field_errors }}
+  {% for field in form %}<label>{{ field.label }}{{ field }}{{ field.errors }}</label>{% endfor %}
+  <div class="settings-form-actions"><a class="button secondary" href="{% url 'studio:project_detail' project.id %}#episode-{{ episode.id }}">Cancel</a><button type="submit">Save episode</button></div>
+</form>
+
+<div class="toolbar"><h2>Episode covers</h2><button class="icon-button secondary" type="button" data-dialog-open="episode-cover-picker" title="Add cover" aria-label="Add cover">+</button></div>
+<div class="asset-grid episode-cover-settings-grid">
+{% for cover in episode.cover_entries.all %}{% with asset=cover.asset %}{% if asset.thumbnail %}
+  <figure class="asset episode-cover-card" data-asset-id="{{ asset.id }}">
+    <a href="{% url 'studio_api:asset_view' asset.id %}"><img src="{% url 'studio_api:asset_thumbnail' asset.id %}" alt="{{ asset.original_filename }}" loading="lazy"></a>
+    <figcaption><span class="asset-name">{{ asset.original_filename }}</span><span class="muted">{{ asset.width }}x{{ asset.height }}</span>
+      <form class="episode-cover-meta" method="post" action="{% url 'studio:episode_cover_update' cover.id %}" data-episode-cover-form>{% csrf_token %}
+        <label title="Language used on this cover"><span>Language</span><select name="language_code">{% for code,name in cover_languages %}<option value="{{ code }}"{% if cover.language_code == code %} selected{% endif %}>{{ code }}</option>{% endfor %}</select></label>
+        <label title="Target platform for this cover"><span>Platform</span><select name="platform" data-cover-platform>{% for value,name in cover_platforms %}<option value="{{ value }}"{% if cover.platform == value %} selected{% endif %}>{{ name }}</option>{% endfor %}</select></label>
+        <input name="custom_platform" value="{{ cover.custom_platform }}" placeholder="Custom platform" aria-label="Custom platform" data-custom-platform{% if cover.platform != 'OTHER' %} hidden{% endif %}><button class="secondary" type="submit">Save attributes</button>
+      </form>
+      <form method="post" action="{% url 'studio:asset_attach' 'episode_avatar' episode.id %}" data-ajax-asset-action data-live-preview-target="#episode-settings-cover-display">{% csrf_token %}<input type="hidden" name="asset_id" value="{{ asset.id }}"><button class="secondary set-avatar-button" type="submit">{% if episode.avatar_asset_id == asset.id %}Current cover{% else %}Set as cover{% endif %}</button></form>
+      {% include "studio/_asset_actions.html" with asset=asset attachment_scope='episode' attachment_id=episode.id return_anchor='episode-covers' %}
+    </figcaption>
+  </figure>
+{% endif %}{% endwith %}{% empty %}<p class="empty">No episode covers yet.</p>{% endfor %}
+</div>
+<script>(()=>{document.querySelectorAll('[data-cover-platform]').forEach(select=>{const custom=select.closest('form')?.querySelector('[data-custom-platform]'),sync=()=>{if(custom)custom.hidden=select.value!=='OTHER'};select.addEventListener('change',sync);sync()});document.querySelectorAll('[data-episode-cover-form]').forEach(form=>form.addEventListener('submit',async event=>{event.preventDefault();const button=event.submitter;if(button)button.disabled=true;try{const response=await fetch(form.action,{method:'POST',body:new FormData(form),headers:{'X-Requested-With':'XMLHttpRequest'}}),data=await response.json();if(!response.ok)throw new Error(data.error||'Could not save cover.');window.studioToast?.('Episode cover saved.')}catch(error){window.studioToast?.(error.message||'Could not save cover.','error')}finally{if(button)button.disabled=false}}))})();</script>
+{% endblock %}

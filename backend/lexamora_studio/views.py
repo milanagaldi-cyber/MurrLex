@@ -1051,8 +1051,34 @@ def character_set_avatar(request, character_id):
 
 @login_required
 def episode_edit(request, episode_id):
-    item = get_object_or_404(Episode.objects.select_related("project__workspace").filter(project__in=accessible_projects(request.user)), id=episode_id)
-    return _edit_entity(request, item=item, form_class=EpisodeForm, workspace=item.project.workspace, title="Edit episode", success_url=lambda value: ("studio:project_detail", value.project_id))
+    item = get_object_or_404(
+        Episode.objects.select_related("project__workspace", "avatar_asset").prefetch_related(
+            Prefetch("cover_entries", queryset=EpisodeCover.objects.select_related("asset"))
+        ).filter(project__in=accessible_projects(request.user)),
+        id=episode_id,
+    )
+    if not has_object_capability(request.user, item, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    form = EpisodeForm(request.POST or None, instance=item)
+    if request.method == "POST" and form.is_valid():
+        item = form.save(commit=False)
+        item.updated_by = request.user
+        item.full_clean()
+        item.save()
+        record_revision(instance=item, user=request.user, operation="UPDATE")
+        messages.success(request, "Episode saved.")
+        return redirect("studio:episode_edit", episode_id=item.id)
+    project_assets, workspace_assets = _picker_assets(request.user, item.project)
+    return render(request, "studio/episode_edit.html", {
+        "episode": item,
+        "project": item.project,
+        "form": form,
+        "can_edit": True,
+        "project_assets": project_assets,
+        "workspace_assets": workspace_assets,
+        "cover_languages": PROMPT_LANGUAGES,
+        "cover_platforms": EpisodeCover.Platform.choices,
+    })
 
 
 @login_required
@@ -1274,7 +1300,7 @@ def entity_move(request, entity_type, entity_id, direction):
 @login_required
 def project_detail(request, project_id):
     project = get_object_or_404(
-        accessible_projects(request.user).select_related("workspace", "created_by", "updated_by").prefetch_related("media_assets", "assets", "characters__avatar_asset", "characters__reference_assets", "episodes__avatar_asset", "episodes__cover_assets", Prefetch("episodes__cover_entries", queryset=EpisodeCover.objects.select_related("asset")), "episodes__scenes", "memberships__user", "recommended_tracks"),
+        accessible_projects(request.user).select_related("workspace", "created_by", "updated_by").prefetch_related("media_assets", "assets", "characters__avatar_asset", "characters__reference_assets", Prefetch("episodes__cover_entries", queryset=EpisodeCover.objects.select_related("asset")), "episodes__scenes", "memberships__user", "recommended_tracks"),
         id=project_id,
     )
     inherited = list(project.workspace.memberships.filter(status=WorkspaceMembership.Status.ACTIVE).exclude(user=project.workspace.owner).select_related("user"))
@@ -1296,8 +1322,6 @@ def project_detail(request, project_id):
         "workspace_assets": workspace_assets,
         "gallery_assets": gallery_assets,
         "gallery_projects": [project],
-        "cover_languages": PROMPT_LANGUAGES,
-        "cover_platforms": EpisodeCover.Platform.choices,
     })
 
 

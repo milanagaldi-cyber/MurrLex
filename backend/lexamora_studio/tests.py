@@ -1158,7 +1158,7 @@ class StudioWebEditingAndImagesTests(TestCase):
                 self.assertEqual(self.episode.cover_assets.count(), 2)
                 self.assertEqual(self.episode.avatar_asset_id, second.id)
                 page = self.client.get(f"/studio/projects/{self.project.id}/")
-                self.assertContains(page, "Episode covers")
+                self.assertContains(page, "episode-cover-strip")
                 self.assertContains(page, "episode-b.png")
 
     def test_episode_cover_metadata_can_be_updated_inline(self):
@@ -1185,9 +1185,41 @@ class StudioWebEditingAndImagesTests(TestCase):
                 cover.refresh_from_db()
                 self.assertEqual((cover.language_code, cover.platform, cover.custom_platform), ("PL", "OTHER", "Vimeo"))
                 page = self.client.get(f"/studio/projects/{self.project.id}/")
-                self.assertContains(page, "data-episode-cover-form")
-                self.assertContains(page, "Vimeo")
-                self.assertContains(page, f'data-live-preview-target="#{self.episode.id}-cover-display"')
+                self.assertContains(page, "episode-cover-strip")
+                self.assertNotContains(page, "data-episode-cover-form")
+                editor = self.client.get(f"/studio/episodes/{self.episode.id}/edit/")
+                self.assertContains(editor, "data-episode-cover-form")
+                self.assertContains(editor, "Vimeo")
+                self.assertContains(editor, 'data-live-preview-target="#episode-settings-cover-display"')
+
+    def test_project_music_uses_refreshing_save_and_minus_controls(self):
+        from .models import RecommendedTrack
+
+        track = RecommendedTrack.objects.create(
+            project=self.project, artist="Artist", title="Old track",
+            created_by=self.owner, updated_by=self.owner,
+        )
+        self.client.force_login(self.owner)
+        editor = self.client.get(f"/studio/projects/{self.project.id}/edit/")
+        self.assertContains(editor, "data-preserve-position")
+        self.assertNotContains(editor, 'class="panel project-edit-form" data-stay-on-save')
+        self.assertContains(editor, "data-remove-track")
+        response = self.client.post(
+            f"/studio/projects/{self.project.id}/edit/",
+            {
+                "project_type": "SERIES", "title": self.project.title, "description": "",
+                "concept": "", "rights_holder": "", "publication_info": "",
+                "status": "DRAFT", "status_comment": "",
+                "tracks-TOTAL_FORMS": "1", "tracks-INITIAL_FORMS": "1",
+                "tracks-MIN_NUM_FORMS": "0", "tracks-MAX_NUM_FORMS": "1000",
+                "tracks-0-id": str(track.id), "tracks-0-is_primary": "",
+                "tracks-0-platform": "", "tracks-0-artist": "Artist",
+                "tracks-0-title": "Old track", "tracks-0-url": "",
+                "tracks-0-position": "0", "tracks-0-DELETE": "on",
+            },
+        )
+        self.assertRedirects(response, f"/studio/projects/{self.project.id}/edit/")
+        self.assertFalse(RecommendedTrack.objects.filter(id=track.id).exists())
 
     def test_language_names_only_appear_for_scene_title_and_dialogue_speaker(self):
         from .models import DialogueLine
