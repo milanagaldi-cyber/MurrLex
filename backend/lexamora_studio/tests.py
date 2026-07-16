@@ -1822,7 +1822,10 @@ class StudioMasterDocumentTests(TestCase):
                 "language": "PL", "status": "IN_REVIEW", "status_comment": "Translation checked",
             },
         )
-        self.assertRedirects(response, f"/studio/scenes/{self.first_scene.id}/")
+        self.assertRedirects(
+            response,
+            f"/studio/scenes/{self.first_scene.id}/#dialogue-{self.first_line.id}",
+        )
         self.first_line.refresh_from_db()
         self.assertEqual(self.first_line.text_prompt, "Prompt copy")
         self.assertEqual(self.first_line.text, "Dialogue copy")
