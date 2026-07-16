@@ -3,6 +3,7 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.contrib import messages
+from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
 from django.core import signing
 from django.core.exceptions import ValidationError
@@ -24,6 +25,7 @@ from lessons.provider_credentials import user_has_ai_access
 from .ai import StudioAiError, accept_suggestion, improve_prompt, preview_prompt_translation, reject_suggestion, translate_prompt, translate_prompt_dialogue, undo_suggestion
 from .ai_catalog import PROMPT_LANGUAGES, PROMPT_LANGUAGE_NAMES, active_text_models, default_prompt_template, default_text_model_id, project_text_model_id, selected_text_model
 from .exports import ALL_SECTIONS, ExportError, generate_export
+from .external_images import download_external_image
 from .docx_imports import accept_docx_import, parse_docx
 from .docx_exports import generate_docx_export
 from .docx_roundtrip import compare_docx_export
@@ -339,7 +341,61 @@ def workspace_access(request, workspace_id):
         "owner_membership": workspace.memberships.filter(user=workspace.owner).select_related("user").first(),
         "memberships": workspace.memberships.exclude(user=workspace.owner).select_related("user"),
         "can_remove_access": request.user.id == workspace.owner_id,
+        "can_transfer_owner": request.user.is_superuser,
     })
+
+
+@login_required
+@transaction.atomic
+def workspace_transfer_owner(request, workspace_id):
+    if request.method != "POST" or not request.user.is_superuser:
+        return HttpResponseForbidden("Server super administrator access is required.")
+    workspace = get_object_or_404(Workspace.objects.select_for_update().select_related("owner"), id=workspace_id)
+    email = request.POST.get("email", "").strip().lower()
+    matches = list(get_user_model().objects.filter(email__iexact=email)[:2])
+    if len(matches) != 1:
+        messages.error(request, "Enter the email of one registered user.")
+        return redirect("studio:workspace_access", workspace_id=workspace.id)
+    new_owner = matches[0]
+    if new_owner.id == workspace.owner_id:
+        messages.warning(request, "This user already owns the workspace.")
+        return redirect("studio:workspace_access", workspace_id=workspace.id)
+    previous_owner = workspace.owner
+    WorkspaceMembership.objects.update_or_create(
+        workspace=workspace,
+        user=previous_owner,
+        defaults={
+            "role": WorkspaceMembership.Role.ADMIN,
+            "status": WorkspaceMembership.Status.ACTIVE,
+            "can_use_ai": True,
+            "can_export": True,
+            "can_manage_members": True,
+        },
+    )
+    WorkspaceMembership.objects.update_or_create(
+        workspace=workspace,
+        user=new_owner,
+        defaults={
+            "role": WorkspaceMembership.Role.OWNER,
+            "status": WorkspaceMembership.Status.ACTIVE,
+            "can_use_ai": True,
+            "can_export": True,
+            "can_manage_members": True,
+        },
+    )
+    ProjectAccessExclusion.objects.filter(project__workspace=workspace, user=new_owner).delete()
+    workspace.owner = new_owner
+    workspace.updated_by = request.user
+    workspace.save(update_fields=["owner", "updated_by", "updated_at"])
+    audit(
+        workspace=workspace,
+        actor=request.user,
+        action="WORKSPACE_OWNER_TRANSFERRED",
+        instance=workspace,
+        metadata={"previousOwnerId": previous_owner.id, "newOwnerId": new_owner.id},
+    )
+    messages.success(request, "Workspace owner changed. The previous owner remains a workspace administrator.")
+    return redirect("studio:workspace_access", workspace_id=workspace.id)
 
 
 @login_required
@@ -825,7 +881,7 @@ def _accessible_workspace_images(user, workspace):
     ).filter(
         Q(projects__in=projects)
         | Q(projects__isnull=True),
-    ).select_related("project").prefetch_related(
+    ).select_related("project", "created_by", "updated_by").prefetch_related(
         "projects",
         Prefetch("referenced_by_scenes", queryset=Scene.objects.select_related("episode")),
         Prefetch("referenced_by_characters", queryset=Character.objects.select_related("project")),
@@ -940,6 +996,78 @@ def character_edit(request, character_id):
 
 
 @login_required
+@transaction.atomic
+def character_copy(request, character_id):
+    source = get_object_or_404(
+        Character.objects.select_related("project__workspace", "avatar_asset").prefetch_related("reference_assets").filter(
+            project__in=accessible_projects(request.user)
+        ),
+        id=character_id,
+    )
+    if request.method != "POST" or not has_object_capability(request.user, source, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    base = f"{source.name} copy"[:160]
+    name = base
+    suffix = 2
+    while Character.all_objects.filter(project=source.project, name=name).exists():
+        name = f"{base} {suffix}"[:180]
+        suffix += 1
+    copied = Character.objects.create(
+        project=source.project,
+        name=name,
+        name_prompt=source.name_prompt,
+        name_dialogue=source.name_dialogue,
+        description=source.description,
+        description_prompt=source.description_prompt,
+        description_dialogue=source.description_dialogue,
+        visual_description=source.visual_description,
+        visual_description_prompt=source.visual_description_prompt,
+        visual_description_dialogue=source.visual_description_dialogue,
+        position=source.project.characters.count(),
+        avatar_asset=source.avatar_asset,
+        created_by=request.user,
+        updated_by=request.user,
+    )
+    references = list(source.reference_assets.all())
+    if references:
+        copied.reference_assets.add(*references)
+        copied.project.media_assets.add(*references)
+    record_revision(instance=copied, user=request.user, operation="COPY")
+    audit(
+        workspace=source.project.workspace,
+        actor=request.user,
+        action="CHARACTER_COPIED",
+        instance=copied,
+        metadata={"sourceCharacterId": str(source.id)},
+    )
+    messages.success(request, "Character copied to the end of the project character list.")
+    return redirect("studio:character_detail", character_id=copied.id)
+
+
+@login_required
+@transaction.atomic
+def character_delete(request, character_id):
+    character = get_object_or_404(
+        Character.objects.select_related("project__workspace").filter(project__in=accessible_projects(request.user)),
+        id=character_id,
+    )
+    if request.method != "POST" or not has_object_capability(request.user, character, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    project = character.project
+    character.deleted_at = timezone.now()
+    character.deleted_by = request.user
+    character.updated_by = request.user
+    character.save(update_fields=["deleted_at", "deleted_by", "updated_by", "updated_at"])
+    for position, item in enumerate(project.characters.order_by("position", "id")):
+        if item.position != position:
+            item.position = position
+            item.save(update_fields=["position", "updated_at"])
+    audit(workspace=project.workspace, actor=request.user, action="CHARACTER_DELETED", instance=character)
+    messages.success(request, "Character deleted. Its Workspace images were preserved.")
+    return redirect("studio:project_detail", project_id=project.id)
+
+
+@login_required
 def character_detail(request, character_id):
     character = get_object_or_404(
         Character.objects.select_related("project__workspace", "avatar_asset").prefetch_related("assets", "reference_assets").filter(
@@ -970,28 +1098,27 @@ def character_detail(request, character_id):
     })
 
 
-@login_required
-def asset_attach(request, scope, owner_id):
-    if scope == "workspace_avatar":
-        owner = get_object_or_404(accessible_workspaces(request.user), id=owner_id)
+def _asset_attachment_target(user, scope, owner_id):
+    if scope in {"workspace", "workspace_avatar"}:
+        owner = get_object_or_404(accessible_workspaces(user), id=owner_id)
         project = None
         workspace = owner
     elif scope == "project_cover":
         owner = get_object_or_404(
-            accessible_projects(request.user).select_related("workspace"), id=owner_id
+            accessible_projects(user).select_related("workspace"), id=owner_id
         )
         project = owner
         workspace = owner.workspace
     elif scope == "project":
         owner = get_object_or_404(
-            accessible_projects(request.user).select_related("workspace"), id=owner_id
+            accessible_projects(user).select_related("workspace"), id=owner_id
         )
         project = owner
         workspace = owner.workspace
     elif scope == "scene":
         owner = get_object_or_404(
             Scene.objects.select_related("episode__project__workspace").filter(
-                episode__project__in=accessible_projects(request.user)
+                episode__project__in=accessible_projects(user)
             ), id=owner_id,
         )
         project = owner.episode.project
@@ -999,7 +1126,7 @@ def asset_attach(request, scope, owner_id):
     elif scope in {"character", "character_avatar"}:
         owner = get_object_or_404(
             Character.objects.select_related("project__workspace").filter(
-                project__in=accessible_projects(request.user)
+                project__in=accessible_projects(user)
             ), id=owner_id,
         )
         project = owner.project
@@ -1007,16 +1134,75 @@ def asset_attach(request, scope, owner_id):
     elif scope in {"episode", "episode_avatar"}:
         owner = get_object_or_404(
             Episode.objects.select_related("project__workspace").filter(
-                project__in=accessible_projects(request.user)
+                project__in=accessible_projects(user)
             ), id=owner_id,
         )
         project = owner.project
         workspace = project.workspace
     else:
+        return None
+    return owner, project, workspace
+
+
+def _apply_asset_attachment(*, user, scope, owner, project, workspace, asset):
+    if project is not None:
+        asset.projects.add(project)
+    if scope == "workspace_avatar":
+        owner.avatar_asset = asset
+        owner.updated_by = user
+        owner.save(update_fields=["avatar_asset", "updated_by", "updated_at"])
+    elif scope == "workspace":
+        pass
+    elif scope == "project_cover":
+        owner.cover_asset = asset
+        owner.updated_by = user
+        owner.save(update_fields=["cover_asset", "updated_by", "updated_at"])
+    elif scope == "project":
+        pass
+    elif scope in {"episode", "episode_avatar"}:
+        owner.cover_assets.add(asset)
+        EpisodeCover.objects.get_or_create(
+            episode=owner,
+            asset=asset,
+            defaults={
+                "language_code": owner.language or owner.project.dialogue_language or "EN",
+                "created_by": user,
+                "updated_by": user,
+            },
+        )
+        if scope == "episode_avatar" or not owner.avatar_asset_id:
+            owner.avatar_asset = asset
+            owner.updated_by = user
+            owner.save(update_fields=["avatar_asset", "updated_by", "updated_at"])
+    elif scope == "scene":
+        owner.reference_assets.add(asset)
+    else:
+        owner.reference_assets.add(asset)
+    if scope in {"scene", "character", "character_avatar"}:
+        asset.updated_by = user
+        asset.save(update_fields=["updated_by", "updated_at"])
+    if scope == "character_avatar":
+        owner.avatar_asset = asset
+        owner.updated_by = user
+        owner.save(update_fields=["avatar_asset", "updated_by", "updated_at"])
+    audit(
+        workspace=workspace,
+        actor=user,
+        action="ASSET_ATTACHED",
+        instance=asset,
+        metadata={"scope": scope, "ownerId": str(owner.id)},
+    )
+
+
+@login_required
+def asset_attach(request, scope, owner_id):
+    target = _asset_attachment_target(request.user, scope, owner_id)
+    if target is None:
         return HttpResponseForbidden("Unsupported image attachment scope.")
+    owner, project, workspace = target
     permitted = (
         has_capability(request.user, owner, "manage_members")
-        if scope == "workspace_avatar"
+        if scope in {"workspace", "workspace_avatar"}
         else has_object_capability(request.user, owner, "edit")
     )
     if request.method != "POST" or not permitted:
@@ -1030,64 +1216,14 @@ def asset_attach(request, scope, owner_id):
             | Q(projects__isnull=True),
         ).distinct(), id=request.POST.get("asset_id"),
     )
-    if project is not None:
-        asset.projects.add(project)
-    if scope == "workspace_avatar":
-        owner.avatar_asset = asset
-        owner.updated_by = request.user
-        owner.save(update_fields=["avatar_asset", "updated_by", "updated_at"])
-    elif scope == "project_cover":
-        owner.cover_asset = asset
-        owner.updated_by = request.user
-        owner.save(update_fields=["cover_asset", "updated_by", "updated_at"])
-    elif scope == "project":
-        pass
-    elif scope == "episode":
-        owner.cover_assets.add(asset)
-        EpisodeCover.objects.get_or_create(
-            episode=owner,
-            asset=asset,
-            defaults={
-                "language_code": owner.language or owner.project.dialogue_language or "EN",
-                "created_by": request.user,
-                "updated_by": request.user,
-            },
-        )
-        if not owner.avatar_asset_id:
-            owner.avatar_asset = asset
-            owner.updated_by = request.user
-            owner.save(update_fields=["avatar_asset", "updated_by", "updated_at"])
-    elif scope == "episode_avatar":
-        owner.cover_assets.add(asset)
-        EpisodeCover.objects.get_or_create(
-            episode=owner,
-            asset=asset,
-            defaults={
-                "language_code": owner.language or owner.project.dialogue_language or "EN",
-                "created_by": request.user,
-                "updated_by": request.user,
-            },
-        )
-        owner.avatar_asset = asset
-        owner.updated_by = request.user
-        owner.save(update_fields=["avatar_asset", "updated_by", "updated_at"])
-    elif scope == "scene":
-        owner.reference_assets.add(asset)
-    else:
-        owner.reference_assets.add(asset)
-    if scope in {"scene", "character", "character_avatar"}:
-        asset.updated_by = request.user
-        asset.save(update_fields=["updated_by", "updated_at"])
-    if scope == "character_avatar":
-        owner.avatar_asset = asset
-        owner.updated_by = request.user
-        owner.save(update_fields=["avatar_asset", "updated_by", "updated_at"])
-    audit(workspace=workspace, actor=request.user, action="ASSET_ATTACHED", instance=asset, metadata={"scope": scope, "ownerId": str(owner.id)})
+    _apply_asset_attachment(
+        user=request.user, scope=scope, owner=owner, project=project, workspace=workspace, asset=asset,
+    )
     messages.success(request, "Image selection saved.")
     requested = request.POST.get("next", "")
     if requested and url_has_allowed_host_and_scheme(requested, {request.get_host()}, require_https=request.is_secure()):
         return HttpResponseRedirect(requested)
-    if scope == "workspace_avatar":
+    if scope in {"workspace", "workspace_avatar"}:
         return redirect("studio:workspace_detail", workspace_id=owner.id)
     if scope == "project_cover":
         return redirect("studio:workspace_detail", workspace_id=workspace.id)
@@ -1096,6 +1232,43 @@ def asset_attach(request, scope, owner_id):
     if scope == "scene":
         return redirect("studio:scene_detail", scene_id=owner.id)
     return redirect("studio:character_detail", character_id=owner.id)
+
+
+@login_required
+def asset_url_import(request, scope, owner_id):
+    target = _asset_attachment_target(request.user, scope, owner_id)
+    if target is None:
+        return HttpResponseForbidden("Unsupported image attachment scope.")
+    owner, project, workspace = target
+    permitted = (
+        has_capability(request.user, owner, "manage_members")
+        if scope in {"workspace", "workspace_avatar"}
+        else has_object_capability(request.user, owner, "edit")
+    )
+    if request.method != "POST" or not permitted:
+        return HttpResponseForbidden("Edit permission is required.")
+    try:
+        uploaded = download_external_image(request.POST.get("image_url", ""))
+        asset = create_asset(
+            user=request.user,
+            workspace=workspace,
+            uploaded=uploaded,
+            kind=Asset.Kind.OTHER,
+            prevent_duplicate=True,
+        )
+        _apply_asset_attachment(
+            user=request.user, scope=scope, owner=owner, project=project, workspace=workspace, asset=asset,
+        )
+    except ValidationError as exc:
+        messages.error(request, "; ".join(exc.messages))
+    else:
+        messages.success(request, "External image imported and selected.")
+    requested = request.POST.get("next", "")
+    if requested and url_has_allowed_host_and_scheme(requested, {request.get_host()}, require_https=request.is_secure()):
+        return HttpResponseRedirect(requested)
+    if project is not None:
+        return redirect("studio:project_detail", project_id=project.id)
+    return redirect("studio:workspace_detail", workspace_id=workspace.id)
 
 
 @login_required
@@ -2897,6 +3070,11 @@ def docx_roundtrip(request, job_id):
 def _prompt_editor_context(request, project=None):
     return {
         "ai_models": AiModelProfile.objects.filter(is_active=True),
+        "image_models": AiModelProfile.objects.filter(
+            is_active=True,
+            media_type=AiModelProfile.MediaType.IMAGE,
+            provider__iexact="openai",
+        ),
         "text_models": active_text_models(),
         "default_text_model": project_text_model_id(project) if project else default_text_model_id(),
         "prompt_languages": PROMPT_LANGUAGES,
@@ -3179,6 +3357,7 @@ def prompt_generate_image(request, prompt_id):
     )
     job = ImageGenerationJob.objects.create(
         workspace=project.workspace,
+        project=project,
         prompt=prompt,
         requested_by=request.user,
         model_profile=image_model,
@@ -3214,9 +3393,10 @@ def prompt_image_jobs(request, prompt_id):
 def image_generation_job_status(request, job_id):
     job = get_object_or_404(
         ImageGenerationJob.objects.select_related("result_asset", "model_profile").filter(
-            prompt__scene__episode__project__in=accessible_projects(request.user),
+            Q(project__in=accessible_projects(request.user))
+            | Q(prompt__scene__episode__project__in=accessible_projects(request.user)),
             requested_by=request.user,
-        ),
+        ).distinct(),
         id=job_id,
     )
     return JsonResponse(_image_generation_job_payload(job))
@@ -3242,6 +3422,114 @@ def _image_generation_job_payload(job):
             "thumbnailUrl": reverse("studio_api:asset_thumbnail", kwargs={"asset_id": job.result_asset_id}),
         })
     return payload
+
+
+@login_required
+def project_image_generation(request, project_id):
+    project = get_object_or_404(
+        accessible_projects(request.user).select_related("workspace__default_image_model"),
+        id=project_id,
+    )
+    if not has_project_capability(request.user, project, "use_ai") or not user_has_ai_access(request.user):
+        return HttpResponseForbidden("AI access is not enabled for this account.")
+    project_assets, workspace_assets = _picker_assets(request.user, project)
+    jobs = ImageGenerationJob.objects.select_related("result_asset", "model_profile").filter(
+        project=project,
+        requested_by=request.user,
+    )[:25]
+    return render(request, "studio/project_image_generation.html", {
+        "project": project,
+        "project_assets": project_assets,
+        "workspace_assets": workspace_assets,
+        "image_models": AiModelProfile.objects.filter(
+            is_active=True,
+            media_type=AiModelProfile.MediaType.IMAGE,
+            provider__iexact="openai",
+        ),
+        "jobs": jobs,
+        **_project_header_context(request.user, project),
+    })
+
+
+@login_required
+def project_generate_image(request, project_id):
+    project = get_object_or_404(
+        accessible_projects(request.user).select_related("workspace__default_image_model"),
+        id=project_id,
+    )
+    if request.method != "POST":
+        return JsonResponse({"error": "POST is required."}, status=405)
+    if not has_project_capability(request.user, project, "use_ai") or not user_has_ai_access(request.user):
+        return JsonResponse({"error": "AI access is not enabled for this account."}, status=403)
+    try:
+        payload = json.loads(request.body or b"{}")
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "The generation request is not valid JSON."}, status=400)
+    image_model = AiModelProfile.objects.filter(
+        id=payload.get("modelProfileId"),
+        media_type=AiModelProfile.MediaType.IMAGE,
+        is_active=True,
+        provider__iexact="openai",
+    ).first() or project.workspace.default_image_model
+    if image_model is None:
+        return JsonResponse({"error": "Choose an OpenAI image model."}, status=400)
+    request_prompt = str(payload.get("prompt") or "").strip()
+    if not request_prompt or len(request_prompt) > settings.AI_MAX_TEXT_CHARS:
+        return JsonResponse({"error": "Enter a prompt within the server text limit."}, status=400)
+    defaults = image_model.defaults if isinstance(image_model.defaults, dict) else {}
+    try:
+        output_compression = int(payload.get("outputCompression", defaults.get("output_compression", 100)))
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "Image compression must be a number from 0 to 100."}, status=400)
+    reference_ids = [str(value) for value in payload.get("referenceAssetIds", [])][:3]
+    accessible_ids = {
+        str(value)
+        for value in _accessible_workspace_images(request.user, project.workspace).filter(
+            id__in=reference_ids,
+        ).values_list("id", flat=True)
+    }
+    if len(accessible_ids) != len(set(reference_ids)):
+        return JsonResponse({"error": "One or more reference images are not accessible."}, status=400)
+    image_options = {
+        "size": str(payload.get("size") or defaults.get("size") or "1024x1024"),
+        "quality": str(payload.get("quality") or defaults.get("quality") or "low"),
+        "output_format": str(payload.get("outputFormat") or defaults.get("output_format") or "png"),
+        "output_compression": output_compression,
+        "background": str(payload.get("background") or defaults.get("background") or "auto"),
+        "moderation": str(payload.get("moderation") or defaults.get("moderation") or "auto"),
+    }
+    job = ImageGenerationJob.objects.create(
+        workspace=project.workspace,
+        project=project,
+        requested_by=request.user,
+        model_profile=image_model,
+        request_prompt=request_prompt,
+        options=image_options,
+        reference_asset_ids=reference_ids,
+    )
+    audit(
+        workspace=project.workspace,
+        actor=request.user,
+        action="PROJECT_IMAGE_QUEUED",
+        instance=project,
+        metadata={
+            "jobId": str(job.id),
+            "model": image_model.model_id,
+            "referenceAssetIds": reference_ids,
+            "settings": image_options,
+        },
+    )
+    return JsonResponse(_image_generation_job_payload(job), status=202)
+
+
+@login_required
+def project_image_jobs(request, project_id):
+    project = get_object_or_404(accessible_projects(request.user), id=project_id)
+    jobs = ImageGenerationJob.objects.select_related("result_asset", "model_profile").filter(
+        project=project,
+        requested_by=request.user,
+    )[:25]
+    return JsonResponse({"jobs": [_image_generation_job_payload(job) for job in jobs]})
 
 
 @login_required

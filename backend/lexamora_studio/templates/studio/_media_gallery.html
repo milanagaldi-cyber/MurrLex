@@ -37,6 +37,6 @@
         <figcaption><span class="asset-name">{{ asset.original_filename }}</span><span class="muted">Workspace / {{ asset.width }}x{{ asset.height }}</span>{% if gallery_mode == "workspace" %}{% include "studio/_asset_actions.html" with asset=asset allow_trash=True %}{% elif asset.is_current_project %}{% include "studio/_asset_actions.html" with asset=asset attachment_scope='project' attachment_id=gallery_current_project %}{% else %}{% include "studio/_asset_actions.html" with asset=asset attach_project_id=gallery_current_project return_anchor=gallery_id %}{% endif %}</figcaption>
       </figure>
     {% endif %}{% endfor %}
-    {% if can_edit %}{% include "studio/_image_picker.html" with picker_id=gallery_picker_id upload_url=gallery_upload_url picker_return=request.get_full_path picker_default_scope=gallery_default_scope %}{% endif %}
+    {% if can_edit %}{% include "studio/_image_picker.html" with picker_id=gallery_picker_id upload_url=gallery_upload_url picker_return=request.get_full_path picker_default_scope=gallery_default_scope attach_scope=gallery_attach_scope owner_id=gallery_owner_id %}{% endif %}
   </div>
 </details>

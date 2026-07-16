@@ -737,7 +737,14 @@ class ImageGenerationJob(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     workspace = models.ForeignKey(Workspace, on_delete=models.PROTECT, related_name="image_generation_jobs")
-    prompt = models.ForeignKey(Prompt, on_delete=models.PROTECT, related_name="image_generation_jobs")
+    project = models.ForeignKey(
+        Project, on_delete=models.PROTECT, related_name="image_generation_jobs",
+        null=True, blank=True,
+    )
+    prompt = models.ForeignKey(
+        Prompt, on_delete=models.PROTECT, related_name="image_generation_jobs",
+        null=True, blank=True,
+    )
     requested_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="studio_image_generation_jobs",
     )

@@ -3151,3 +3151,98 @@ class StudioGeneralSettingsTests(TestCase):
             {"name": "Forbidden", "model_id": "gpt-5.4-mini"},
         )
         self.assertEqual(denied.status_code, 403)
+
+
+class StudioProductionPilotFeaturesTests(TestCase):
+    def setUp(self):
+        from .models import AiModelProfile, Character
+
+        users = get_user_model()
+        self.owner = users.objects.create_user("pilot-owner", email="owner@example.com", password="strong-pass")
+        self.new_owner = users.objects.create_user("pilot-new-owner", email="new-owner@example.com", password="strong-pass")
+        self.admin = users.objects.create_superuser("pilot-admin", email="admin@example.com", password="strong-pass")
+        self.workspace = create_workspace(user=self.owner, name="Pilot Studio", slug="pilot-studio")
+        self.project = Project.objects.create(
+            workspace=self.workspace,
+            project_type=Project.Type.SERIES,
+            title="Pilot Project",
+            created_by=self.owner,
+            updated_by=self.owner,
+        )
+        self.character = Character.objects.create(
+            project=self.project,
+            name="Hero",
+            description="Original hero",
+            created_by=self.owner,
+            updated_by=self.owner,
+        )
+        self.image_model = AiModelProfile.objects.create(
+            name="GPT Image Test",
+            provider="OpenAI",
+            model_id="gpt-image-test",
+            media_type=AiModelProfile.MediaType.IMAGE,
+            is_active=True,
+        )
+        self.workspace.default_image_model = self.image_model
+        self.workspace.save(update_fields=["default_image_model", "updated_at"])
+
+    def test_superuser_can_transfer_workspace_owner(self):
+        self.client.force_login(self.admin)
+        response = self.client.post(
+            f"/studio/workspaces/{self.workspace.id}/owner/",
+            {"email": self.new_owner.email},
+        )
+        self.assertRedirects(response, f"/studio/workspaces/{self.workspace.id}/access/")
+        self.workspace.refresh_from_db()
+        self.assertEqual(self.workspace.owner, self.new_owner)
+        self.assertEqual(
+            WorkspaceMembership.objects.get(workspace=self.workspace, user=self.owner).role,
+            WorkspaceMembership.Role.ADMIN,
+        )
+        self.assertEqual(
+            WorkspaceMembership.objects.get(workspace=self.workspace, user=self.new_owner).role,
+            WorkspaceMembership.Role.OWNER,
+        )
+
+    def test_character_can_be_copied_and_soft_deleted(self):
+        from .models import Character
+
+        self.client.force_login(self.owner)
+        copied_response = self.client.post(f"/studio/characters/{self.character.id}/copy/")
+        copied = Character.objects.exclude(id=self.character.id).get()
+        self.assertRedirects(copied_response, f"/studio/characters/{copied.id}/")
+        self.assertEqual(copied.description, self.character.description)
+        deleted_response = self.client.post(f"/studio/characters/{copied.id}/delete/")
+        self.assertRedirects(deleted_response, f"/studio/projects/{self.project.id}/")
+        self.assertFalse(Character.objects.filter(id=copied.id).exists())
+        self.assertTrue(Character.all_objects.filter(id=copied.id, deleted_at__isnull=False).exists())
+
+    @patch("lexamora_studio.views.user_has_ai_access", return_value=True)
+    def test_project_generation_can_queue_selected_model(self, _has_access):
+        from .models import ImageGenerationJob
+
+        self.client.force_login(self.owner)
+        response = self.client.post(
+            f"/studio/projects/{self.project.id}/image-generation/queue/",
+            data=json.dumps({
+                "prompt": "A cinematic test frame",
+                "modelProfileId": str(self.image_model.id),
+                "size": "1024x1536",
+                "quality": "medium",
+                "outputFormat": "png",
+                "referenceAssetIds": [],
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 202, response.content)
+        job = ImageGenerationJob.objects.get(id=response.json()["jobId"])
+        self.assertEqual(job.project, self.project)
+        self.assertIsNone(job.prompt)
+        self.assertEqual(job.model_profile, self.image_model)
+
+    def test_external_image_import_rejects_private_network(self):
+        from django.core.exceptions import ValidationError
+        from .external_images import download_external_image
+
+        with self.assertRaises(ValidationError):
+            download_external_image("http://127.0.0.1/private.png")

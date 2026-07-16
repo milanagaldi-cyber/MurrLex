@@ -19,12 +19,12 @@ logger = logging.getLogger(__name__)
 def execute_image_generation_job(job_id):
     close_old_connections()
     job = ImageGenerationJob.objects.select_related(
-        "prompt__scene__episode__project", "workspace", "requested_by", "model_profile",
+        "prompt__scene__episode__project", "project", "workspace", "requested_by", "model_profile",
     ).get(id=job_id)
     if job.status != ImageGenerationJob.Status.RUNNING:
         return
     prompt = job.prompt
-    project = prompt.scene.episode.project
+    project = job.project or prompt.scene.episode.project
     reference_map = {
         str(asset.id): asset
         for asset in Asset.objects.filter(
@@ -57,7 +57,7 @@ def execute_image_generation_job(job_id):
         extension = job.options["output_format"]
         content_type = {"png": "image/png", "jpeg": "image/jpeg", "webp": "image/webp"}[extension]
         uploaded = SimpleUploadedFile(
-            f"openai-{slugify(prompt.title or 'prompt') or 'prompt'}-{timezone.now():%Y%m%d-%H%M%S}.{extension}",
+            f"openai-{slugify(prompt.title if prompt else project.title) or 'image'}-{timezone.now():%Y%m%d-%H%M%S}.{extension}",
             image_bytes,
             content_type=content_type,
         )
@@ -69,7 +69,8 @@ def execute_image_generation_job(job_id):
             project=project,
             prompt=prompt,
         )
-        prompt.reference_assets.remove(asset)
+        if prompt is not None:
+            prompt.reference_assets.remove(asset)
         asset.ai_metadata = {
             "provider": "OpenAI",
             "model": model,
@@ -97,8 +98,8 @@ def execute_image_generation_job(job_id):
         audit(
             workspace=job.workspace,
             actor=job.requested_by,
-            action="PROMPT_IMAGE_GENERATED",
-            instance=prompt,
+            action="PROMPT_IMAGE_GENERATED" if prompt else "PROJECT_IMAGE_GENERATED",
+            instance=prompt or project,
             metadata={
                 "assetId": str(asset.id),
                 "jobId": str(job.id),
