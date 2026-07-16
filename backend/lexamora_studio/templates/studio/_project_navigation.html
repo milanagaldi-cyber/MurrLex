@@ -11,7 +11,7 @@
     </nav>
     {% if request.resolver_match.url_name == 'project_detail' %}<div class="project-command-bar">
       {% if can_edit %}<a class="button secondary" href="{% url 'studio:project_edit' project.id %}" title="Edit Project">Edit</a>{% endif %}
-      {% if can_administer %}<button class="secondary" type="button" data-dialog-open="copy-project-dialog" title="Copy Project">Copy</button>{% endif %}
+      {% if can_copy_project %}<button class="secondary" type="button" data-dialog-open="copy-project-dialog" title="Copy Project">Copy</button>{% endif %}
       {% if can_manage_project %}<a class="button secondary" href="{% url 'studio:project_access' project.id %}" title="Share Project">Share</a>{% endif %}
       {% if can_administer %}<form method="post" action="{% url 'studio:project_trash' project.id %}" data-confirm="Archive this project? It will remain in Archive until explicitly deleted.">{% csrf_token %}<button class="secondary" title="Archive Project">Archive</button></form>{% endif %}
       <details class="export-menu"><summary class="button secondary" title="Export Project">Export</summary><div class="export-menu-list"><a href="{% url 'studio:project_exports' project.id %}?format=pdf">Export PDF</a><a href="{% url 'studio:project_exports' project.id %}?format=docx">Export DOCX</a></div></details>
@@ -19,4 +19,4 @@
     </div>{% endif %}
   </div>
 </header>
-{% if can_administer and request.resolver_match.url_name == 'project_detail' %}<dialog id="copy-project-dialog" class="confirmation-dialog"><form method="post" action="{% url 'studio:project_copy' project.id %}">{% csrf_token %}<h2>Copy project</h2><p>The project content, scenes, prompts, translations and image links will be copied.</p><label class="checkbox-line"><input type="checkbox" name="copy_access" value="1"> Copy direct project access</label><div class="dialog-actions"><button class="secondary" type="button" data-dialog-close>Cancel</button><button type="submit">Copy project</button></div></form></dialog>{% endif %}
+{% if can_copy_project and request.resolver_match.url_name == 'project_detail' %}<dialog id="copy-project-dialog" class="confirmation-dialog"><form method="post" action="{% url 'studio:project_copy' project.id %}">{% csrf_token %}<h2>Copy project</h2><p>The project content, scenes, prompts, translations and images will be copied.</p><label>Target Workspace<select name="target_workspace" required>{% for target in copy_target_workspaces %}<option value="{{ target.id }}"{% if target.id == project.workspace_id %} selected{% endif %}>{{ target.name }}</option>{% endfor %}</select></label><label class="checkbox-line"><input type="checkbox" name="copy_access" value="1"> Copy direct project access for users already authorized in the target Workspace</label><div class="dialog-actions"><button class="secondary" type="button" data-dialog-close>Cancel</button><button type="submit">Copy project</button></div></form></dialog>{% endif %}

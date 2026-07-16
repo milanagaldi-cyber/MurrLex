@@ -3039,6 +3039,163 @@ class StudioAssetLifecycleTests(TestCase):
         self.assertTrue(AuditEvent.objects.filter(action="ASSET_RESTORED").exists())
         self.assertTrue(AuditEvent.objects.filter(action="ASSET_PURGED").exists())
 
+    def test_avatar_only_image_can_be_restored_and_purge_clears_avatar_link(self):
+        import tempfile
+        from pathlib import Path
+        from .models import Asset
+        from .storage import create_asset, trash_asset
+
+        self.client.force_login(self.owner)
+        with tempfile.TemporaryDirectory() as directory:
+            with self.settings(STUDIO_PRIVATE_MEDIA_ROOT=Path(directory)):
+                asset = create_asset(
+                    user=self.owner,
+                    workspace=self.workspace,
+                    uploaded=self.image_file("workspace-avatar.png"),
+                    kind=Asset.Kind.OTHER,
+                )
+                self.workspace.avatar_asset = asset
+                self.workspace.save(update_fields=["avatar_asset", "updated_at"])
+                trash_asset(asset=asset, user=self.owner)
+
+                preview = self.client.get(f"/studio/assets/{asset.id}/trash-thumbnail/")
+                self.assertEqual(preview.status_code, 200)
+                preview.close()
+                restored = self.client.post(
+                    f"/studio/assets/{asset.id}/restore/",
+                    {"next": f"/studio/workspaces/{self.workspace.id}/recycle-bin/"},
+                )
+                self.assertRedirects(
+                    restored,
+                    f"/studio/workspaces/{self.workspace.id}/recycle-bin/",
+                )
+                self.assertTrue(Asset.objects.filter(id=asset.id).exists())
+
+                trash_asset(asset=asset, user=self.owner)
+                with self.captureOnCommitCallbacks(execute=True):
+                    purged = self.client.post(
+                        f"/studio/assets/{asset.id}/purge/",
+                        {"next": f"/studio/workspaces/{self.workspace.id}/recycle-bin/"},
+                    )
+                self.assertRedirects(
+                    purged,
+                    f"/studio/workspaces/{self.workspace.id}/recycle-bin/",
+                )
+                self.workspace.refresh_from_db()
+                self.assertIsNone(self.workspace.avatar_asset_id)
+                self.assertIsNotNone(Asset.all_objects.get(id=asset.id).purged_at)
+
+    def test_empty_recycle_bin_purges_all_workspace_files(self):
+        import tempfile
+        from pathlib import Path
+        from .models import Asset, Character
+        from .storage import create_asset, trash_asset
+
+        self.client.force_login(self.owner)
+        character = Character.objects.create(
+            project=self.project,
+            name="Recycle avatar",
+            created_by=self.owner,
+            updated_by=self.owner,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            with self.settings(STUDIO_PRIVATE_MEDIA_ROOT=Path(directory)):
+                first = create_asset(
+                    user=self.owner,
+                    workspace=self.workspace,
+                    uploaded=self.image_file("first.png"),
+                    kind=Asset.Kind.OTHER,
+                )
+                second = create_asset(
+                    user=self.owner,
+                    workspace=self.workspace,
+                    uploaded=self.image_file("second.png"),
+                    kind=Asset.Kind.OTHER,
+                )
+                character.avatar_asset = second
+                character.save(update_fields=["avatar_asset", "updated_at"])
+                trash_asset(asset=first, user=self.owner)
+                trash_asset(asset=second, user=self.owner)
+
+                with self.captureOnCommitCallbacks(execute=True):
+                    response = self.client.post(
+                        f"/studio/workspaces/{self.workspace.id}/recycle-bin/clear/",
+                    )
+                self.assertRedirects(
+                    response,
+                    f"/studio/workspaces/{self.workspace.id}/recycle-bin/",
+                )
+                self.assertEqual(
+                    Asset.all_objects.filter(
+                        workspace=self.workspace,
+                        deleted_at__isnull=False,
+                        purged_at__isnull=True,
+                    ).count(),
+                    0,
+                )
+                character.refresh_from_db()
+                self.assertIsNone(character.avatar_asset_id)
+
+    def test_project_copy_to_another_workspace_copies_image_files(self):
+        import tempfile
+        from pathlib import Path
+        from .models import Asset, Character
+        from .storage import create_asset
+
+        target_workspace = create_workspace(
+            user=self.owner,
+            name="Target Studio",
+            slug="target-studio",
+        )
+        character = Character.objects.create(
+            project=self.project,
+            name="Source character",
+            created_by=self.owner,
+            updated_by=self.owner,
+        )
+        self.client.force_login(self.owner)
+        with tempfile.TemporaryDirectory() as directory:
+            with self.settings(STUDIO_PRIVATE_MEDIA_ROOT=Path(directory)):
+                source_asset = create_asset(
+                    user=self.owner,
+                    workspace=self.workspace,
+                    project=self.project,
+                    uploaded=self.image_file("cross-workspace-cover.png"),
+                    kind=Asset.Kind.CHARACTER_REFERENCE,
+                )
+                self.project.cover_asset = source_asset
+                self.project.save(update_fields=["cover_asset", "updated_at"])
+                character.avatar_asset = source_asset
+                character.reference_assets.add(source_asset)
+                character.save(update_fields=["avatar_asset", "updated_at"])
+
+                response = self.client.post(
+                    f"/studio/projects/{self.project.id}/copy/",
+                    {"target_workspace": str(target_workspace.id)},
+                )
+                copied = target_workspace.projects.get()
+                self.assertRedirects(response, f"/studio/projects/{copied.id}/")
+                copied.refresh_from_db()
+                copied_character = copied.characters.get(name=character.name)
+                self.assertIsNotNone(copied.cover_asset)
+                self.assertNotEqual(copied.cover_asset_id, source_asset.id)
+                self.assertEqual(copied.cover_asset.workspace_id, target_workspace.id)
+                self.assertEqual(
+                    copied.cover_asset.checksum_sha256,
+                    source_asset.checksum_sha256,
+                )
+                self.assertTrue(copied.cover_asset.file.name)
+                self.assertEqual(
+                    copied_character.avatar_asset_id,
+                    copied.cover_asset_id,
+                )
+                self.assertTrue(
+                    copied_character.reference_assets.filter(
+                        id=copied.cover_asset_id,
+                    ).exists()
+                )
+                self.assertTrue(Asset.objects.filter(id=source_asset.id).exists())
+
     def test_viewer_cannot_delete_image(self):
         import tempfile
         from pathlib import Path

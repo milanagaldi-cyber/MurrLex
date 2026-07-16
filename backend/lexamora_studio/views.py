@@ -207,6 +207,7 @@ def workspace_detail(request, workspace_id):
         )
         project.can_edit = has_project_capability(request.user, project, "edit")
         project.can_manage = has_project_capability(request.user, project, "manage_project")
+        project.can_copy = has_project_capability(request.user, project, "manage_project")
         project.can_administer = is_workspace_owner_or_admin(request.user, workspace)
     recycle_count = Asset.all_objects.filter(workspace=workspace, deleted_at__isnull=False, purged_at__isnull=True).count()
     archive_count = Project.all_objects.filter(workspace=workspace, deleted_at__isnull=False, purged_at__isnull=True).count()
@@ -234,6 +235,7 @@ def workspace_detail(request, workspace_id):
         "gallery_projects": projects,
         "project_assets": [],
         "workspace_assets": workspace_assets,
+        "copy_target_workspaces": _project_copy_targets(request.user),
     })
 
 
@@ -907,12 +909,33 @@ def _picker_assets(user, project):
     return project_assets, workspace_assets
 
 
+def _project_copy_targets(user):
+    workspaces = accessible_workspaces(user).select_related("owner")
+    if user.is_superuser:
+        return list(workspaces.order_by("name"))
+    return list(
+        workspaces.filter(
+            Q(owner=user)
+            | Q(
+                memberships__user=user,
+                memberships__status=WorkspaceMembership.Status.ACTIVE,
+                memberships__role__in=[
+                    WorkspaceMembership.Role.OWNER,
+                    WorkspaceMembership.Role.ADMIN,
+                ],
+            )
+        ).distinct().order_by("name")
+    )
+
+
 def _project_header_context(user, project):
     return {
         "can_edit": has_project_capability(user, project, "edit"),
         "can_manage_project": has_project_capability(user, project, "manage_project"),
+        "can_copy_project": has_project_capability(user, project, "manage_project"),
         "can_administer": is_workspace_owner_or_admin(user, project.workspace),
         "can_remove_project_access": user.id == project.workspace.owner_id,
+        "copy_target_workspaces": _project_copy_targets(user),
     }
 
 
@@ -2392,6 +2415,28 @@ def _asset_for_edit(request, asset_id, include_deleted=False):
     )
 
 
+def _detach_asset_display_links(asset, user):
+    now = timezone.now()
+    Workspace.all_objects.filter(avatar_asset=asset).update(
+        avatar_asset=None, updated_by=user, updated_at=now,
+    )
+    Project.all_objects.filter(cover_asset=asset).update(
+        cover_asset=None, updated_by=user, updated_at=now,
+    )
+    Character.all_objects.filter(avatar_asset=asset).update(
+        avatar_asset=None, updated_by=user, updated_at=now,
+    )
+    Episode.all_objects.filter(avatar_asset=asset).update(
+        avatar_asset=None, updated_by=user, updated_at=now,
+    )
+    EpisodeCover.all_objects.filter(asset=asset).delete()
+    asset.projects.clear()
+    asset.referenced_by_scenes.clear()
+    asset.referenced_by_characters.clear()
+    asset.referenced_by_prompts.clear()
+    asset.cover_for_episodes.clear()
+
+
 def _asset_usage_project_ids(asset):
     project_ids = {project.id for project in asset.projects.all()}
     project_ids.update(scene.episode.project_id for scene in asset.referenced_by_scenes.all())
@@ -2637,16 +2682,18 @@ def asset_restore(request, asset_id):
 
 
 @login_required
+@transaction.atomic
 def asset_purge(request, asset_id):
     asset = _asset_for_edit(request, asset_id, include_deleted=True)
     if request.method != "POST" or not has_object_capability(request.user, asset, "edit"):
         return HttpResponseForbidden("Edit permission is required.")
     try:
+        _detach_asset_display_links(asset, request.user)
         purge_asset(asset=asset, user=request.user)
     except ValidationError as exc:
         messages.error(request, "; ".join(exc.messages))
     else:
-        messages.success(request, "File permanently deleted.")
+        messages.success(request, "File permanently deleted")
     return _asset_action_redirect(request, asset)
 
 
@@ -2670,6 +2717,29 @@ def workspace_recycle_bin(request, workspace_id):
         "workspace": workspace, "assets": assets,
         "can_edit": has_capability(request.user, workspace, "edit"),
     })
+
+
+@login_required
+@transaction.atomic
+def workspace_recycle_bin_clear(request, workspace_id):
+    workspace = get_object_or_404(accessible_workspaces(request.user), id=workspace_id)
+    if request.method != "POST" or not has_capability(request.user, workspace, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    assets = list(
+        Asset.all_objects.select_for_update().filter(
+            workspace=workspace,
+            deleted_at__isnull=False,
+            purged_at__isnull=True,
+        )
+    )
+    for asset in assets:
+        _detach_asset_display_links(asset, request.user)
+        purge_asset(asset=asset, user=request.user)
+    messages.success(
+        request,
+        f"Recycle Bin cleared: {len(assets)} file{'s' if len(assets) != 1 else ''} permanently deleted",
+    )
+    return redirect("studio:workspace_recycle_bin", workspace_id=workspace.id)
 
 
 @login_required
@@ -2795,14 +2865,86 @@ def _unique_project_title(workspace, title):
     return candidate
 
 
+def _project_image_assets(project):
+    return list(
+        Asset.objects.filter(
+            workspace=project.workspace,
+            content_type__startswith="image/",
+            purged_at__isnull=True,
+        ).filter(
+            Q(project=project)
+            | Q(scene__episode__project=project)
+            | Q(character__project=project)
+            | Q(prompt__scene__episode__project=project)
+            | Q(projects=project)
+            | Q(referenced_by_scenes__episode__project=project)
+            | Q(referenced_by_characters__project=project)
+            | Q(referenced_by_prompts__scene__episode__project=project)
+            | Q(project_cover_for=project)
+            | Q(character_avatar_for__project=project)
+            | Q(cover_for_episodes__project=project)
+            | Q(episode_avatar_for__project=project)
+            | Q(episode_cover_entries__episode__project=project)
+        ).distinct()
+    )
+
+
+def _copy_project_images(*, source, copied, target_workspace, user):
+    source_assets = _project_image_assets(source)
+    if target_workspace.id == source.workspace_id:
+        copied.media_assets.add(*source_assets)
+        return {asset.id: asset for asset in source_assets}
+
+    asset_map = {}
+    for source_asset in source_assets:
+        target_asset = Asset.objects.filter(
+            workspace=target_workspace,
+            checksum_sha256=source_asset.checksum_sha256,
+            content_type=source_asset.content_type,
+            purged_at__isnull=True,
+        ).exclude(file="").first()
+        if target_asset is None:
+            if not source_asset.file.name:
+                raise ValidationError(f"{source_asset.original_filename} has no stored file to copy.")
+            with source_asset.file.open("rb") as stored_file:
+                uploaded = SimpleUploadedFile(
+                    source_asset.original_filename,
+                    stored_file.read(),
+                    content_type=source_asset.content_type,
+                )
+            target_asset = create_asset(
+                user=user,
+                workspace=target_workspace,
+                uploaded=uploaded,
+                kind=source_asset.kind,
+                project=copied,
+            )
+            target_asset.ai_metadata = dict(source_asset.ai_metadata or {})
+            target_asset.save(update_fields=["ai_metadata", "updated_at"])
+        else:
+            target_asset.projects.add(copied)
+        asset_map[source_asset.id] = target_asset
+    return asset_map
+
+
+def _mapped_assets(asset_map, assets):
+    return [asset_map[asset.id] for asset in assets if asset.id in asset_map]
+
+
 @login_required
 @transaction.atomic
 def project_copy(request, project_id):
     source = get_object_or_404(accessible_projects(request.user).select_related("workspace"), id=project_id)
-    if request.method != "POST" or not is_workspace_owner_or_admin(request.user, source.workspace):
-        return HttpResponseForbidden("Workspace owner or administrator permission is required.")
+    if request.method != "POST" or not has_project_capability(request.user, source, "manage_project"):
+        return HttpResponseForbidden("Project management permission is required.")
+    target_workspace = get_object_or_404(
+        accessible_workspaces(request.user),
+        id=request.POST.get("target_workspace") or source.workspace_id,
+    )
+    if not has_capability(request.user, target_workspace, "manage_project"):
+        return HttpResponseForbidden("Target Workspace project management permission is required.")
     copied = Project.objects.create(
-        workspace=source.workspace, project_type=source.project_type, title=_unique_project_title(source.workspace, source.title),
+        workspace=target_workspace, project_type=source.project_type, title=_unique_project_title(target_workspace, source.title),
         description=source.description, concept=source.concept, original_language=source.original_language, translation_languages=source.translation_languages,
         prompt_template=source.prompt_template, documentation_language=source.documentation_language,
         dialogue_language=source.dialogue_language, prompt_language=source.prompt_language,
@@ -2811,6 +2953,12 @@ def project_copy(request, project_id):
         rights_holder=source.rights_holder, publication_info=source.publication_info, status=Project.Status.DRAFT,
         status_comment=source.status_comment,
         created_by=request.user, updated_by=request.user,
+    )
+    asset_map = _copy_project_images(
+        source=source,
+        copied=copied,
+        target_workspace=target_workspace,
+        user=request.user,
     )
     for track in source.recommended_tracks.all():
         RecommendedTrack.objects.create(
@@ -2865,46 +3013,43 @@ def project_copy(request, project_id):
                 prompt_map[prompt.id] = new_prompt
                 for block in prompt.blocks.all():
                     PromptBlock.objects.create(prompt=new_prompt, block_type=block.block_type, content=block.content, source_dialogue=line_map.get(block.source_dialogue_id), translated_content=block.translated_content, translation_language=block.translation_language, translation_model=block.translation_model, position=block.position, created_by=request.user, updated_by=request.user)
-    source_assets = list(
-        Asset.objects.filter(projects=source, purged_at__isnull=True).distinct()
-    )
-    asset_map = {asset.id: asset for asset in source_assets}
-    if source_assets:
-        copied.media_assets.add(*source_assets)
     for old_scene_id, new_scene in scene_map.items():
         old_scene = Scene.all_objects.get(id=old_scene_id)
-        references = list(old_scene.reference_assets.all())
+        references = _mapped_assets(asset_map, old_scene.reference_assets.all())
         if references:
             new_scene.reference_assets.add(*references)
             copied.media_assets.add(*references)
     for old_prompt_id, new_prompt in prompt_map.items():
-        references = list(Prompt.all_objects.get(id=old_prompt_id).reference_assets.all())
+        references = _mapped_assets(
+            asset_map,
+            Prompt.all_objects.get(id=old_prompt_id).reference_assets.all(),
+        )
         if references:
             new_prompt.reference_assets.add(*references)
             copied.media_assets.add(*references)
     for old_character_id, new_character in character_map.items():
         old_character = Character.all_objects.get(id=old_character_id)
-        references = list(old_character.reference_assets.all())
+        references = _mapped_assets(asset_map, old_character.reference_assets.all())
         if references:
             new_character.reference_assets.add(*references)
             copied.media_assets.add(*references)
         old_avatar_id = old_character.avatar_asset_id
-        if old_avatar_id:
-            new_character.avatar_asset_id = old_avatar_id
+        if old_avatar_id in asset_map:
+            new_character.avatar_asset = asset_map[old_avatar_id]
             new_character.save(update_fields=["avatar_asset", "updated_at"])
     for old_episode_id, new_episode in episode_map.items():
         old_episode = Episode.all_objects.get(id=old_episode_id)
-        covers = list(old_episode.cover_assets.all())
+        covers = _mapped_assets(asset_map, old_episode.cover_assets.all())
         if covers:
             new_episode.cover_assets.add(*covers)
             copied.media_assets.add(*covers)
-        if old_episode.avatar_asset_id:
-            new_episode.avatar_asset_id = old_episode.avatar_asset_id
+        if old_episode.avatar_asset_id in asset_map:
+            new_episode.avatar_asset = asset_map[old_episode.avatar_asset_id]
             new_episode.save(update_fields=["avatar_asset", "updated_at"])
         EpisodeCover.objects.bulk_create([
             EpisodeCover(
                 episode=new_episode,
-                asset_id=cover.asset_id,
+                asset=asset_map[cover.asset_id],
                 language_code=cover.language_code,
                 platform=cover.platform,
                 custom_platform=cover.custom_platform,
@@ -2912,18 +3057,42 @@ def project_copy(request, project_id):
                 updated_by=request.user,
             )
             for cover in old_episode.cover_entries.all()
+            if cover.asset_id in asset_map
         ], ignore_conflicts=True)
-    if source.cover_asset_id:
-        copied.cover_asset_id = source.cover_asset_id
-        copied.media_assets.add(source.cover_asset_id)
+    if source.cover_asset_id in asset_map:
+        copied.cover_asset = asset_map[source.cover_asset_id]
+        copied.media_assets.add(copied.cover_asset)
         copied.save(update_fields=["cover_asset", "updated_at"])
     if request.POST.get("copy_access") == "1":
+        memberships = source.memberships.filter(is_active=True).select_related("user")
+        if target_workspace.id != source.workspace_id:
+            allowed_user_ids = set(
+                target_workspace.memberships.filter(
+                    status=WorkspaceMembership.Status.ACTIVE,
+                ).values_list("user_id", flat=True)
+            )
+            allowed_user_ids.add(target_workspace.owner_id)
+            memberships = memberships.filter(user_id__in=allowed_user_ids)
         ProjectMembership.objects.bulk_create([
             ProjectMembership(project=copied, user=item.user, role=item.role, is_active=item.is_active, invited_by=request.user)
-            for item in source.memberships.filter(is_active=True).select_related("user")
+            for item in memberships
         ])
-    audit(workspace=source.workspace, actor=request.user, action="PROJECT_COPIED", instance=copied, metadata={"sourceProjectId": str(source.id)})
-    messages.success(request, "Project copied with shared links to its Workspace images.")
+    audit(
+        workspace=target_workspace,
+        actor=request.user,
+        action="PROJECT_COPIED",
+        instance=copied,
+        metadata={
+            "sourceProjectId": str(source.id),
+            "sourceWorkspaceId": str(source.workspace_id),
+            "targetWorkspaceId": str(target_workspace.id),
+            "copiedImageCount": len(asset_map),
+        },
+    )
+    if target_workspace.id == source.workspace_id:
+        messages.success(request, "Project copied with shared Workspace images")
+    else:
+        messages.success(request, f"Project copied to {target_workspace.name} with its images")
     return redirect("studio:project_detail", project_id=copied.id)
 
 
