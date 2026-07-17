@@ -517,7 +517,7 @@ class AdminThemeTests(TestCase):
 
 
 class PremiumPageTests(TestCase):
-    def test_premium_page_requires_login_and_shows_credit_history(self):
+    def test_premium_page_is_read_only_for_regular_users(self):
         user = get_user_model().objects.create_user("premium-user", password="strong-pass")
         response = self.client.get("/premium/")
         self.assertEqual(response.status_code, 200)
@@ -528,16 +528,27 @@ class PremiumPageTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Premium cabinet")
         self.assertContains(response, "AI operations")
-        self.assertContains(response, "Credit ledger")
+        self.assertNotContains(response, "Credit ledger")
+        self.assertNotContains(response, "Simulate purchase")
+        self.assertEqual(self.client.post("/premium/", {"action": "simulate_purchase"}).status_code, 405)
 
-    def test_simulated_purchase_adds_credits(self):
-        from .models import CreditLedger
+    def test_premium_control_is_superuser_only_and_records_grants(self):
+        from .models import AdminAuditLog, CreditLedger
 
-        user = get_user_model().objects.create_user("premium-buyer", password="strong-pass")
-        self.client.force_login(user)
-        response = self.client.post("/premium/", {"action": "simulate_purchase"})
-        self.assertRedirects(response, "/premium/")
-        self.assertEqual(CreditLedger.balance_for(user), 100_000)
+        target = get_user_model().objects.create_user("premium-buyer", password="strong-pass")
+        ordinary = get_user_model().objects.create_user("ordinary-admin", password="strong-pass", is_staff=True)
+        self.client.force_login(ordinary)
+        self.assertEqual(self.client.get("/admin/premium-control/").status_code, 403)
+
+        superuser = get_user_model().objects.create_superuser("server-owner", "owner@example.com", "strong-pass")
+        self.client.force_login(superuser)
+        response = self.client.post(
+            "/admin/premium-control/",
+            {"user_id": target.id, "action": "grant", "amount": "125000", "reason": "Test allocation"},
+        )
+        self.assertRedirects(response, "/admin/premium-control/")
+        self.assertEqual(CreditLedger.balance_for(target), 125_000)
+        self.assertTrue(AdminAuditLog.objects.filter(actor=superuser, target_id=str(target.pk), action="premium_control_grant").exists())
 
 
 @override_settings(

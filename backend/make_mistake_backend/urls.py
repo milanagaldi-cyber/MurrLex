@@ -40,6 +40,7 @@ urlpatterns = [
         name="staff_admin_login",
     ),
     path("admin/help/", admin.site.admin_view(lesson_views.admin_help), name="admin_help"),
+    path("admin/premium-control/", admin.site.admin_view(lesson_views.premium_control), name="premium_control"),
     path("admin/", admin.site.urls),
     path("register/", lesson_views.register, name="register"),
     path("account/", lesson_views.account, name="account"),

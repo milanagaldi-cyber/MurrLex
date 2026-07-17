@@ -26,6 +26,12 @@
             </div>
         </div>
         <div class="dashboard-links">
+            {% if user.is_superuser %}
+            <a class="dashboard-link" href="{% url 'premium_control' %}">
+                <span class="dashboard-link-copy"><strong>Premium Control</strong><small>Assign plans, grant or deduct credits, simulate purchases, and freeze balances.</small></span>
+                <span class="dashboard-status">Superuser only</span>
+            </a>
+            {% endif %}
             {% if perms.auth.view_user %}
             <a class="dashboard-link" href="{% url 'admin:auth_user_changelist' %}">
                 <span class="dashboard-link-copy"><strong>Users</strong><small>Accounts, passwords, staff status, and permissions.</small></span>

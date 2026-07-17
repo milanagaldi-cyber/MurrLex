@@ -1859,7 +1859,7 @@ def entity_move(request, entity_type, entity_id, direction):
 @login_required
 def project_detail(request, project_id):
     project = get_object_or_404(
-        accessible_projects(request.user).select_related("workspace", "created_by", "updated_by", "cover_asset").prefetch_related("media_assets", "assets", "characters__avatar_asset", "characters__reference_assets", Prefetch("episodes__cover_entries", queryset=EpisodeCover.objects.select_related("asset")), "episodes__scenes", "memberships__user", "recommended_tracks"),
+        accessible_projects(request.user).select_related("workspace", "created_by", "updated_by", "cover_asset").prefetch_related("media_assets", "assets", "characters__avatar_asset", "characters__reference_assets", Prefetch("episodes__cover_entries", queryset=EpisodeCover.objects.select_related("asset")), Prefetch("episodes__scenes__reference_assets", queryset=Asset.objects.filter(prompt__isnull=True, content_type__startswith="image/"), to_attr="list_images"), "memberships__user", "recommended_tracks"),
         id=project_id,
     )
     inherited = list(project.workspace.memberships.filter(status=WorkspaceMembership.Status.ACTIVE).exclude(user=project.workspace.owner).select_related("user"))
@@ -2074,6 +2074,7 @@ def scene_detail(request, scene_id):
         "can_edit": can_edit,
         "can_use_ai": has_object_capability(request.user, scene, "use_ai") and user_has_ai_access(request.user),
         "scene_images": scene.reference_assets.filter(prompt__isnull=True),
+        "scene_avatar": scene.reference_assets.filter(prompt__isnull=True, content_type__startswith="image/").first(),
         "project_assets": project_assets,
         "workspace_assets": workspace_assets,
         "mention_characters": list(scene.episode.project.characters.values_list("name", flat=True)),
@@ -4050,6 +4051,7 @@ def _image_generation_job_payload(job):
         payload.update({
             "assetId": str(job.result_asset_id),
             "viewUrl": reverse("studio_api:asset_view", kwargs={"asset_id": job.result_asset_id}),
+            "downloadUrl": reverse("studio_api:asset_download", kwargs={"asset_id": job.result_asset_id}),
             "thumbnailUrl": reverse("studio_api:asset_thumbnail", kwargs={"asset_id": job.result_asset_id}),
             "contentType": job.result_asset.content_type,
             "starred": job.result_asset.is_starred,

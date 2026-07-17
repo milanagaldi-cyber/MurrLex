@@ -739,7 +739,7 @@ class SubscriptionAdmin(admin.ModelAdmin):
     readonly_fields = ("user", "updated_at", "last_refilled_at")
 
     def has_manage_subscription_status_permission(self, request):
-        return request.user.has_perm("lessons.manage_subscription_status")
+        return request.user.is_superuser
 
     @admin.action(description="Activate selected subscriptions", permissions=["manage_subscription_status"])
     def activate_subscriptions(self, request, queryset):
@@ -811,7 +811,7 @@ class CreditLedgerAdmin(admin.ModelAdmin):
     readonly_fields = ("user", "amount", "reason", "note", "created_by", "reversal_of", "created_at")
 
     def has_adjust_credits_permission(self, request):
-        return request.user.has_perm("lessons.adjust_credits")
+        return request.user.is_superuser
 
     @admin.action(description="Reverse selected credit adjustments", permissions=["adjust_credits"])
     def reverse_adjustments(self, request, queryset):

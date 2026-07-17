@@ -4,12 +4,15 @@ import os
 import uuid
 
 from django.conf import settings
+from django.contrib import admin
 from django.contrib import messages
-from django.contrib.auth import login
+from django.contrib.auth import get_user_model, login
 from django.contrib.auth.decorators import login_required
 from django.http import HttpResponse, HttpResponseForbidden, JsonResponse
 from django.core.paginator import Paginator
+from django.db.models import Q
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
@@ -24,6 +27,7 @@ from .forms import (
     TranscriptionForm,
     TranslationForm,
 )
+from .audit import record_audit_event
 from .models import Card, CreditLedger, ImportLog, Lesson, ProviderCredential, Subscription, SubscriptionPlan, UserApiAccess
 from .services import LessonImportError, import_lesson_payload, log_failed_import
 from .ai_gateway import ProviderError, recognize_image, run_text, synthesize_elevenlabs, synthesize_openai, transcribe
@@ -420,7 +424,7 @@ def provider_credentials(request):
     return render(request, "registration/provider_credentials.html", {"form": form, "provider_rows": provider_rows})
 
 
-@require_http_methods(["GET", "POST"])
+@require_http_methods(["GET"])
 def premium(request):
     from lexamora_studio.models import AiUsageLog
     from lexamora_studio.usage import token_summary
@@ -428,14 +432,6 @@ def premium(request):
     if not request.user.is_authenticated:
         return render(request, "registration/premium.html", {"premium_public": True})
     subscription, _ = Subscription.objects.select_related("plan").get_or_create(user=request.user)
-    if request.method == "POST" and request.POST.get("action") == "simulate_purchase":
-        amount = 100_000
-        CreditLedger.objects.create(
-            user=request.user, amount=amount, reason=CreditLedger.Reason.PURCHASE_SIMULATION,
-            note="Test purchase simulation", created_by=request.user,
-        )
-        messages.success(request, f"{amount:,} test credits added")
-        return redirect("premium")
     logs = AiUsageLog.objects.filter(user=request.user).select_related("workspace")
     model = request.GET.get("model", "").strip()
     action = request.GET.get("action", "").strip()
@@ -452,15 +448,91 @@ def premium(request):
     page = Paginator(logs, per_page).get_page(request.GET.get("page"))
     return render(request, "registration/premium.html", {
         "subscription": subscription,
-        "plans": SubscriptionPlan.objects.filter(is_active=True),
         "summary": token_summary(request.user),
         "usage_page": page,
-        "credit_entries": CreditLedger.objects.filter(user=request.user)[:100],
         "models": AiUsageLog.objects.filter(user=request.user).exclude(model="").values_list("model", flat=True).distinct().order_by("model"),
         "actions": AiUsageLog.objects.filter(user=request.user).exclude(action="").values_list("action", flat=True).distinct().order_by("action"),
         "selected_model": model,
         "selected_action": action,
         "per_page": per_page,
+    })
+
+
+@require_http_methods(["GET", "POST"])
+def premium_control(request):
+    """Superuser-only subscription and credit operations cabinet."""
+    if not request.user.is_authenticated or not request.user.is_superuser:
+        return HttpResponseForbidden("Server super administrator access is required.")
+
+    User = get_user_model()
+    if request.method == "POST":
+        target = get_object_or_404(User, id=request.POST.get("user_id"))
+        action = request.POST.get("action", "").strip()
+        reason = request.POST.get("reason", "").strip()
+        if not reason:
+            messages.error(request, "Enter an operation reason")
+            return redirect("premium_control")
+        subscription, _ = Subscription.objects.select_related("plan").get_or_create(user=target)
+        if action == "assign_plan":
+            from .premium import next_refill_time
+
+            plan = get_object_or_404(SubscriptionPlan, id=request.POST.get("plan_id"))
+            subscription.plan = plan
+            subscription.plan_code = plan.code
+            subscription.status = Subscription.Status.ACTIVE
+            subscription.next_refill_at = next_refill_time(timezone.now(), plan.refill_period)
+            subscription.save()
+            messages.success(request, f"{plan.name} assigned to {target.get_username()}")
+        elif action in {"grant", "deduct", "simulate_purchase"}:
+            try:
+                amount = abs(int(request.POST.get("amount") or 100_000))
+            except (TypeError, ValueError):
+                amount = 0
+            if not amount:
+                messages.error(request, "Credit amount must be greater than zero")
+                return redirect("premium_control")
+            if action == "deduct":
+                amount = -amount
+            ledger_reason = {
+                "grant": CreditLedger.Reason.ADMIN_ADJUSTMENT,
+                "deduct": CreditLedger.Reason.ADMIN_DEDUCTION,
+                "simulate_purchase": CreditLedger.Reason.PURCHASE_SIMULATION,
+            }[action]
+            CreditLedger.objects.create(
+                user=target, amount=amount, reason=ledger_reason, note=reason, created_by=request.user,
+            )
+            messages.success(request, f"{amount:+,} credits recorded for {target.get_username()}")
+        elif action in {"freeze", "unfreeze"}:
+            subscription.credits_frozen = action == "freeze"
+            subscription.freeze_reason = reason if subscription.credits_frozen else ""
+            subscription.save(update_fields=["credits_frozen", "freeze_reason", "updated_at"])
+            messages.success(request, f"Credits {'frozen' if subscription.credits_frozen else 'unfrozen'} for {target.get_username()}")
+        else:
+            messages.error(request, "Unknown premium operation")
+        record_audit_event(
+            action=f"premium_control_{action or 'unknown'}", target=target, actor=request.user,
+            request=request, reason=reason,
+        )
+        return redirect("premium_control")
+
+    users = User.objects.select_related("subscription__plan").order_by("username")
+    query = request.GET.get("q", "").strip()
+    if query:
+        users = users.filter(Q(username__icontains=query) | Q(email__icontains=query))
+    page = Paginator(users, 50).get_page(request.GET.get("page"))
+    subscriptions = {
+        item.user_id: item
+        for item in Subscription.objects.select_related("plan").filter(user__in=page.object_list)
+    }
+    for user in page.object_list:
+        user.premium_subscription = subscriptions.get(user.id)
+        user.credit_balance = CreditLedger.balance_for(user)
+    return render(request, "admin/premium_control.html", {
+        **admin.site.each_context(request),
+        "title": "Premium control",
+        "users_page": page,
+        "plans": SubscriptionPlan.objects.order_by("refill_credits", "name"),
+        "query": query,
     })
 
 

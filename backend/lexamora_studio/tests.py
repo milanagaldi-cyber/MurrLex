@@ -2294,12 +2294,16 @@ class StudioInlineEditingWorkflowTests(TestCase):
         page = self.client.get(f"/studio/scenes/{self.first_scene.id}/")
         self.assertEqual(page.status_code, 200)
         self.assertContains(page, 'id="scene-editor-form"')
-        self.assertContains(page, "Create scene", count=1)
+        self.assertContains(page, "Create Scene", count=1)
         self.assertContains(page, f'/studio/scenes/{self.second_scene.id}/')
         self.assertContains(page, "data-scene-cancel disabled", count=1)
         self.assertNotContains(page, 'name="number"')
         self.assertContains(page, 'id="scene-navigation-bottom"')
         self.assertContains(page, "+ Add model...")
+        self.assertContains(page, "scene-editor-command-bar")
+        self.assertContains(page, "scene-identity-meta")
+        self.assertContains(page, "Created")
+        self.assertNotContains(page, '<div class="project-shell-identity">')
 
     def test_workspace_avatar_and_manual_generation_model(self):
         import tempfile
@@ -3688,6 +3692,7 @@ class StudioProductionPilotFeaturesTests(TestCase):
                 )
                 listed = self.client.get(f"/studio/projects/{self.project.id}/image-generation/jobs/")
                 self.assertEqual([item["jobId"] for item in listed.json()["jobs"]], [str(job.id)])
+                self.assertTrue(listed.json()["jobs"][0]["downloadUrl"])
 
                 starred = self.client.post(f"/studio/assets/{generated.id}/star/")
                 self.assertEqual(starred.status_code, 200, starred.content)
@@ -3726,6 +3731,10 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertContains(response, "data-generation-composer")
         self.assertContains(response, "data-project-media-type")
         self.assertContains(response, '<option value="VIDEO">Video</option>', html=True)
+        self.assertContains(response, "data-project-video-count")
+        self.assertContains(response, "Queue one to four independent Veo generations")
+        self.assertContains(response, "data-generation-key=\"video-size\"")
+        self.assertContains(response, "data-video-download")
         self.assertContains(response, "data-composer-undo")
         self.assertContains(response, "data-composer-redo")
         self.assertContains(response, "data-generation-reference-filter")

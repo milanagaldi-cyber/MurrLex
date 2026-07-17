@@ -38,6 +38,7 @@
   {% for scene in episode.scenes.all %}
     <div class="row scene-list-row" data-scene-id="{{ scene.id }}" data-scene-title="{{ scene.title }}">
       {% if can_edit %}<button class="icon-button secondary scene-drag-handle" type="button" title="Drag scene" aria-label="Drag scene">&#8942;&#8942;</button>{% else %}<span></span>{% endif %}
+      <a class="scene-list-avatar" href="{% url 'studio:scene_detail' scene.id %}" aria-label="Open Scene {{ forloop.counter }}">{% for asset in scene.list_images %}{% if forloop.first %}<img src="{% url 'studio_api:asset_thumbnail' asset.id %}" alt="">{% endif %}{% empty %}{{ scene.number }}{% endfor %}</a>
       <a data-scene-label href="{% url 'studio:scene_detail' scene.id %}">Scene {{ forloop.counter }}. {{ scene.title }}</a>
       <span class="muted">{{ scene.get_scene_type_display }} / {{ scene.get_status_display }}</span>
       {% if can_edit %}<span class="scene-row-actions"><form method="post" action="{% url 'studio:scene_copy' scene.id %}">{% csrf_token %}<button class="icon-button secondary" type="submit" title="Copy scene" aria-label="Copy scene">&#x29C9;</button></form><form method="post" action="{% url 'studio:scene_delete' scene.id %}" data-confirm="Delete this scene? Remaining scene numbers will be recalculated.">{% csrf_token %}<button class="icon-button secondary" type="submit" title="Delete scene" aria-label="Delete scene">&#x2715;</button></form></span>{% endif %}

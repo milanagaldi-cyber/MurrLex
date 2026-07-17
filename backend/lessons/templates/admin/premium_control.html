@@ -1,0 +1,21 @@
+{% extends "admin/base_site.html" %}
+{% block breadcrumbs %}<div class="breadcrumbs"><a href="{% url 'admin:index' %}">Home</a> &rsaquo; Premium Control</div>{% endblock %}
+{% block content %}
+<style>
+.premium-control-head,.premium-user-head,.premium-actions{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.premium-control-head{margin-bottom:20px}.premium-control-head form{display:flex;gap:8px}.premium-control-head input{min-width:280px}.premium-users{display:grid;gap:12px}.premium-user{padding:16px;border:1px solid var(--border-color);border-radius:8px;background:var(--body-bg)}.premium-user-head h2{margin:0}.premium-user-meta{display:flex;gap:14px;flex-wrap:wrap;color:var(--body-quiet-color)}.premium-actions{justify-content:flex-start;margin-top:14px;padding-top:14px;border-top:1px solid var(--border-color)}.premium-actions form{display:flex;align-items:end;gap:7px;flex-wrap:wrap}.premium-actions label{display:grid;gap:4px;font-size:12px}.premium-actions input,.premium-actions select{width:auto;min-width:120px}.premium-actions input[name=reason]{min-width:210px}
+</style>
+<div class="premium-control-head"><div><h1>Premium Control</h1><p>Server super administrators only. Every balance operation is written to the immutable credit ledger and audit log.</p></div><form method="get"><input name="q" value="{{ query }}" placeholder="Username or email"><button type="submit">Search</button></form></div>
+<div class="premium-users">
+{% for target in users_page %}
+<section class="premium-user">
+  <div class="premium-user-head"><div><h2>{{ target.get_full_name|default:target.username }}</h2><div class="premium-user-meta"><span>{{ target.email|default:"No email" }}</span><span>Plan: {{ target.premium_subscription.plan.name|default:target.premium_subscription.plan_code|default:"Free" }}</span><span>Balance: {{ target.credit_balance }}</span>{% if target.premium_subscription.credits_frozen %}<strong>Frozen</strong>{% endif %}</div></div><a href="{% url 'admin:auth_user_change' target.id %}">Open user</a></div>
+  <div class="premium-actions">
+    <form method="post">{% csrf_token %}<input type="hidden" name="user_id" value="{{ target.id }}"><input type="hidden" name="action" value="assign_plan"><label>Plan<select name="plan_id">{% for plan in plans %}<option value="{{ plan.id }}">{{ plan.name }} / {{ plan.refill_credits }}</option>{% endfor %}</select></label><label>Reason<input name="reason" required></label><button>Assign</button></form>
+    <form method="post">{% csrf_token %}<input type="hidden" name="user_id" value="{{ target.id }}"><label>Credits<input type="number" min="1" name="amount" value="100000" required></label><label>Reason<input name="reason" required></label><button name="action" value="grant">Grant</button><button class="deletelink" name="action" value="deduct">Deduct</button><button name="action" value="simulate_purchase">Simulate purchase</button></form>
+    <form method="post">{% csrf_token %}<input type="hidden" name="user_id" value="{{ target.id }}"><label>Reason<input name="reason" required></label>{% if target.premium_subscription.credits_frozen %}<button name="action" value="unfreeze">Unfreeze</button>{% else %}<button name="action" value="freeze">Freeze</button>{% endif %}</form>
+  </div>
+</section>
+{% empty %}<p>No users found</p>{% endfor %}
+</div>
+<div class="paginator">Page {{ users_page.number }} of {{ users_page.paginator.num_pages }}{% if users_page.has_previous %} <a href="?q={{ query|urlencode }}&page={{ users_page.previous_page_number }}">Previous</a>{% endif %}{% if users_page.has_next %} <a href="?q={{ query|urlencode }}&page={{ users_page.next_page_number }}">Next</a>{% endif %}</div>
+{% endblock %}
