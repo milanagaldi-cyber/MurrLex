@@ -3562,6 +3562,44 @@ class StudioProductionPilotFeaturesTests(TestCase):
                 self.character.refresh_from_db()
                 self.assertEqual(str(self.character.avatar_asset_id), cropped.json()["id"])
 
+    def test_character_avatar_can_be_removed_without_deleting_workspace_image(self):
+        import tempfile
+        from pathlib import Path
+        from .models import Asset
+        from .storage import create_asset
+
+        self.client.force_login(self.owner)
+        with tempfile.TemporaryDirectory() as directory:
+            with self.settings(STUDIO_PRIVATE_MEDIA_ROOT=Path(directory)):
+                asset = create_asset(
+                    user=self.owner,
+                    workspace=self.workspace,
+                    uploaded=self.image_file("removable-avatar.png"),
+                    kind=Asset.Kind.OTHER,
+                )
+                asset.projects.add(self.project)
+                self.character.avatar_asset = asset
+                self.character.save(update_fields=["avatar_asset", "updated_at"])
+                self.project.cover_asset = asset
+                self.project.save(update_fields=["cover_asset", "updated_at"])
+
+                page = self.client.get(f"/studio/projects/{self.project.id}/")
+                self.assertContains(page, f"/studio/characters/{self.character.id}/avatar/remove/")
+                self.assertContains(page, f"/api/v1/studio/assets/{asset.id}/thumbnail")
+                self.assertContains(page, "project-shell-avatar")
+                self.assertContains(page, "getElementById(selector.slice(1))")
+
+                removed = self.client.post(
+                    f"/studio/characters/{self.character.id}/avatar/remove/",
+                    HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+                )
+                self.assertEqual(removed.status_code, 200, removed.content)
+                self.character.refresh_from_db()
+                self.project.refresh_from_db()
+                self.assertIsNone(self.character.avatar_asset_id)
+                self.assertEqual(self.project.cover_asset_id, asset.id)
+                self.assertTrue(Asset.objects.filter(id=asset.id).exists())
+
     @patch("lexamora_studio.views.user_has_ai_access", return_value=True)
     def test_project_generation_can_queue_selected_model(self, _has_access):
         from .models import ImageGenerationJob
@@ -3635,6 +3673,13 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertContains(response, "data-project-prompt-action=\"translate\"")
         self.assertContains(response, "Final prompt")
         self.assertContains(response, "data-avatar-crop-dialog")
+        markup = response.content.decode()
+        self.assertLess(
+            markup.index('data-project-image-prompt placeholder='),
+            markup.index('<div class="prompt-image-settings">'),
+        )
+        self.assertContains(response, "generation-setting-field")
+        self.assertContains(response, "generation-submit-row")
 
     @patch("lexamora_studio.views.run_text", return_value=("Improved cinematic prompt", "gpt-5.4-mini"))
     @patch("lexamora_studio.views.user_has_ai_access", return_value=True)
@@ -3654,7 +3699,7 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertEqual(response.status_code, 200, response.content)
         self.assertEqual(response.json()["content"], "Improved cinematic prompt")
 
-    def test_scene_prompt_is_listed_in_modal_and_can_be_deleted(self):
+    def test_scene_prompt_expands_inline_and_can_be_deleted(self):
         from .ai_catalog import default_prompt_template
         from .models import Episode, Scene
 
@@ -3671,7 +3716,9 @@ class StudioProductionPilotFeaturesTests(TestCase):
         )
         self.client.force_login(self.owner)
         page = self.client.get(f"/studio/scenes/{scene.id}/")
-        self.assertContains(page, f'id="prompt-dialog-{prompt.id}"')
+        self.assertContains(page, f'<details class="scene-prompt-row" id="prompt-row-{prompt.id}">')
+        self.assertNotContains(page, f'id="prompt-dialog-{prompt.id}"')
+        self.assertContains(page, "scene-prompt-inline")
         self.assertContains(page, "A hero walks outside")
         deleted = self.client.post(f"/studio/prompts/{prompt.id}/delete/")
         self.assertRedirects(deleted, f"/studio/scenes/{scene.id}/#prompts")

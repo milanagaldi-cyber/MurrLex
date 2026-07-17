@@ -1370,6 +1370,36 @@ def character_set_avatar(request, character_id):
 
 
 @login_required
+def character_remove_avatar(request, character_id):
+    character = get_object_or_404(
+        Character.objects.select_related("project__workspace").filter(
+            project__in=accessible_projects(request.user)
+        ),
+        id=character_id,
+    )
+    if request.method != "POST" or not has_object_capability(request.user, character, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    character.avatar_asset = None
+    character.updated_by = request.user
+    character.save(update_fields=["avatar_asset", "updated_by", "updated_at"])
+    audit(
+        workspace=character.project.workspace,
+        actor=request.user,
+        action="CHARACTER_AVATAR_REMOVED",
+        instance=character,
+    )
+    if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+        return JsonResponse({"ok": True, "characterId": str(character.id)})
+    messages.success(request, "Character avatar removed")
+    requested = request.POST.get("next", "")
+    if requested and url_has_allowed_host_and_scheme(
+        requested, {request.get_host()}, require_https=request.is_secure()
+    ):
+        return HttpResponseRedirect(requested)
+    return redirect("studio:character_detail", character_id=character.id)
+
+
+@login_required
 def episode_edit(request, episode_id):
     item = get_object_or_404(
         Episode.objects.select_related("project__workspace", "avatar_asset").prefetch_related(
@@ -1673,7 +1703,7 @@ def entity_move(request, entity_type, entity_id, direction):
 @login_required
 def project_detail(request, project_id):
     project = get_object_or_404(
-        accessible_projects(request.user).select_related("workspace", "created_by", "updated_by").prefetch_related("media_assets", "assets", "characters__avatar_asset", "characters__reference_assets", Prefetch("episodes__cover_entries", queryset=EpisodeCover.objects.select_related("asset")), "episodes__scenes", "memberships__user", "recommended_tracks"),
+        accessible_projects(request.user).select_related("workspace", "created_by", "updated_by", "cover_asset").prefetch_related("media_assets", "assets", "characters__avatar_asset", "characters__reference_assets", Prefetch("episodes__cover_entries", queryset=EpisodeCover.objects.select_related("asset")), "episodes__scenes", "memberships__user", "recommended_tracks"),
         id=project_id,
     )
     inherited = list(project.workspace.memberships.filter(status=WorkspaceMembership.Status.ACTIVE).exclude(user=project.workspace.owner).select_related("user"))
@@ -1851,7 +1881,7 @@ def project_access(request, project_id):
 @login_required
 def scene_detail(request, scene_id):
     scene = get_object_or_404(
-        Scene.objects.select_related("episode__project__workspace").prefetch_related(
+        Scene.objects.select_related("episode__project__workspace", "episode__project__cover_asset").prefetch_related(
             "dialogue_lines", "prompts__ai_model", "prompts__template", "prompts__blocks__source_dialogue",
             "prompts__assets", "prompts__reference_assets", "prompts__ai_suggestions", "assets", "reference_assets"
         ).filter(episode__project__in=accessible_projects(request.user)),
@@ -3816,7 +3846,7 @@ def _image_generation_job_payload(job):
 @login_required
 def project_image_generation(request, project_id):
     project = get_object_or_404(
-        accessible_projects(request.user).select_related("workspace__default_image_model"),
+        accessible_projects(request.user).select_related("workspace__default_image_model", "cover_asset"),
         id=project_id,
     )
     if not has_project_capability(request.user, project, "use_ai") or not user_has_ai_access(request.user):
