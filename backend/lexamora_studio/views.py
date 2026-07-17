@@ -29,7 +29,7 @@ from .external_images import download_external_image
 from .docx_imports import accept_docx_import, parse_docx
 from .docx_exports import generate_docx_export
 from .docx_roundtrip import compare_docx_export
-from .forms import AdditionalGenerationForm, AiModelProfileForm, AssetEditForm, CharacterCreateForm, CharacterForm, DialogueLineForm, DocxImportUploadForm, EpisodeForm, GenerationOutputUploadForm, ImageUploadForm, MultipleImageUploadForm, ProjectBulkMembershipForm, ProjectForm, ProjectMembershipForm, ProjectSettingsForm, ProjectUserSelectionForm, PromptBlockForm, PromptForm, RecommendedTrackForm, SceneForm, StudioTextModelForm, WorkspaceForm, WorkspaceMembershipForm
+from .forms import AdditionalGenerationForm, AiModelProfileForm, AssetEditForm, CharacterCreateForm, CharacterForm, DialogueLineForm, DocxImportUploadForm, EpisodeForm, GenerationOutputUploadForm, ImageUploadForm, MultipleImageUploadForm, ProjectBulkMembershipForm, ProjectForm, ProjectMembershipForm, ProjectSettingsForm, ProjectUserSelectionForm, PromptBlockForm, PromptForm, RecommendedTrackForm, SceneForm, StudioTextModelForm, WorkspaceForm, WorkspaceMembershipForm, WorkspaceUserSelectionForm
 from .models import AdditionalGeneration, AiModelProfile, AiSuggestion, AiUsageLog, Asset, Character, DialogueLine, DocxImport, EmailDeliveryLog, Episode, EpisodeCover, ExportJob, GenerationOutput, ImageGenerationJob, Project, ProjectAccessExclusion, ProjectMembership, Prompt, PromptBlock, RecommendedTrack, Scene, StudioTextModel, SubtitleTrack, TranslationUnit, Workspace, WorkspaceMembership
 from .notifications import notify_access_granted
 from .permissions import accessible_assets, accessible_projects, accessible_suggestions, accessible_workspaces, has_capability, has_object_capability, has_project_capability, is_workspace_owner_or_admin
@@ -318,9 +318,13 @@ def workspace_access(request, workspace_id):
     workspace = get_object_or_404(accessible_workspaces(request.user).select_related("owner"), id=workspace_id)
     if not has_capability(request.user, workspace, "manage_members"):
         return HttpResponseForbidden("Workspace member management permission is required.")
-    form = WorkspaceMembershipForm(request.POST or None, workspace=workspace)
+    action = request.POST.get("action", "save") if request.method == "POST" else "save"
+    form = WorkspaceMembershipForm(request.POST if action == "save" else None, workspace=workspace)
+    selection_form = WorkspaceUserSelectionForm(
+        request.POST if action == "select_users" else None,
+        workspace=workspace,
+    ) if _is_server_super_admin(request.user) else None
     if request.method == "POST":
-        action = request.POST.get("action", "save")
         if action in {"remove", "exclude"} and request.user.id != workspace.owner_id:
             return HttpResponseForbidden("Only the workspace owner can remove workspace access.")
         if action == "remove":
@@ -332,7 +336,33 @@ def workspace_access(request, workspace_id):
             membership.delete()
             messages.success(request, "Workspace access removed.")
             return redirect("studio:workspace_access", workspace_id=workspace.id)
-        if form.is_valid():
+        if action == "select_users" and selection_form is not None and selection_form.is_valid():
+            added = 0
+            updated = 0
+            role = selection_form.cleaned_data["role"]
+            can_use_ai = selection_form.cleaned_data["can_use_ai"]
+            for user in selection_form.cleaned_data["users"]:
+                existed = WorkspaceMembership.objects.filter(
+                    workspace=workspace, user=user, status=WorkspaceMembership.Status.ACTIVE,
+                ).exists()
+                WorkspaceMembership.objects.update_or_create(
+                    workspace=workspace,
+                    user=user,
+                    defaults={"role": role, "status": WorkspaceMembership.Status.ACTIVE, "can_use_ai": can_use_ai},
+                )
+                ProjectAccessExclusion.objects.filter(project__workspace=workspace, user=user).delete()
+                if existed:
+                    updated += 1
+                else:
+                    added += 1
+                    notify_access_granted(
+                        user=user, entity_name=workspace.name, entity_kind="workspace",
+                        url=request.build_absolute_uri(reverse("studio:workspace_detail", kwargs={"workspace_id": workspace.id})),
+                        granted_by=request.user,
+                    )
+            messages.success(request, f"Selected workspace access saved: {added} added, {updated} updated")
+            return redirect("studio:workspace_access", workspace_id=workspace.id)
+        if action == "save" and form.is_valid():
             existed = WorkspaceMembership.objects.filter(workspace=workspace, user=form.user, status=WorkspaceMembership.Status.ACTIVE).exists()
             WorkspaceMembership.objects.update_or_create(
                 workspace=workspace,
@@ -347,6 +377,7 @@ def workspace_access(request, workspace_id):
     return render(request, "studio/workspace_access.html", {
         "workspace": workspace,
         "form": form,
+        "selection_form": selection_form,
         "owner_membership": workspace.memberships.filter(user=workspace.owner).select_related("user").first(),
         "memberships": workspace.memberships.exclude(user=workspace.owner).select_related("user"),
         "can_remove_access": request.user.id == workspace.owner_id,
@@ -830,6 +861,12 @@ def _image_upload(request, *, target, workspace, title, success_url, kind, proje
         return HttpResponseForbidden("Edit permission is required.")
     form = MultipleImageUploadForm(request.POST or None, request.FILES or None, limit=10)
     if request.method == "POST" and form.is_valid():
+        image_role = request.POST.get("image_role", "")
+        avatar_roles = {"workspace_avatar", "character_avatar", "episode_avatar", "project_cover"}
+        defer_avatar_assignment = (
+            image_role in avatar_roles
+            and request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        )
         uploaded_count = 0
         first_asset = None
         for uploaded in form.cleaned_data["file"]:
@@ -851,11 +888,20 @@ def _image_upload(request, *, target, workspace, title, success_url, kind, proje
                             "updated_by": request.user,
                         },
                     )
-                    if not episode.avatar_asset_id:
+                    if not defer_avatar_assignment and not episode.avatar_asset_id:
                         episode.avatar_asset = asset
                         episode.updated_by = request.user
                         episode.save(update_fields=["avatar_asset", "updated_by", "updated_at"])
-        image_role = request.POST.get("image_role", "")
+        if first_asset and defer_avatar_assignment:
+            return JsonResponse({
+                "assetId": str(first_asset.id),
+                "name": first_asset.original_filename,
+                "viewUrl": reverse("studio_api:asset_view", kwargs={"asset_id": first_asset.id}),
+                "thumbnailUrl": reverse("studio_api:asset_thumbnail", kwargs={"asset_id": first_asset.id}),
+                "cropUrl": reverse("studio:asset_crop", kwargs={"asset_id": first_asset.id}),
+                "attachScope": image_role,
+                "attachOwnerId": str(target.id),
+            }, status=201)
         if first_asset and image_role == "workspace_avatar" and isinstance(target, Workspace):
             target.avatar_asset = first_asset
             target.updated_by = request.user
@@ -3509,6 +3555,30 @@ def scene_prompt_quick_create(request, scene_id):
 
 
 @login_required
+def prompt_delete(request, prompt_id):
+    prompt = get_object_or_404(
+        Prompt.objects.select_related("scene__episode__project__workspace").filter(
+            scene__episode__project__in=accessible_projects(request.user)
+        ),
+        id=prompt_id,
+    )
+    if request.method != "POST" or not has_object_capability(request.user, prompt, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    now = timezone.now()
+    Prompt.objects.filter(Q(id=prompt.id) | Q(source_prompt_id=prompt.id)).update(
+        deleted_at=now, deleted_by=request.user, updated_by=request.user,
+    )
+    audit(
+        workspace=prompt.scene.episode.project.workspace,
+        actor=request.user,
+        action="PROMPT_DELETED",
+        instance=prompt,
+    )
+    messages.success(request, "Prompt deleted")
+    return HttpResponseRedirect(reverse("studio:scene_detail", kwargs={"scene_id": prompt.scene_id}) + "#prompts")
+
+
+@login_required
 def prompt_quick_save(request, prompt_id):
     prompt = get_object_or_404(
         Prompt.objects.select_related("scene__episode__project__workspace", "ai_model", "template")
@@ -3646,6 +3716,7 @@ def prompt_generate_image(request, prompt_id):
         return JsonResponse({"error": "Image compression must be a number from 0 to 100."}, status=400)
     image_options = {
         "size": str(payload.get("size") or defaults.get("size") or "1024x1024"),
+        "composition_preset": str(payload.get("compositionPreset") or "square"),
         "quality": str(payload.get("quality") or defaults.get("quality") or "low"),
         "output_format": str(payload.get("outputFormat") or defaults.get("output_format") or "png"),
         "output_compression": output_compression,
@@ -3764,9 +3835,59 @@ def project_image_generation(request, project_id):
             media_type=AiModelProfile.MediaType.IMAGE,
             provider__iexact="openai",
         ),
+        "text_models": active_text_models(),
+        "default_text_model": project_text_model_id(project),
+        "prompt_languages": PROMPT_LANGUAGES,
         "jobs": jobs,
         **_project_header_context(request.user, project),
     })
+
+
+@login_required
+def project_image_prompt_preview(request, project_id):
+    project = get_object_or_404(accessible_projects(request.user).select_related("workspace"), id=project_id)
+    if request.method != "POST":
+        return JsonResponse({"error": "POST is required."}, status=405)
+    if not has_project_capability(request.user, project, "use_ai") or not user_has_ai_access(request.user):
+        return JsonResponse({"error": "AI access is not enabled for this account."}, status=403)
+    try:
+        payload = json.loads(request.body or b"{}")
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "The prompt request is not valid JSON."}, status=400)
+    source = str(payload.get("prompt") or "").strip()
+    action = str(payload.get("action") or "").strip().lower()
+    if not source:
+        return JsonResponse({"error": "Enter an image prompt first."}, status=400)
+    if action not in {"translate", "improve"}:
+        return JsonResponse({"error": "Choose Translate or Improve."}, status=400)
+    try:
+        model_id = selected_text_model(payload.get("textModel") or project_text_model_id(project))
+        if action == "translate":
+            target = str(payload.get("targetLanguage") or "EN").upper()
+            if target not in PROMPT_LANGUAGE_NAMES:
+                raise ValidationError("Choose a supported target language.")
+            instruction = (
+                f"Translate this image-generation prompt into {PROMPT_LANGUAGE_NAMES[target]}. "
+                "Preserve names, visual details, camera instructions, and formatting. Return only the translated prompt."
+            )
+        else:
+            target = ""
+            instruction = (
+                "Improve this image-generation prompt in its current language. Make it precise, visual, coherent, "
+                "and production-ready without changing the requested subject. Return only the improved prompt."
+            )
+        result, used_model = _run_logged_text(
+            workspace=project.workspace,
+            user=request.user,
+            action=f"PROJECT_IMAGE_PROMPT_{action.upper()}",
+            model=model_id,
+            text=f"{instruction}\n\nPROMPT:\n{source}",
+        )
+    except (ProviderError, ValidationError) as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except Exception:
+        return JsonResponse({"error": "The AI service returned an unexpected error. Please retry."}, status=500)
+    return JsonResponse({"content": result.strip(), "model": used_model, "language": target})
 
 
 @login_required
@@ -3810,6 +3931,7 @@ def project_generate_image(request, project_id):
         return JsonResponse({"error": "One or more reference images are not accessible."}, status=400)
     image_options = {
         "size": str(payload.get("size") or defaults.get("size") or "1024x1024"),
+        "composition_preset": str(payload.get("compositionPreset") or "square"),
         "quality": str(payload.get("quality") or defaults.get("quality") or "low"),
         "output_format": str(payload.get("outputFormat") or defaults.get("output_format") or "png"),
         "output_compression": output_compression,

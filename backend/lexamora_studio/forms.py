@@ -260,6 +260,33 @@ class WorkspaceMembershipForm(forms.Form):
         return email
 
 
+class WorkspaceUserSelectionForm(forms.Form):
+    users = forms.ModelMultipleChoiceField(
+        label="Users",
+        queryset=get_user_model().objects.none(),
+        widget=forms.CheckboxSelectMultiple,
+    )
+    role = forms.ChoiceField(
+        choices=[choice for choice in WorkspaceMembership.Role.choices if choice[0] != WorkspaceMembership.Role.OWNER]
+    )
+    can_use_ai = forms.BooleanField(required=False, initial=True, label="AI access")
+
+    def __init__(self, *args, workspace, **kwargs):
+        self.workspace = workspace
+        super().__init__(*args, **kwargs)
+        self.fields["users"].queryset = (
+            get_user_model().objects.filter(is_active=True)
+            .exclude(pk=workspace.owner_id)
+            .order_by("email", "username")
+        )
+
+    def clean_users(self):
+        users = list(self.cleaned_data["users"])
+        if len(users) > 100:
+            raise forms.ValidationError("Select no more than 100 users at once.")
+        return users
+
+
 class CharacterForm(forms.ModelForm):
     class Meta:
         model = Character

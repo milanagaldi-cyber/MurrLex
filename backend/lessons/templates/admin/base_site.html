@@ -1149,11 +1149,7 @@
 {% endblock %}
 
 {% block welcome-msg %}
-<span class="admin-welcome">
-    {% with social=user.socialaccount_set.first %}<span class="admin-user-avatar" title="{% firstof user.get_full_name user.get_username %}">{% if social.extra_data.picture %}<img src="{{ social.extra_data.picture }}" alt="">{% else %}{% firstof user.get_short_name user.get_username as admin_name %}{{ admin_name|first|upper }}{% endif %}</span>{% endwith %}
-    {% translate 'Welcome,' %}
-    <strong>{% firstof user.get_short_name user.get_username %}</strong>
-</span>
+{% with social=user.socialaccount_set.first %}<a class="admin-user-avatar" href="{% url 'admin:auth_user_change' user.id %}" title="{% firstof user.get_full_name user.get_username %}" aria-label="Open your administrator account">{% if social.extra_data.picture %}<img src="{{ social.extra_data.picture }}" alt="">{% else %}{% firstof user.get_short_name user.get_username as admin_name %}{{ admin_name|first|upper }}{% endif %}</a>{% endwith %}
 {% endblock %}
 
 {% block userlinks %}

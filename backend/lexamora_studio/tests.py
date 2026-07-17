@@ -3372,6 +3372,16 @@ class StudioGeneralSettingsTests(TestCase):
 
 
 class StudioProductionPilotFeaturesTests(TestCase):
+    @staticmethod
+    def image_file(name="pilot-avatar.png"):
+        import io
+        from PIL import Image
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        output = io.BytesIO()
+        Image.new("RGB", (96, 96), "#d87a31").save(output, "PNG")
+        return SimpleUploadedFile(name, output.getvalue(), content_type="image/png")
+
     def setUp(self):
         from .models import AiModelProfile, Character
 
@@ -3486,6 +3496,30 @@ class StudioProductionPilotFeaturesTests(TestCase):
             2,
         )
 
+    def test_superuser_can_select_registered_workspace_users(self):
+        first = get_user_model().objects.create_user(
+            "workspace-one", email="workspace-one@example.com", password="strong-pass"
+        )
+        second = get_user_model().objects.create_user(
+            "workspace-two", email="workspace-two@example.com", password="strong-pass"
+        )
+        self.client.force_login(self.admin)
+        page = self.client.get(f"/studio/workspaces/{self.workspace.id}/access/")
+        self.assertContains(page, "Select registered users")
+        response = self.client.post(
+            f"/studio/workspaces/{self.workspace.id}/access/",
+            {
+                "action": "select_users",
+                "users": [str(first.id), str(second.id)],
+                "role": WorkspaceMembership.Role.EDITOR,
+                "can_use_ai": "on",
+            },
+        )
+        self.assertRedirects(response, f"/studio/workspaces/{self.workspace.id}/access/")
+        memberships = WorkspaceMembership.objects.filter(workspace=self.workspace, user__in=[first, second])
+        self.assertEqual(memberships.count(), 2)
+        self.assertFalse(memberships.filter(can_use_ai=False).exists())
+
     def test_character_can_be_copied_and_soft_deleted(self):
         from .models import Character
 
@@ -3498,6 +3532,35 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertRedirects(deleted_response, f"/studio/projects/{self.project.id}/")
         self.assertFalse(Character.objects.filter(id=copied.id).exists())
         self.assertTrue(Character.all_objects.filter(id=copied.id, deleted_at__isnull=False).exists())
+
+    def test_uploaded_character_avatar_is_cropped_before_assignment(self):
+        import tempfile
+        from pathlib import Path
+
+        self.client.force_login(self.owner)
+        with tempfile.TemporaryDirectory() as directory:
+            with self.settings(STUDIO_PRIVATE_MEDIA_ROOT=Path(directory)):
+                uploaded = self.client.post(
+                    f"/studio/characters/{self.character.id}/images/new/",
+                    {"file": self.image_file(), "image_role": "character_avatar"},
+                    HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+                )
+                self.assertEqual(uploaded.status_code, 201, uploaded.content)
+                payload = uploaded.json()
+                self.character.refresh_from_db()
+                self.assertIsNone(self.character.avatar_asset_id)
+                cropped = self.client.post(
+                    payload["cropUrl"],
+                    data=json.dumps({
+                        "x": 0, "y": 0, "width": 80, "height": 80,
+                        "attachScope": "character_avatar",
+                        "attachOwnerId": str(self.character.id),
+                    }),
+                    content_type="application/json",
+                )
+                self.assertEqual(cropped.status_code, 201, cropped.content)
+                self.character.refresh_from_db()
+                self.assertEqual(str(self.character.avatar_asset_id), cropped.json()["id"])
 
     @patch("lexamora_studio.views.user_has_ai_access", return_value=True)
     def test_project_generation_can_queue_selected_model(self, _has_access):
@@ -3567,8 +3630,52 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertContains(response, "data-project-generation-send-direct")
         self.assertContains(response, "Generate Image")
         self.assertNotContains(response, "Review request")
-        self.assertContains(response, "generation-source-popover")
+        self.assertContains(response, "data-source-dialog")
+        self.assertContains(response, "9:16 Story / Reels / TikTok")
+        self.assertContains(response, "data-project-prompt-action=\"translate\"")
+        self.assertContains(response, "Final prompt")
         self.assertContains(response, "data-avatar-crop-dialog")
+
+    @patch("lexamora_studio.views.run_text", return_value=("Improved cinematic prompt", "gpt-5.4-mini"))
+    @patch("lexamora_studio.views.user_has_ai_access", return_value=True)
+    def test_project_image_prompt_can_be_improved_in_preview(self, _has_access, _run_text):
+        from .models import StudioTextModel
+
+        StudioTextModel.objects.update_or_create(
+            model_id="gpt-5.4-mini",
+            defaults={"name": "GPT mini", "is_active": True, "is_default": True, "updated_by": self.admin},
+        )
+        self.client.force_login(self.owner)
+        response = self.client.post(
+            f"/studio/projects/{self.project.id}/image-generation/prompt-preview/",
+            data=json.dumps({"prompt": "rough frame", "action": "improve", "textModel": "gpt-5.4-mini"}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["content"], "Improved cinematic prompt")
+
+    def test_scene_prompt_is_listed_in_modal_and_can_be_deleted(self):
+        from .ai_catalog import default_prompt_template
+        from .models import Episode, Scene
+
+        episode = Episode.objects.create(
+            project=self.project, number=1, title="Pilot", created_by=self.owner, updated_by=self.owner,
+        )
+        scene = Scene.objects.create(
+            episode=episode, number=1, position=0, title="Opening", created_by=self.owner, updated_by=self.owner,
+        )
+        prompt = Prompt.objects.create(
+            scene=scene, ai_model=self.image_model, template=default_prompt_template(Prompt.Type.IMAGE),
+            prompt_type=Prompt.Type.IMAGE, title="Street frame", content="A hero walks outside",
+            created_by=self.owner, updated_by=self.owner,
+        )
+        self.client.force_login(self.owner)
+        page = self.client.get(f"/studio/scenes/{scene.id}/")
+        self.assertContains(page, f'id="prompt-dialog-{prompt.id}"')
+        self.assertContains(page, "A hero walks outside")
+        deleted = self.client.post(f"/studio/prompts/{prompt.id}/delete/")
+        self.assertRedirects(deleted, f"/studio/scenes/{scene.id}/#prompts")
+        self.assertFalse(Prompt.objects.filter(id=prompt.id).exists())
 
     def test_external_image_import_rejects_private_network(self):
         from django.core.exceptions import ValidationError

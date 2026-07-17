@@ -128,7 +128,10 @@ def home(request):
 
 @require_http_methods(["GET"])
 def admin_help(request):
-    return render(request, "admin/help.html")
+    return render(request, "admin/help.html", {
+        "build_version": "2026.07.17.2",
+        "build_updated": "2026-07-17",
+    })
 
 
 @require_http_methods(["GET", "POST"])

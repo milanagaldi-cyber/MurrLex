@@ -3,47 +3,80 @@
 {% block breadcrumbs %}<div class="breadcrumbs"><a href="{% url 'admin:index' %}">Admin</a> &rsaquo; Help</div>{% endblock %}
 {% block content %}
 <div class="admin-help">
-  <h1>Administration model and user guide</h1>
-  <p>This page describes the current production access model. Application accounts, Django staff roles, Django superusers, and Linux server accounts are separate security layers.</p>
+  <h1>Administration model and operating guide</h1>
+  <p><strong>Build {{ build_version }}</strong> &middot; updated {{ build_updated }}</p>
+  <p>This guide describes the current production authorization model. Product login, Lexamora Studio access, Django Admin permissions and operating-system access are separate layers. A permission in one layer never silently grants a permission in another.</p>
 
-  <section class="module aligned"><h2>Who is a superuser</h2>
-    <p><strong>No user becomes a Django superuser automatically.</strong> The first Google login, the first registered account, an email address, workspace ownership, or membership in a project never grants this status.</p>
-    <p>A Django superuser is an account with the explicit <code>is_superuser</code> flag. It is created with the controlled <code>createsuperuser</code> command or granted by an existing Django superuser. Google-created users are explicitly created without staff or superuser rights.</p>
-    <p>The <strong>Superadmin</strong> group receives all current model permissions, but group membership does not set <code>is_superuser</code>. Code paths reserved for a real Django superuser remain unavailable to a group-only administrator.</p>
-  </section>
-
-  <section class="module aligned"><h2>Capabilities</h2>
-    <table><thead><tr><th>Role</th><th>Purpose and authority</th></tr></thead><tbody>
-      <tr><td>Django superuser</td><td>Full Admin access, staff and group management, provider credentials, recovery operations, server-wide workspace ownership transfer, and every permission check that explicitly requires <code>is_superuser</code>. Reserve for product owners and recovery.</td></tr>
-      <tr><td>Superadmin group</td><td>All synchronized Django model permissions and delegated Studio administration. It does not bypass explicit superuser-only safeguards.</td></tr>
-      <tr><td>Daily Admin</td><td>Routine users, sessions, allowlist, AI access, subscriptions, lessons and cards. It cannot manage provider secrets, groups, or promote itself.</td></tr>
-      <tr><td>Support</td><td>User status, sessions, allowlist, AI access, subscription and credit visibility.</td></tr>
-      <tr><td>Billing</td><td>Subscriptions, audited credit adjustments, usage and audit visibility.</td></tr>
-      <tr><td>Content</td><td>Lessons, cards, imports and Lexamora Studio content.</td></tr>
-      <tr><td>ReadOnly / Developer</td><td>Read-only operational or technical diagnostics without provider credential access.</td></tr>
+  <section class="module aligned"><h2>Four administration layers</h2>
+    <table><thead><tr><th>Layer</th><th>What it controls</th><th>Who manages it</th></tr></thead><tbody>
+      <tr><td>Product account</td><td>Login, Google identity, account status, subscription, AI entitlement and application sessions.</td><td>Django superusers and delegated staff roles in this Admin.</td></tr>
+      <tr><td>Lexamora Studio</td><td>Workspace ownership, workspace membership, project sharing, editing, translation, AI generation and export rights.</td><td>Workspace owners/admins, project controllers and server super administrators.</td></tr>
+      <tr><td>Django Admin</td><td>Users, groups, provider keys, AI grants, operational records, audit and support actions.</td><td>Accounts with <code>is_staff</code> and the required Django permissions.</td></tr>
+      <tr><td>Server administration</td><td>Linux, SSH, Nginx, systemd services, PostgreSQL, storage, secrets, deployment and backups.</td><td>Infrastructure administrators with an individual SSH/sudo account. This access is not created from Django Admin.</td></tr>
     </tbody></table>
   </section>
 
-  <section class="module aligned"><h2>Working with users</h2>
+  <section class="module aligned"><h2>Superuser and Superadmin</h2>
+    <p><strong>No user becomes a Django superuser automatically.</strong> The first registration, first Google login, a specific email address, workspace ownership or project Full control never grants superuser status.</p>
+    <p>A Django superuser has the explicit <code>is_superuser</code> flag. It is created through a controlled <code>createsuperuser</code> operation or assigned by an existing Django superuser. Google-created users start as ordinary active users with Staff and Superuser disabled.</p>
+    <p>The <strong>Superadmin</strong> group is the delegated server-application administrator. It receives synchronized Django model permissions and global Lexamora Studio administration, including access to all active workspaces/projects, workspace owner transfer and bulk user selection. It is still not a Linux administrator and cannot read provider secrets after they are stored.</p>
+    <p>A server/Linux administrator can deploy and recover the service but does not automatically receive a product account. For traceability, infrastructure work and product administration should use separate named accounts.</p>
+  </section>
+
+  <section class="module aligned"><h2>Django Admin roles</h2>
+    <table><thead><tr><th>Role</th><th>Authority</th><th>Typical use</th></tr></thead><tbody>
+      <tr><td>Django superuser</td><td>All Admin models and safeguards, staff/group assignment, provider credentials, recovery actions and server-wide Studio ownership transfer.</td><td>Product owner and emergency recovery. Keep the number of accounts minimal.</td></tr>
+      <tr><td>Superadmin group</td><td>All synchronized model permissions plus global Studio administration and bulk access workflows.</td><td>Trusted application administrator without Linux access.</td></tr>
+      <tr><td>Daily Admin</td><td>Routine users, sessions, allowlist, AI access, subscriptions, lessons and cards. No provider secrets or self-promotion.</td><td>Daily product operations.</td></tr>
+      <tr><td>Support</td><td>User status, sessions, allowlist, AI entitlement and subscription visibility.</td><td>User support and access diagnosis.</td></tr>
+      <tr><td>Billing</td><td>Subscriptions, audited credit adjustments, usage and financial audit visibility.</td><td>Commercial operations.</td></tr>
+      <tr><td>Content</td><td>Lessons, cards, imports and Studio content models.</td><td>Methodists and content managers.</td></tr>
+      <tr><td>ReadOnly</td><td>Read access to operational records without mutations.</td><td>Audit and supervised diagnostics.</td></tr>
+      <tr><td>Developer</td><td>Technical diagnostics and selected operational models, without provider credential access.</td><td>Application troubleshooting.</td></tr>
+    </tbody></table>
+  </section>
+
+  <section class="module aligned"><h2>Workspace roles and rights</h2>
+    <table><thead><tr><th>Role</th><th>Rights</th></tr></thead><tbody>
+      <tr><td>Owner</td><td>View, edit, translate, manage members/projects, use AI, export and archive. Exactly one owner is recorded. Only a server super administrator can transfer ownership.</td></tr>
+      <tr><td>Admin</td><td>Same operational capabilities as Owner, except ownership itself and owner-only revocation safeguards.</td></tr>
+      <tr><td>Editor</td><td>View, edit and translate workspace content. AI/export/member management require an explicit entitlement or higher role.</td></tr>
+      <tr><td>Translator</td><td>View and translate without general content administration.</td></tr>
+      <tr><td>Viewer</td><td>Read-only workspace access.</td></tr>
+    </tbody></table>
+    <p>An active workspace member inherits access to projects in that workspace unless a specific project records an exclusion. Workspace AI access and the account-level AI grant must both permit the operation.</p>
+  </section>
+
+  <section class="module aligned"><h2>Project roles and rights</h2>
+    <table><thead><tr><th>Role</th><th>Rights</th></tr></thead><tbody>
+      <tr><td>View</td><td>Read the project and its accessible media.</td></tr>
+      <tr><td>Edit</td><td>View, edit, translate and use AI when the user also has account/workspace AI entitlement.</td></tr>
+      <tr><td>Full control</td><td>Edit plus project management and export. It does not make the user workspace owner or Django administrator.</td></tr>
+    </tbody></table>
+    <p>Project-only access can be added in addition to inherited workspace access. The workspace owner cannot be removed from an individual project. A workspace owner may revoke inherited project access for another member without removing that member from the workspace.</p>
+  </section>
+
+  <section class="module aligned"><h2>Working with users: onboarding workflow</h2>
     <ol>
-      <li>Add the email to <strong>Google OAuth Allowed Users</strong> when Google staging access is restricted.</li>
-      <li>Ask the user to sign in once. Google login creates a basic active application user without staff or superuser rights.</li>
-      <li>Open <strong>Users</strong>. Keep ordinary product users active but leave Staff and Superuser disabled.</li>
-      <li>For Admin access, enable Staff and assign the smallest suitable group. Only a real superuser can change staff, superuser, groups, and direct permissions.</li>
-      <li>Use <strong>AI Access</strong> to enable server AI functions. Project or workspace sharing and AI entitlement are related product permissions but are not the same as Django Admin access.</li>
-      <li>Share a Lexamora workspace or project from Studio. Project roles are View, Edit, or Full control; workspace ownership is managed separately.</li>
-      <li>Use audited bulk actions to block, unblock, mark for deletion, or grant credits. Physical user deletion is disabled.</li>
-      <li>Require TOTP for staff when the Admin MFA policy is enabled. MFA recovery must be verified out of band and recorded in Security Audit Log.</li>
+      <li>If Google staging access is restricted, add the address to <strong>Google OAuth Allowed Users</strong>.</li>
+      <li>Ask the person to sign in once. The login creates a basic active account, never Staff or Superuser.</li>
+      <li>Open <strong>Users</strong> and verify identity, email and active status. Do not enable Staff for ordinary product users.</li>
+      <li>Use <strong>AI Access</strong> for server AI entitlement. Never put provider API keys into user, workspace or project fields.</li>
+      <li>Share the workspace or project from Lexamora Studio. Use the smallest suitable role and verify inherited project access.</li>
+      <li>For Admin work, enable Staff and assign one minimal role group. Only a real Django superuser may change staff, superuser, groups and direct permissions.</li>
+      <li>Require TOTP for staff when the MFA policy is enabled. Verify recovery requests out of band.</li>
+      <li>For departure or compromise, revoke Studio access, active sessions and AI entitlement first; then block the account. Physical user deletion remains disabled for audit integrity.</li>
     </ol>
   </section>
 
-  <section class="module aligned"><h2>Safety rules</h2>
+  <section class="module aligned"><h2>Operational safety</h2>
     <ul>
-      <li>Use individual staff accounts; never share a superuser login.</li>
-      <li>Grant the least powerful role that can complete the job.</li>
-      <li>Do not store OpenAI or ElevenLabs keys in user records or project fields; use Provider Keys.</li>
-      <li>Critical actions require a reason and are written to the audit log.</li>
-      <li>Review staff, superusers, groups, MFA and break-glass accounts regularly.</li>
+      <li>Use named accounts. Never share a Django superuser or SSH login.</li>
+      <li>Use least privilege and review Superuser, Superadmin, Staff, MFA and workspace owners regularly.</li>
+      <li>Provider keys are entered through Provider Keys, encrypted at rest and never displayed again.</li>
+      <li>Workspace/project sharing is not the same as Django Admin access and is not the same as AI entitlement.</li>
+      <li>Critical changes should leave an Audit Log record and a human-readable reason.</li>
+      <li>Linux administrators maintain deploys, services, database, backups and secrets. Product admins maintain people, roles and content.</li>
     </ul>
   </section>
 </div>
