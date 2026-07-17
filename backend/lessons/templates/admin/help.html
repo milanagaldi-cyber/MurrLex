@@ -1,0 +1,50 @@
+{% extends "admin/base_site.html" %}
+{% block title %}Administration Help | MurrLex Admin{% endblock %}
+{% block breadcrumbs %}<div class="breadcrumbs"><a href="{% url 'admin:index' %}">Admin</a> &rsaquo; Help</div>{% endblock %}
+{% block content %}
+<div class="admin-help">
+  <h1>Administration model and user guide</h1>
+  <p>This page describes the current production access model. Application accounts, Django staff roles, Django superusers, and Linux server accounts are separate security layers.</p>
+
+  <section class="module aligned"><h2>Who is a superuser</h2>
+    <p><strong>No user becomes a Django superuser automatically.</strong> The first Google login, the first registered account, an email address, workspace ownership, or membership in a project never grants this status.</p>
+    <p>A Django superuser is an account with the explicit <code>is_superuser</code> flag. It is created with the controlled <code>createsuperuser</code> command or granted by an existing Django superuser. Google-created users are explicitly created without staff or superuser rights.</p>
+    <p>The <strong>Superadmin</strong> group receives all current model permissions, but group membership does not set <code>is_superuser</code>. Code paths reserved for a real Django superuser remain unavailable to a group-only administrator.</p>
+  </section>
+
+  <section class="module aligned"><h2>Capabilities</h2>
+    <table><thead><tr><th>Role</th><th>Purpose and authority</th></tr></thead><tbody>
+      <tr><td>Django superuser</td><td>Full Admin access, staff and group management, provider credentials, recovery operations, server-wide workspace ownership transfer, and every permission check that explicitly requires <code>is_superuser</code>. Reserve for product owners and recovery.</td></tr>
+      <tr><td>Superadmin group</td><td>All synchronized Django model permissions and delegated Studio administration. It does not bypass explicit superuser-only safeguards.</td></tr>
+      <tr><td>Daily Admin</td><td>Routine users, sessions, allowlist, AI access, subscriptions, lessons and cards. It cannot manage provider secrets, groups, or promote itself.</td></tr>
+      <tr><td>Support</td><td>User status, sessions, allowlist, AI access, subscription and credit visibility.</td></tr>
+      <tr><td>Billing</td><td>Subscriptions, audited credit adjustments, usage and audit visibility.</td></tr>
+      <tr><td>Content</td><td>Lessons, cards, imports and Lexamora Studio content.</td></tr>
+      <tr><td>ReadOnly / Developer</td><td>Read-only operational or technical diagnostics without provider credential access.</td></tr>
+    </tbody></table>
+  </section>
+
+  <section class="module aligned"><h2>Working with users</h2>
+    <ol>
+      <li>Add the email to <strong>Google OAuth Allowed Users</strong> when Google staging access is restricted.</li>
+      <li>Ask the user to sign in once. Google login creates a basic active application user without staff or superuser rights.</li>
+      <li>Open <strong>Users</strong>. Keep ordinary product users active but leave Staff and Superuser disabled.</li>
+      <li>For Admin access, enable Staff and assign the smallest suitable group. Only a real superuser can change staff, superuser, groups, and direct permissions.</li>
+      <li>Use <strong>AI Access</strong> to enable server AI functions. Project or workspace sharing and AI entitlement are related product permissions but are not the same as Django Admin access.</li>
+      <li>Share a Lexamora workspace or project from Studio. Project roles are View, Edit, or Full control; workspace ownership is managed separately.</li>
+      <li>Use audited bulk actions to block, unblock, mark for deletion, or grant credits. Physical user deletion is disabled.</li>
+      <li>Require TOTP for staff when the Admin MFA policy is enabled. MFA recovery must be verified out of band and recorded in Security Audit Log.</li>
+    </ol>
+  </section>
+
+  <section class="module aligned"><h2>Safety rules</h2>
+    <ul>
+      <li>Use individual staff accounts; never share a superuser login.</li>
+      <li>Grant the least powerful role that can complete the job.</li>
+      <li>Do not store OpenAI or ElevenLabs keys in user records or project fields; use Provider Keys.</li>
+      <li>Critical actions require a reason and are written to the audit log.</li>
+      <li>Review staff, superusers, groups, MFA and break-glass accounts regularly.</li>
+    </ul>
+  </section>
+</div>
+{% endblock %}

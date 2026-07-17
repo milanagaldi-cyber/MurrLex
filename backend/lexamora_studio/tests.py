@@ -3430,6 +3430,9 @@ class StudioProductionPilotFeaturesTests(TestCase):
         )
         delegated_admin.groups.add(Group.objects.get_or_create(name="Superadmin")[0])
         self.client.force_login(delegated_admin)
+        access_page = self.client.get(f"/studio/workspaces/{self.workspace.id}/access/")
+        self.assertEqual(access_page.status_code, 200)
+        self.assertContains(access_page, "Transfer workspace ownership")
         response = self.client.post(
             f"/studio/workspaces/{self.workspace.id}/owner/",
             {"email": self.new_owner.email},
@@ -3458,6 +3461,30 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertRedirects(response, f"/studio/projects/{self.project.id}/access/")
         self.assertTrue(ProjectMembership.objects.filter(project=self.project, user=first, role=ProjectMembership.Role.EDITOR).exists())
         self.assertTrue(ProjectMembership.objects.filter(project=self.project, user=second, role=ProjectMembership.Role.EDITOR).exists())
+
+    def test_superuser_can_select_registered_project_users(self):
+        first = get_user_model().objects.create_user(
+            "selected-one", email="selected-one@example.com", password="strong-pass"
+        )
+        second = get_user_model().objects.create_user(
+            "selected-two", email="selected-two@example.com", password="strong-pass"
+        )
+        self.client.force_login(self.admin)
+        page = self.client.get(f"/studio/projects/{self.project.id}/access/")
+        self.assertContains(page, "Select registered users")
+        response = self.client.post(
+            f"/studio/projects/{self.project.id}/access/",
+            {
+                "action": "select_users",
+                "users": [str(first.id), str(second.id)],
+                "role": ProjectMembership.Role.EDITOR,
+            },
+        )
+        self.assertRedirects(response, f"/studio/projects/{self.project.id}/access/")
+        self.assertEqual(
+            ProjectMembership.objects.filter(project=self.project, user__in=[first, second]).count(),
+            2,
+        )
 
     def test_character_can_be_copied_and_soft_deleted(self):
         from .models import Character
@@ -3496,6 +3523,38 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertEqual(job.model_profile, self.image_model)
 
     @patch("lexamora_studio.views.user_has_ai_access", return_value=True)
+    def test_project_generation_accepts_multiple_jobs_without_waiting(self, _has_access):
+        from .models import ImageGenerationJob
+
+        self.client.force_login(self.owner)
+        payload = {
+            "prompt": "First independent frame",
+            "modelProfileId": str(self.image_model.id),
+            "size": "1024x1024",
+            "quality": "low",
+            "outputFormat": "png",
+            "referenceAssetIds": [],
+        }
+        first = self.client.post(
+            f"/studio/projects/{self.project.id}/image-generation/queue/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+        payload["prompt"] = "Second independent frame"
+        second = self.client.post(
+            f"/studio/projects/{self.project.id}/image-generation/queue/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+        self.assertEqual(first.status_code, 202)
+        self.assertEqual(second.status_code, 202)
+        self.assertNotEqual(first.json()["jobId"], second.json()["jobId"])
+        self.assertEqual(
+            ImageGenerationJob.objects.filter(project=self.project, status=ImageGenerationJob.Status.QUEUED).count(),
+            2,
+        )
+
+    @patch("lexamora_studio.views.user_has_ai_access", return_value=True)
     def test_project_generation_page_renders_queue_workspace(self, _has_access):
         self.client.force_login(self.owner)
         response = self.client.get(
@@ -3505,6 +3564,11 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertContains(response, "data-reference-slots")
         self.assertContains(response, "Generated here")
         self.assertContains(response, "data-project-generation-results")
+        self.assertContains(response, "data-project-generation-send-direct")
+        self.assertContains(response, "Generate Image")
+        self.assertNotContains(response, "Review request")
+        self.assertContains(response, "generation-source-popover")
+        self.assertContains(response, "data-avatar-crop-dialog")
 
     def test_external_image_import_rejects_private_network(self):
         from django.core.exceptions import ValidationError

@@ -29,7 +29,7 @@ from .external_images import download_external_image
 from .docx_imports import accept_docx_import, parse_docx
 from .docx_exports import generate_docx_export
 from .docx_roundtrip import compare_docx_export
-from .forms import AdditionalGenerationForm, AiModelProfileForm, AssetEditForm, CharacterCreateForm, CharacterForm, DialogueLineForm, DocxImportUploadForm, EpisodeForm, GenerationOutputUploadForm, ImageUploadForm, MultipleImageUploadForm, ProjectBulkMembershipForm, ProjectForm, ProjectMembershipForm, ProjectSettingsForm, PromptBlockForm, PromptForm, RecommendedTrackForm, SceneForm, StudioTextModelForm, WorkspaceForm, WorkspaceMembershipForm
+from .forms import AdditionalGenerationForm, AiModelProfileForm, AssetEditForm, CharacterCreateForm, CharacterForm, DialogueLineForm, DocxImportUploadForm, EpisodeForm, GenerationOutputUploadForm, ImageUploadForm, MultipleImageUploadForm, ProjectBulkMembershipForm, ProjectForm, ProjectMembershipForm, ProjectSettingsForm, ProjectUserSelectionForm, PromptBlockForm, PromptForm, RecommendedTrackForm, SceneForm, StudioTextModelForm, WorkspaceForm, WorkspaceMembershipForm
 from .models import AdditionalGeneration, AiModelProfile, AiSuggestion, AiUsageLog, Asset, Character, DialogueLine, DocxImport, EmailDeliveryLog, Episode, EpisodeCover, ExportJob, GenerationOutput, ImageGenerationJob, Project, ProjectAccessExclusion, ProjectMembership, Prompt, PromptBlock, RecommendedTrack, Scene, StudioTextModel, SubtitleTrack, TranslationUnit, Workspace, WorkspaceMembership
 from .notifications import notify_access_granted
 from .permissions import accessible_assets, accessible_projects, accessible_suggestions, accessible_workspaces, has_capability, has_object_capability, has_project_capability, is_workspace_owner_or_admin
@@ -1699,6 +1699,10 @@ def project_access(request, project_id):
     action = request.POST.get("action", "save") if request.method == "POST" else "save"
     form = ProjectMembershipForm(request.POST if action == "save" else None, project=project)
     bulk_form = ProjectBulkMembershipForm(request.POST if action == "bulk_add" else None, project=project)
+    selection_form = ProjectUserSelectionForm(
+        request.POST if action == "select_users" else None,
+        project=project,
+    ) if _is_server_super_admin(request.user) else None
     if request.method == "POST":
         if action in {"remove", "exclude"} and request.user.id != project.workspace.owner_id:
             return HttpResponseForbidden("Only the workspace owner can remove project access.")
@@ -1749,6 +1753,31 @@ def project_access(request, project_id):
                 summary += f", {len(bulk_form.missing_emails)} not registered"
             messages.success(request, summary)
             return redirect("studio:project_access", project_id=project.id)
+        if action == "select_users" and selection_form is not None and selection_form.is_valid():
+            added = 0
+            updated = 0
+            role = selection_form.cleaned_data["role"]
+            for user in selection_form.cleaned_data["users"]:
+                existed = ProjectMembership.objects.filter(project=project, user=user, is_active=True).exists()
+                ProjectAccessExclusion.objects.filter(project=project, user=user).delete()
+                ProjectMembership.objects.update_or_create(
+                    project=project,
+                    user=user,
+                    defaults={"role": role, "is_active": True, "invited_by": request.user},
+                )
+                if existed:
+                    updated += 1
+                else:
+                    added += 1
+                    notify_access_granted(
+                        user=user,
+                        entity_name=project.title,
+                        entity_kind="project",
+                        url=request.build_absolute_uri(reverse("studio:project_detail", kwargs={"project_id": project.id})),
+                        granted_by=request.user,
+                    )
+            messages.success(request, f"Selected access saved: {added} added, {updated} updated")
+            return redirect("studio:project_access", project_id=project.id)
         if action == "save" and form.is_valid():
             existed = ProjectMembership.objects.filter(project=project, user=form.user, is_active=True).exists()
             ProjectAccessExclusion.objects.filter(project=project, user=form.user).delete()
@@ -1766,6 +1795,7 @@ def project_access(request, project_id):
         "project": project,
         "form": form,
         "bulk_form": bulk_form,
+        "selection_form": selection_form,
         "memberships": project.memberships.select_related("user"),
         "inherited_memberships": inherited,
         "can_remove_access": request.user.id == project.workspace.owner_id,

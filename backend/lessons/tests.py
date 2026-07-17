@@ -358,6 +358,21 @@ class HomePageTests(TestCase):
             self.assertContains(response, f'href="{href}"')
         self.assertNotContains(response, 'href="/register/"')
 
+    def test_signed_in_home_replaces_public_card_with_available_apps(self):
+        user = get_user_model().objects.create_user(
+            username="home-user",
+            email="home-user@example.com",
+            password="Strong-home-password-2026!",
+        )
+        self.client.force_login(user)
+        response = self.client.get("/")
+        self.assertContains(response, "Available to you")
+        self.assertContains(response, 'href="/account/"')
+        self.assertContains(response, 'href="/studio/"')
+        self.assertContains(response, 'href="/apps/"')
+        self.assertContains(response, 'href="/premium/"')
+        self.assertNotContains(response, "<h2>Public access</h2>")
+
     def test_public_pages_include_theme_switcher(self):
         for path in ("/", "/login/", "/register/", "/premium/"):
             with self.subTest(path=path):
@@ -415,6 +430,19 @@ class AdminThemeTests(TestCase):
         self.assertContains(response, "data-admin-history-back")
         self.assertContains(response, "previousPageIsLocal")
         self.assertContains(response, "text-decoration: none !important")
+        self.assertContains(response, "admin-user-avatar")
+        self.assertContains(response, '>Home</a>')
+        self.assertContains(response, '>Help</a>')
+
+    def test_admin_help_explains_roles_and_is_staff_protected(self):
+        response = self.client.get("/admin/help/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "No user becomes a Django superuser automatically")
+        self.assertContains(response, "Superadmin group")
+        self.assertContains(response, "Working with users")
+        self.client.logout()
+        denied = self.client.get("/admin/help/")
+        self.assertEqual(denied.status_code, 302)
 
     def test_admin_login_also_has_back_button(self):
         self.client.logout()

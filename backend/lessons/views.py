@@ -126,6 +126,11 @@ def home(request):
     return render(request, "lessons/home.html", {"site_links": site_links})
 
 
+@require_http_methods(["GET"])
+def admin_help(request):
+    return render(request, "admin/help.html")
+
+
 @require_http_methods(["GET", "POST"])
 def register(request):
     if request.user.is_authenticated:

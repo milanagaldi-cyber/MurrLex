@@ -18,10 +18,20 @@ PROJECT_ROLE_CAPABILITIES = {
 }
 
 
+def is_server_super_admin(user):
+    return bool(
+        getattr(user, "is_authenticated", False)
+        and (
+            getattr(user, "is_superuser", False)
+            or user.groups.filter(name="Superadmin").exists()
+        )
+    )
+
+
 def accessible_workspaces(user):
     if not getattr(user, "is_authenticated", False):
         return Workspace.objects.none()
-    if user.is_superuser:
+    if is_server_super_admin(user):
         return Workspace.objects.all()
     return Workspace.objects.filter(
         memberships__user=user,
@@ -32,7 +42,7 @@ def accessible_workspaces(user):
 def accessible_projects(user):
     if not getattr(user, "is_authenticated", False):
         return Project.objects.none()
-    if user.is_superuser:
+    if is_server_super_admin(user):
         return Project.objects.filter(workspace__deleted_at__isnull=True)
     inherited = Q(
             workspace__memberships__user=user,
@@ -102,7 +112,7 @@ def membership_for(user, workspace):
 
 
 def is_workspace_owner_or_admin(user, workspace):
-    if getattr(user, "is_superuser", False):
+    if is_server_super_admin(user):
         return True
     if workspace.owner_id == getattr(user, "id", None):
         return True
@@ -115,7 +125,7 @@ def is_workspace_owner_or_admin(user, workspace):
 
 
 def has_capability(user, workspace, capability):
-    if getattr(user, "is_superuser", False):
+    if is_server_super_admin(user):
         return True
     membership = membership_for(user, workspace)
     if membership is None:
@@ -130,7 +140,7 @@ def has_capability(user, workspace, capability):
 
 
 def has_project_capability(user, project, capability):
-    if getattr(user, "is_superuser", False):
+    if is_server_super_admin(user):
         return True
     explicitly_revoked = ProjectAccessExclusion.objects.filter(project=project, user=user).exists()
     if not explicitly_revoked and has_capability(user, project.workspace, capability):

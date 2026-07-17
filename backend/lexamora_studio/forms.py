@@ -1,6 +1,7 @@
 import re
 
 from django import forms
+from django.contrib.auth import get_user_model
 from django.core.validators import validate_email
 from django.db.models import Q
 
@@ -211,6 +212,30 @@ class ProjectBulkMembershipForm(forms.Form):
         if not self.users:
             raise forms.ValidationError("No registered project users were found in this list.")
         return "\n".join(values)
+
+
+class ProjectUserSelectionForm(forms.Form):
+    users = forms.ModelMultipleChoiceField(
+        label="Users",
+        queryset=get_user_model().objects.none(),
+        widget=forms.CheckboxSelectMultiple,
+    )
+    role = forms.ChoiceField(choices=ProjectMembership.Role.choices)
+
+    def __init__(self, *args, project, **kwargs):
+        self.project = project
+        super().__init__(*args, **kwargs)
+        self.fields["users"].queryset = (
+            get_user_model().objects.filter(is_active=True)
+            .exclude(pk=project.workspace.owner_id)
+            .order_by("email", "username")
+        )
+
+    def clean_users(self):
+        users = list(self.cleaned_data["users"])
+        if len(users) > 100:
+            raise forms.ValidationError("Select no more than 100 users at once.")
+        return users
 
 
 class WorkspaceMembershipForm(forms.Form):

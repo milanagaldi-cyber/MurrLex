@@ -10,6 +10,19 @@
   <p class="muted">Paste up to 100 registered email addresses. Existing project roles are updated; unknown addresses are reported without blocking valid users.</p>
   <form method="post">{% csrf_token %}<input type="hidden" name="action" value="bulk_add">{{ bulk_form.as_p }}<button type="submit">Add users</button></form>
 </section>
+{% if selection_form %}
+<section class="panel" style="padding:20px;max-width:960px">
+  <h2>Select registered users</h2>
+  <p class="muted">Server superusers can grant one role to several registered users without entering email addresses.</p>
+  <form method="post">{% csrf_token %}<input type="hidden" name="action" value="select_users">
+    {{ selection_form.users.errors }}
+    <div class="table-wrap access-user-table"><table><thead><tr><th>Select</th><th>User</th><th>Email</th></tr></thead><tbody>
+    {% for user in selection_form.fields.users.queryset %}<tr><td><input type="checkbox" name="users" value="{{ user.id }}"{% if user.id|stringformat:"s" in selection_form.users.value %} checked{% endif %}></td><td>{{ user.get_full_name|default:user.username }}</td><td>{{ user.email|default:"No email" }}</td></tr>{% empty %}<tr><td colspan="3">No available registered users</td></tr>{% endfor %}
+    </tbody></table></div>
+    <div class="inline-fields" style="margin-top:12px"><label>Role {{ selection_form.role }}</label><button type="submit">Add selected users</button></div>
+  </form>
+</section>
+{% endif %}
 <h2>People with access</h2>
 <div class="list">
   <div class="row"><strong title="{{ project.workspace.owner|user_details }}">{{ project.workspace.owner|display_name }}</strong><span>Workspace owner / full access</span><span class="muted">Cannot be removed</span></div>

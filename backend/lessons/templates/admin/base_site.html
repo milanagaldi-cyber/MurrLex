@@ -164,6 +164,19 @@
         color: var(--body-quiet-color);
         white-space: nowrap;
     }
+    .admin-user-avatar {
+        display: grid;
+        place-items: center;
+        width: 34px;
+        height: 34px;
+        overflow: hidden;
+        border: 1px solid var(--accent);
+        border-radius: 50%;
+        background: var(--admin-input-bg);
+        color: var(--link-fg);
+        font-weight: 900;
+    }
+    .admin-user-avatar img { width: 100%; height: 100%; object-fit: cover; }
     #branding h1, #branding h1 a:link, #branding h1 a:visited {
         color: var(--header-branding-color);
     }
@@ -1137,6 +1150,7 @@
 
 {% block welcome-msg %}
 <span class="admin-welcome">
+    {% with social=user.socialaccount_set.first %}<span class="admin-user-avatar" title="{% firstof user.get_full_name user.get_username %}">{% if social.extra_data.picture %}<img src="{{ social.extra_data.picture }}" alt="">{% else %}{% firstof user.get_short_name user.get_username as admin_name %}{{ admin_name|first|upper }}{% endif %}</span>{% endwith %}
     {% translate 'Welcome,' %}
     <strong>{% firstof user.get_short_name user.get_username %}</strong>
 </span>
@@ -1157,12 +1171,13 @@
 
 {% block nav-global %}
 <nav class="murrlex-admin-nav" aria-label="Admin navigation">
+    <a href="/">Home</a>
     <a href="{% url 'admin:index' %}">Dashboard</a>
     {% if perms.auth.view_user %}<a href="{% url 'admin:auth_user_changelist' %}">Users</a>{% endif %}
     {% if perms.auth.view_group %}<a href="{% url 'admin:auth_group_changelist' %}">Groups</a>{% endif %}
     {% if perms.lessons.view_userapiaccess %}<a href="{% url 'admin:lessons_userapiaccess_changelist' %}">AI Access</a>{% endif %}
     {% if perms.lessons.view_providercredential %}<a href="{% url 'admin:lessons_providercredential_changelist' %}">Provider Keys</a>{% endif %}
     {% if perms.lessons.view_lesson %}<a href="{% url 'admin:lessons_lesson_changelist' %}">Lessons</a>{% endif %}
-    <a href="/">Public Home</a>
+    <a href="{% url 'admin_help' %}">Help</a>
 </nav>
 {% endblock %}

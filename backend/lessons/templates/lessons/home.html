@@ -45,6 +45,15 @@
 
     <section class="grid" aria-label="MurrLex service dashboard">
         <article class="card">
+            {% if request.user.is_authenticated %}
+            <span class="badge open">Your access</span>
+            <h2>Available to you</h2>
+            <p>Your signed-in MurrLex applications and account areas.</p>
+            <p><a href="{% url 'account' %}">User cabinet</a></p>
+            <p><a href="{% url 'studio:dashboard' %}">Lexamora Studio</a></p>
+            <p><a href="{% url 'apps_dashboard' %}">MurrLex Apps</a></p>
+            <p><a href="{% url 'premium' %}">Premium preview</a></p>
+            {% else %}
             <span class="badge open">Public</span>
             <h2>Public access</h2>
             <p>Entry points for invited test users.</p>
@@ -56,6 +65,7 @@
             {% endif %}
             <p><a href="{% url 'account' %}">User cabinet</a></p>
             <p><a href="{% url 'premium' %}">Premium preview</a></p>
+            {% endif %}
         </article>
 
         <article class="card">

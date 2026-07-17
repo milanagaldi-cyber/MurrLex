@@ -39,6 +39,7 @@ urlpatterns = [
         RedirectView.as_view(url="/accounts/login/?next=/admin/", permanent=False),
         name="staff_admin_login",
     ),
+    path("admin/help/", admin.site.admin_view(lesson_views.admin_help), name="admin_help"),
     path("admin/", admin.site.urls),
     path("register/", lesson_views.register, name="register"),
     path("account/", lesson_views.account, name="account"),
