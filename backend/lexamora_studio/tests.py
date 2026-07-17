@@ -638,6 +638,9 @@ class StudioAiSuggestionTests(TestCase):
         self.client.force_login(self.editor)
         editor_page = self.client.get(f"/studio/scenes/{self.prompt.scene_id}/")
         self.assertContains(editor_page, "data-image-request-status")
+        self.assertContains(editor_page, "data-generation-composer")
+        self.assertContains(editor_page, "data-composer-media-type")
+        self.assertContains(editor_page, "References")
         self.assertContains(editor_page, "1536 x 1024 - Landscape")
         self.assertContains(editor_page, "1024 x 1536 - Portrait")
         self.assertContains(editor_page, ">Close</button>", html=False)
@@ -691,6 +694,7 @@ class StudioAiSuggestionTests(TestCase):
         self.assertEqual(call_kwargs["output_format"], "png")
         self.assertEqual(call_kwargs["background"], "opaque")
         self.assertEqual(call_kwargs["moderation"], "low")
+        self.assertNotIn("composition_preset", call_kwargs)
         self.client.force_login(self.viewer)
         shared_status = self.client.get(response.json()["statusUrl"])
         self.assertEqual(shared_status.status_code, 200)
@@ -3655,6 +3659,52 @@ class StudioProductionPilotFeaturesTests(TestCase):
             2,
         )
 
+    def test_generated_asset_can_be_starred_and_detached_from_generation_page(self):
+        import tempfile
+        from pathlib import Path
+        from .models import Asset, ImageGenerationJob
+        from .storage import create_asset
+
+        self.client.force_login(self.owner)
+        with tempfile.TemporaryDirectory() as directory:
+            with self.settings(STUDIO_PRIVATE_MEDIA_ROOT=Path(directory)):
+                generated = create_asset(
+                    user=self.owner,
+                    workspace=self.workspace,
+                    project=self.project,
+                    uploaded=self.image_file("generated-result.png"),
+                    kind=Asset.Kind.GENERATION_OUTPUT,
+                )
+                generated.projects.add(self.project)
+                job = ImageGenerationJob.objects.create(
+                    workspace=self.workspace,
+                    project=self.project,
+                    requested_by=self.owner,
+                    model_profile=self.image_model,
+                    status=ImageGenerationJob.Status.SUCCESS,
+                    request_prompt="Generated result",
+                    options={"size": "1024x1024", "quality": "low", "output_format": "png"},
+                    result_asset=generated,
+                )
+                listed = self.client.get(f"/studio/projects/{self.project.id}/image-generation/jobs/")
+                self.assertEqual([item["jobId"] for item in listed.json()["jobs"]], [str(job.id)])
+
+                starred = self.client.post(f"/studio/assets/{generated.id}/star/")
+                self.assertEqual(starred.status_code, 200, starred.content)
+                self.assertTrue(starred.json()["starred"])
+
+                detached = self.client.post(
+                    f"/studio/assets/{generated.id}/detach/project/{self.project.id}/",
+                    HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+                )
+                self.assertEqual(detached.status_code, 302, detached.content)
+                generated.refresh_from_db()
+                self.assertEqual(generated.kind, Asset.Kind.GENERATION_OUTPUT)
+                self.assertTrue(generated.is_starred)
+                self.assertFalse(generated.projects.filter(id=self.project.id).exists())
+                listed = self.client.get(f"/studio/projects/{self.project.id}/image-generation/jobs/")
+                self.assertEqual(listed.json()["jobs"], [])
+
     @patch("lexamora_studio.views.user_has_ai_access", return_value=True)
     def test_project_generation_page_renders_queue_workspace(self, _has_access):
         self.client.force_login(self.owner)
@@ -3669,17 +3719,17 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertContains(response, "Generate Image")
         self.assertNotContains(response, "Review request")
         self.assertContains(response, "data-source-dialog")
-        self.assertContains(response, "9:16 Story / Reels / TikTok")
+        self.assertContains(response, "9:16 Story")
         self.assertContains(response, "data-project-prompt-action=\"translate\"")
         self.assertContains(response, "Final prompt")
         self.assertContains(response, "data-avatar-crop-dialog")
-        markup = response.content.decode()
-        self.assertLess(
-            markup.index('data-project-image-prompt placeholder='),
-            markup.index('<div class="prompt-image-settings">'),
-        )
-        self.assertContains(response, "generation-setting-field")
-        self.assertContains(response, "generation-submit-row")
+        self.assertContains(response, "data-generation-composer")
+        self.assertContains(response, "data-project-media-type")
+        self.assertContains(response, '<option value="VIDEO">Video</option>', html=True)
+        self.assertContains(response, "data-composer-undo")
+        self.assertContains(response, "data-composer-redo")
+        self.assertContains(response, "data-generation-reference-filter")
+        self.assertNotContains(response, "data-project-prompt-target")
 
     @patch("lexamora_studio.views.run_text", return_value=("Improved cinematic prompt", "gpt-5.4-mini"))
     @patch("lexamora_studio.views.user_has_ai_access", return_value=True)

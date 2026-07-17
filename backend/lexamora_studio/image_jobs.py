@@ -31,7 +31,7 @@ def execute_image_generation_job(job_id):
             id__in=job.reference_asset_ids,
             workspace=job.workspace,
             content_type__startswith="image/",
-        ).exclude(kind=Asset.Kind.GENERATION_OUTPUT)
+        )
     }
     reference_assets = [reference_map[item] for item in job.reference_asset_ids if item in reference_map][:3]
     references = []
@@ -48,11 +48,15 @@ def execute_image_generation_job(job_id):
         input_chars=len(job.request_prompt),
     )
     try:
+        provider_options = {
+            key: value for key, value in job.options.items()
+            if key != "composition_preset"
+        }
         image_bytes, model, provider_usage = generate_image_with_usage(
             job.request_prompt,
             model=job.model_profile.model_id,
             reference_images=references,
-            **job.options,
+            **provider_options,
         )
         extension = job.options["output_format"]
         content_type = {"png": "image/png", "jpeg": "image/jpeg", "webp": "image/webp"}[extension]

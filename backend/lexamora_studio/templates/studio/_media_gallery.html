@@ -11,11 +11,13 @@
           <option value="current">Current Project</option>
           <option value="workspace">Workspace</option>
           <option value="recent">Last 10 in Project</option>
+          <option value="starred">Starred</option>
+          <option value="generated">Generated</option>
         </select>
       </label>
       {% else %}
       <label class="compact-control">Project
-        <select data-media-project><option value="workspace">Workspace</option>{% for item in gallery_projects %}<option value="{{ item.id }}">{{ item.title }}</option>{% endfor %}</select>
+        <select data-media-project><option value="workspace">Workspace</option><option value="starred">Starred</option><option value="generated">Generated</option>{% for item in gallery_projects %}<option value="{{ item.id }}">{{ item.title }}</option>{% endfor %}</select>
       </label>
       {% endif %}
       <label class="compact-control">Format
@@ -32,7 +34,7 @@
   </summary>
   <div class="asset-grid media-grid large" data-view-container="{{ gallery_view_key }}" data-media-grid>
     {% for asset in gallery_assets %}{% if asset.thumbnail %}
-      <figure class="asset" data-media-item data-asset-id="{{ asset.id }}" data-name="{{ asset.original_filename|lower }}" data-created="{{ asset.created_at|date:'U' }}" data-projects="{{ asset.gallery_project_ids }}" data-recent="{% if asset.is_recent_project %}1{% else %}0{% endif %}" data-orientation="{% if asset.width == asset.height %}square{% elif asset.width > asset.height %}horizontal{% else %}vertical{% endif %}" data-crop-url="{% url 'studio:asset_crop' asset.id %}"{% if gallery_mode == "project" and not asset.is_current_project %} hidden{% endif %}>
+      <figure class="asset" data-media-item data-asset-id="{{ asset.id }}" data-name="{{ asset.original_filename|lower }}" data-created="{{ asset.created_at|date:'U' }}" data-projects="{{ asset.gallery_project_ids }}" data-recent="{% if asset.is_recent_project %}1{% else %}0{% endif %}" data-starred="{% if asset.is_starred %}1{% else %}0{% endif %}" data-generated="{% if asset.kind == 'GENERATION_OUTPUT' %}1{% else %}0{% endif %}" data-orientation="{% if asset.width == asset.height %}square{% elif asset.width > asset.height %}horizontal{% else %}vertical{% endif %}" data-crop-url="{% url 'studio:asset_crop' asset.id %}"{% if gallery_mode == "project" and not asset.is_current_project %} hidden{% endif %}>
         <a href="{% url 'studio_api:asset_view' asset.id %}"><img src="{% url 'studio_api:asset_thumbnail' asset.id %}" alt="{{ asset.original_filename }}" loading="lazy" decoding="async"></a>
         <figcaption><span class="asset-name">{{ asset.original_filename }}</span><span class="muted">Workspace / {{ asset.width }}x{{ asset.height }}</span>{% if gallery_mode == "workspace" %}{% include "studio/_asset_actions.html" with asset=asset allow_trash=True %}{% elif asset.is_current_project %}{% include "studio/_asset_actions.html" with asset=asset attachment_scope='project' attachment_id=gallery_current_project %}{% else %}{% include "studio/_asset_actions.html" with asset=asset attach_project_id=gallery_current_project return_anchor=gallery_id %}{% endif %}</figcaption>
       </figure>

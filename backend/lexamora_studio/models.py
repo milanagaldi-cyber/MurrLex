@@ -572,6 +572,7 @@ class Asset(SoftDeleteModel):
     width = models.PositiveIntegerField(null=True, blank=True)
     height = models.PositiveIntegerField(null=True, blank=True)
     ai_metadata = models.JSONField(default=dict, blank=True)
+    is_starred = models.BooleanField(default=False)
     purged_at = models.DateTimeField(null=True, blank=True)
     purged_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,

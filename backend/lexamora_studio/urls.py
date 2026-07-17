@@ -51,6 +51,7 @@ urlpatterns = [
     path("assets/<uuid:asset_id>/edit/", views.asset_edit, name="asset_edit"),
     path("assets/<uuid:asset_id>/trash/", views.asset_trash, name="asset_trash"),
     path("assets/<uuid:asset_id>/crop/", views.asset_crop, name="asset_crop"),
+    path("assets/<uuid:asset_id>/star/", views.asset_star_toggle, name="asset_star_toggle"),
     path("assets/<uuid:asset_id>/detach/<str:scope>/<uuid:owner_id>/", views.asset_detach, name="asset_detach"),
     path("assets/attach/<str:scope>/<uuid:owner_id>/", views.asset_attach, name="asset_attach"),
     path("assets/import-url/<str:scope>/<uuid:owner_id>/", views.asset_url_import, name="asset_url_import"),

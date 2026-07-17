@@ -2550,6 +2550,24 @@ def _asset_action_redirect(request, asset):
     return redirect("studio:dashboard")
 
 
+@login_required
+def asset_star_toggle(request, asset_id):
+    asset = _asset_for_edit(request, asset_id)
+    if request.method != "POST" or not has_object_capability(request.user, asset, "edit"):
+        return JsonResponse({"error": "Edit permission is required."}, status=403)
+    asset.is_starred = not asset.is_starred
+    asset.updated_by = request.user
+    asset.save(update_fields=["is_starred", "updated_by", "updated_at"])
+    audit(
+        workspace=asset.workspace,
+        actor=request.user,
+        action="ASSET_STAR_UPDATED",
+        instance=asset,
+        metadata={"starred": asset.is_starred},
+    )
+    return JsonResponse({"assetId": str(asset.id), "starred": asset.is_starred})
+
+
 def _asset_for_edit(request, asset_id, include_deleted=False):
     return get_object_or_404(
         accessible_assets(request.user, include_deleted=include_deleted)
@@ -2793,7 +2811,8 @@ def asset_detach(request, asset_id, scope, owner_id):
             asset.character = None
         if asset.prompt_id and asset.prompt.scene.episode.project_id == project.id:
             asset.prompt = None
-        asset.kind = Asset.Kind.OTHER
+        if asset.kind != Asset.Kind.GENERATION_OUTPUT:
+            asset.kind = Asset.Kind.OTHER
         detached = True
     elif scope == "episode":
         episode = get_object_or_404(Episode.objects.filter(project__in=accessible_projects(request.user)), id=owner_id)
@@ -3447,6 +3466,10 @@ def docx_roundtrip(request, job_id):
 def _prompt_editor_context(request, project=None):
     return {
         "ai_models": AiModelProfile.objects.filter(is_active=True),
+        "media_models": AiModelProfile.objects.filter(
+            is_active=True,
+            media_type__in=[AiModelProfile.MediaType.IMAGE, AiModelProfile.MediaType.VIDEO],
+        ),
         "image_models": AiModelProfile.objects.filter(
             is_active=True,
             media_type=AiModelProfile.MediaType.IMAGE,
@@ -3553,6 +3576,13 @@ def scene_prompt_quick_create(request, scene_id):
     if prompt_type not in Prompt.Type.values or status not in Prompt.Status.values:
         messages.error(request, "Choose a valid prompt type and status.")
         return redirect("studio:scene_detail", scene_id=scene.id)
+    expected_media_type = {
+        Prompt.Type.IMAGE: AiModelProfile.MediaType.IMAGE,
+        Prompt.Type.VIDEO: AiModelProfile.MediaType.VIDEO,
+    }.get(prompt_type)
+    if expected_media_type and ai_model.media_type != expected_media_type:
+        messages.error(request, "Choose a model that matches the prompt type.")
+        return redirect("studio:scene_detail", scene_id=scene.id)
     content = request.POST.get("content", "").strip()
     prompt = Prompt.objects.create(
         scene=scene,
@@ -3579,6 +3609,14 @@ def scene_prompt_quick_create(request, scene_id):
         )
         record_revision(instance=block, user=request.user, operation="CREATE")
     record_revision(instance=prompt, user=request.user, operation="CREATE")
+    reference_ids = request.POST.getlist("reference_asset_ids")[:3]
+    if reference_ids:
+        references = list(
+            _accessible_workspace_images(request.user, scene.episode.project.workspace)
+            .filter(id__in=reference_ids)
+        )
+        prompt.reference_assets.add(*references)
+        scene.episode.project.media_assets.add(*references)
     audit(workspace=workspace, actor=request.user, action="PROMPT_INLINE_CREATED", instance=prompt)
     messages.success(request, "Prompt created.")
     return HttpResponseRedirect(reverse("studio:scene_detail", kwargs={"scene_id": scene.id}) + f"#prompt-{prompt.id}")
@@ -3754,8 +3792,7 @@ def prompt_generate_image(request, prompt_id):
         "moderation": str(payload.get("moderation") or defaults.get("moderation") or "auto"),
     }
     reference_assets = list(
-        prompt.reference_assets.filter(content_type__startswith="image/")
-        .exclude(kind=Asset.Kind.GENERATION_OUTPUT)[:3]
+        prompt.reference_assets.filter(content_type__startswith="image/")[:3]
     )
     job = ImageGenerationJob.objects.create(
         workspace=project.workspace,
@@ -3839,6 +3876,13 @@ def _image_generation_job_payload(job):
             "assetId": str(job.result_asset_id),
             "viewUrl": reverse("studio_api:asset_view", kwargs={"asset_id": job.result_asset_id}),
             "thumbnailUrl": reverse("studio_api:asset_thumbnail", kwargs={"asset_id": job.result_asset_id}),
+            "starred": job.result_asset.is_starred,
+            "starUrl": reverse("studio:asset_star_toggle", kwargs={"asset_id": job.result_asset_id}),
+            "detachUrl": reverse("studio:asset_detach", kwargs={
+                "asset_id": job.result_asset_id,
+                "scope": "project",
+                "owner_id": job.project_id or job.prompt.scene.episode.project_id,
+            }),
         })
     return payload
 
@@ -3852,18 +3896,14 @@ def project_image_generation(request, project_id):
     if not has_project_capability(request.user, project, "use_ai") or not user_has_ai_access(request.user):
         return HttpResponseForbidden("AI access is not enabled for this account.")
     project_assets, workspace_assets = _picker_assets(request.user, project)
-    jobs = ImageGenerationJob.objects.select_related("result_asset", "model_profile", "requested_by").filter(
-        project=project,
-        prompt__isnull=True,
-    )[:100]
+    jobs = _project_generation_jobs(project)[:100]
     return render(request, "studio/project_image_generation.html", {
         "project": project,
         "project_assets": project_assets,
         "workspace_assets": workspace_assets,
-        "image_models": AiModelProfile.objects.filter(
+        "media_models": AiModelProfile.objects.filter(
             is_active=True,
-            media_type=AiModelProfile.MediaType.IMAGE,
-            provider__iexact="openai",
+            media_type__in=[AiModelProfile.MediaType.IMAGE, AiModelProfile.MediaType.VIDEO],
         ),
         "text_models": active_text_models(),
         "default_text_model": project_text_model_id(project),
@@ -3995,11 +4035,22 @@ def project_generate_image(request, project_id):
 @login_required
 def project_image_jobs(request, project_id):
     project = get_object_or_404(accessible_projects(request.user), id=project_id)
-    jobs = ImageGenerationJob.objects.select_related("result_asset", "model_profile", "requested_by").filter(
-        project=project,
-        prompt__isnull=True,
-    )[:100]
+    jobs = _project_generation_jobs(project)[:100]
     return JsonResponse({"jobs": [_image_generation_job_payload(job) for job in jobs]})
+
+
+def _project_generation_jobs(project):
+    visible = (
+        Q(status__in=[ImageGenerationJob.Status.QUEUED, ImageGenerationJob.Status.RUNNING, ImageGenerationJob.Status.ERROR])
+        | Q(result_asset__projects=project)
+    )
+    return (
+        ImageGenerationJob.objects
+        .select_related("result_asset", "model_profile", "requested_by")
+        .filter(project=project, prompt__isnull=True)
+        .filter(visible)
+        .distinct()
+    )
 
 
 @login_required
