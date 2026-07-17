@@ -1,3 +1,4 @@
+import base64
 import json
 from unittest.mock import patch
 
@@ -14,6 +15,34 @@ from .models import Card, GoogleOAuthAllowedUser, ImportLog, Lesson, ProviderCre
 from .provider_credentials import get_provider_api_key
 from .services import import_lesson_payload
 from .social_auth import GoogleIdentityError
+
+
+class GoogleAiGatewayTests(TestCase):
+    @patch("lessons.ai_gateway._google_headers", return_value={"x-goog-api-key": "secret", "Content-Type": "application/json"})
+    @patch("lessons.ai_gateway.requests.post")
+    def test_nano_banana_uses_generate_content_with_references(self, mocked_post, _mocked_headers):
+        from .ai_gateway import generate_google_image_with_usage
+
+        response = mocked_post.return_value
+        response.ok = True
+        response.json.return_value = {
+            "candidates": [{"content": {"parts": [{"inlineData": {"mimeType": "image/png", "data": base64.b64encode(b"png-result").decode("ascii")}}]}}],
+            "usageMetadata": {"promptTokenCount": 7, "candidatesTokenCount": 3, "totalTokenCount": 10},
+        }
+        result, model, usage, content_type, extension = generate_google_image_with_usage(
+            "A production still",
+            model="gemini-3.1-flash-image",
+            reference_images=[("hero.png", b"reference", "image/png")],
+            aspect_ratio="9:16",
+            size="2K",
+        )
+
+        self.assertEqual((result, model, usage["total_tokens"]), (b"png-result", "gemini-3.1-flash-image", 10))
+        self.assertEqual((content_type, extension), ("image/png", "png"))
+        request = mocked_post.call_args
+        self.assertTrue(request.args[0].endswith("/models/gemini-3.1-flash-image:generateContent"))
+        self.assertEqual(request.kwargs["json"]["generationConfig"]["imageConfig"], {"aspectRatio": "9:16", "imageSize": "2K"})
+        self.assertIn("inlineData", request.kwargs["json"]["contents"][0]["parts"][1])
 
 
 @override_settings(
@@ -488,13 +517,27 @@ class AdminThemeTests(TestCase):
 
 
 class PremiumPageTests(TestCase):
-    def test_premium_page_is_public_placeholder(self):
+    def test_premium_page_requires_login_and_shows_credit_history(self):
+        user = get_user_model().objects.create_user("premium-user", password="strong-pass")
         response = self.client.get("/premium/")
-
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Premium preview")
-        self.assertContains(response, "Advanced API access is coming soon")
-        self.assertContains(response, "Higher API limits")
+
+        self.client.force_login(user)
+        response = self.client.get("/premium/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Premium cabinet")
+        self.assertContains(response, "AI operations")
+        self.assertContains(response, "Credit ledger")
+
+    def test_simulated_purchase_adds_credits(self):
+        from .models import CreditLedger
+
+        user = get_user_model().objects.create_user("premium-buyer", password="strong-pass")
+        self.client.force_login(user)
+        response = self.client.post("/premium/", {"action": "simulate_purchase"})
+        self.assertRedirects(response, "/premium/")
+        self.assertEqual(CreditLedger.balance_for(user), 100_000)
 
 
 @override_settings(

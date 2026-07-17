@@ -11,13 +11,13 @@
           <option value="current">Current Project</option>
           <option value="workspace">Workspace</option>
           <option value="recent">Last 10 in Project</option>
-          <option value="starred">Starred</option>
+          <option value="starred">Favorite</option>
           <option value="generated">Generated</option>
         </select>
       </label>
       {% else %}
       <label class="compact-control">Project
-        <select data-media-project><option value="workspace">Workspace</option><option value="starred">Starred</option><option value="generated">Generated</option>{% for item in gallery_projects %}<option value="{{ item.id }}">{{ item.title }}</option>{% endfor %}</select>
+        <select data-media-project><option value="workspace">Workspace</option><option value="starred">Favorite</option><option value="generated">Generated</option>{% for item in gallery_projects %}<option value="{{ item.id }}">{{ item.title }}</option>{% endfor %}</select>
       </label>
       {% endif %}
       <label class="compact-control">Format

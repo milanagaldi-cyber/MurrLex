@@ -47,6 +47,6 @@ def user_has_ai_access(user) -> bool:
         return False
     if not (user.is_superuser or getattr(getattr(user, "api_access", None), "ai_api_enabled", False)):
         return False
-    return ProviderCredential.objects.filter(
-        provider=ProviderCredential.Provider.OPENAI,
-    ).exclude(encrypted_api_key="").exists()
+    return ProviderCredential.objects.exclude(encrypted_api_key="").filter(
+        provider__in=[ProviderCredential.Provider.OPENAI, ProviderCredential.Provider.GOOGLE],
+    ).exists()

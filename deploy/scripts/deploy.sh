@@ -23,6 +23,11 @@ cd backend
 DEBUG=true GOOGLE_OAUTH_ENABLED=false GOOGLE_OAUTH_CLIENT_ID= GOOGLE_OAUTH_CLIENT_SECRET= \
   ./.venv/bin/python manage.py test
 
+sudo /usr/bin/install -m 0644 "$APP_DIR/deploy/systemd/murrlex-credit-refill.service" /etc/systemd/system/murrlex-credit-refill.service
+sudo /usr/bin/install -m 0644 "$APP_DIR/deploy/systemd/murrlex-credit-refill.timer" /etc/systemd/system/murrlex-credit-refill.timer
+sudo /usr/bin/systemctl daemon-reload
+sudo /usr/bin/systemctl enable --now murrlex-credit-refill.timer
+
 sudo /usr/bin/systemctl restart murrlex-backend.service
 sudo /usr/bin/systemctl is-active --quiet murrlex-backend.service
 sudo /usr/bin/systemctl restart murrlex-image-worker.service

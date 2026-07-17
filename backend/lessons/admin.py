@@ -21,6 +21,7 @@ from .models import (
     Lesson,
     ProviderCredential,
     Subscription,
+    SubscriptionPlan,
     UserApiAccess,
     UserSecurityProfile,
 )
@@ -57,7 +58,11 @@ class MurrLexUserAdmin(UserAdmin):
     """Keep routine admins useful without letting them grant themselves power."""
 
     action_form = CriticalActionForm
-    actions = ("block_users", "unblock_users", "soft_delete_users", "grant_100_credits")
+    actions = (
+        "block_users", "unblock_users", "soft_delete_users", "grant_100_credits",
+        "grant_100k_credits", "deduct_100k_credits", "assign_light", "assign_super",
+        "assign_ultra", "freeze_credits", "unfreeze_credits",
+    )
     list_display = (
         "username",
         "email",
@@ -81,10 +86,20 @@ class MurrLexUserAdmin(UserAdmin):
         model = Subscription
         can_delete = False
         extra = 0
-        fields = ("plan_code", "status", "valid_until", "updated_at")
+        fields = ("plan", "plan_code", "status", "valid_until", "credits_frozen", "freeze_reason", "next_refill_at", "last_refilled_at", "updated_at")
         readonly_fields = ("updated_at",)
 
     inlines = (UserSecurityProfileInline, SubscriptionInline)
+
+    def get_actions(self, request):
+        actions = super().get_actions(request)
+        if not request.user.is_superuser:
+            for name in (
+                "grant_100k_credits", "deduct_100k_credits", "assign_light", "assign_super",
+                "assign_ultra", "freeze_credits", "unfreeze_credits",
+            ):
+                actions.pop(name, None)
+        return actions
 
     def get_inline_instances(self, request, obj=None):
         if obj is None or not request.user.is_superuser:
@@ -220,6 +235,62 @@ class MurrLexUserAdmin(UserAdmin):
                 new_value={"amount": 100, "ledger_id": entry.pk},
                 reason=reason,
             )
+
+    def _credit_adjustment(self, request, queryset, amount):
+        reason = require_action_reason(self, request)
+        if reason is None or not request.user.is_superuser:
+            return
+        ledger_reason = CreditLedger.Reason.ADMIN_ADJUSTMENT if amount > 0 else CreditLedger.Reason.ADMIN_DEDUCTION
+        for user in queryset:
+            CreditLedger.objects.create(user=user, amount=amount, reason=ledger_reason, note=reason, created_by=request.user)
+
+    @admin.action(description="Grant 100,000 credits (superuser)")
+    def grant_100k_credits(self, request, queryset):
+        self._credit_adjustment(request, queryset, 100_000)
+
+    @admin.action(description="Deduct 100,000 credits (superuser)")
+    def deduct_100k_credits(self, request, queryset):
+        self._credit_adjustment(request, queryset, -100_000)
+
+    def _assign_plan(self, request, queryset, code):
+        reason = require_action_reason(self, request)
+        if reason is None or not request.user.is_superuser:
+            return
+        plan = SubscriptionPlan.objects.get(code=code)
+        now = timezone.now()
+        from .premium import next_refill_time
+        for user in queryset:
+            subscription, _ = Subscription.objects.get_or_create(user=user)
+            subscription.plan = plan
+            subscription.plan_code = plan.code
+            subscription.status = Subscription.Status.ACTIVE
+            subscription.next_refill_at = next_refill_time(now, plan.refill_period)
+            subscription.save()
+
+    @admin.action(description="Assign Light plan (superuser)")
+    def assign_light(self, request, queryset): self._assign_plan(request, queryset, "light")
+
+    @admin.action(description="Assign Super plan (superuser)")
+    def assign_super(self, request, queryset): self._assign_plan(request, queryset, "super")
+
+    @admin.action(description="Assign Ultra plan (superuser)")
+    def assign_ultra(self, request, queryset): self._assign_plan(request, queryset, "ultra")
+
+    def _set_credit_freeze(self, request, queryset, frozen):
+        reason = require_action_reason(self, request)
+        if reason is None or not request.user.is_superuser:
+            return
+        for user in queryset:
+            subscription, _ = Subscription.objects.get_or_create(user=user)
+            subscription.credits_frozen = frozen
+            subscription.freeze_reason = reason if frozen else ""
+            subscription.save(update_fields=["credits_frozen", "freeze_reason", "updated_at"])
+
+    @admin.action(description="Freeze AI credits (superuser)")
+    def freeze_credits(self, request, queryset): self._set_credit_freeze(request, queryset, True)
+
+    @admin.action(description="Unfreeze AI credits (superuser)")
+    def unfreeze_credits(self, request, queryset): self._set_credit_freeze(request, queryset, False)
 
     def save_model(self, request, obj, form, change):
         old_value = {}
@@ -662,10 +733,10 @@ class UserSecurityProfileAdmin(admin.ModelAdmin):
 class SubscriptionAdmin(admin.ModelAdmin):
     action_form = CriticalActionForm
     actions = ("activate_subscriptions", "cancel_subscriptions")
-    list_display = ("user", "plan_code", "status", "valid_until", "updated_at")
+    list_display = ("user", "plan", "status", "credits_frozen", "next_refill_at", "valid_until", "updated_at")
     search_fields = ("user__username", "user__email", "plan_code")
-    list_filter = ("status", "plan_code")
-    readonly_fields = ("user", "plan_code", "status", "valid_until", "updated_at")
+    list_filter = ("status", "plan", "credits_frozen")
+    readonly_fields = ("user", "updated_at", "last_refilled_at")
 
     def has_manage_subscription_status_permission(self, request):
         return request.user.has_perm("lessons.manage_subscription_status")
@@ -699,8 +770,35 @@ class SubscriptionAdmin(admin.ModelAdmin):
     def has_add_permission(self, request):
         return False
 
+    def get_readonly_fields(self, request, obj=None):
+        if request.user.is_superuser:
+            return self.readonly_fields
+        return tuple(field.name for field in self.model._meta.fields)
+
     def has_delete_permission(self, request, obj=None):
         return False
+
+
+@admin.register(SubscriptionPlan)
+class SubscriptionPlanAdmin(admin.ModelAdmin):
+    list_display = ("name", "code", "refill_period", "refill_credits", "is_active", "updated_at")
+    list_editable = ("refill_period", "refill_credits", "is_active")
+    search_fields = ("name", "code")
+
+    def has_module_permission(self, request):
+        return request.user.is_superuser
+
+    def has_view_permission(self, request, obj=None):
+        return request.user.is_superuser
+
+    def has_add_permission(self, request):
+        return request.user.is_superuser
+
+    def has_change_permission(self, request, obj=None):
+        return request.user.is_superuser
+
+    def has_delete_permission(self, request, obj=None):
+        return request.user.is_superuser
 
 
 @admin.register(CreditLedger)

@@ -6,7 +6,12 @@ from django.db import close_old_connections
 from django.utils import timezone
 from django.utils.text import slugify
 
-from lessons.ai_gateway import ProviderError, generate_image_with_usage
+from lessons.ai_gateway import (
+    ProviderError,
+    generate_google_image_with_usage,
+    generate_google_video_with_usage,
+    generate_image_with_usage,
+)
 
 from .models import AiUsageLog, Asset, ImageGenerationJob
 from .revisions import audit
@@ -33,7 +38,9 @@ def execute_image_generation_job(job_id):
             content_type__startswith="image/",
         )
     }
-    reference_assets = [reference_map[item] for item in job.reference_asset_ids if item in reference_map][:3]
+    defaults = job.model_profile.defaults if isinstance(job.model_profile.defaults, dict) else {}
+    max_references = max(0, min(int(defaults.get("max_references", 3)), 20))
+    reference_assets = [reference_map[item] for item in job.reference_asset_ids if item in reference_map][:max_references]
     references = []
     for reference in reference_assets:
         with reference.file.open("rb") as source:
@@ -42,7 +49,7 @@ def execute_image_generation_job(job_id):
         workspace=job.workspace,
         user=job.requested_by,
         prompt=prompt,
-        action="GENERATE_IMAGE",
+        action="GENERATE_VIDEO" if job.model_profile.media_type == job.model_profile.MediaType.VIDEO else "GENERATE_IMAGE",
         model=job.model_profile.model_id,
         status="STARTED",
         input_chars=len(job.request_prompt),
@@ -52,17 +59,28 @@ def execute_image_generation_job(job_id):
             key: value for key, value in job.options.items()
             if key != "composition_preset"
         }
-        image_bytes, model, provider_usage = generate_image_with_usage(
-            job.request_prompt,
-            model=job.model_profile.model_id,
-            reference_images=references,
-            **provider_options,
-        )
-        extension = job.options["output_format"]
-        content_type = {"png": "image/png", "jpeg": "image/jpeg", "webp": "image/webp"}[extension]
+        provider = job.model_profile.provider.strip().lower()
+        if "google" in provider and job.model_profile.media_type == job.model_profile.MediaType.VIDEO:
+            media_bytes, model, provider_usage, content_type, extension = generate_google_video_with_usage(
+                job.request_prompt, model=job.model_profile.model_id, reference_images=references, **provider_options,
+            )
+        elif "google" in provider:
+            media_bytes, model, provider_usage, content_type, extension = generate_google_image_with_usage(
+                job.request_prompt, model=job.model_profile.model_id, reference_images=references, **provider_options,
+            )
+        else:
+            openai_options = {
+                key: value for key, value in provider_options.items()
+                if key in {"size", "quality", "output_format", "output_compression", "background", "moderation"}
+            }
+            media_bytes, model, provider_usage = generate_image_with_usage(
+                job.request_prompt, model=job.model_profile.model_id, reference_images=references, **openai_options,
+            )
+            extension = job.options.get("output_format", "png")
+            content_type = {"png": "image/png", "jpeg": "image/jpeg", "webp": "image/webp"}[extension]
         uploaded = SimpleUploadedFile(
-            f"openai-{slugify(prompt.title if prompt else project.title) or 'image'}-{timezone.now():%Y%m%d-%H%M%S}.{extension}",
-            image_bytes,
+            f"ai-{slugify(prompt.title if prompt else project.title) or 'media'}-{timezone.now():%Y%m%d-%H%M%S}.{extension}",
+            media_bytes,
             content_type=content_type,
         )
         asset = create_asset(
@@ -76,7 +94,7 @@ def execute_image_generation_job(job_id):
         if prompt is not None:
             prompt.reference_assets.remove(asset)
         asset.ai_metadata = {
-            "provider": "OpenAI",
+            "provider": job.model_profile.provider,
             "model": model,
             "requestPrompt": job.request_prompt,
             "settings": job.options,
@@ -87,7 +105,7 @@ def execute_image_generation_job(job_id):
         asset.save(update_fields=["ai_metadata", "updated_at"])
         usage.model = model
         usage.status = "SUCCESS"
-        usage.output_chars = len(image_bytes)
+        usage.output_chars = len(media_bytes)
         usage.input_tokens = provider_usage.get("input_tokens", 0)
         usage.output_tokens = provider_usage.get("output_tokens", 0)
         usage.total_tokens = provider_usage.get("total_tokens", 0)
@@ -102,7 +120,7 @@ def execute_image_generation_job(job_id):
         audit(
             workspace=job.workspace,
             actor=job.requested_by,
-            action="PROMPT_IMAGE_GENERATED" if prompt else "PROJECT_IMAGE_GENERATED",
+            action=("PROMPT_" if prompt else "PROJECT_") + ("VIDEO_GENERATED" if content_type.startswith("video/") else "IMAGE_GENERATED"),
             instance=prompt or project,
             metadata={
                 "assetId": str(asset.id),
@@ -124,7 +142,7 @@ def execute_image_generation_job(job_id):
         usage.status = "ERROR"
         usage.error_code = "unexpected_error"
         usage.save(update_fields=["status", "error_code"])
-        _fail_job(job, "Image generation returned an unexpected error")
+        _fail_job(job, "Media generation returned an unexpected error")
     finally:
         close_old_connections()
 

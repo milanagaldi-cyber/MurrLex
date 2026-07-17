@@ -1,0 +1,11 @@
+[Unit]
+Description=MurrLex automatic subscription credit refill
+After=murrlex-backend.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=/opt/MurrLex/backend
+EnvironmentFile=/opt/MurrLex/.env
+ExecStart=/opt/MurrLex/backend/.venv/bin/python manage.py process_subscription_refills

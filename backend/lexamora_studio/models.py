@@ -331,6 +331,7 @@ class AiModelProfile(models.Model):
 class StudioTextModel(models.Model):
     class Provider(models.TextChoices):
         OPENAI = "openai", "OpenAI"
+        GOOGLE = "google", "Google AI Studio"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=120)

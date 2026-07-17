@@ -3629,7 +3629,6 @@ def _prompt_editor_context(request, project=None):
         "image_models": AiModelProfile.objects.filter(
             is_active=True,
             media_type=AiModelProfile.MediaType.IMAGE,
-            provider__iexact="openai",
         ),
         "text_models": active_text_models(),
         "default_text_model": project_text_model_id(project) if project else default_text_model_id(),
@@ -3765,7 +3764,8 @@ def scene_prompt_quick_create(request, scene_id):
         )
         record_revision(instance=block, user=request.user, operation="CREATE")
     record_revision(instance=prompt, user=request.user, operation="CREATE")
-    reference_ids = request.POST.getlist("reference_asset_ids")[:3]
+    prompt_defaults = ai_model.defaults if isinstance(ai_model.defaults, dict) else {}
+    reference_ids = request.POST.getlist("reference_asset_ids")[:max(0, min(int(prompt_defaults.get("max_references", 3)), 20))]
     if reference_ids:
         references = list(
             _accessible_workspace_images(request.user, scene.episode.project.workspace)
@@ -3922,8 +3922,8 @@ def prompt_generate_image(request, prompt_id):
         id=prompt_id,
     )
     project = prompt.scene.episode.project
-    if request.method != "POST" or prompt.prompt_type != Prompt.Type.IMAGE:
-        return JsonResponse({"error": "Image generation is available only for Photo prompts."}, status=400)
+    if request.method != "POST" or prompt.prompt_type not in {Prompt.Type.IMAGE, Prompt.Type.VIDEO}:
+        return JsonResponse({"error": "Media generation is available only for Photo or Video prompts."}, status=400)
     if not has_object_capability(request.user, prompt, "use_ai") or not user_has_ai_access(request.user):
         return JsonResponse({"error": "AI access is not enabled for this account."}, status=403)
     try:
@@ -3934,16 +3934,15 @@ def prompt_generate_image(request, prompt_id):
     if payload.get("modelProfileId"):
         requested_profile = AiModelProfile.objects.filter(
             id=payload["modelProfileId"],
-            media_type=AiModelProfile.MediaType.IMAGE, is_active=True,
-            provider__iexact="openai",
+            media_type=AiModelProfile.MediaType.IMAGE if prompt.prompt_type == Prompt.Type.IMAGE else AiModelProfile.MediaType.VIDEO,
+            is_active=True,
         ).first()
-    image_model = requested_profile or (prompt.ai_model if (
-        prompt.ai_model.media_type == AiModelProfile.MediaType.IMAGE
-        and prompt.ai_model.provider.strip().lower() == "openai"
+    media_model = requested_profile or (prompt.ai_model if (
+        prompt.ai_model.media_type == (AiModelProfile.MediaType.IMAGE if prompt.prompt_type == Prompt.Type.IMAGE else AiModelProfile.MediaType.VIDEO)
     ) else project.workspace.default_image_model)
-    if image_model is None:
-        return JsonResponse({"error": "Choose a default OpenAI image model in Workspace settings."}, status=400)
-    defaults = image_model.defaults if isinstance(image_model.defaults, dict) else {}
+    if media_model is None:
+        return JsonResponse({"error": "Choose a media model in Workspace settings."}, status=400)
+    defaults = media_model.defaults if isinstance(media_model.defaults, dict) else {}
     request_prompt = str(payload.get("prompt") or prompt.editor_content).strip()
     if not request_prompt:
         return JsonResponse({"error": "Copy a non-empty prompt into the generation request."}, status=400)
@@ -3953,33 +3952,35 @@ def prompt_generate_image(request, prompt_id):
         output_compression = int(payload.get("outputCompression", defaults.get("output_compression", 100)))
     except (TypeError, ValueError):
         return JsonResponse({"error": "Image compression must be a number from 0 to 100."}, status=400)
-    image_options = {
+    composition = str(payload.get("compositionPreset") or "square")
+    ratio_by_composition = {"story": "9:16", "portrait": "4:5", "poster": "2:3", "square": "1:1", "youtube": "16:9", "landscape": "16:9", "cinema": "21:9"}
+    media_options = {
         "size": str(payload.get("size") or defaults.get("size") or "1024x1024"),
-        "composition_preset": str(payload.get("compositionPreset") or "square"),
+        "aspect_ratio": str(payload.get("aspectRatio") or defaults.get("aspect_ratio") or ratio_by_composition.get(composition, "1:1")),
+        "composition_preset": composition,
         "quality": str(payload.get("quality") or defaults.get("quality") or "low"),
         "output_format": str(payload.get("outputFormat") or defaults.get("output_format") or "png"),
         "output_compression": output_compression,
         "background": str(payload.get("background") or defaults.get("background") or "auto"),
         "moderation": str(payload.get("moderation") or defaults.get("moderation") or "auto"),
     }
-    reference_assets = list(
-        prompt.reference_assets.filter(content_type__startswith="image/")[:3]
-    )
+    max_references = max(0, min(int(defaults.get("max_references", 3)), 20))
+    reference_assets = list(prompt.reference_assets.filter(content_type__startswith="image/")[:max_references])
     job = ImageGenerationJob.objects.create(
         workspace=project.workspace,
         project=project,
         prompt=prompt,
         requested_by=request.user,
-        model_profile=image_model,
+        model_profile=media_model,
         request_prompt=request_prompt,
-        options=image_options,
+        options=media_options,
         reference_asset_ids=[str(item.id) for item in reference_assets],
     )
     audit(
         workspace=project.workspace, actor=request.user, action="PROMPT_IMAGE_QUEUED",
         instance=prompt, metadata={
-            "jobId": str(job.id), "model": image_model.model_id,
-            "requestPrompt": request_prompt, "settings": image_options,
+            "jobId": str(job.id), "model": media_model.model_id,
+            "requestPrompt": request_prompt, "settings": media_options,
             "referenceAssetIds": [str(item.id) for item in reference_assets],
         },
     )
@@ -4031,6 +4032,9 @@ def _image_generation_job_payload(job):
         "jobId": str(job.id),
         "status": job.status,
         "model": job.provider_model or job.model_profile.model_id,
+        "provider": job.model_profile.provider,
+        "mediaType": job.model_profile.media_type,
+        "maxReferences": int((job.model_profile.defaults or {}).get("max_references", 3)),
         "referenceCount": len(job.reference_asset_ids),
         "settings": job.options,
         "error": job.error_message,
@@ -4047,6 +4051,7 @@ def _image_generation_job_payload(job):
             "assetId": str(job.result_asset_id),
             "viewUrl": reverse("studio_api:asset_view", kwargs={"asset_id": job.result_asset_id}),
             "thumbnailUrl": reverse("studio_api:asset_thumbnail", kwargs={"asset_id": job.result_asset_id}),
+            "contentType": job.result_asset.content_type,
             "starred": job.result_asset.is_starred,
             "starUrl": reverse("studio:asset_star_toggle", kwargs={"asset_id": job.result_asset_id}),
             "detachUrl": reverse("studio:asset_detach", kwargs={
@@ -4075,6 +4080,8 @@ def user_token_usage(request):
     if per_page not in {20, 50, 100, 500}:
         per_page = 50
     page = Paginator(logs, per_page).get_page(request.GET.get("page"))
+    from lessons.models import CreditLedger
+    credit_entries = CreditLedger.objects.filter(user=request.user)[:100]
     return JsonResponse({
         "summary": token_summary(request.user), "page": page.number,
         "pages": page.paginator.num_pages, "count": page.paginator.count,
@@ -4083,6 +4090,11 @@ def user_token_usage(request):
             "action": item.action, "model": item.model, "tokens": item.total_tokens,
             "status": item.status,
         } for item in page],
+        "creditOperations": [{
+            "time": item.created_at.isoformat(), "amount": item.amount,
+            "reason": item.get_reason_display(), "note": item.note,
+            "createdBy": (item.created_by.get_full_name() or item.created_by.username) if item.created_by_id else "System",
+        } for item in credit_entries],
     })
 
 
@@ -4233,23 +4245,30 @@ def project_generate_image(request, project_id):
         payload = json.loads(request.body or b"{}")
     except (TypeError, ValueError):
         return JsonResponse({"error": "The generation request is not valid JSON."}, status=400)
-    image_model = AiModelProfile.objects.filter(
-        id=payload.get("modelProfileId"),
-        media_type=AiModelProfile.MediaType.IMAGE,
-        is_active=True,
-        provider__iexact="openai",
-    ).first() or project.workspace.default_image_model
-    if image_model is None:
-        return JsonResponse({"error": "Choose an OpenAI image model."}, status=400)
+    requested_model_id = payload.get("modelProfileId")
+    media_model = None
+    if requested_model_id:
+        media_model = AiModelProfile.objects.filter(
+            id=requested_model_id,
+            media_type__in=[AiModelProfile.MediaType.IMAGE, AiModelProfile.MediaType.VIDEO],
+            is_active=True,
+        ).first()
+        if media_model is None:
+            return JsonResponse({"error": "The selected image or video model is unavailable."}, status=400)
+    else:
+        media_model = project.workspace.default_image_model
+    if media_model is None:
+        return JsonResponse({"error": "Choose an image or video model."}, status=400)
     request_prompt = str(payload.get("prompt") or "").strip()
     if not request_prompt or len(request_prompt) > settings.AI_MAX_TEXT_CHARS:
         return JsonResponse({"error": "Enter a prompt within the server text limit."}, status=400)
-    defaults = image_model.defaults if isinstance(image_model.defaults, dict) else {}
+    defaults = media_model.defaults if isinstance(media_model.defaults, dict) else {}
     try:
         output_compression = int(payload.get("outputCompression", defaults.get("output_compression", 100)))
     except (TypeError, ValueError):
         return JsonResponse({"error": "Image compression must be a number from 0 to 100."}, status=400)
-    reference_ids = [str(value) for value in payload.get("referenceAssetIds", [])][:3]
+    max_references = max(0, min(int(defaults.get("max_references", 3)), 20))
+    reference_ids = [str(value) for value in payload.get("referenceAssetIds", [])][:max_references]
     accessible_ids = {
         str(value)
         for value in _accessible_workspace_images(request.user, project.workspace).filter(
@@ -4258,9 +4277,12 @@ def project_generate_image(request, project_id):
     }
     if len(accessible_ids) != len(set(reference_ids)):
         return JsonResponse({"error": "One or more reference images are not accessible."}, status=400)
-    image_options = {
+    composition = str(payload.get("compositionPreset") or "square")
+    ratio_by_composition = {"story": "9:16", "portrait": "4:5", "poster": "2:3", "square": "1:1", "youtube": "16:9", "landscape": "16:9", "cinema": "21:9"}
+    media_options = {
         "size": str(payload.get("size") or defaults.get("size") or "1024x1024"),
-        "composition_preset": str(payload.get("compositionPreset") or "square"),
+        "aspect_ratio": str(payload.get("aspectRatio") or defaults.get("aspect_ratio") or ratio_by_composition.get(composition, "1:1")),
+        "composition_preset": composition,
         "quality": str(payload.get("quality") or defaults.get("quality") or "low"),
         "output_format": str(payload.get("outputFormat") or defaults.get("output_format") or "png"),
         "output_compression": output_compression,
@@ -4271,9 +4293,9 @@ def project_generate_image(request, project_id):
         workspace=project.workspace,
         project=project,
         requested_by=request.user,
-        model_profile=image_model,
+        model_profile=media_model,
         request_prompt=request_prompt,
-        options=image_options,
+        options=media_options,
         reference_asset_ids=reference_ids,
     )
     audit(
@@ -4283,9 +4305,9 @@ def project_generate_image(request, project_id):
         instance=project,
         metadata={
             "jobId": str(job.id),
-            "model": image_model.model_id,
+            "model": media_model.model_id,
             "referenceAssetIds": reference_ids,
-            "settings": image_options,
+            "settings": media_options,
         },
     )
     return JsonResponse(_image_generation_job_payload(job), status=202)
@@ -4330,11 +4352,10 @@ def prompt_asset_attach(request, prompt_id):
         ).distinct(),
         id=request.POST.get("asset_id"),
     )
-    if (
-        not prompt.reference_assets.filter(id=asset.id).exists()
-        and prompt.generation_reference_count >= 3
-    ):
-        messages.warning(request, "A prompt can use up to three reference images")
+    defaults = prompt.ai_model.defaults if isinstance(prompt.ai_model.defaults, dict) else {}
+    max_references = max(0, min(int(defaults.get("max_references", 3)), 20))
+    if not prompt.reference_assets.filter(id=asset.id).exists() and prompt.generation_reference_count >= max_references:
+        messages.warning(request, f"This model supports up to {max_references} reference images")
         return HttpResponseRedirect(
             reverse("studio:scene_detail", kwargs={"scene_id": prompt.scene_id})
             + f"#prompt-{prompt.id}"

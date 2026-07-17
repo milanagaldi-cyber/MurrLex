@@ -8,6 +8,7 @@ from django.contrib import messages
 from django.contrib.auth import login
 from django.contrib.auth.decorators import login_required
 from django.http import HttpResponse, HttpResponseForbidden, JsonResponse
+from django.core.paginator import Paginator
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
@@ -23,7 +24,7 @@ from .forms import (
     TranscriptionForm,
     TranslationForm,
 )
-from .models import Card, ImportLog, Lesson, ProviderCredential, UserApiAccess
+from .models import Card, CreditLedger, ImportLog, Lesson, ProviderCredential, Subscription, SubscriptionPlan, UserApiAccess
 from .services import LessonImportError, import_lesson_payload, log_failed_import
 from .ai_gateway import ProviderError, recognize_image, run_text, synthesize_elevenlabs, synthesize_openai, transcribe
 from .api_auth import (
@@ -419,9 +420,48 @@ def provider_credentials(request):
     return render(request, "registration/provider_credentials.html", {"form": form, "provider_rows": provider_rows})
 
 
-@require_http_methods(["GET"])
+@require_http_methods(["GET", "POST"])
 def premium(request):
-    return render(request, "registration/premium.html")
+    from lexamora_studio.models import AiUsageLog
+    from lexamora_studio.usage import token_summary
+
+    if not request.user.is_authenticated:
+        return render(request, "registration/premium.html", {"premium_public": True})
+    subscription, _ = Subscription.objects.select_related("plan").get_or_create(user=request.user)
+    if request.method == "POST" and request.POST.get("action") == "simulate_purchase":
+        amount = 100_000
+        CreditLedger.objects.create(
+            user=request.user, amount=amount, reason=CreditLedger.Reason.PURCHASE_SIMULATION,
+            note="Test purchase simulation", created_by=request.user,
+        )
+        messages.success(request, f"{amount:,} test credits added")
+        return redirect("premium")
+    logs = AiUsageLog.objects.filter(user=request.user).select_related("workspace")
+    model = request.GET.get("model", "").strip()
+    action = request.GET.get("action", "").strip()
+    if model:
+        logs = logs.filter(model=model)
+    if action:
+        logs = logs.filter(action=action)
+    try:
+        per_page = int(request.GET.get("per_page", 50))
+    except (TypeError, ValueError):
+        per_page = 50
+    if per_page not in {20, 50, 100, 500}:
+        per_page = 50
+    page = Paginator(logs, per_page).get_page(request.GET.get("page"))
+    return render(request, "registration/premium.html", {
+        "subscription": subscription,
+        "plans": SubscriptionPlan.objects.filter(is_active=True),
+        "summary": token_summary(request.user),
+        "usage_page": page,
+        "credit_entries": CreditLedger.objects.filter(user=request.user)[:100],
+        "models": AiUsageLog.objects.filter(user=request.user).exclude(model="").values_list("model", flat=True).distinct().order_by("model"),
+        "actions": AiUsageLog.objects.filter(user=request.user).exclude(action="").values_list("action", flat=True).distinct().order_by("action"),
+        "selected_model": model,
+        "selected_action": action,
+        "per_page": per_page,
+    })
 
 
 @require_http_methods(["GET", "POST"])

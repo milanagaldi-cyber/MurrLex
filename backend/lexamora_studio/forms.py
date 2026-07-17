@@ -36,10 +36,9 @@ class WorkspaceForm(forms.ModelForm):
         self.fields["default_image_model"].queryset = AiModelProfile.objects.filter(
             is_active=True,
             media_type=AiModelProfile.MediaType.IMAGE,
-            provider__iexact="OpenAI",
         )
         self.fields["default_image_model"].required = False
-        self.fields["default_image_model"].empty_label = "Choose OpenAI image model"
+        self.fields["default_image_model"].empty_label = "Choose default image model"
         for name in ("documentation_language", "dialogue_language", "prompt_language"):
             self.fields[name].required = False
 

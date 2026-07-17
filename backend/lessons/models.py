@@ -96,6 +96,26 @@ class UserApiAccess(models.Model):
         return f"{self.user.get_username()}: {'enabled' if self.ai_api_enabled else 'disabled'}"
 
 
+class SubscriptionPlan(models.Model):
+    class RefillPeriod(models.TextChoices):
+        DAILY = "daily", "Every day"
+        WEEKLY = "weekly", "Every week"
+        MONTHLY = "monthly", "Every month"
+
+    code = models.SlugField(max_length=32, unique=True)
+    name = models.CharField(max_length=80)
+    refill_period = models.CharField(max_length=16, choices=RefillPeriod.choices, default=RefillPeriod.MONTHLY)
+    refill_credits = models.PositiveBigIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["refill_credits", "name"]
+
+    def __str__(self) -> str:
+        return self.name
+
+
 class Subscription(models.Model):
     class Status(models.TextChoices):
         FREE = "free", "Free"
@@ -109,8 +129,19 @@ class Subscription(models.Model):
         related_name="subscription",
     )
     plan_code = models.CharField(max_length=64, default="free")
+    plan = models.ForeignKey(
+        SubscriptionPlan,
+        on_delete=models.PROTECT,
+        related_name="subscriptions",
+        null=True,
+        blank=True,
+    )
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.FREE)
     valid_until = models.DateTimeField(null=True, blank=True)
+    credits_frozen = models.BooleanField(default=False)
+    freeze_reason = models.TextField(blank=True)
+    next_refill_at = models.DateTimeField(null=True, blank=True)
+    last_refilled_at = models.DateTimeField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -127,6 +158,9 @@ class CreditLedger(models.Model):
         USAGE = "usage", "Usage"
         SUPPORT_BONUS = "support_bonus", "Support bonus"
         ADMIN_ADJUSTMENT = "admin_adjustment", "Admin adjustment"
+        ADMIN_DEDUCTION = "admin_deduction", "Admin deduction"
+        AUTO_REFILL = "auto_refill", "Automatic subscription refill"
+        PURCHASE_SIMULATION = "purchase_simulation", "Simulated purchase"
         REVERSAL = "reversal", "Reversal"
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="credit_entries")
@@ -343,6 +377,7 @@ class ProviderCredential(models.Model):
     class Provider(models.TextChoices):
         OPENAI = "openai", "OpenAI"
         ELEVENLABS = "elevenlabs", "ElevenLabs"
+        GOOGLE = "google", "Google AI Studio"
 
     provider = models.CharField(max_length=32, choices=Provider.choices, unique=True)
     encrypted_api_key = models.TextField(blank=True, editable=False)
