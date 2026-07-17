@@ -729,6 +729,52 @@ class AiUsageLog(models.Model):
         ordering = ["-created_at", "id"]
 
 
+class UserTokenQuota(models.Model):
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="studio_token_quota",
+    )
+    allowance = models.PositiveBigIntegerField(default=1_000_000)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.user}: {self.allowance}"
+
+
+class ProjectAssistantContext(models.Model):
+    project = models.OneToOneField(Project, on_delete=models.CASCADE, related_name="assistant_context")
+    content = models.TextField(blank=True)
+    asset = models.ForeignKey(
+        Asset, on_delete=models.SET_NULL, related_name="assistant_context_for", null=True, blank=True,
+    )
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        related_name="updated_studio_assistant_contexts", null=True, blank=True,
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class EpisodeComic(models.Model):
+    class Status(models.TextChoices):
+        RUNNING = "RUNNING", "Running"
+        SUCCESS = "SUCCESS", "Success"
+        ERROR = "ERROR", "Error"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    episode = models.ForeignKey(Episode, on_delete=models.CASCADE, related_name="comics")
+    asset = models.ForeignKey(Asset, on_delete=models.SET_NULL, related_name="episode_comics", null=True, blank=True)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.RUNNING)
+    model = models.CharField(max_length=160, blank=True)
+    error_message = models.TextField(blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="studio_episode_comics",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at", "id"]
+
+
 class ImageGenerationJob(models.Model):
     class Status(models.TextChoices):
         QUEUED = "QUEUED", "Queued"

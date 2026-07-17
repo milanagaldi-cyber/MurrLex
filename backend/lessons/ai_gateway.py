@@ -98,6 +98,50 @@ def run_text_with_usage(model: str, prompt: str) -> tuple[str, str, dict[str, in
     return output, selected_model, usage
 
 
+def run_multimodal_text_with_usage(
+    model: str,
+    prompt: str,
+    reference_images: list[tuple[str, bytes, str]] | None = None,
+) -> tuple[str, str, dict[str, int]]:
+    selected_model = require_model(model, TEXT_MODELS, "gpt-5.4-mini")
+    clean_prompt = prompt.strip()
+    if not clean_prompt or len(clean_prompt) > settings.AI_MAX_TEXT_CHARS:
+        raise ProviderError("Text is empty or exceeds the server limit.")
+
+    references = list(reference_images or [])
+    max_references = int(getattr(settings, "AI_MAX_COMIC_REFERENCE_IMAGES", 20))
+    if len(references) > max_references:
+        raise ProviderError(f"A maximum of {max_references} reference images is supported.")
+
+    content = [{"type": "input_text", "text": clean_prompt}]
+    for filename, image_bytes, content_type in references:
+        if not image_bytes or len(image_bytes) > settings.AI_MAX_IMAGE_BYTES:
+            raise ProviderError(f"Reference image {filename} is empty or exceeds the server limit.")
+        safe_content_type = content_type if content_type.startswith("image/") else "image/jpeg"
+        image_data = base64.b64encode(image_bytes).decode("ascii")
+        content.append({
+            "type": "input_image",
+            "image_url": f"data:{safe_content_type};base64,{image_data}",
+        })
+
+    try:
+        response = requests.post(
+            f"{settings.OPENAI_BASE_URL}/responses",
+            headers={**_openai_headers(), "Content-Type": "application/json"},
+            json={"model": selected_model, "input": [{"role": "user", "content": content}]},
+            timeout=180,
+        )
+        _safe_response(response)
+        payload = response.json()
+        output = _extract_response_text(payload)
+        usage = _extract_usage(payload)
+    except (requests.RequestException, ValueError) as exc:
+        raise ProviderError("The multimodal AI provider is unavailable.") from exc
+    if not output:
+        raise ProviderError("The multimodal AI provider returned an empty response.")
+    return output, selected_model, usage
+
+
 def generate_image(prompt: str) -> tuple[bytes, str]:
     image_bytes, model, _ = generate_image_with_usage(prompt)
     return image_bytes, model

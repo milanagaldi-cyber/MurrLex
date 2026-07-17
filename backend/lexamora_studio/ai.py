@@ -11,6 +11,7 @@ from lessons.ai_gateway import ProviderError, run_text as _gateway_run_text, run
 from .models import AiSuggestion, AiUsageLog, Prompt, PromptBlock, Revision, TranslationUnit
 from .revisions import audit, record_revision, workspace_for
 from .services import save_translation
+from .usage import TokenQuotaExceeded, require_token_quota
 
 
 MODES = {
@@ -107,6 +108,10 @@ def _parse_content(raw_text):
 
 
 def _check_rate(user):
+    try:
+        require_token_quota(user)
+    except TokenQuotaExceeded as exc:
+        raise StudioAiError("token_quota_exceeded", str(exc)) from exc
     cutoff = timezone.now() - timedelta(minutes=1)
     if AiUsageLog.objects.filter(user=user, created_at__gte=cutoff).count() >= settings.STUDIO_AI_RATE_PER_MINUTE:
         raise StudioAiError("rate_limited", "AI request limit reached. Please wait before trying again.")

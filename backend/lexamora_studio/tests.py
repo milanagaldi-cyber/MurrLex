@@ -2330,7 +2330,7 @@ class StudioInlineEditingWorkflowTests(TestCase):
             f"/studio/workspaces/{self.workspace.id}/edit/",
             {"name": self.workspace.name, "description": "A fuller production workspace description."},
         )
-        self.assertRedirects(response, f"/studio/workspaces/{self.workspace.id}/")
+        self.assertRedirects(response, f"/studio/workspaces/{self.workspace.id}/edit/")
         self.workspace.refresh_from_db()
         self.assertEqual(self.workspace.description, "A fuller production workspace description.")
         self.assertTrue(Revision.objects.filter(entity_type="lexamora_studio.workspace", entity_id=self.workspace.id).exists())
@@ -3780,3 +3780,191 @@ class StudioProductionPilotFeaturesTests(TestCase):
 
         with self.assertRaises(ValidationError):
             download_external_image("http://127.0.0.1/private.png")
+
+
+class StudioTokenAssistantComicTests(TestCase):
+    def setUp(self):
+        import tempfile
+
+        from .models import Episode, StudioTextModel, private_storage
+
+        self.temp_media = tempfile.TemporaryDirectory()
+        self.private_storage = private_storage
+        self.previous_location = private_storage._location
+        private_storage._location = self.temp_media.name
+        private_storage.__dict__.pop("base_location", None)
+        private_storage.__dict__.pop("location", None)
+        users = get_user_model()
+        self.owner = users.objects.create_user("quota-owner", password="strong-pass")
+        self.workspace = create_workspace(user=self.owner, name="Quota Studio", slug="quota-studio")
+        self.text_model, _ = StudioTextModel.objects.get_or_create(
+            model_id="gpt-5.4-mini",
+            defaults={"name": "GPT Test Mini", "is_active": True, "is_default": True},
+        )
+        self.project = Project.objects.create(
+            workspace=self.workspace,
+            project_type=Project.Type.SERIES,
+            title="Token Project",
+            documentation_language="RU",
+            dialogue_language="PL",
+            prompt_language="EN",
+            default_translation_model=self.text_model,
+            created_by=self.owner,
+            updated_by=self.owner,
+        )
+        self.episode = Episode.objects.create(
+            project=self.project,
+            number=1,
+            title="Pilot",
+            created_by=self.owner,
+            updated_by=self.owner,
+        )
+        self.client.force_login(self.owner)
+
+    def tearDown(self):
+        self.private_storage._location = self.previous_location
+        self.private_storage.__dict__.pop("base_location", None)
+        self.private_storage.__dict__.pop("location", None)
+        self.temp_media.cleanup()
+
+    def test_token_usage_defaults_to_million_and_paginates(self):
+        from .models import AiUsageLog
+
+        AiUsageLog.objects.bulk_create([
+            AiUsageLog(
+                workspace=self.workspace,
+                user=self.owner,
+                action="TRANSLATE" if index % 2 else "ASSIST",
+                model="gpt-test-mini",
+                status="SUCCESS",
+                total_tokens=10,
+            )
+            for index in range(55)
+        ])
+        response = self.client.get("/studio/usage/me/?per_page=20&action=TRANSLATE")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["summary"]["allowance"], 1_000_000)
+        self.assertEqual(payload["summary"]["remaining"], 999_450)
+        self.assertEqual(payload["count"], 27)
+        self.assertEqual(len(payload["operations"]), 20)
+        self.assertEqual(payload["pages"], 2)
+
+    def test_workspace_and_project_avatar_removal_preserve_asset(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        from .models import Asset
+        from .storage import create_asset
+
+        asset = create_asset(
+            user=self.owner,
+            workspace=self.workspace,
+            project=self.project,
+            kind=Asset.Kind.OTHER,
+            uploaded=SimpleUploadedFile("avatar.txt", b"avatar", content_type="text/plain"),
+        )
+        self.workspace.avatar_asset = asset
+        self.workspace.save(update_fields=["avatar_asset", "updated_at"])
+        self.project.cover_asset = asset
+        self.project.save(update_fields=["cover_asset", "updated_at"])
+        workspace_response = self.client.post(
+            f"/studio/workspaces/{self.workspace.id}/avatar/remove/",
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        project_response = self.client.post(
+            f"/studio/projects/{self.project.id}/cover/remove/",
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertEqual((workspace_response.status_code, project_response.status_code), (200, 200))
+        self.workspace.refresh_from_db()
+        self.project.refresh_from_db()
+        self.assertIsNone(self.workspace.avatar_asset_id)
+        self.assertIsNone(self.project.cover_asset_id)
+        self.assertTrue(Asset.objects.filter(id=asset.id).exists())
+
+    @patch("lexamora_studio.views.user_has_ai_access", return_value=True)
+    @patch("lexamora_studio.views._run_logged_text", return_value=("translated", "gpt-5.4-mini"))
+    def test_prompt_translation_preserves_named_dialogue_language(self, mocked_run, _mocked_access):
+        response = self.client.post(
+            f"/studio/projects/{self.project.id}/image-generation/prompt-preview/",
+            data=json.dumps({
+                "prompt": 'Character speaks in Polish: "I am healthy"',
+                "action": "translate",
+                "targetLanguage": "EN",
+                "textModel": "gpt-5.4-mini",
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        instruction = mocked_run.call_args.kwargs["text"]
+        self.assertIn("translate that direct speech into the named language", instruction)
+        self.assertIn("Character speaks in Polish", instruction)
+
+    def test_assistant_context_merges_and_creates_downloadable_asset(self):
+        first = self.client.post(
+            f"/studio/projects/{self.project.id}/assistant/context/",
+            {"content": "First context", "merge": "1"},
+        )
+        second = self.client.post(
+            f"/studio/projects/{self.project.id}/assistant/context/",
+            {"content": "Second context", "merge": "1"},
+        )
+        self.assertEqual((first.status_code, second.status_code), (200, 200))
+        self.assertIn("First context", second.json()["content"])
+        self.assertIn("Second context", second.json()["content"])
+        self.assertTrue(second.json()["downloadUrl"])
+
+    @patch("lexamora_studio.views._run_logged_text", return_value=("Panel plan", "gpt-5.4-mini"))
+    def test_episode_comic_is_created_as_workspace_project_asset(self, _mocked_run):
+        from .models import EpisodeComic
+
+        response = self.client.post(
+            f"/studio/episodes/{self.episode.id}/comic/generate/",
+            {"model": "gpt-5.4-mini"},
+        )
+        self.assertRedirects(response, f"/studio/episodes/{self.episode.id}/edit/")
+        comic = EpisodeComic.objects.get(episode=self.episode)
+        self.assertEqual(comic.status, EpisodeComic.Status.SUCCESS)
+        self.assertEqual(comic.asset.content_type, "application/pdf")
+        self.assertTrue(comic.asset.projects.filter(id=self.project.id).exists())
+
+    @patch("lexamora_studio.views._run_logged_multimodal_text", return_value=("Visual panel plan", "gpt-5.4-mini"))
+    def test_episode_comic_sends_scene_images_to_multimodal_model(self, mocked_run):
+        import io
+
+        from PIL import Image
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        from .models import Asset, Scene
+        from .storage import create_asset
+
+        scene = Scene.objects.create(
+            episode=self.episode,
+            number=1,
+            position=1,
+            title="Visual scene",
+            description="A visible reference must guide the panel",
+            created_by=self.owner,
+            updated_by=self.owner,
+        )
+        image_buffer = io.BytesIO()
+        Image.new("RGB", (64, 96), "green").save(image_buffer, format="PNG")
+        create_asset(
+            user=self.owner,
+            workspace=self.workspace,
+            project=self.project,
+            scene=scene,
+            kind=Asset.Kind.SCENE_IMAGE,
+            uploaded=SimpleUploadedFile("scene-reference.png", image_buffer.getvalue(), content_type="image/png"),
+        )
+
+        response = self.client.post(
+            f"/studio/episodes/{self.episode.id}/comic/generate/",
+            {"model": "gpt-5.4-mini"},
+        )
+
+        self.assertRedirects(response, f"/studio/episodes/{self.episode.id}/edit/")
+        references = mocked_run.call_args.kwargs["reference_images"]
+        self.assertEqual(len(references), 1)
+        self.assertEqual(references[0][0], "scene-reference.png")
+        self.assertIn("reference image 1", mocked_run.call_args.kwargs["text"])

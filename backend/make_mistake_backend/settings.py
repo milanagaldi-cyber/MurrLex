@@ -182,6 +182,7 @@ TEMPLATES = [
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
                 "lessons.context_processors.oauth_status",
+                "lexamora_studio.context_processors.studio_token_context",
             ],
         },
     },

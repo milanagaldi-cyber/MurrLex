@@ -7,15 +7,12 @@
   <div><h1>Workspace settings</h1><p>Central settings inherited by new projects and prompts.</p></div>
   <a class="button secondary" href="{% url 'studio:workspace_media_models' workspace.id %}">Generation models</a>
 </div>
-<form method="post" enctype="multipart/form-data" class="settings-grid" data-stay-on-save>{% csrf_token %}
+<form method="post" class="settings-grid" data-stay-on-save>{% csrf_token %}
   <section class="panel settings-section workspace-primary-settings">
     <h2>Workspace</h2>{{ form.non_field_errors }}
     <div class="workspace-settings-layout">
-      <div class="workspace-fields"><label>Name{{ form.name }}</label><label>Description{{ form.description }}</label></div>
-      <label class="compact-avatar" title="{% if workspace.avatar_asset %}Change Avatar{% else %}Add Avatar{% endif %}">
-        {{ form.avatar }}
-        {% if workspace.avatar_asset %}<img data-avatar-preview src="{% url 'studio_api:asset_thumbnail' workspace.avatar_asset.id %}" alt="Workspace avatar"><b data-avatar-placeholder hidden>+</b><span>Change Avatar</span>{% else %}<img data-avatar-preview hidden alt="Workspace avatar preview"><b data-avatar-placeholder>+</b><span>Add Avatar</span>{% endif %}
-      </label>
+      <div class="workspace-fields"><label><span>Name</span>{{ form.name }}</label><label><span>Description</span>{{ form.description }}</label></div>
+      <button id="workspace-settings-avatar" class="workspace-settings-avatar character-avatar-trigger" type="button" data-dialog-open="workspace-settings-avatar-picker" title="{% if workspace.avatar_asset %}Change Avatar{% else %}Add Avatar{% endif %}">{% if workspace.avatar_asset %}<img src="{% url 'studio_api:asset_thumbnail' workspace.avatar_asset.id %}" alt="Workspace avatar">{% else %}<b>+</b>{% endif %}<span class="avatar-change-label">{% if workspace.avatar_asset %}Change Avatar{% else %}Add Avatar{% endif %}</span></button>
     </div>
   </section>
   <section class="panel settings-section">
@@ -33,10 +30,14 @@
   </section>
   <div class="settings-actions settings-form-actions"><button type="submit">Save settings</button><a class="button secondary" href="{% url 'studio:workspace_detail' workspace.id %}">Cancel</a></div>
 </form>
+{% url 'studio:workspace_image_upload' workspace.id as workspace_avatar_upload_url %}{% url 'studio:workspace_remove_avatar' workspace.id as workspace_avatar_remove_url %}
+{% include "studio/_image_picker.html" with picker_id="workspace-settings-avatar-picker" picker_title="Workspace Avatar" attach_scope="workspace_avatar" owner_id=workspace.id upload_url=workspace_avatar_upload_url upload_role="workspace_avatar" picker_return=request.get_full_path hide_picker_trigger=True preserve_position=True upload_limit=1 live_preview_id="workspace-settings-avatar" avatar_crop_ratio="0.8" remove_avatar_url=workspace_avatar_remove_url avatar_label=workspace.name has_avatar=workspace.avatar_asset_id %}
 <section class="panel settings-section ai-usage-section">
   <div class="section-title-row"><div><h2>AI token usage</h2><p class="muted">Provider-reported token usage for this workspace. Image requests include the selected model and reference count in their asset metadata.</p></div><span class="accent-tag success">LIVE LOG</span></div>
   <div class="ai-usage-summary"><div><span>Input</span><strong>{{ ai_totals.input_tokens }}</strong></div><div><span>Output</span><strong>{{ ai_totals.output_tokens }}</strong></div><div><span>Total</span><strong>{{ ai_totals.total_tokens }}</strong></div></div>
+  <form method="get" class="ai-usage-filters"><label>User<select name="ai_user"><option value="">All</option>{% for id,email,username in ai_users %}<option value="{{ id }}"{% if ai_filters.user == id|stringformat:'s' %} selected{% endif %}>{{ email|default:username }}</option>{% endfor %}</select></label><label>Model<select name="ai_model"><option value="">All</option>{% for value in ai_models %}<option{% if ai_filters.model == value %} selected{% endif %}>{{ value }}</option>{% endfor %}</select></label><label>Action<select name="ai_action"><option value="">All</option>{% for value in ai_actions %}<option{% if ai_filters.action == value %} selected{% endif %}>{{ value }}</option>{% endfor %}</select></label><label>Status<select name="ai_status"><option value="">All</option><option{% if ai_filters.status == 'SUCCESS' %} selected{% endif %}>SUCCESS</option><option{% if ai_filters.status == 'ERROR' %} selected{% endif %}>ERROR</option></select></label><label>Rows<select name="per_page"><option{% if ai_per_page == 20 %} selected{% endif %}>20</option><option{% if ai_per_page == 50 %} selected{% endif %}>50</option><option{% if ai_per_page == 100 %} selected{% endif %}>100</option><option{% if ai_per_page == 500 %} selected{% endif %}>500</option></select></label><button type="submit">Apply</button></form>
   <div class="table-scroll"><table class="ai-usage-table"><thead><tr><th>Time</th><th>User</th><th>Action</th><th>Model</th><th>Input</th><th>Output</th><th>Total</th><th>Status</th></tr></thead><tbody>{% for row in ai_usage %}<tr><td>{{ row.created_at|date:"Y-m-d H:i" }}</td><td>{{ row.user|display_name }}</td><td>{{ row.action }}</td><td><code>{{ row.model }}</code></td><td>{{ row.input_tokens }}</td><td>{{ row.output_tokens }}</td><td><strong>{{ row.total_tokens }}</strong></td><td><span class="status-dot {% if row.status == 'SUCCESS' %}success{% elif row.status == 'ERROR' %}failed{% endif %}"></span>{{ row.status }}</td></tr>{% empty %}<tr><td colspan="8" class="muted">No AI requests have been recorded yet</td></tr>{% endfor %}</tbody></table></div>
+  <nav class="pagination" aria-label="AI usage pages">{% if ai_page.has_previous %}<a href="?page={{ ai_page.previous_page_number }}&per_page={{ ai_per_page }}&ai_user={{ ai_filters.user }}&ai_model={{ ai_filters.model|urlencode }}&ai_action={{ ai_filters.action|urlencode }}&ai_status={{ ai_filters.status }}">Previous</a>{% endif %}<span>Page {{ ai_page.number }} / {{ ai_page.paginator.num_pages }} · {{ ai_page.paginator.count }} operations</span>{% if ai_page.has_next %}<a href="?page={{ ai_page.next_page_number }}&per_page={{ ai_per_page }}&ai_user={{ ai_filters.user }}&ai_model={{ ai_filters.model|urlencode }}&ai_action={{ ai_filters.action|urlencode }}&ai_status={{ ai_filters.status }}">Next</a>{% endif %}</nav>
 </section>
 {% if can_administer %}
 <section class="panel settings-section email-test" id="email-test"><h2>Test email delivery</h2><p class="muted">Send a diagnostic message to a current workspace member. Provider secrets are never included in the downloadable log.</p>

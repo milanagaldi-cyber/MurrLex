@@ -7,7 +7,9 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.decorators import login_required
 from django.core import signing
 from django.core.exceptions import ValidationError
+from django.core.files.base import ContentFile
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.core.paginator import Paginator
 from django.core.mail import send_mail
 from django.db import transaction
 from django.db.models import Prefetch, Q, Sum
@@ -19,23 +21,25 @@ from django.utils import timezone
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils.text import slugify
 
-from lessons.ai_gateway import ProviderError, TEXT_MODELS, generate_image as _gateway_generate_image, generate_image_with_usage as _gateway_generate_image_with_usage, run_text as _gateway_run_text, run_text_with_usage as _gateway_run_text_with_usage
+from lessons.ai_gateway import ProviderError, TEXT_MODELS, generate_image as _gateway_generate_image, generate_image_with_usage as _gateway_generate_image_with_usage, run_multimodal_text_with_usage as _gateway_run_multimodal_text_with_usage, run_text as _gateway_run_text, run_text_with_usage as _gateway_run_text_with_usage
 from lessons.provider_credentials import user_has_ai_access
 
 from .ai import StudioAiError, accept_suggestion, improve_prompt, preview_prompt_translation, reject_suggestion, translate_prompt, translate_prompt_dialogue, undo_suggestion
 from .ai_catalog import PROMPT_LANGUAGES, PROMPT_LANGUAGE_NAMES, active_text_models, default_prompt_template, default_text_model_id, project_text_model_id, selected_text_model
+from .comics import build_episode_comic_pdf
 from .exports import ALL_SECTIONS, ExportError, generate_export
 from .external_images import download_external_image
 from .docx_imports import accept_docx_import, parse_docx
 from .docx_exports import generate_docx_export
 from .docx_roundtrip import compare_docx_export
 from .forms import AdditionalGenerationForm, AiModelProfileForm, AssetEditForm, CharacterCreateForm, CharacterForm, DialogueLineForm, DocxImportUploadForm, EpisodeForm, GenerationOutputUploadForm, ImageUploadForm, MultipleImageUploadForm, ProjectBulkMembershipForm, ProjectForm, ProjectMembershipForm, ProjectSettingsForm, ProjectUserSelectionForm, PromptBlockForm, PromptForm, RecommendedTrackForm, SceneForm, StudioTextModelForm, WorkspaceForm, WorkspaceMembershipForm, WorkspaceUserSelectionForm
-from .models import AdditionalGeneration, AiModelProfile, AiSuggestion, AiUsageLog, Asset, Character, DialogueLine, DocxImport, EmailDeliveryLog, Episode, EpisodeCover, ExportJob, GenerationOutput, ImageGenerationJob, Project, ProjectAccessExclusion, ProjectMembership, Prompt, PromptBlock, RecommendedTrack, Scene, StudioTextModel, SubtitleTrack, TranslationUnit, Workspace, WorkspaceMembership
+from .models import AdditionalGeneration, AiModelProfile, AiSuggestion, AiUsageLog, Asset, Character, DialogueLine, DocxImport, EmailDeliveryLog, Episode, EpisodeComic, EpisodeCover, ExportJob, GenerationOutput, ImageGenerationJob, Project, ProjectAccessExclusion, ProjectAssistantContext, ProjectMembership, Prompt, PromptBlock, RecommendedTrack, Scene, StudioTextModel, SubtitleTrack, TranslationUnit, Workspace, WorkspaceMembership
 from .notifications import notify_access_granted
 from .permissions import accessible_assets, accessible_projects, accessible_suggestions, accessible_workspaces, has_capability, has_object_capability, has_project_capability, is_workspace_owner_or_admin
 from .revisions import audit, record_revision
 from .services import bulk_replace_subtitle_lines, create_workspace, propagate_project_original_language, reorder_subtitle_lines, save_translation, update_dialogue_line
 from .storage import create_asset, crop_asset, purge_asset, restore_asset, trash_asset
+from .usage import TokenQuotaExceeded, require_token_quota, token_summary
 
 
 ARCHIVE_PURGE_DELAY_SECONDS = 30
@@ -51,6 +55,7 @@ def _is_server_super_admin(user):
 
 
 def _run_logged_text(*, workspace, user, action, model, text, prompt=None):
+    require_token_quota(user)
     usage = AiUsageLog.objects.create(
         workspace=workspace, user=user, prompt=prompt, action=action,
         model=model, status="STARTED", input_chars=len(text),
@@ -61,6 +66,33 @@ def _run_logged_text(*, workspace, user, action, model, text, prompt=None):
             provider_usage = {}
         else:
             output, selected_model, provider_usage = _gateway_run_text_with_usage(model, text)
+    except Exception:
+        usage.status = "ERROR"
+        usage.error_code = "provider_error"
+        usage.save(update_fields=["status", "error_code"])
+        raise
+    usage.model = selected_model
+    usage.status = "SUCCESS"
+    usage.output_chars = len(output)
+    usage.input_tokens = provider_usage.get("input_tokens", 0)
+    usage.output_tokens = provider_usage.get("output_tokens", 0)
+    usage.total_tokens = provider_usage.get("total_tokens", 0)
+    usage.save(update_fields=[
+        "model", "status", "output_chars", "input_tokens", "output_tokens", "total_tokens",
+    ])
+    return output, selected_model
+
+
+def _run_logged_multimodal_text(*, workspace, user, action, model, text, reference_images, prompt=None):
+    require_token_quota(user)
+    usage = AiUsageLog.objects.create(
+        workspace=workspace, user=user, prompt=prompt, action=action,
+        model=model, status="STARTED", input_chars=len(text),
+    )
+    try:
+        output, selected_model, provider_usage = _gateway_run_multimodal_text_with_usage(
+            model, text, reference_images,
+        )
     except Exception:
         usage.status = "ERROR"
         usage.error_code = "provider_error"
@@ -280,23 +312,47 @@ def workspace_edit(request, workspace_id):
     if request.method == "POST" and form.is_valid():
         item = form.save(commit=False)
         item.updated_by = request.user
-        avatar = form.cleaned_data.get("avatar")
-        if avatar:
-            item.avatar_asset = create_asset(user=request.user, workspace=workspace, uploaded=avatar, kind=Asset.Kind.OTHER)
         item.save()
         record_revision(instance=item, user=request.user, operation="UPDATE")
         messages.success(request, "Workspace settings saved.")
-        return redirect("studio:workspace_detail", workspace_id=item.id)
+        return redirect("studio:workspace_edit", workspace_id=item.id)
     ai_usage = workspace.ai_usage.select_related("user", "prompt").order_by("-created_at")
+    user_filter = request.GET.get("ai_user", "").strip()
+    model_filter = request.GET.get("ai_model", "").strip()
+    action_filter = request.GET.get("ai_action", "").strip()
+    status_filter = request.GET.get("ai_status", "").strip()
+    if user_filter:
+        ai_usage = ai_usage.filter(user_id=user_filter)
+    if model_filter:
+        ai_usage = ai_usage.filter(model=model_filter)
+    if action_filter:
+        ai_usage = ai_usage.filter(action=action_filter)
+    if status_filter:
+        ai_usage = ai_usage.filter(status=status_filter)
     ai_totals = ai_usage.aggregate(
         input_tokens=Sum("input_tokens"), output_tokens=Sum("output_tokens"), total_tokens=Sum("total_tokens"),
     )
+    try:
+        per_page = int(request.GET.get("per_page", 50))
+    except (TypeError, ValueError):
+        per_page = 50
+    if per_page not in {20, 50, 100, 500}:
+        per_page = 50
+    page = Paginator(ai_usage, per_page).get_page(request.GET.get("page"))
+    workspace_assets = _decorate_gallery_assets(request.user, list(_accessible_workspace_images(request.user, workspace)), deduplicate=True)
     return render(request, "studio/workspace_settings.html", {
         "workspace": workspace, "form": form, "models": AiModelProfile.objects.all(),
         "can_administer": is_workspace_owner_or_admin(request.user, workspace),
         "email_recipients": [workspace.owner, *[item.user for item in workspace.memberships.filter(status=WorkspaceMembership.Status.ACTIVE).select_related("user") if item.user_id != workspace.owner_id]],
         "email_logs": workspace.email_delivery_logs.select_related("created_by")[:10],
-        "ai_usage": ai_usage[:250],
+        "ai_usage": page,
+        "ai_page": page,
+        "ai_per_page": per_page,
+        "ai_users": workspace.ai_usage.select_related("user").order_by("user__email").values_list("user_id", "user__email", "user__username").distinct(),
+        "ai_models": workspace.ai_usage.order_by("model").values_list("model", flat=True).distinct(),
+        "ai_actions": workspace.ai_usage.order_by("action").values_list("action", flat=True).distinct(),
+        "ai_filters": {"user": user_filter, "model": model_filter, "action": action_filter, "status": status_filter},
+        "project_assets": [], "workspace_assets": workspace_assets,
         "ai_totals": {key: value or 0 for key, value in ai_totals.items()},
     })
 
@@ -452,6 +508,21 @@ def workspace_avatar_upload(request, workspace_id):
         messages.success(request, "Workspace image updated.")
         return redirect("studio:workspace_detail", workspace_id=workspace.id)
     return render(request, "studio/entity_form.html", {"form": form, "title": "Workspace image", "multipart": True, "return_to": reverse("studio:workspace_detail", kwargs={"workspace_id": workspace.id})})
+
+
+@login_required
+def workspace_remove_avatar(request, workspace_id):
+    workspace = get_object_or_404(accessible_workspaces(request.user), id=workspace_id)
+    if request.method != "POST" or not has_capability(request.user, workspace, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    workspace.avatar_asset = None
+    workspace.updated_by = request.user
+    workspace.save(update_fields=["avatar_asset", "updated_by", "updated_at"])
+    audit(workspace=workspace, actor=request.user, action="WORKSPACE_AVATAR_REMOVED", instance=workspace)
+    if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+        return JsonResponse({"ok": True})
+    messages.success(request, "Workspace avatar removed")
+    return redirect("studio:workspace_edit", workspace_id=workspace.id)
 
 
 @login_required
@@ -1032,32 +1103,39 @@ def project_settings(request, project_id):
     project = get_object_or_404(accessible_projects(request.user).select_related("workspace"), id=project_id)
     if not has_project_capability(request.user, project, "edit"):
         return HttpResponseForbidden("Edit permission is required.")
-    old_language = (project.original_language or "EN").strip().upper()
+    original_language = project.original_language
+    requested_original_language = (request.POST.get("original_language") or original_language).upper()
+    original_language_changed = request.method == "POST" and requested_original_language != original_language.upper()
+    propagation_confirmed = request.POST.get("confirm_language_propagation") == "on"
     form = ProjectSettingsForm(request.POST or None, instance=project)
+    if original_language_changed and not propagation_confirmed:
+        form.add_error(
+            None,
+            "Confirm that the new language must be propagated to original prompts, translations, and dialogue lines.",
+        )
     if request.method == "POST" and form.is_valid():
-        new_language = form.cleaned_data["original_language"]
         with transaction.atomic():
             project = form.save(commit=False)
+            project.original_language = requested_original_language
             project.updated_by = request.user
             project.full_clean()
             project.save()
-            record_revision(instance=project, user=request.user, operation="SETTINGS_UPDATE")
-            if new_language != old_language:
-                counts = propagate_project_original_language(project=project, language=new_language, user=request.user)
-                audit(
-                    workspace=project.workspace, actor=request.user,
-                    action="PROJECT_ORIGINAL_LANGUAGE_PROPAGATED", instance=project,
-                    metadata={"from": old_language, "to": new_language, **counts},
+            if original_language_changed:
+                counts = propagate_project_original_language(
+                    project=project,
+                    language=requested_original_language,
+                    user=request.user,
                 )
-        if new_language != old_language:
+            record_revision(instance=project, user=request.user, operation="SETTINGS_UPDATE")
+        messages.success(request, "Project settings saved")
+        if original_language_changed:
             messages.success(
                 request,
-                f"Original language changed {old_language} -> {new_language}. "
-                f"Updated {counts['originalPrompts']} original prompts, {counts['translations']} translations, "
-                f"and {counts['dialogueLines']} dialogue lines.",
+                "Updated "
+                f"{counts['originalPrompts']} original prompts, "
+                f"{counts['translations']} translations, and "
+                f"{counts['dialogueLines']} dialogue lines",
             )
-        else:
-            messages.success(request, "Project settings saved.")
         return redirect("studio:project_settings", project_id=project.id)
     return render(request, "studio/project_settings.html", {
         "project": project, "form": form,
@@ -1428,7 +1506,85 @@ def episode_edit(request, episode_id):
         "workspace_assets": workspace_assets,
         "cover_languages": PROMPT_LANGUAGES,
         "cover_platforms": EpisodeCover.Platform.choices,
+        "text_models": active_text_models(),
+        "default_text_model": project_text_model_id(item.project),
     })
+
+
+@login_required
+def episode_comic_generate(request, episode_id):
+    episode = get_object_or_404(Episode.objects.select_related("project__workspace").filter(project__in=accessible_projects(request.user)), id=episode_id)
+    if request.method != "POST" or not has_object_capability(request.user, episode, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    model = selected_text_model(request.POST.get("model") or project_text_model_id(episode.project))
+    comic = EpisodeComic.objects.create(episode=episode, model=model, created_by=request.user)
+    try:
+        scene_text = []
+        reference_images = []
+        max_references = int(getattr(settings, "AI_MAX_COMIC_REFERENCE_IMAGES", 20))
+        scenes = episode.scenes.prefetch_related("dialogue_lines", "assets", "reference_assets").order_by("position", "number")
+        for scene in scenes:
+            dialogue = "\n".join(f"{line.speaker}: {line.text}" for line in scene.dialogue_lines.all())
+            scene_asset_map = {
+                asset.id: asset for asset in [*scene.assets.all(), *scene.reference_assets.all()]
+                if asset.deleted_at is None and asset.content_type.startswith("image/") and asset.file.name
+            }
+            image_labels = []
+            for asset in scene_asset_map.values():
+                if len(reference_images) >= max_references:
+                    break
+                try:
+                    with asset.file.open("rb") as source:
+                        image_bytes = source.read()
+                except OSError:
+                    continue
+                reference_images.append((asset.original_filename, image_bytes, asset.content_type))
+                image_labels.append(f"reference image {len(reference_images)} ({asset.original_filename})")
+            image_note = f"\nVisual references: {', '.join(image_labels)}" if image_labels else ""
+            scene_text.append(f"Scene {scene.number}: {scene.title}\n{scene.description}\n{dialogue}{image_note}")
+        request_text = (
+            "Create concise comic panel narration. Preserve scene order, dialogue facts, character identity, "
+            "and visible details from the supplied reference images. Associate each numbered image with the "
+            "scene that names it. Return text only.\n\n" + "\n\n".join(scene_text)
+        )
+        if reference_images:
+            plan, used_model = _run_logged_multimodal_text(
+                workspace=episode.project.workspace, user=request.user, action="GENERATE_COMIC_PLAN",
+                model=model, text=request_text, reference_images=reference_images,
+            )
+        else:
+            plan, used_model = _run_logged_text(
+                workspace=episode.project.workspace, user=request.user, action="GENERATE_COMIC_PLAN",
+                model=model, text=request_text,
+            )
+        uploaded = SimpleUploadedFile(
+            f"{slugify(episode.project.title)}-episode-{episode.number}-comic.pdf",
+            build_episode_comic_pdf(episode, plan), content_type="application/pdf",
+        )
+        asset = create_asset(user=request.user, workspace=episode.project.workspace, uploaded=uploaded, kind=Asset.Kind.EXPORT, project=episode.project)
+        asset.ai_metadata = {"kind": "episode_comic", "episodeId": str(episode.id), "model": used_model}
+        asset.save(update_fields=["ai_metadata", "updated_at"])
+        comic.asset = asset; comic.status = EpisodeComic.Status.SUCCESS; comic.model = used_model
+        comic.save(update_fields=["asset", "status", "model", "updated_at"])
+        messages.success(request, "Comic generated")
+    except Exception as exc:
+        comic.status = EpisodeComic.Status.ERROR; comic.error_message = str(exc)[:2000]
+        comic.save(update_fields=["status", "error_message", "updated_at"])
+        messages.error(request, "Comic generation failed")
+    return redirect("studio:episode_edit", episode_id=episode.id)
+
+
+@login_required
+def episode_comic_detach(request, comic_id):
+    comic = get_object_or_404(EpisodeComic.objects.select_related("episode__project__workspace", "asset").filter(episode__project__in=accessible_projects(request.user)), id=comic_id)
+    episode_id = comic.episode_id
+    if request.method != "POST" or not has_object_capability(request.user, comic.episode, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    if request.POST.get("trash") == "1" and comic.asset:
+        trash_asset(asset=comic.asset, user=request.user)
+    comic.delete()
+    messages.success(request, "Comic detached")
+    return redirect("studio:episode_edit", episode_id=episode_id)
 
 
 @login_required
@@ -3647,6 +3803,21 @@ def prompt_delete(request, prompt_id):
 
 
 @login_required
+def project_remove_avatar(request, project_id):
+    project = get_object_or_404(accessible_projects(request.user), id=project_id)
+    if request.method != "POST" or not has_project_capability(request.user, project, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    project.cover_asset = None
+    project.updated_by = request.user
+    project.save(update_fields=["cover_asset", "updated_by", "updated_at"])
+    audit(workspace=project.workspace, actor=request.user, action="PROJECT_COVER_REMOVED", instance=project)
+    if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+        return JsonResponse({"ok": True})
+    messages.success(request, "Project avatar removed")
+    return redirect("studio:project_detail", project_id=project.id)
+
+
+@login_required
 def prompt_quick_save(request, prompt_id):
     prompt = get_object_or_404(
         Prompt.objects.select_related("scene__episode__project__workspace", "ai_model", "template")
@@ -3888,6 +4059,87 @@ def _image_generation_job_payload(job):
 
 
 @login_required
+def user_token_usage(request):
+    logs = AiUsageLog.objects.filter(user=request.user).select_related("workspace")
+    for key, field in (("workspace", "workspace_id"), ("model", "model"), ("action", "action")):
+        value = request.GET.get(key, "").strip()
+        if value:
+            logs = logs.filter(**{field: value})
+    status = request.GET.get("status", "").strip().upper()
+    if status:
+        logs = logs.filter(status=status)
+    try:
+        per_page = int(request.GET.get("per_page", 50))
+    except (TypeError, ValueError):
+        per_page = 50
+    if per_page not in {20, 50, 100, 500}:
+        per_page = 50
+    page = Paginator(logs, per_page).get_page(request.GET.get("page"))
+    return JsonResponse({
+        "summary": token_summary(request.user), "page": page.number,
+        "pages": page.paginator.num_pages, "count": page.paginator.count,
+        "operations": [{
+            "time": item.created_at.isoformat(), "workspace": item.workspace.name,
+            "action": item.action, "model": item.model, "tokens": item.total_tokens,
+            "status": item.status,
+        } for item in page],
+    })
+
+
+@login_required
+def project_assistant(request, project_id):
+    project = get_object_or_404(accessible_projects(request.user).select_related("workspace"), id=project_id)
+    if request.method != "POST" or not has_project_capability(request.user, project, "use_ai"):
+        return JsonResponse({"error": "AI access is required"}, status=403)
+    try:
+        payload = json.loads(request.body or b"{}")
+        question = str(payload.get("message") or "").strip()
+        model = selected_text_model(payload.get("model") or project_text_model_id(project))
+    except (ValueError, ValidationError) as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    if not question:
+        return JsonResponse({"error": "Enter a message"}, status=400)
+    context = ProjectAssistantContext.objects.filter(project=project).first()
+    history = payload.get("history") if isinstance(payload.get("history"), list) else []
+    request_text = json.dumps({
+        "role": "You are a practical film production assistant inside Lexamora Studio",
+        "project": {"title": project.title, "description": project.description, "concept": project.concept},
+        "saved_context": context.content if context else "", "history": history[-12:], "question": question,
+    }, ensure_ascii=False)
+    try:
+        answer, used_model = _run_logged_text(workspace=project.workspace, user=request.user, action="PROJECT_ASSISTANT", model=model, text=request_text)
+    except (ProviderError, TokenQuotaExceeded, ValidationError) as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    return JsonResponse({"answer": answer, "model": used_model})
+
+
+@login_required
+def project_assistant_context(request, project_id):
+    project = get_object_or_404(accessible_projects(request.user).select_related("workspace"), id=project_id)
+    if not has_project_capability(request.user, project, "edit"):
+        return HttpResponseForbidden("Edit permission is required.")
+    context, _ = ProjectAssistantContext.objects.get_or_create(project=project)
+    if request.method == "GET":
+        return JsonResponse({"content": context.content, "downloadUrl": reverse("studio_api:asset_download", kwargs={"asset_id": context.asset_id}) if context.asset_id else ""})
+    uploaded = request.FILES.get("file")
+    incoming = request.POST.get("content", "")
+    if uploaded:
+        try:
+            incoming = uploaded.read().decode("utf-8")
+        except UnicodeDecodeError:
+            return JsonResponse({"error": "Context file must be UTF-8 text"}, status=400)
+    merge = request.POST.get("merge", "1") == "1"
+    content = "\n\n".join(part for part in ([context.content, incoming] if merge else [incoming]) if part.strip()).strip()
+    uploaded_context = SimpleUploadedFile(f"{slugify(project.title)}-assistant-context.txt", content.encode("utf-8"), content_type="text/plain")
+    asset = create_asset(user=request.user, workspace=project.workspace, uploaded=uploaded_context, kind=Asset.Kind.OTHER, project=project)
+    if context.asset_id:
+        context.asset.projects.remove(project)
+    context.content = content; context.asset = asset; context.updated_by = request.user
+    context.save()
+    return JsonResponse({"ok": True, "content": content, "downloadUrl": reverse("studio_api:asset_download", kwargs={"asset_id": asset.id})})
+
+
+@login_required
 def project_image_generation(request, project_id):
     project = get_object_or_404(
         accessible_projects(request.user).select_related("workspace__default_image_model", "cover_asset"),
@@ -3933,12 +4185,15 @@ def project_image_prompt_preview(request, project_id):
     try:
         model_id = selected_text_model(payload.get("textModel") or project_text_model_id(project))
         if action == "translate":
-            target = str(payload.get("targetLanguage") or "EN").upper()
-            if target not in PROMPT_LANGUAGE_NAMES:
-                raise ValidationError("Choose a supported target language.")
+            target = str(payload.get("targetLanguage") or "EN").strip()
+            target_name = PROMPT_LANGUAGE_NAMES.get(target.upper(), target)
+            if not target_name or len(target_name) > 60:
+                raise ValidationError("Enter a valid target language.")
             instruction = (
-                f"Translate this image-generation prompt into {PROMPT_LANGUAGE_NAMES[target]}. "
-                "Preserve names, visual details, camera instructions, and formatting. Return only the translated prompt."
+                f"Translate this media-generation prompt into {target_name}. Preserve names, visual details, "
+                "camera instructions, and formatting. If the prompt explicitly says that a character speaks in "
+                "a named language, translate that direct speech into the named language, not the body language; "
+                "keep the language instruction explicit. Return only the translated prompt."
             )
         else:
             target = ""
@@ -3953,7 +4208,7 @@ def project_image_prompt_preview(request, project_id):
             model=model_id,
             text=f"{instruction}\n\nPROMPT:\n{source}",
         )
-    except (ProviderError, ValidationError) as exc:
+    except (ProviderError, TokenQuotaExceeded, ValidationError) as exc:
         return JsonResponse({"error": str(exc)}, status=400)
     except Exception:
         return JsonResponse({"error": "The AI service returned an unexpected error. Please retry."}, status=500)
@@ -3970,6 +4225,10 @@ def project_generate_image(request, project_id):
         return JsonResponse({"error": "POST is required."}, status=405)
     if not has_project_capability(request.user, project, "use_ai") or not user_has_ai_access(request.user):
         return JsonResponse({"error": "AI access is not enabled for this account."}, status=403)
+    try:
+        require_token_quota(request.user)
+    except TokenQuotaExceeded as exc:
+        return JsonResponse({"error": str(exc)}, status=402)
     try:
         payload = json.loads(request.body or b"{}")
     except (TypeError, ValueError):

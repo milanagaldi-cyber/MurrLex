@@ -12,8 +12,6 @@ from .models import AdditionalGeneration, AiModelProfile, Asset, Character, Dial
 
 
 class WorkspaceForm(forms.ModelForm):
-    avatar = forms.ImageField(required=False, label="Avatar")
-
     class Meta:
         model = Workspace
         fields = [
@@ -71,9 +69,6 @@ class ProjectSettingsForm(forms.ModelForm):
         ("characters", "Characters"),
         ("episodes", "Episodes"),
     )
-    original_language = forms.CharField(widget=forms.Select(choices=PROMPT_LANGUAGES), initial="EN")
-    translation_languages = forms.CharField(required=False, help_text="Comma-separated language codes, for example: en, pl, de")
-    confirm_language_propagation = forms.BooleanField(required=False, widget=forms.HiddenInput)
     hidden_sections = forms.MultipleChoiceField(
         choices=SECTION_CHOICES,
         required=False,
@@ -83,7 +78,7 @@ class ProjectSettingsForm(forms.ModelForm):
 
     class Meta:
         model = Project
-        fields = ["original_language", "documentation_language", "dialogue_language", "prompt_language", "translation_languages", "default_translation_model", "prompt_template", "hidden_sections"]
+        fields = ["documentation_language", "dialogue_language", "prompt_language", "default_translation_model", "prompt_template", "hidden_sections"]
         widgets = {
             "documentation_language": forms.Select(choices=PROMPT_LANGUAGES),
             "dialogue_language": forms.Select(choices=PROMPT_LANGUAGES),
@@ -102,42 +97,10 @@ class ProjectSettingsForm(forms.ModelForm):
         self.fields["default_translation_model"].empty_label = "Use Studio default"
         for name in ("documentation_language", "dialogue_language", "prompt_language"):
             self.fields[name].required = False
-        if self.instance and not self.instance._state.adding:
-            self.initial["original_language"] = (self.instance.original_language or "EN").upper()
-            self.fields["original_language"].widget.attrs["data-initial-language"] = self.initial["original_language"]
-            self.initial["translation_languages"] = ", ".join(self.instance.translation_languages or [])
-            prompt_count = Prompt.objects.filter(
-                scene__episode__project=self.instance,
-                source_prompt__isnull=True,
-            ).count()
-            dialogue_count = DialogueLine.objects.filter(scene__episode__project=self.instance).count()
-            self.language_change_summary = (
-                f"The new language will be applied to {prompt_count} original prompts and "
-                f"{dialogue_count} dialogue lines. Saved translations remain translations."
-            )
-
-    def clean_original_language(self):
-        value = self.cleaned_data["original_language"].strip().upper()
-        if value not in dict(PROMPT_LANGUAGES):
-            raise forms.ValidationError("Choose a supported project language.")
-        return value
-
-    def clean_translation_languages(self):
-        value = self.cleaned_data["translation_languages"]
-        return list(dict.fromkeys(part.strip().lower() for part in value.split(",") if part.strip()))
-
     def clean(self):
         cleaned = super().clean()
         for name in ("documentation_language", "dialogue_language", "prompt_language"):
             cleaned[name] = (cleaned.get(name) or getattr(self.instance, name, "") or self.initial.get(name) or "EN").upper()
-        if self.instance and not self.instance._state.adding:
-            old_language = (self.instance.original_language or "EN").strip().upper()
-            new_language = (cleaned.get("original_language") or "").strip().upper()
-            if new_language and new_language != old_language and not cleaned.get("confirm_language_propagation"):
-                self.add_error(
-                    "confirm_language_propagation",
-                    "Confirm that the new language will update every original prompt and dialogue line in this project.",
-                )
         return cleaned
 
 

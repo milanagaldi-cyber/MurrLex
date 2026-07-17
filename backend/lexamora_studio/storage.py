@@ -21,6 +21,9 @@ ALLOWED_UPLOADS = {
     ".pdf": {"application/pdf"},
     ".docx": {"application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
     ".mp4": {"video/mp4"},
+    ".txt": {"text/plain"},
+    ".md": {"text/markdown", "text/plain"},
+    ".json": {"application/json", "text/plain"},
 }
 IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
 
