@@ -5,6 +5,11 @@
   <h2>Add or update access</h2>
   <form method="post">{% csrf_token %}{{ form.as_p }}<button type="submit">Save access</button></form>
 </section>
+<section class="panel" style="padding:20px;max-width:760px">
+  <h2>Add users in bulk</h2>
+  <p class="muted">Paste up to 100 registered email addresses. Existing project roles are updated; unknown addresses are reported without blocking valid users.</p>
+  <form method="post">{% csrf_token %}<input type="hidden" name="action" value="bulk_add">{{ bulk_form.as_p }}<button type="submit">Add users</button></form>
+</section>
 <h2>People with access</h2>
 <div class="list">
   <div class="row"><strong title="{{ project.workspace.owner|user_details }}">{{ project.workspace.owner|display_name }}</strong><span>Workspace owner / full access</span><span class="muted">Cannot be removed</span></div>

@@ -6,7 +6,7 @@
   <div><h1>Edit Episode {{ episode.number }}</h1><p>{{ episode.title }}</p></div>
 </div>
 {% url 'studio:episode_image_upload' episode.id as episode_upload_url %}
-{% include "studio/_image_picker.html" with picker_id="episode-cover-picker" picker_title="Episode Covers" attach_scope="episode" owner_id=episode.id upload_url=episode_upload_url upload_role="episode_avatar" picker_return=request.get_full_path hide_picker_trigger=True preserve_position=True upload_limit=10 live_preview_id="episode-settings-cover-display" %}
+{% include "studio/_image_picker.html" with picker_id="episode-cover-picker" picker_title="Episode Covers" attach_scope="episode_avatar" owner_id=episode.id upload_url=episode_upload_url upload_role="episode_avatar" picker_return=request.get_full_path hide_picker_trigger=True preserve_position=True upload_limit=10 live_preview_id="episode-settings-cover-display" avatar_crop_ratio="0.833333" %}
 
 <form method="post" class="panel episode-settings-form" data-preserve-position data-stay-on-save>{% csrf_token %}
   {{ form.non_field_errors }}

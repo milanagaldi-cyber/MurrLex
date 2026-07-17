@@ -1,4 +1,8 @@
+import re
+
 from django import forms
+from django.core.validators import validate_email
+from django.db.models import Q
 
 from lessons.ai_gateway import TEXT_MODELS
 
@@ -163,6 +167,50 @@ class ProjectMembershipForm(forms.Form):
             raise forms.ValidationError("The workspace owner already has full access.")
         self.user = matches[0]
         return email
+
+
+class ProjectBulkMembershipForm(forms.Form):
+    emails = forms.CharField(
+        label="User emails",
+        widget=forms.Textarea(attrs={
+            "rows": 5,
+            "placeholder": "one@example.com\ntwo@example.com",
+        }),
+        help_text="Up to 100 registered users. Separate addresses with commas, semicolons, spaces, or new lines.",
+    )
+    role = forms.ChoiceField(choices=ProjectMembership.Role.choices)
+
+    def __init__(self, *args, project, **kwargs):
+        self.project = project
+        self.users = []
+        self.missing_emails = []
+        super().__init__(*args, **kwargs)
+
+    def clean_emails(self):
+        from django.contrib.auth import get_user_model
+
+        values = list(dict.fromkeys(
+            value.strip().lower()
+            for value in re.split(r"[\s,;]+", self.cleaned_data["emails"])
+            if value.strip()
+        ))
+        if not values:
+            raise forms.ValidationError("Enter at least one email address.")
+        if len(values) > 100:
+            raise forms.ValidationError("Add no more than 100 users at once.")
+        for value in values:
+            validate_email(value)
+        query = Q(pk__in=[])
+        for value in values:
+            query |= Q(email__iexact=value)
+        matches = list(get_user_model().objects.filter(query))
+        by_email = {user.email.strip().lower(): user for user in matches if user.email}
+        owner_email = (self.project.workspace.owner.email or "").strip().lower()
+        self.users = [by_email[value] for value in values if value in by_email and value != owner_email]
+        self.missing_emails = [value for value in values if value not in by_email]
+        if not self.users:
+            raise forms.ValidationError("No registered project users were found in this list.")
+        return "\n".join(values)
 
 
 class WorkspaceMembershipForm(forms.Form):

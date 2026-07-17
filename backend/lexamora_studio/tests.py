@@ -692,7 +692,9 @@ class StudioAiSuggestionTests(TestCase):
         self.assertEqual(call_kwargs["background"], "opaque")
         self.assertEqual(call_kwargs["moderation"], "low")
         self.client.force_login(self.viewer)
-        self.assertEqual(self.client.get(response.json()["statusUrl"]).status_code, 404)
+        shared_status = self.client.get(response.json()["statusUrl"])
+        self.assertEqual(shared_status.status_code, 200)
+        self.assertEqual(shared_status.json()["status"], "SUCCESS")
 
     def test_image_worker_claims_five_distinct_jobs(self):
         from .management.commands.run_image_generation_worker import Command
@@ -3039,6 +3041,62 @@ class StudioAssetLifecycleTests(TestCase):
         self.assertTrue(AuditEvent.objects.filter(action="ASSET_RESTORED").exists())
         self.assertTrue(AuditEvent.objects.filter(action="ASSET_PURGED").exists())
 
+    def test_recycle_bin_removes_stale_database_record_when_file_is_missing(self):
+        import tempfile
+        from pathlib import Path
+        from .models import Asset
+        from .storage import create_asset, trash_asset
+
+        self.client.force_login(self.owner)
+        with tempfile.TemporaryDirectory() as directory:
+            with self.settings(STUDIO_PRIVATE_MEDIA_ROOT=Path(directory)):
+                asset = create_asset(
+                    user=self.owner,
+                    workspace=self.workspace,
+                    uploaded=self.image_file("missing.png"),
+                    kind=Asset.Kind.OTHER,
+                )
+                trash_asset(asset=asset, user=self.owner)
+                Path(asset.file.path).unlink()
+                with self.captureOnCommitCallbacks(execute=True):
+                    response = self.client.get(
+                        f"/studio/workspaces/{self.workspace.id}/recycle-bin/"
+                    )
+                self.assertEqual(response.status_code, 200)
+                self.assertNotContains(response, "missing.png")
+                stale = Asset.all_objects.get(id=asset.id)
+                self.assertIsNotNone(stale.purged_at)
+                self.assertEqual(stale.file.name, "")
+
+    def test_avatar_crop_can_be_attached_in_one_request(self):
+        import tempfile
+        from pathlib import Path
+        from .models import Asset
+        from .storage import create_asset
+
+        self.client.force_login(self.owner)
+        with tempfile.TemporaryDirectory() as directory:
+            with self.settings(STUDIO_PRIVATE_MEDIA_ROOT=Path(directory)):
+                source = create_asset(
+                    user=self.owner,
+                    workspace=self.workspace,
+                    uploaded=self.image_file("avatar-source.png"),
+                    kind=Asset.Kind.OTHER,
+                )
+                response = self.client.post(
+                    f"/studio/assets/{source.id}/crop/",
+                    data=json.dumps({
+                        "x": 10, "y": 5, "width": 50, "height": 50,
+                        "attachScope": "workspace_avatar",
+                        "attachOwnerId": str(self.workspace.id),
+                    }),
+                    content_type="application/json",
+                )
+                self.assertEqual(response.status_code, 201, response.content)
+                self.assertTrue(response.json()["attached"])
+                self.workspace.refresh_from_db()
+                self.assertEqual(str(self.workspace.avatar_asset_id), response.json()["id"])
+
     def test_avatar_only_image_can_be_restored_and_purge_clears_avatar_link(self):
         import tempfile
         from pathlib import Path
@@ -3364,6 +3422,43 @@ class StudioProductionPilotFeaturesTests(TestCase):
             WorkspaceMembership.Role.OWNER,
         )
 
+    def test_superadmin_group_member_can_transfer_workspace_owner(self):
+        from django.contrib.auth.models import Group
+
+        delegated_admin = get_user_model().objects.create_user(
+            "delegated-admin", email="delegated@example.com", password="strong-pass"
+        )
+        delegated_admin.groups.add(Group.objects.get_or_create(name="Superadmin")[0])
+        self.client.force_login(delegated_admin)
+        response = self.client.post(
+            f"/studio/workspaces/{self.workspace.id}/owner/",
+            {"email": self.new_owner.email},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.url, f"/studio/workspaces/{self.workspace.id}/access/")
+        self.workspace.refresh_from_db()
+        self.assertEqual(self.workspace.owner, self.new_owner)
+
+    def test_project_users_can_be_added_in_bulk(self):
+        first = get_user_model().objects.create_user(
+            "bulk-one", email="bulk-one@example.com", password="strong-pass"
+        )
+        second = get_user_model().objects.create_user(
+            "bulk-two", email="bulk-two@example.com", password="strong-pass"
+        )
+        self.client.force_login(self.owner)
+        response = self.client.post(
+            f"/studio/projects/{self.project.id}/access/",
+            {
+                "action": "bulk_add",
+                "emails": "bulk-one@example.com; bulk-two@example.com\nmissing@example.com",
+                "role": ProjectMembership.Role.EDITOR,
+            },
+        )
+        self.assertRedirects(response, f"/studio/projects/{self.project.id}/access/")
+        self.assertTrue(ProjectMembership.objects.filter(project=self.project, user=first, role=ProjectMembership.Role.EDITOR).exists())
+        self.assertTrue(ProjectMembership.objects.filter(project=self.project, user=second, role=ProjectMembership.Role.EDITOR).exists())
+
     def test_character_can_be_copied_and_soft_deleted(self):
         from .models import Character
 
@@ -3399,6 +3494,17 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertEqual(job.project, self.project)
         self.assertIsNone(job.prompt)
         self.assertEqual(job.model_profile, self.image_model)
+
+    @patch("lexamora_studio.views.user_has_ai_access", return_value=True)
+    def test_project_generation_page_renders_queue_workspace(self, _has_access):
+        self.client.force_login(self.owner)
+        response = self.client.get(
+            f"/studio/projects/{self.project.id}/image-generation/"
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertContains(response, "data-reference-slots")
+        self.assertContains(response, "Generated here")
+        self.assertContains(response, "data-project-generation-results")
 
     def test_external_image_import_rejects_private_network(self):
         from django.core.exceptions import ValidationError

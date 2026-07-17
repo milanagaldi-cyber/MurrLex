@@ -29,7 +29,7 @@ from .external_images import download_external_image
 from .docx_imports import accept_docx_import, parse_docx
 from .docx_exports import generate_docx_export
 from .docx_roundtrip import compare_docx_export
-from .forms import AdditionalGenerationForm, AiModelProfileForm, AssetEditForm, CharacterCreateForm, CharacterForm, DialogueLineForm, DocxImportUploadForm, EpisodeForm, GenerationOutputUploadForm, ImageUploadForm, MultipleImageUploadForm, ProjectForm, ProjectMembershipForm, ProjectSettingsForm, PromptBlockForm, PromptForm, RecommendedTrackForm, SceneForm, StudioTextModelForm, WorkspaceForm, WorkspaceMembershipForm
+from .forms import AdditionalGenerationForm, AiModelProfileForm, AssetEditForm, CharacterCreateForm, CharacterForm, DialogueLineForm, DocxImportUploadForm, EpisodeForm, GenerationOutputUploadForm, ImageUploadForm, MultipleImageUploadForm, ProjectBulkMembershipForm, ProjectForm, ProjectMembershipForm, ProjectSettingsForm, PromptBlockForm, PromptForm, RecommendedTrackForm, SceneForm, StudioTextModelForm, WorkspaceForm, WorkspaceMembershipForm
 from .models import AdditionalGeneration, AiModelProfile, AiSuggestion, AiUsageLog, Asset, Character, DialogueLine, DocxImport, EmailDeliveryLog, Episode, EpisodeCover, ExportJob, GenerationOutput, ImageGenerationJob, Project, ProjectAccessExclusion, ProjectMembership, Prompt, PromptBlock, RecommendedTrack, Scene, StudioTextModel, SubtitleTrack, TranslationUnit, Workspace, WorkspaceMembership
 from .notifications import notify_access_granted
 from .permissions import accessible_assets, accessible_projects, accessible_suggestions, accessible_workspaces, has_capability, has_object_capability, has_project_capability, is_workspace_owner_or_admin
@@ -41,6 +41,13 @@ from .storage import create_asset, crop_asset, purge_asset, restore_asset, trash
 ARCHIVE_PURGE_DELAY_SECONDS = 30
 run_text = _gateway_run_text
 generate_image = _gateway_generate_image
+
+
+def _is_server_super_admin(user):
+    return bool(
+        getattr(user, "is_superuser", False)
+        or user.groups.filter(name="Superadmin").exists()
+    )
 
 
 def _run_logged_text(*, workspace, user, action, model, text, prompt=None):
@@ -343,14 +350,14 @@ def workspace_access(request, workspace_id):
         "owner_membership": workspace.memberships.filter(user=workspace.owner).select_related("user").first(),
         "memberships": workspace.memberships.exclude(user=workspace.owner).select_related("user"),
         "can_remove_access": request.user.id == workspace.owner_id,
-        "can_transfer_owner": request.user.is_superuser,
+        "can_transfer_owner": _is_server_super_admin(request.user),
     })
 
 
 @login_required
 @transaction.atomic
 def workspace_transfer_owner(request, workspace_id):
-    if request.method != "POST" or not request.user.is_superuser:
+    if request.method != "POST" or not _is_server_super_admin(request.user):
         return HttpResponseForbidden("Server super administrator access is required.")
     workspace = get_object_or_404(Workspace.objects.select_for_update().select_related("owner"), id=workspace_id)
     email = request.POST.get("email", "").strip().lower()
@@ -1689,9 +1696,10 @@ def project_access(request, project_id):
     project = get_object_or_404(accessible_projects(request.user).select_related("workspace"), id=project_id)
     if not has_project_capability(request.user, project, "manage_project"):
         return HttpResponseForbidden("Full control permission is required.")
-    form = ProjectMembershipForm(request.POST or None, project=project)
+    action = request.POST.get("action", "save") if request.method == "POST" else "save"
+    form = ProjectMembershipForm(request.POST if action == "save" else None, project=project)
+    bulk_form = ProjectBulkMembershipForm(request.POST if action == "bulk_add" else None, project=project)
     if request.method == "POST":
-        action = request.POST.get("action", "save")
         if action in {"remove", "exclude"} and request.user.id != project.workspace.owner_id:
             return HttpResponseForbidden("Only the workspace owner can remove project access.")
         if action == "remove":
@@ -1713,7 +1721,35 @@ def project_access(request, project_id):
             ProjectAccessExclusion.objects.update_or_create(project=project, user=membership.user, defaults={"revoked_by": request.user})
             messages.success(request, "Inherited access revoked for this project.")
             return redirect("studio:project_access", project_id=project.id)
-        if form.is_valid():
+        if action == "bulk_add" and bulk_form.is_valid():
+            added = 0
+            updated = 0
+            role = bulk_form.cleaned_data["role"]
+            for user in bulk_form.users:
+                existed = ProjectMembership.objects.filter(project=project, user=user, is_active=True).exists()
+                ProjectAccessExclusion.objects.filter(project=project, user=user).delete()
+                ProjectMembership.objects.update_or_create(
+                    project=project,
+                    user=user,
+                    defaults={"role": role, "is_active": True, "invited_by": request.user},
+                )
+                if existed:
+                    updated += 1
+                else:
+                    added += 1
+                    notify_access_granted(
+                        user=user,
+                        entity_name=project.title,
+                        entity_kind="project",
+                        url=request.build_absolute_uri(reverse("studio:project_detail", kwargs={"project_id": project.id})),
+                        granted_by=request.user,
+                    )
+            summary = f"Bulk access saved: {added} added, {updated} updated"
+            if bulk_form.missing_emails:
+                summary += f", {len(bulk_form.missing_emails)} not registered"
+            messages.success(request, summary)
+            return redirect("studio:project_access", project_id=project.id)
+        if action == "save" and form.is_valid():
             existed = ProjectMembership.objects.filter(project=project, user=form.user, is_active=True).exists()
             ProjectAccessExclusion.objects.filter(project=project, user=form.user).delete()
             ProjectMembership.objects.update_or_create(
@@ -1729,6 +1765,7 @@ def project_access(request, project_id):
     return render(request, "studio/project_access.html", {
         "project": project,
         "form": form,
+        "bulk_form": bulk_form,
         "memberships": project.memberships.select_related("user"),
         "inherited_memberships": inherited,
         "can_remove_access": request.user.id == project.workspace.owner_id,
@@ -2415,6 +2452,15 @@ def _asset_for_edit(request, asset_id, include_deleted=False):
     )
 
 
+def _asset_original_exists(asset):
+    if not asset.file.name:
+        return False
+    try:
+        return asset.file.storage.exists(asset.file.name)
+    except OSError:
+        return False
+
+
 def _detach_asset_display_links(asset, user):
     now = timezone.now()
     Workspace.all_objects.filter(avatar_asset=asset).update(
@@ -2517,10 +2563,30 @@ def asset_trash(request, asset_id):
 @login_required
 def asset_crop(request, asset_id):
     asset = _asset_for_edit(request, asset_id)
-    if request.method != "POST" or not has_object_capability(request.user, asset, "edit"):
+    if request.method != "POST":
         return JsonResponse({"error": "Edit permission is required."}, status=403)
     try:
         data = json.loads(request.body or b"{}")
+        attach_scope = str(data.get("attachScope") or "")
+        attach_owner_id = data.get("attachOwnerId")
+        attachment_target = None
+        attachment_permitted = False
+        if attach_scope:
+            if attach_scope not in {"workspace_avatar", "character_avatar", "episode_avatar", "project_cover"}:
+                raise ValidationError("This crop target is not supported.")
+            attachment_target = _asset_attachment_target(request.user, attach_scope, attach_owner_id)
+            if attachment_target is None:
+                raise ValidationError("The crop target is not available.")
+            owner, project, workspace = attachment_target
+            if workspace.id != asset.workspace_id:
+                raise ValidationError("The image and crop target must belong to the same workspace.")
+            attachment_permitted = (
+                has_capability(request.user, owner, "manage_members")
+                if attach_scope == "workspace_avatar"
+                else has_object_capability(request.user, owner, "edit")
+            )
+        if not has_object_capability(request.user, asset, "edit") and not attachment_permitted:
+            return JsonResponse({"error": "Edit permission is required."}, status=403)
         cropped = crop_asset(
             asset=asset,
             user=request.user,
@@ -2529,6 +2595,16 @@ def asset_crop(request, asset_id):
             width=data.get("width"),
             height=data.get("height"),
         )
+        if attachment_target is not None:
+            owner, project, workspace = attachment_target
+            _apply_asset_attachment(
+                user=request.user,
+                scope=attach_scope,
+                owner=owner,
+                project=project,
+                workspace=workspace,
+                asset=cropped,
+            )
     except (json.JSONDecodeError, ValidationError) as exc:
         message = "; ".join(exc.messages) if isinstance(exc, ValidationError) else "Invalid crop request."
         return JsonResponse({"error": message}, status=400)
@@ -2536,6 +2612,9 @@ def asset_crop(request, asset_id):
         "id": str(cropped.id),
         "viewUrl": reverse("studio_api:asset_view", kwargs={"asset_id": cropped.id}),
         "thumbnailUrl": reverse("studio_api:asset_thumbnail", kwargs={"asset_id": cropped.id}),
+        "attached": bool(attachment_target),
+        "attachScope": attach_scope,
+        "attachOwnerId": str(attach_owner_id or ""),
     }, status=201)
 
 
@@ -2687,6 +2766,11 @@ def asset_purge(request, asset_id):
     asset = _asset_for_edit(request, asset_id, include_deleted=True)
     if request.method != "POST" or not has_object_capability(request.user, asset, "edit"):
         return HttpResponseForbidden("Edit permission is required.")
+    if not _asset_original_exists(asset):
+        _detach_asset_display_links(asset, request.user)
+        purge_asset(asset=asset, user=request.user)
+        messages.warning(request, "The missing file record was removed from Recycle Bin")
+        return redirect("studio:workspace_recycle_bin", workspace_id=asset.workspace_id)
     try:
         _detach_asset_display_links(asset, request.user)
         purge_asset(asset=asset, user=request.user)
@@ -2710,12 +2794,20 @@ def project_image_trash(request, project_id):
 @login_required
 def workspace_recycle_bin(request, workspace_id):
     workspace = get_object_or_404(accessible_workspaces(request.user), id=workspace_id)
-    assets = Asset.all_objects.filter(
+    candidates = list(Asset.all_objects.filter(
         workspace=workspace, deleted_at__isnull=False, purged_at__isnull=True,
-    ).select_related("project", "scene", "character").order_by("-deleted_at")
+    ).select_related("project", "scene", "character").order_by("-deleted_at"))
+    can_edit = has_capability(request.user, workspace, "edit")
+    assets = []
+    for asset in candidates:
+        if _asset_original_exists(asset):
+            assets.append(asset)
+        elif can_edit:
+            _detach_asset_display_links(asset, request.user)
+            purge_asset(asset=asset, user=request.user)
     return render(request, "studio/workspace_recycle_bin.html", {
         "workspace": workspace, "assets": assets,
-        "can_edit": has_capability(request.user, workspace, "edit"),
+        "can_edit": can_edit,
     })
 
 
@@ -3200,11 +3292,21 @@ def trashed_asset_file(request, asset_id, thumbnail=False):
         ),
         id=asset_id,
     )
-    field = asset.thumbnail if thumbnail and asset.thumbnail.name else asset.file
+    field = asset.file
+    if thumbnail and asset.thumbnail.name:
+        try:
+            if asset.thumbnail.storage.exists(asset.thumbnail.name):
+                field = asset.thumbnail
+        except OSError:
+            pass
     if not field.name:
         raise Http404("File not found.")
+    try:
+        response = FileResponse(field.open("rb"), content_type="image/jpeg" if field == asset.thumbnail else asset.content_type)
+    except (FileNotFoundError, OSError) as exc:
+        raise Http404("File not found.") from exc
     audit(workspace=asset.workspace, actor=request.user, action="ASSET_TRASH_VIEW", instance=asset)
-    return FileResponse(field.open("rb"), content_type="image/jpeg" if thumbnail else asset.content_type)
+    return response
 
 @login_required
 def docx_roundtrip(request, job_id):
@@ -3561,10 +3663,9 @@ def prompt_image_jobs(request, prompt_id):
 @login_required
 def image_generation_job_status(request, job_id):
     job = get_object_or_404(
-        ImageGenerationJob.objects.select_related("result_asset", "model_profile").filter(
+        ImageGenerationJob.objects.select_related("result_asset", "model_profile", "requested_by").filter(
             Q(project__in=accessible_projects(request.user))
             | Q(prompt__scene__episode__project__in=accessible_projects(request.user)),
-            requested_by=request.user,
         ).distinct(),
         id=job_id,
     )
@@ -3572,6 +3673,21 @@ def image_generation_job_status(request, job_id):
 
 
 def _image_generation_job_payload(job):
+    reference_map = {
+        str(asset.id): asset
+        for asset in Asset.objects.filter(id__in=job.reference_asset_ids)
+    }
+    reference_images = []
+    for asset_id in job.reference_asset_ids:
+        asset = reference_map.get(str(asset_id))
+        if asset is None:
+            continue
+        reference_images.append({
+            "assetId": str(asset.id),
+            "name": asset.original_filename,
+            "viewUrl": reverse("studio_api:asset_view", kwargs={"asset_id": asset.id}),
+            "thumbnailUrl": reverse("studio_api:asset_thumbnail", kwargs={"asset_id": asset.id}),
+        })
     payload = {
         "jobId": str(job.id),
         "status": job.status,
@@ -3580,6 +3696,9 @@ def _image_generation_job_payload(job):
         "settings": job.options,
         "error": job.error_message,
         "createdAt": job.created_at.isoformat(),
+        "requestPrompt": job.request_prompt,
+        "requestedBy": job.requested_by.get_full_name() or job.requested_by.username,
+        "referenceImages": reference_images,
         "startedAt": job.started_at.isoformat() if job.started_at else None,
         "finishedAt": job.finished_at.isoformat() if job.finished_at else None,
         "statusUrl": reverse("studio:image_generation_job_status", kwargs={"job_id": job.id}),
@@ -3602,10 +3721,10 @@ def project_image_generation(request, project_id):
     if not has_project_capability(request.user, project, "use_ai") or not user_has_ai_access(request.user):
         return HttpResponseForbidden("AI access is not enabled for this account.")
     project_assets, workspace_assets = _picker_assets(request.user, project)
-    jobs = ImageGenerationJob.objects.select_related("result_asset", "model_profile").filter(
+    jobs = ImageGenerationJob.objects.select_related("result_asset", "model_profile", "requested_by").filter(
         project=project,
-        requested_by=request.user,
-    )[:25]
+        prompt__isnull=True,
+    )[:100]
     return render(request, "studio/project_image_generation.html", {
         "project": project,
         "project_assets": project_assets,
@@ -3694,10 +3813,10 @@ def project_generate_image(request, project_id):
 @login_required
 def project_image_jobs(request, project_id):
     project = get_object_or_404(accessible_projects(request.user), id=project_id)
-    jobs = ImageGenerationJob.objects.select_related("result_asset", "model_profile").filter(
+    jobs = ImageGenerationJob.objects.select_related("result_asset", "model_profile", "requested_by").filter(
         project=project,
-        requested_by=request.user,
-    )[:25]
+        prompt__isnull=True,
+    )[:100]
     return JsonResponse({"jobs": [_image_generation_job_payload(job) for job in jobs]})
 
 
