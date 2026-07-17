@@ -118,6 +118,10 @@ def user_for_google_claims(claims: dict):
 
 
 class StagingSocialAccountAdapter(DefaultSocialAccountAdapter):
+    def is_open_for_signup(self, request, sociallogin):
+        # pre_social_login enforces the verified-email allowlist before a new user is saved.
+        return settings.GOOGLE_OAUTH_ENABLED and sociallogin.account.provider == "google"
+
     def pre_social_login(self, request, sociallogin):
         if sociallogin.account.provider != "google":
             return

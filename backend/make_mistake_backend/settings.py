@@ -101,6 +101,8 @@ GOOGLE_OAUTH_ALLOWED_EMAILS = [value.lower() for value in env_list("GOOGLE_OAUTH
 GOOGLE_OAUTH_ALLOWED_SUBS = env_list("GOOGLE_OAUTH_ALLOWED_SUBS", [])
 PUBLIC_SIGNUP_ENABLED = env_bool("PUBLIC_SIGNUP_ENABLED", False)
 REGISTRATION_ALLOWLIST_ENABLED = env_bool("REGISTRATION_ALLOWLIST_ENABLED", True)
+REGISTRATION_EMAIL_VERIFICATION_REQUIRED = env_bool("REGISTRATION_EMAIL_VERIFICATION_REQUIRED", False)
+PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "https://ml-staging-api.lexaailabs.com").rstrip("/")
 LOGIN_URL = "/login/"
 LOGIN_REDIRECT_URL = "/account/"
 LOGOUT_REDIRECT_URL = "/login/"
@@ -111,6 +113,7 @@ SOCIALACCOUNT_EMAIL_VERIFICATION = "none"
 SOCIALACCOUNT_AUTO_SIGNUP = True
 SOCIALACCOUNT_STORE_TOKENS = False
 SOCIALACCOUNT_ADAPTER = "lessons.social_auth.StagingSocialAccountAdapter"
+ACCOUNT_ADAPTER = "lessons.account_adapter.ClosedAllauthSignupAdapter"
 SITE_ID = 1
 
 
@@ -250,7 +253,13 @@ EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
 EMAIL_USE_TLS = env_bool("EMAIL_USE_TLS", False)
 EMAIL_USE_SSL = env_bool("EMAIL_USE_SSL", False)
+if EMAIL_USE_TLS and EMAIL_USE_SSL:
+    raise ImproperlyConfigured("EMAIL_USE_TLS and EMAIL_USE_SSL cannot both be enabled.")
 DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "Lexamora Studio <noreply@lexaailabs.com>")
+SERVER_EMAIL = os.environ.get("SERVER_EMAIL", DEFAULT_FROM_EMAIL)
+EMAIL_TIMEOUT = max(1, int(os.environ.get("EMAIL_TIMEOUT", "15")))
+EMAIL_SUBJECT_PREFIX = os.environ.get("EMAIL_SUBJECT_PREFIX", "[MurrLex] ")
+PASSWORD_RESET_TIMEOUT = max(60, int(os.environ.get("EMAIL_VERIFICATION_TIMEOUT", "86400")))
 
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SECURE_SSL_REDIRECT = env_bool("SECURE_SSL_REDIRECT", not DEBUG)

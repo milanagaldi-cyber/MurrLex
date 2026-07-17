@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+APP_DIR="/opt/MurrLex"
+ENV_FILE="${APP_DIR}/.env"
+PYTHON="${APP_DIR}/backend/.venv/bin/python"
+
+[[ "${EUID}" -eq 0 ]] || { echo "Run through sudo." >&2; exit 1; }
+[[ -f "${ENV_FILE}" ]] || { echo "${ENV_FILE} does not exist." >&2; exit 1; }
+
+set_env() {
+  local key="$1" value="$2" tmp found=0 line
+  [[ "${value}" != *$'\n'* && "${value}" != *$'\r'* ]] || { echo "Multiline values are not supported." >&2; exit 1; }
+  tmp="$(mktemp)"
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    if [[ "${line}" == "${key}="* ]]; then
+      printf '%s=%s\n' "${key}" "${value}" >>"${tmp}"
+      found=1
+    else
+      printf '%s\n' "${line}" >>"${tmp}"
+    fi
+  done <"${ENV_FILE}"
+  [[ "${found}" -eq 1 ]] || printf '%s=%s\n' "${key}" "${value}" >>"${tmp}"
+  install -o root -g root -m 0600 "${tmp}" "${ENV_FILE}"
+  rm -f "${tmp}"
+}
+
+case "${1:-}" in
+  setup)
+    read -r -p "SMTP host (for example smtp.gmail.com): " host
+    read -r -p "SMTP username/email: " username
+    read -r -s -p "SMTP password or app password: " password
+    printf '\n'
+    read -r -p "From address (for example MurrLex <mail@example.com>): " from
+    read -r -p "Send the test message to: " recipient
+    [[ -n "${host}" && -n "${username}" && -n "${password}" && -n "${from}" && -n "${recipient}" ]] || {
+      echo "All five values are required." >&2
+      exit 1
+    }
+    cp -a "${ENV_FILE}" "${ENV_FILE}.smtp-backup-$(date -u +%Y%m%dT%H%M%SZ)"
+    set_env EMAIL_BACKEND django.core.mail.backends.smtp.EmailBackend
+    set_env EMAIL_HOST "${host}"
+    set_env EMAIL_PORT 587
+    set_env EMAIL_HOST_USER "${username}"
+    set_env EMAIL_HOST_PASSWORD "${password}"
+    set_env EMAIL_USE_TLS true
+    set_env EMAIL_USE_SSL false
+    set_env DEFAULT_FROM_EMAIL "${from}"
+    set_env SERVER_EMAIL "${from}"
+    set_env PUBLIC_BASE_URL https://ml-staging-api.lexaailabs.com
+    set_env REGISTRATION_EMAIL_VERIFICATION_REQUIRED false
+    cd "${APP_DIR}/backend"
+    "${PYTHON}" manage.py check_smtp --send-to "${recipient}"
+    set_env REGISTRATION_EMAIL_VERIFICATION_REQUIRED true
+    systemctl restart murrlex-backend.service
+    systemctl is-active --quiet murrlex-backend.service
+    echo "SMTP works and registration email verification is now enabled."
+    ;;
+  check)
+    cd "${APP_DIR}/backend"
+    if [[ -n "${2:-}" ]]; then
+      "${PYTHON}" manage.py check_smtp --send-to "$2"
+    else
+      "${PYTHON}" manage.py check_smtp
+    fi
+    ;;
+  disable)
+    set_env REGISTRATION_EMAIL_VERIFICATION_REQUIRED false
+    systemctl restart murrlex-backend.service
+    echo "Registration email verification disabled. SMTP credentials were kept."
+    ;;
+  *)
+    echo "Usage: sudo murrlex-smtp setup | check [EMAIL] | disable" >&2
+    exit 1
+    ;;
+esac

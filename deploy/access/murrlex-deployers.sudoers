@@ -1,0 +1,1 @@
+%murrlex-deployers ALL=(root) NOPASSWD: /usr/local/sbin/murrlex-deploy

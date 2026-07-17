@@ -43,6 +43,16 @@ urlpatterns = [
     path("admin/premium-control/", admin.site.admin_view(lesson_views.premium_control), name="premium_control"),
     path("admin/", admin.site.urls),
     path("register/", lesson_views.register, name="register"),
+    path(
+        "register/verification-sent/",
+        lesson_views.registration_verification_sent,
+        name="registration_verification_sent",
+    ),
+    path(
+        "register/verify/<uidb64>/<token>/",
+        lesson_views.verify_registration_email,
+        name="verify_registration_email",
+    ),
     path("account/", lesson_views.account, name="account"),
     path("account/settings/", lesson_views.account_settings, name="account_settings"),
     path("account/provider-keys/", lesson_views.provider_credentials, name="provider_credentials"),

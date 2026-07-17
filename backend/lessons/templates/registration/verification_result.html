@@ -1,0 +1,23 @@
+{% extends "lessons/public_base.html" %}
+
+{% block title %}Email verification | MurrLex{% endblock %}
+{% block body_class %}auth-page{% endblock %}
+
+{% block body %}
+<main class="auth-card panel">
+    <div class="auth-logo">
+        <a class="brand" href="{% url 'home' %}">
+            <span class="brand-mark">ML</span>
+            <span>MurrLex Server</span>
+        </a>
+    </div>
+    {% if verified_user %}
+        <h1>Email confirmed</h1>
+        <p>Your account is active. You can now log in.</p>
+    {% else %}
+        <h1>Link is not valid</h1>
+        <p>The activation link is invalid, expired, or has already been used.</p>
+    {% endif %}
+    <a class="button full" href="{% url 'login' %}">Go to login</a>
+</main>
+{% endblock %}

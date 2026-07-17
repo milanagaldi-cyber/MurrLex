@@ -1,5 +1,6 @@
 import base64
 import json
+import logging
 import os
 import uuid
 
@@ -8,6 +9,7 @@ from django.contrib import admin
 from django.contrib import messages
 from django.contrib.auth import get_user_model, login
 from django.contrib.auth.decorators import login_required
+from django.db import transaction
 from django.http import HttpResponse, HttpResponseForbidden, JsonResponse
 from django.core.paginator import Paginator
 from django.db.models import Q
@@ -28,6 +30,7 @@ from .forms import (
     TranslationForm,
 )
 from .audit import record_audit_event
+from .email_verification import activate_from_token, send_registration_verification
 from .models import Card, CreditLedger, ImportLog, Lesson, ProviderCredential, Subscription, SubscriptionPlan, UserApiAccess
 from .services import LessonImportError, import_lesson_payload, log_failed_import
 from .ai_gateway import ProviderError, recognize_image, run_text, synthesize_elevenlabs, synthesize_openai, transcribe
@@ -48,6 +51,9 @@ from .sync_service import (
     merge_mobile_lessons,
     user_lessons_payload,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 @require_http_methods(["GET"])
@@ -150,14 +156,38 @@ def register(request):
     if request.method == "POST":
         form = PublicRegistrationForm(request.POST)
         if form.is_valid():
-            user = form.save()
-            login(request, user, backend="django.contrib.auth.backends.ModelBackend")
-            messages.success(request, "Your account has been created.")
-            return redirect("account")
+            if settings.REGISTRATION_EMAIL_VERIFICATION_REQUIRED:
+                try:
+                    with transaction.atomic():
+                        user = form.save(commit=False)
+                        user.is_active = False
+                        user.save()
+                        send_registration_verification(user)
+                except Exception:
+                    logger.exception("Registration verification email could not be sent")
+                    form.add_error(None, "We could not send the verification email. Please try again later.")
+                else:
+                    return redirect("registration_verification_sent")
+            else:
+                user = form.save()
+                login(request, user, backend="django.contrib.auth.backends.ModelBackend")
+                messages.success(request, "Your account has been created.")
+                return redirect("account")
     else:
         form = PublicRegistrationForm()
 
     return render(request, "registration/register.html", {"form": form})
+
+
+@require_http_methods(["GET"])
+def registration_verification_sent(request):
+    return render(request, "registration/verification_sent.html")
+
+
+@require_http_methods(["GET"])
+def verify_registration_email(request, uidb64, token):
+    user = activate_from_token(uidb64, token)
+    return render(request, "registration/verification_result.html", {"verified_user": user})
 
 
 @login_required
@@ -663,6 +693,21 @@ def api_register(request):
             {"status": "error", "error": "Registration details are invalid.", "fields": form.errors.get_json_data()},
             status=400,
         )
+    if settings.REGISTRATION_EMAIL_VERIFICATION_REQUIRED:
+        try:
+            with transaction.atomic():
+                user = form.save(commit=False)
+                user.is_active = False
+                user.save()
+                send_registration_verification(user)
+        except Exception:
+            logger.exception("Mobile registration verification email could not be sent")
+            return json_error("Verification email could not be sent. Try again later.", 503)
+        return JsonResponse(
+            {"status": "verification_required", "detail": "Check your email to activate the account."},
+            status=202,
+        )
+
     user = form.save()
     session, refresh_token = create_session(user, str(payload.get("deviceName", "")))
     return JsonResponse(token_payload(user, session, refresh_token), status=201)

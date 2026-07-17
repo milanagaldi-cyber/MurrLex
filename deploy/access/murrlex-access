@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+DEPLOY_GROUP="murrlex-deployers"
+OWNER_GROUP="murrlex-owners"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  sudo murrlex-access add USER deploy
+  sudo murrlex-access add USER owner
+  sudo murrlex-access disable USER
+  sudo murrlex-access list
+
+The add command reads one public SSH key from standard input or prompts for it.
+EOF
+}
+
+valid_user() { [[ "$1" =~ ^[a-z_][a-z0-9_-]{0,30}$ ]]; }
+read_key() {
+  local key
+  if [[ -t 0 ]]; then
+    read -r -p "Paste the public SSH key: " key
+  else
+    IFS= read -r key
+  fi
+  [[ "${key}" =~ ^ssh-(ed25519|rsa)[[:space:]]+[A-Za-z0-9+/=]+([[:space:]].*)?$ ]] || {
+    echo "Only a complete ssh-ed25519 or ssh-rsa public key is accepted." >&2
+    exit 1
+  }
+  printf '%s\n' "${key}"
+}
+
+[[ "${EUID}" -eq 0 ]] || { echo "Run through sudo." >&2; exit 1; }
+command="${1:-}"
+
+case "${command}" in
+  add)
+    username="${2:-}"
+    role="${3:-}"
+    valid_user "${username}" || { echo "Invalid Linux username." >&2; exit 1; }
+    [[ "${role}" == "deploy" || "${role}" == "owner" ]] || { usage; exit 1; }
+    key="$(read_key)"
+    id "${username}" >/dev/null 2>&1 || useradd --create-home --shell /bin/bash "${username}"
+    usermod --lock "${username}"
+    install -d -o "${username}" -g "${username}" -m 0700 "/home/${username}/.ssh"
+    key_file="/home/${username}/.ssh/authorized_keys"
+    if [[ "${role}" == "deploy" ]]; then
+      gpasswd -d "${username}" "${OWNER_GROUP}" >/dev/null 2>&1 || true
+      usermod -aG "${DEPLOY_GROUP}" "${username}"
+      entry="restrict,command=\"/usr/local/sbin/murrlex-deploy-key\" ${key}"
+    else
+      gpasswd -d "${username}" "${DEPLOY_GROUP}" >/dev/null 2>&1 || true
+      usermod -aG "${OWNER_GROUP}" "${username}"
+      entry="${key}"
+    fi
+    printf '%s\n' "${entry}" >"${key_file}"
+    chown "${username}:${username}" "${key_file}"
+    chmod 0600 "${key_file}"
+    echo "${username} added with role ${role}. Password login remains locked."
+    ;;
+  disable)
+    username="${2:-}"
+    valid_user "${username}" || { echo "Invalid Linux username." >&2; exit 1; }
+    id "${username}" >/dev/null 2>&1 || { echo "User does not exist." >&2; exit 1; }
+    usermod --lock "${username}"
+    : >"/home/${username}/.ssh/authorized_keys"
+    echo "${username} disabled; the account and audit history remain."
+    ;;
+  list)
+    echo "Owners:"
+    getent group "${OWNER_GROUP}" | cut -d: -f4
+    echo "Deploy only:"
+    getent group "${DEPLOY_GROUP}" | cut -d: -f4
+    ;;
+  *) usage; exit 1 ;;
+esac

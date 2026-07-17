@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+APP_DIR="/opt/MurrLex"
+BRANCH="Server_Main"
+BACKUP_DIR="/var/backups/murrlex"
+LOCK_FILE="/run/lock/murrlex-deploy.lock"
+
+if [[ "${EUID}" -ne 0 ]]; then
+  echo "murrlex-deploy must run through sudo." >&2
+  exit 1
+fi
+
+exec 9>"${LOCK_FILE}"
+if ! flock -n 9; then
+  echo "Another MurrLex deployment is already running." >&2
+  exit 1
+fi
+
+log() { printf '[murrlex-deploy] %s\n' "$*"; }
+cd "${APP_DIR}"
+
+current_branch="$(git branch --show-current)"
+[[ "${current_branch}" == "${BRANCH}" ]] || { echo "Expected ${BRANCH}, found ${current_branch}." >&2; exit 1; }
+[[ -z "$(git status --porcelain --untracked-files=no)" ]] || { echo "Tracked server files have local changes." >&2; exit 1; }
+
+old_revision="$(git rev-parse HEAD)"
+log "fetching ${BRANCH} (current ${old_revision:0:12})"
+git fetch origin "${BRANCH}"
+git merge --ff-only "origin/${BRANCH}"
+new_revision="$(git rev-parse HEAD)"
+
+install -d -m 0700 "${BACKUP_DIR}"
+if [[ -f backend/db.sqlite3 ]]; then
+  backup="${BACKUP_DIR}/db-$(date -u +%Y%m%dT%H%M%SZ)-${old_revision:0:12}.sqlite3"
+  if command -v sqlite3 >/dev/null 2>&1; then
+    sqlite3 backend/db.sqlite3 ".backup '${backup}'"
+  else
+    cp --preserve=mode,timestamps backend/db.sqlite3 "${backup}"
+  fi
+  log "database backup created"
+fi
+
+cd backend
+./.venv/bin/python -m pip install -r requirements.txt
+./.venv/bin/python manage.py migrate --noinput
+./.venv/bin/python manage.py bootstrap_roles
+./.venv/bin/python manage.py collectstatic --noinput
+DEBUG=true GOOGLE_OAUTH_ENABLED=false GOOGLE_OAUTH_CLIENT_ID= GOOGLE_OAUTH_CLIENT_SECRET= \
+  ./.venv/bin/python manage.py test
+
+install -o root -g root -m 0644 "${APP_DIR}/deploy/systemd/murrlex-credit-refill.service" /etc/systemd/system/murrlex-credit-refill.service
+install -o root -g root -m 0644 "${APP_DIR}/deploy/systemd/murrlex-credit-refill.timer" /etc/systemd/system/murrlex-credit-refill.timer
+systemctl daemon-reload
+systemctl enable --now murrlex-credit-refill.timer
+
+systemctl restart murrlex-backend.service
+systemctl is-active --quiet murrlex-backend.service
+systemctl restart murrlex-image-worker.service
+systemctl is-active --quiet murrlex-image-worker.service
+curl --fail --silent --show-error --max-time 10 http://127.0.0.1:8001/api/health >/dev/null
+
+logger -t murrlex-deploy "success actor=${SUDO_USER:-root} old=${old_revision} new=${new_revision}"
+log "success ${old_revision:0:12} -> ${new_revision:0:12}"
