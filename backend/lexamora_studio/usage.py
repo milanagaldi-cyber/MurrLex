@@ -3,7 +3,7 @@ from django.db.models import Sum
 from lessons.models import CreditLedger, Subscription
 from lessons.premium import apply_due_refill
 
-from .models import AiUsageLog, UserTokenQuota
+from .models import AiUsageLog, StudioUserPreference, UserTokenQuota
 
 
 DEFAULT_TOKEN_ALLOWANCE = 1_000_000
@@ -39,6 +39,9 @@ def token_summary(user):
 
 
 def require_token_quota(user):
+    preference = StudioUserPreference.objects.filter(user=user).only("ai_enabled").first()
+    if preference is not None and not preference.ai_enabled:
+        raise TokenQuotaExceeded("AI use is paused in your Lexamora Studio header")
     summary = token_summary(user)
     if summary["frozen"]:
         raise TokenQuotaExceeded("Your AI credits are temporarily frozen. Contact support.")

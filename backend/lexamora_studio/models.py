@@ -362,8 +362,10 @@ class StudioUserPreference(models.Model):
         related_name="studio_preferences",
     )
     speech_language = models.CharField(max_length=16, default="en-US")
+    translation_language = models.CharField(max_length=16, default="EN")
     speech_continuous = models.BooleanField(default=False)
     speech_interim = models.BooleanField(default=True)
+    ai_enabled = models.BooleanField(default=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):

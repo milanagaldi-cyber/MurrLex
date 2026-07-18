@@ -6,6 +6,7 @@ app_name = "studio"
 
 urlpatterns = [
     path("preferences/speech/", views.speech_preferences, name="speech_preferences"),
+    path("preferences/ai-toggle/", views.ai_usage_toggle, name="ai_usage_toggle"),
     path("", views.dashboard, name="dashboard"),
     path("settings/", views.studio_settings, name="settings"),
     path("settings/text-models/quick-create/", views.text_model_quick_create, name="text_model_quick_create"),

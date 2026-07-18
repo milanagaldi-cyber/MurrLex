@@ -3658,18 +3658,33 @@ def speech_preferences(request):
     if language not in allowed_languages:
         return JsonResponse({"error": "Choose a supported recognition language."}, status=400)
     preference, _ = StudioUserPreference.objects.get_or_create(user=request.user)
+    translation_language = str(payload.get("translationLanguage") or preference.translation_language or "EN").upper()
+    allowed_translation_languages = {code for code, _label in PROMPT_LANGUAGES}
+    if translation_language not in allowed_translation_languages:
+        return JsonResponse({"error": "Choose a supported translation language."}, status=400)
     preference.speech_language = language
+    preference.translation_language = translation_language
     preference.speech_continuous = bool(payload.get("continuous", False))
     preference.speech_interim = bool(payload.get("interim", True))
     preference.save(update_fields=[
-        "speech_language", "speech_continuous", "speech_interim", "updated_at",
+        "speech_language", "translation_language", "speech_continuous", "speech_interim", "updated_at",
     ])
     return JsonResponse({
         "language": preference.speech_language,
+        "translationLanguage": preference.translation_language,
         "continuous": preference.speech_continuous,
         "interim": preference.speech_interim,
     })
 
+
+@login_required
+def ai_usage_toggle(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "POST is required."}, status=405)
+    preference, _ = StudioUserPreference.objects.get_or_create(user=request.user)
+    preference.ai_enabled = not preference.ai_enabled
+    preference.save(update_fields=["ai_enabled", "updated_at"])
+    return JsonResponse({"enabled": preference.ai_enabled})
 
 def _prompt_payload(prompt):
     versions = [

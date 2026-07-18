@@ -3614,7 +3614,7 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.client.force_login(self.owner)
         response = self.client.post(
             "/studio/preferences/speech/",
-            data=json.dumps({"language": "pl-PL", "continuous": True, "interim": False}),
+            data=json.dumps({"language": "pl-PL", "translationLanguage": "BY", "continuous": True, "interim": False}),
             content_type="application/json",
         )
         self.assertEqual(response.status_code, 200, response.content)
@@ -3622,6 +3622,18 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertEqual(preference.speech_language, "pl-PL")
         self.assertTrue(preference.speech_continuous)
         self.assertFalse(preference.speech_interim)
+        self.assertEqual(preference.translation_language, "BY")
+
+    def test_user_can_pause_and_resume_ai_usage(self):
+        from .models import StudioUserPreference
+
+        self.client.force_login(self.owner)
+        paused = self.client.post("/studio/preferences/ai-toggle/")
+        self.assertEqual(paused.status_code, 200, paused.content)
+        self.assertFalse(paused.json()["enabled"])
+        self.assertFalse(StudioUserPreference.objects.get(user=self.owner).ai_enabled)
+        resumed = self.client.post("/studio/preferences/ai-toggle/")
+        self.assertTrue(resumed.json()["enabled"])
 
     @patch("lexamora_studio.views.user_has_ai_access", return_value=True)
     def test_video_generation_ignores_image_only_options(self, _has_access):
@@ -3784,7 +3796,10 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertContains(response, "data-project-generation-quantity")
         self.assertContains(response, "data-max-outputs")
         self.assertContains(response, "data-generation-key=\"video-size\"")
-        self.assertContains(response, "data-video-download")
+        self.assertContains(response, "Generated photos")
+        self.assertContains(response, "Generated videos")
+        self.assertContains(response, "data-video-preview-dialog")
+        self.assertContains(response, 'data-library-type="VIDEO"')
         self.assertContains(response, "data-composer-undo")
         self.assertContains(response, "data-composer-redo")
         self.assertContains(response, "data-generation-reference-filter")

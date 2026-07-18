@@ -67,6 +67,7 @@ class ProjectSettingsForm(forms.ModelForm):
         ("images", "Images"),
         ("characters", "Characters"),
         ("episodes", "Episodes"),
+        ("generated_videos", "Generated videos"),
     )
     hidden_sections = forms.MultipleChoiceField(
         choices=SECTION_CHOICES,

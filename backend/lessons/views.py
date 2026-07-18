@@ -460,7 +460,7 @@ def premium(request):
     from lexamora_studio.usage import token_summary
 
     if not request.user.is_authenticated:
-        return render(request, "registration/premium.html", {"premium_public": True})
+        return render(request, "registration/premium.html", {"premium_public": True, "premium_base_template": "lessons/base.html"})
     subscription, _ = Subscription.objects.select_related("plan").get_or_create(user=request.user)
     logs = AiUsageLog.objects.filter(user=request.user).select_related("workspace")
     model = request.GET.get("model", "").strip()
@@ -485,6 +485,7 @@ def premium(request):
         "selected_model": model,
         "selected_action": action,
         "per_page": per_page,
+        "premium_base_template": "studio/base.html",
     })
 
 

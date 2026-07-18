@@ -13,7 +13,9 @@ def studio_token_context(request):
         )[:5],
         "studio_speech_preferences": {
             "language": preference.speech_language if preference else "",
+            "translation_language": preference.translation_language if preference else "EN",
             "continuous": preference.speech_continuous if preference else False,
             "interim": preference.speech_interim if preference else True,
         },
+        "studio_ai_enabled": preference.ai_enabled if preference else True,
     }
