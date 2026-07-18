@@ -13,11 +13,15 @@ android {
         applicationId = "com.lexaprograms.polishcards"
         minSdk = 34
         targetSdk = 35
-        versionCode = 194
-        versionName = "0.93"
+        versionCode = 195
+        versionName = "0.94-rive-sort"
     }
 
     buildTypes {
+        debug {
+            applicationIdSuffix = ".rivesort"
+            versionNameSuffix = "-debug"
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(
@@ -39,6 +43,15 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "x86_64")
+            isUniversalApk = false
+        }
     }
 }
 

@@ -303,7 +303,8 @@ private fun List<CatDialogMessage>.toCatChatMessages(): List<CatChatMessage> {
 
 private enum class LanguageGameMode {
     RIVE_RUNNER_LAB,
-    RIVE_LETTER_BLOCKS
+    RIVE_LETTER_BLOCKS,
+    RIVE_CHARACTER_SORT
 }
 
 private enum class RiveCatAction {
@@ -1155,7 +1156,8 @@ val animationScreenOpen = showAnimationCatalog || showOriginalAnimation
 var activeLanguageGame by remember { mutableStateOf<LanguageGameMode?>(null) }
 val fullScreenGameOpen = activeLanguageGame in setOf(
     LanguageGameMode.RIVE_RUNNER_LAB,
-    LanguageGameMode.RIVE_LETTER_BLOCKS
+    LanguageGameMode.RIVE_LETTER_BLOCKS,
+    LanguageGameMode.RIVE_CHARACTER_SORT
 )
 var catChatInput by remember { mutableStateOf("") }
 var catChatBasicLanguage by remember { mutableStateOf(state.activeVocabularySourceLanguage) }
@@ -2758,7 +2760,8 @@ var catDialogId by remember { mutableStateOf<String?>(null) }
     }
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
-        topBar = {
+        topBar = topBar@{
+            if (activeLanguageGame == LanguageGameMode.RIVE_CHARACTER_SORT) return@topBar
             CenterAlignedTopAppBar(
                 navigationIcon = {
                     if (animationScreenOpen || fullScreenGameOpen || state.screen != AppScreen.CATALOG) {
@@ -2792,6 +2795,7 @@ var catDialogId by remember { mutableStateOf<String?>(null) }
                             when (activeLanguageGame) {
                                 LanguageGameMode.RIVE_RUNNER_LAB -> "Rive Runner Lab"
                                 LanguageGameMode.RIVE_LETTER_BLOCKS -> "Rive Letter Blocks"
+                                LanguageGameMode.RIVE_CHARACTER_SORT -> "Rive Character Sort"
                                 null -> "MurrLex"
                             },
                             fontWeight = FontWeight.SemiBold,
@@ -3228,6 +3232,8 @@ var catDialogId by remember { mutableStateOf<String?>(null) }
                     onSpeak = { text, languageTag -> speakText(text, languageTag) },
                     onDismiss = { activeLanguageGame = null }
                 )
+            } else if (activeLanguageGame == LanguageGameMode.RIVE_CHARACTER_SORT) {
+                RiveCharacterSortScreen(onDismiss = { activeLanguageGame = null })
             } else if (showOriginalAnimation) {
                 OriginalAnimationScreen(onDismiss = { showOriginalAnimation = false })
             } else if (showAnimationCatalog) {
@@ -3739,6 +3745,13 @@ private fun MurrLexTitleRow(
                             GingerFluffyCatMark(modifier = Modifier.size(24.dp))
                         },
                         onClick = { onStartGame(LanguageGameMode.RIVE_LETTER_BLOCKS) }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Rive Character Sort") },
+                        leadingIcon = {
+                            GingerFluffyCatMark(modifier = Modifier.size(24.dp))
+                        },
+                        onClick = { onStartGame(LanguageGameMode.RIVE_CHARACTER_SORT) }
                     )
                 }
             }
