@@ -4,6 +4,9 @@ set -Eeuo pipefail
 [[ "${EUID}" -eq 0 ]] || { echo "Run as root." >&2; exit 1; }
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
+visudo -cf "${SCRIPT_DIR}/murrlex-deployers.sudoers"
+visudo -cf "${SCRIPT_DIR}/murrlex-owners.sudoers"
+
 groupadd --force murrlex-owners
 groupadd --force murrlex-deployers
 install -o root -g root -m 0755 "${SCRIPT_DIR}/murrlex-deploy" /usr/local/sbin/murrlex-deploy
@@ -14,8 +17,6 @@ install -o root -g root -m 0440 "${SCRIPT_DIR}/murrlex-deployers.sudoers" /etc/s
 install -o root -g root -m 0440 "${SCRIPT_DIR}/murrlex-owners.sudoers" /etc/sudoers.d/murrlex-owners
 install -o root -g root -m 0644 "${SCRIPT_DIR}/90-murrlex-deployers.conf" /etc/ssh/sshd_config.d/90-murrlex-deployers.conf
 
-visudo -cf /etc/sudoers.d/murrlex-deployers
-visudo -cf /etc/sudoers.d/murrlex-owners
 sshd -t
 systemctl reload ssh.service
 echo "Access-control foundation installed. Existing root settings and authorized_keys were not changed."
