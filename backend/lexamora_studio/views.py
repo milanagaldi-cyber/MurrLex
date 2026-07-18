@@ -33,7 +33,7 @@ from .docx_imports import accept_docx_import, parse_docx
 from .docx_exports import generate_docx_export
 from .docx_roundtrip import compare_docx_export
 from .forms import AdditionalGenerationForm, AiModelProfileForm, AssetEditForm, CharacterCreateForm, CharacterForm, DialogueLineForm, DocxImportUploadForm, EpisodeForm, GenerationOutputUploadForm, ImageUploadForm, MultipleImageUploadForm, ProjectBulkMembershipForm, ProjectForm, ProjectMembershipForm, ProjectSettingsForm, ProjectUserSelectionForm, PromptBlockForm, PromptForm, RecommendedTrackForm, SceneForm, StudioTextModelForm, WorkspaceForm, WorkspaceMembershipForm, WorkspaceUserSelectionForm
-from .models import AdditionalGeneration, AiModelProfile, AiSuggestion, AiUsageLog, Asset, Character, DialogueLine, DocxImport, EmailDeliveryLog, Episode, EpisodeComic, EpisodeCover, ExportJob, GenerationOutput, ImageGenerationJob, Project, ProjectAccessExclusion, ProjectAssistantContext, ProjectMembership, Prompt, PromptBlock, RecommendedTrack, Scene, StudioTextModel, SubtitleTrack, TranslationUnit, Workspace, WorkspaceMembership
+from .models import AdditionalGeneration, AiModelProfile, AiSuggestion, AiUsageLog, Asset, Character, DialogueLine, DocxImport, EmailDeliveryLog, Episode, EpisodeComic, EpisodeCover, ExportJob, GenerationOutput, ImageGenerationJob, Project, ProjectAccessExclusion, ProjectAssistantContext, ProjectMembership, Prompt, PromptBlock, RecommendedTrack, Scene, StudioTextModel, StudioUserPreference, SubtitleTrack, TranslationUnit, Workspace, WorkspaceMembership
 from .notifications import notify_access_granted
 from .permissions import accessible_assets, accessible_projects, accessible_suggestions, accessible_workspaces, has_capability, has_object_capability, has_project_capability, is_workspace_owner_or_admin
 from .revisions import audit, record_revision
@@ -3643,6 +3643,34 @@ def _prompt_editor_context(request, project=None):
     }
 
 
+@login_required
+def speech_preferences(request):
+    if request.method != "POST":
+        return JsonResponse({"error": "POST is required."}, status=405)
+    try:
+        payload = json.loads(request.body or b"{}")
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "The speech settings are not valid JSON."}, status=400)
+    allowed_languages = {
+        "en-US", "pl-PL", "ru-RU", "be-BY", "uk-UA", "de-DE", "es-ES", "pt-PT",
+    }
+    language = str(payload.get("language") or "en-US")
+    if language not in allowed_languages:
+        return JsonResponse({"error": "Choose a supported recognition language."}, status=400)
+    preference, _ = StudioUserPreference.objects.get_or_create(user=request.user)
+    preference.speech_language = language
+    preference.speech_continuous = bool(payload.get("continuous", False))
+    preference.speech_interim = bool(payload.get("interim", True))
+    preference.save(update_fields=[
+        "speech_language", "speech_continuous", "speech_interim", "updated_at",
+    ])
+    return JsonResponse({
+        "language": preference.speech_language,
+        "continuous": preference.speech_continuous,
+        "interim": preference.speech_interim,
+    })
+
+
 def _prompt_payload(prompt):
     versions = [
         {
@@ -3944,27 +3972,33 @@ def prompt_generate_image(request, prompt_id):
     if media_model is None:
         return JsonResponse({"error": "Choose a media model in Workspace settings."}, status=400)
     defaults = media_model.defaults if isinstance(media_model.defaults, dict) else {}
+    ui_fields = set(defaults.get("ui_fields") or [])
     request_prompt = str(payload.get("prompt") or prompt.editor_content).strip()
     if not request_prompt:
         return JsonResponse({"error": "Copy a non-empty prompt into the generation request."}, status=400)
     if len(request_prompt) > settings.AI_MAX_TEXT_CHARS:
         return JsonResponse({"error": "The image prompt exceeds the server limit."}, status=400)
-    try:
-        output_compression = int(payload.get("outputCompression", defaults.get("output_compression", 100)))
-    except (TypeError, ValueError):
-        return JsonResponse({"error": "Image compression must be a number from 0 to 100."}, status=400)
+    output_compression = 100
+    if "format" in ui_fields:
+        try:
+            output_compression = int(payload.get("outputCompression", defaults.get("output_compression", 100)))
+        except (TypeError, ValueError):
+            return JsonResponse({"error": "Image compression must be a number from 0 to 100."}, status=400)
     composition = str(payload.get("compositionPreset") or "square")
     ratio_by_composition = {"story": "9:16", "portrait": "4:5", "poster": "2:3", "square": "1:1", "youtube": "16:9", "landscape": "16:9", "cinema": "21:9"}
     media_options = {
         "size": str(payload.get("size") or defaults.get("size") or "1024x1024"),
         "aspect_ratio": str(payload.get("aspectRatio") or defaults.get("aspect_ratio") or ratio_by_composition.get(composition, "1:1")),
         "composition_preset": composition,
-        "quality": str(payload.get("quality") or defaults.get("quality") or "low"),
-        "output_format": str(payload.get("outputFormat") or defaults.get("output_format") or "png"),
-        "output_compression": output_compression,
-        "background": str(payload.get("background") or defaults.get("background") or "auto"),
-        "moderation": str(payload.get("moderation") or defaults.get("moderation") or "auto"),
     }
+    optional_options = {
+        "quality": ("quality", str(payload.get("quality") or defaults.get("quality") or "low")),
+        "output_format": ("format", str(payload.get("outputFormat") or defaults.get("output_format") or "png")),
+        "output_compression": ("format", output_compression),
+        "background": ("background", str(payload.get("background") or defaults.get("background") or "auto")),
+        "moderation": ("moderation", str(payload.get("moderation") or defaults.get("moderation") or "auto")),
+    }
+    media_options.update({key: value for key, (field, value) in optional_options.items() if field in ui_fields or media_model.media_type == AiModelProfile.MediaType.IMAGE})
     max_references = max(0, min(int(defaults.get("max_references", 3)), 20))
     reference_assets = list(prompt.reference_assets.filter(content_type__startswith="image/")[:max_references])
     job = ImageGenerationJob.objects.create(
@@ -4265,10 +4299,13 @@ def project_generate_image(request, project_id):
     if not request_prompt or len(request_prompt) > settings.AI_MAX_TEXT_CHARS:
         return JsonResponse({"error": "Enter a prompt within the server text limit."}, status=400)
     defaults = media_model.defaults if isinstance(media_model.defaults, dict) else {}
-    try:
-        output_compression = int(payload.get("outputCompression", defaults.get("output_compression", 100)))
-    except (TypeError, ValueError):
-        return JsonResponse({"error": "Image compression must be a number from 0 to 100."}, status=400)
+    ui_fields = set(defaults.get("ui_fields") or [])
+    output_compression = 100
+    if "format" in ui_fields:
+        try:
+            output_compression = int(payload.get("outputCompression", defaults.get("output_compression", 100)))
+        except (TypeError, ValueError):
+            return JsonResponse({"error": "Image compression must be a number from 0 to 100."}, status=400)
     max_references = max(0, min(int(defaults.get("max_references", 3)), 20))
     reference_ids = [str(value) for value in payload.get("referenceAssetIds", [])][:max_references]
     accessible_ids = {
@@ -4285,12 +4322,15 @@ def project_generate_image(request, project_id):
         "size": str(payload.get("size") or defaults.get("size") or "1024x1024"),
         "aspect_ratio": str(payload.get("aspectRatio") or defaults.get("aspect_ratio") or ratio_by_composition.get(composition, "1:1")),
         "composition_preset": composition,
-        "quality": str(payload.get("quality") or defaults.get("quality") or "low"),
-        "output_format": str(payload.get("outputFormat") or defaults.get("output_format") or "png"),
-        "output_compression": output_compression,
-        "background": str(payload.get("background") or defaults.get("background") or "auto"),
-        "moderation": str(payload.get("moderation") or defaults.get("moderation") or "auto"),
     }
+    optional_options = {
+        "quality": ("quality", str(payload.get("quality") or defaults.get("quality") or "low")),
+        "output_format": ("format", str(payload.get("outputFormat") or defaults.get("output_format") or "png")),
+        "output_compression": ("format", output_compression),
+        "background": ("background", str(payload.get("background") or defaults.get("background") or "auto")),
+        "moderation": ("moderation", str(payload.get("moderation") or defaults.get("moderation") or "auto")),
+    }
+    media_options.update({key: value for key, (field, value) in optional_options.items() if field in ui_fields})
     job = ImageGenerationJob.objects.create(
         workspace=project.workspace,
         project=project,

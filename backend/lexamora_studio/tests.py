@@ -3608,6 +3608,56 @@ class StudioProductionPilotFeaturesTests(TestCase):
                 self.assertEqual(self.project.cover_asset_id, asset.id)
                 self.assertTrue(Asset.objects.filter(id=asset.id).exists())
 
+    def test_speech_preferences_are_saved_per_user(self):
+        from .models import StudioUserPreference
+
+        self.client.force_login(self.owner)
+        response = self.client.post(
+            "/studio/preferences/speech/",
+            data=json.dumps({"language": "pl-PL", "continuous": True, "interim": False}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        preference = StudioUserPreference.objects.get(user=self.owner)
+        self.assertEqual(preference.speech_language, "pl-PL")
+        self.assertTrue(preference.speech_continuous)
+        self.assertFalse(preference.speech_interim)
+
+    @patch("lexamora_studio.views.user_has_ai_access", return_value=True)
+    def test_video_generation_ignores_image_only_options(self, _has_access):
+        from .models import AiModelProfile, ImageGenerationJob
+
+        video_model = AiModelProfile.objects.create(
+            name="Veo capability test",
+            provider="Google",
+            model_id="veo-capability-test",
+            media_type=AiModelProfile.MediaType.VIDEO,
+            defaults={
+                "max_references": 3,
+                "max_outputs": 2,
+                "ui_fields": ["video-ratio", "video-size", "quantity"],
+            },
+        )
+        self.client.force_login(self.owner)
+        response = self.client.post(
+            f"/studio/projects/{self.project.id}/image-generation/queue/",
+            data=json.dumps({
+                "prompt": "A short vertical motion test",
+                "modelProfileId": str(video_model.id),
+                "size": "720p",
+                "aspectRatio": "9:16",
+                "quality": "high",
+                "outputFormat": "jpeg",
+                "referenceAssetIds": [],
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 202, response.content)
+        options = ImageGenerationJob.objects.get(id=response.json()["jobId"]).options
+        self.assertEqual(options["size"], "720p")
+        self.assertEqual(options["aspect_ratio"], "9:16")
+        self.assertNotIn("quality", options)
+        self.assertNotIn("output_format", options)
     @patch("lexamora_studio.views.user_has_ai_access", return_value=True)
     def test_project_generation_can_queue_selected_model(self, _has_access):
         from .models import ImageGenerationJob
@@ -3731,8 +3781,8 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertContains(response, "data-generation-composer")
         self.assertContains(response, "data-project-media-type")
         self.assertContains(response, '<option value="VIDEO">Video</option>', html=True)
-        self.assertContains(response, "data-project-video-count")
-        self.assertContains(response, "Queue one to four independent Veo generations")
+        self.assertContains(response, "data-project-generation-quantity")
+        self.assertContains(response, "data-max-outputs")
         self.assertContains(response, "data-generation-key=\"video-size\"")
         self.assertContains(response, "data-video-download")
         self.assertContains(response, "data-composer-undo")

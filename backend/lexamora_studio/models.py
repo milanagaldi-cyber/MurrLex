@@ -355,6 +355,21 @@ class StudioTextModel(models.Model):
     def __str__(self):
         return self.name
 
+class StudioUserPreference(models.Model):
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="studio_preferences",
+    )
+    speech_language = models.CharField(max_length=16, default="en-US")
+    speech_continuous = models.BooleanField(default=False)
+    speech_interim = models.BooleanField(default=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Studio preferences for {self.user}"
+
+
 
 class PromptTemplate(models.Model):
     class Scope(models.TextChoices):
