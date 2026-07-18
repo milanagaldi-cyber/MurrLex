@@ -3757,6 +3757,14 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertEqual(timeline.title, "Episode draft")
         self.assertEqual(timeline.aspect_ratio, "9:16")
         self.assertEqual(len(timeline.timeline["tracks"]), 1)
+
+    def test_movie_editor_2_is_available_to_project_users(self):
+        self.client.force_login(self.owner)
+        response = self.client.get(f"/studio/projects/{self.project.id}/movie-editor-2/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Movie Editor 2")
+        self.assertContains(response, "studio/movie-editor-2/index.html")
+
     @patch("lexamora_studio.views.user_has_ai_access", return_value=True)
     def test_project_generation_can_queue_selected_model(self, _has_access):
         from .models import ImageGenerationJob

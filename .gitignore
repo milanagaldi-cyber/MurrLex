@@ -45,3 +45,4 @@ backend/media/
 connector/.cache/
 runlogs/
 backend/private-media/
+frontend/movie-editor-2/node_modules/

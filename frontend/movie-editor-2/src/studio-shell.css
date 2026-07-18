@@ -1,0 +1,7 @@
+:root { color-scheme: dark; }
+html, body, #movie-editor-2-root { width: 100%; min-height: 100%; margin: 0; }
+body { background: #081018; }
+.lexamora-twick-shell { min-height: 760px; background: #081018; color: #f4f7fb; }
+.lexamora-twick-note { display: flex; align-items: center; gap: 9px; min-height: 38px; padding: 0 14px; border-bottom: 1px solid #26394a; background: #101c28; color: #9ab8d1; font: 600 12px/1.2 system-ui, sans-serif; }
+.lexamora-ready-dot { width: 8px; height: 8px; border-radius: 50%; background: #3ded8c; box-shadow: 0 0 0 3px rgba(61, 237, 140, .12); }
+.lexamora-twick-project { margin-left: auto; color: #f4f7fb; }

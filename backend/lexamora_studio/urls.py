@@ -122,6 +122,7 @@ urlpatterns = [
     path("projects/<uuid:project_id>/image-generation/prompt-preview/", views.project_image_prompt_preview, name="project_image_prompt_preview"),
     path("projects/<uuid:project_id>/image-generation/jobs/", views.project_image_jobs, name="project_image_jobs"),
     path("projects/<uuid:project_id>/movie-editor/", views.project_movie_editor, name="project_movie_editor"),
+    path("projects/<uuid:project_id>/movie-editor-2/", views.project_movie_editor_2, name="project_movie_editor_2"),
     path("projects/<uuid:project_id>/localized-translate/", views.localized_translate, name="localized_translate"),
     path("dialogue/<uuid:line_id>/translation-preview/", views.dialogue_translation_preview, name="dialogue_translation_preview"),
     path("episodes/<uuid:episode_id>/subtitles/", views.episode_subtitles, name="episode_subtitles"),

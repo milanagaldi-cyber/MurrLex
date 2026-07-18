@@ -4424,6 +4424,18 @@ def project_movie_editor(request, project_id):
 
 
 @login_required
+def project_movie_editor_2(request, project_id):
+    project = get_object_or_404(
+        accessible_projects(request.user).select_related("workspace", "cover_asset"),
+        id=project_id,
+    )
+    return render(request, "studio/project_movie_editor_2.html", {
+        "project": project,
+        **_project_header_context(request.user, project),
+    })
+
+
+@login_required
 def project_image_prompt_preview(request, project_id):
     project = get_object_or_404(accessible_projects(request.user).select_related("workspace"), id=project_id)
     if request.method != "POST":

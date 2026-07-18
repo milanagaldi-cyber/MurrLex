@@ -1,0 +1,13 @@
+{% extends "studio/base.html" %}
+{% load static %}
+{% block title %}{{ project.title }} / Movie Editor 2{% endblock %}
+{% block extra_head %}<style>
+.movie-editor-2-panel{padding:0;overflow:hidden}.movie-editor-2-frame{display:block;width:100%;height:calc(100vh - 190px);min-height:720px;border:0;background:#081018}
+@media(max-width:720px){.movie-editor-2-frame{height:calc(100vh - 220px);min-height:640px}}
+</style>{% endblock %}
+{% block content %}
+{% include "studio/_project_navigation.html" %}
+<section class="panel movie-editor-2-panel" aria-label="Movie Editor 2">
+  <iframe class="movie-editor-2-frame" title="Movie Editor 2" src="{% static 'studio/movie-editor-2/index.html' %}?projectId={{ project.id|urlencode }}&amp;projectTitle={{ project.title|urlencode }}" allow="clipboard-read; clipboard-write; fullscreen"></iframe>
+</section>
+{% endblock %}

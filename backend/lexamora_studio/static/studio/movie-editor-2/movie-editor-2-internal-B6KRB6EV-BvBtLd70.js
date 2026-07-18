@@ -1,0 +1,1 @@
+180/Math.PI,Math.PI/180,180/Math.PI,26/180*Math.PI,100/Math.log(139/100),180/Math.PI,Math.PI/180;
