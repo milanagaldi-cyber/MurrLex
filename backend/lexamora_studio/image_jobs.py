@@ -39,7 +39,13 @@ def execute_image_generation_job(job_id):
         )
     }
     defaults = job.model_profile.defaults if isinstance(job.model_profile.defaults, dict) else {}
-    max_references = max(0, min(int(defaults.get("max_references", 3)), 20))
+    reference_mode = str(job.options.get("reference_mode") or "FRAMES").upper()
+    reference_limit = (
+        int(defaults.get("max_ingredient_references", defaults.get("max_references", 3)))
+        if job.model_profile.media_type == job.model_profile.MediaType.VIDEO and reference_mode == "INGREDIENTS"
+        else (2 if job.model_profile.media_type == job.model_profile.MediaType.VIDEO else int(defaults.get("max_references", 3)))
+    )
+    max_references = max(0, min(reference_limit, 20))
     reference_assets = [reference_map[item] for item in job.reference_asset_ids if item in reference_map][:max_references]
     references = []
     for reference in reference_assets:

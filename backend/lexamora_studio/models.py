@@ -805,6 +805,7 @@ class EpisodeConsistencyReview(models.Model):
     content = models.TextField(blank=True)
     error_message = models.TextField(blank=True)
     image_count = models.PositiveIntegerField(default=0)
+    score = models.PositiveSmallIntegerField(null=True, blank=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="studio_episode_consistency_reviews",
     )
@@ -852,6 +853,27 @@ class ImageGenerationJob(models.Model):
     class Meta:
         ordering = ["-created_at", "id"]
         indexes = [models.Index(fields=["status", "created_at"], name="studio_img_job_queue")]
+
+
+class MovieTimeline(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    project = models.OneToOneField(Project, on_delete=models.CASCADE, related_name="movie_timeline")
+    title = models.CharField(max_length=200, default="Main edit")
+    aspect_ratio = models.CharField(max_length=12, default="16:9")
+    resolution = models.CharField(max_length=20, default="1920x1080")
+    fps = models.PositiveSmallIntegerField(default=25)
+    timeline = models.JSONField(default=dict, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="created_movie_timelines",
+    )
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="updated_movie_timelines",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["project_id"]
 
 
 class SubtitleTrack(SoftDeleteModel):

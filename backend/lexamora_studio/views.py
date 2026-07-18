@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import timedelta
 
 from django.conf import settings
@@ -33,7 +34,7 @@ from .docx_imports import accept_docx_import, parse_docx
 from .docx_exports import generate_docx_export
 from .docx_roundtrip import compare_docx_export
 from .forms import AdditionalGenerationForm, AiModelProfileForm, AssetEditForm, CharacterCreateForm, CharacterForm, DialogueLineForm, DocxImportUploadForm, EpisodeForm, GenerationOutputUploadForm, ImageUploadForm, MultipleImageUploadForm, ProjectBulkMembershipForm, ProjectForm, ProjectMembershipForm, ProjectSettingsForm, ProjectUserSelectionForm, PromptBlockForm, PromptForm, RecommendedTrackForm, SceneForm, StudioTextModelForm, WorkspaceForm, WorkspaceMembershipForm, WorkspaceUserSelectionForm
-from .models import AdditionalGeneration, AiModelProfile, AiSuggestion, AiUsageLog, Asset, Character, DialogueLine, DocxImport, EmailDeliveryLog, Episode, EpisodeComic, EpisodeConsistencyReview, EpisodeCover, ExportJob, GenerationOutput, ImageGenerationJob, Project, ProjectAccessExclusion, ProjectAssistantContext, ProjectMembership, Prompt, PromptBlock, RecommendedTrack, Scene, StudioTextModel, StudioUserPreference, SubtitleTrack, TranslationUnit, Workspace, WorkspaceMembership
+from .models import AdditionalGeneration, AiModelProfile, AiSuggestion, AiUsageLog, Asset, Character, DialogueLine, DocxImport, EmailDeliveryLog, Episode, EpisodeComic, EpisodeConsistencyReview, EpisodeCover, ExportJob, GenerationOutput, ImageGenerationJob, MovieTimeline, Project, ProjectAccessExclusion, ProjectAssistantContext, ProjectMembership, Prompt, PromptBlock, RecommendedTrack, Scene, StudioTextModel, StudioUserPreference, SubtitleTrack, TranslationUnit, Workspace, WorkspaceMembership
 from .notifications import notify_access_granted
 from .permissions import accessible_assets, accessible_projects, accessible_suggestions, accessible_workspaces, has_capability, has_object_capability, has_project_capability, is_workspace_owner_or_admin
 from .revisions import audit, record_revision
@@ -1632,10 +1633,13 @@ def episode_consistency_review(request, episode_id):
             continue
     instruction = json.dumps({
         "task": (
-            "Review this episode for visual continuity. Compare recurring characters and locations across all "
-            "provided frames. Identify likeness, wardrobe, proportions, color, props, architecture, lighting, and "
-            "timeline inconsistencies. Tie every finding to scene numbers, rank severity, and give concise fixes."
+            "Review this episode for visual continuity. Write in the project's documentation language. Keep the "
+            "review compact and easy to scan, about 20 percent shorter than a normal production review. Compare "
+            "recurring characters and locations across all frames. Start with SCORE: N/10. Group findings under "
+            "Must fix, Should fix, and Nice to fix. Every finding must name scene numbers, give a concise fix, and "
+            "state Points recoverable: +N.N. The sum of recoverable points must not exceed 10 minus the score."
         ),
+        "documentation_language": episode.project.documentation_language,
         "project": episode.project.title, "episode": episode.title, "scenes": scene_payload,
     }, ensure_ascii=False)
     review = EpisodeConsistencyReview.objects.create(
@@ -1655,7 +1659,9 @@ def episode_consistency_review(request, episode_id):
         content, used_model = runner(**runner_kwargs)
         review.model = used_model
         review.content = content
-        review.save(update_fields=["model", "content"])
+        score_match = re.search(r"\bSCORE\s*:\s*(10|[0-9])(?:\.\d+)?\s*/\s*10\b", content, re.IGNORECASE)
+        review.score = int(float(score_match.group(1))) if score_match else None
+        review.save(update_fields=["model", "content", "score"])
         messages.success(request, "Episode consistency review completed")
     except (ProviderError, TokenQuotaExceeded, ValidationError, OSError) as exc:
         review.status = EpisodeConsistencyReview.Status.ERROR
@@ -3775,6 +3781,8 @@ def ai_usage_toggle(request):
     if request.method != "POST":
         return JsonResponse({"error": "POST is required."}, status=405)
     preference, _ = StudioUserPreference.objects.get_or_create(user=request.user)
+    if not preference.ai_enabled and token_summary(request.user)["remaining"] <= 0:
+        return JsonResponse({"error": "Your AI token allowance is exhausted"}, status=402)
     preference.ai_enabled = not preference.ai_enabled
     preference.save(update_fields=["ai_enabled", "updated_at"])
     return JsonResponse({"enabled": preference.ai_enabled})
@@ -4099,17 +4107,35 @@ def prompt_generate_image(request, prompt_id):
         "aspect_ratio": str(payload.get("aspectRatio") or defaults.get("aspect_ratio") or ratio_by_composition.get(composition, "1:1")),
         "composition_preset": composition,
     }
-    max_references = max(0, min(int(defaults.get("max_references", 3)), 20))
+    reference_mode = str(payload.get("referenceMode") or "FRAMES").upper()
+    supported_reference_modes = set(defaults.get("reference_modes") or ["FRAMES"])
+    if media_model.media_type == AiModelProfile.MediaType.VIDEO and reference_mode not in supported_reference_modes:
+        return JsonResponse({"error": "The selected model does not support this reference mode."}, status=400)
+    reference_limit = (
+        int(defaults.get("max_ingredient_references", defaults.get("max_references", 3)))
+        if media_model.media_type == AiModelProfile.MediaType.VIDEO and reference_mode == "INGREDIENTS"
+        else (2 if media_model.media_type == AiModelProfile.MediaType.VIDEO else int(defaults.get("max_references", 3)))
+    )
+    max_references = max(0, min(reference_limit, 20))
     reference_assets = list(prompt.reference_assets.filter(content_type__startswith="image/")[:max_references])
     accessible_ids = {str(item.id) for item in reference_assets}
     if media_model.media_type == AiModelProfile.MediaType.VIDEO:
+        allowed_durations = [int(value) for value in (defaults.get("durations") or [8])]
+        try:
+            duration_seconds = int(payload.get("durationSeconds") or defaults.get("duration") or allowed_durations[0])
+        except (TypeError, ValueError):
+            return JsonResponse({"error": "Choose a valid video duration."}, status=400)
+        if duration_seconds not in allowed_durations:
+            return JsonResponse({"error": "The selected model does not support this video duration."}, status=400)
         first_frame_id = str(payload.get("firstFrameAssetId") or (reference_assets[0].id if reference_assets else ""))
         last_frame_id = str(payload.get("lastFrameAssetId") or (reference_assets[1].id if len(reference_assets) > 1 else ""))
         if first_frame_id and first_frame_id not in accessible_ids:
             return JsonResponse({"error": "The first frame is not accessible."}, status=400)
         if last_frame_id and last_frame_id not in accessible_ids:
             return JsonResponse({"error": "The last frame is not accessible."}, status=400)
-        media_options.update({"first_frame_asset_id": first_frame_id, "last_frame_asset_id": last_frame_id})
+        media_options.update({"reference_mode": reference_mode, "duration_seconds": duration_seconds})
+        if reference_mode == "FRAMES":
+            media_options.update({"first_frame_asset_id": first_frame_id, "last_frame_asset_id": last_frame_id})
     optional_options = {
         "quality": ("quality", str(payload.get("quality") or defaults.get("quality") or "low")),
         "output_format": ("format", str(payload.get("outputFormat") or defaults.get("output_format") or "png")),
@@ -4331,6 +4357,73 @@ def project_image_generation(request, project_id):
 
 
 @login_required
+def project_movie_editor(request, project_id):
+    project = get_object_or_404(
+        accessible_projects(request.user).select_related("workspace", "cover_asset"),
+        id=project_id,
+    )
+    can_edit = has_project_capability(request.user, project, "edit")
+    timeline, _ = MovieTimeline.objects.get_or_create(
+        project=project,
+        defaults={"created_by": request.user, "updated_by": request.user},
+    )
+    if request.method == "POST":
+        if not can_edit:
+            return JsonResponse({"error": "Edit permission is required."}, status=403)
+        try:
+            payload = json.loads(request.body or b"{}")
+        except (TypeError, ValueError):
+            return JsonResponse({"error": "The timeline is not valid JSON."}, status=400)
+        timeline_data = payload.get("timeline")
+        if not isinstance(timeline_data, dict) or len(json.dumps(timeline_data)) > 1_000_000:
+            return JsonResponse({"error": "The timeline is invalid or too large."}, status=400)
+        asset_ids = {
+            str(clip.get("assetId"))
+            for track in timeline_data.get("tracks", []) if isinstance(track, dict)
+            for clip in track.get("clips", []) if isinstance(clip, dict) and clip.get("assetId")
+        }
+        allowed_ids = {
+            str(value) for value in accessible_assets(request.user).filter(
+                workspace=project.workspace, id__in=asset_ids, content_type__startswith="video/",
+            ).filter(Q(project=project) | Q(projects=project)).values_list("id", flat=True)
+        }
+        if asset_ids != allowed_ids:
+            return JsonResponse({"error": "One or more timeline videos are not accessible."}, status=400)
+        timeline.title = str(payload.get("title") or timeline.title).strip()[:200] or "Main edit"
+        timeline.aspect_ratio = str(payload.get("aspectRatio") or "16:9")[:12]
+        timeline.resolution = str(payload.get("resolution") or "1920x1080")[:20]
+        timeline.fps = max(1, min(int(payload.get("fps") or 25), 120))
+        timeline.timeline = timeline_data
+        timeline.updated_by = request.user
+        timeline.save()
+        audit(
+            workspace=project.workspace, actor=request.user, action="MOVIE_TIMELINE_SAVE",
+            instance=project, metadata={"timelineId": str(timeline.id), "trackCount": len(timeline_data.get("tracks", []))},
+        )
+        return JsonResponse({"ok": True, "updatedAt": timeline.updated_at.isoformat()})
+    video_assets = (
+        accessible_assets(request.user).filter(
+            workspace=project.workspace, content_type__startswith="video/", deleted_at__isnull=True,
+        ).filter(Q(project=project) | Q(projects=project)).distinct().order_by("created_at", "id")
+    )
+    asset_data = [{
+        "id": str(asset.id),
+        "name": asset.original_filename,
+        "url": reverse("studio_api:asset_view", kwargs={"asset_id": asset.id}),
+        "downloadUrl": reverse("studio_api:asset_download", kwargs={"asset_id": asset.id}),
+        "size": asset.size_bytes,
+        "createdAt": asset.created_at.isoformat(),
+    } for asset in video_assets]
+    return render(request, "studio/project_movie_editor.html", {
+        "project": project,
+        "movie_timeline": timeline,
+        "movie_assets": asset_data,
+        "can_edit": can_edit,
+        **_project_header_context(request.user, project),
+    })
+
+
+@login_required
 def project_image_prompt_preview(request, project_id):
     project = get_object_or_404(accessible_projects(request.user).select_related("workspace"), id=project_id)
     if request.method != "POST":
@@ -4423,7 +4516,16 @@ def project_generate_image(request, project_id):
             output_compression = int(payload.get("outputCompression", defaults.get("output_compression", 100)))
         except (TypeError, ValueError):
             return JsonResponse({"error": "Image compression must be a number from 0 to 100."}, status=400)
-    max_references = max(0, min(int(defaults.get("max_references", 3)), 20))
+    reference_mode = str(payload.get("referenceMode") or "FRAMES").upper()
+    supported_reference_modes = set(defaults.get("reference_modes") or ["FRAMES"])
+    if media_model.media_type == AiModelProfile.MediaType.VIDEO and reference_mode not in supported_reference_modes:
+        return JsonResponse({"error": "The selected model does not support this reference mode."}, status=400)
+    reference_limit = (
+        int(defaults.get("max_ingredient_references", defaults.get("max_references", 3)))
+        if media_model.media_type == AiModelProfile.MediaType.VIDEO and reference_mode == "INGREDIENTS"
+        else (2 if media_model.media_type == AiModelProfile.MediaType.VIDEO else int(defaults.get("max_references", 3)))
+    )
+    max_references = max(0, min(reference_limit, 20))
     reference_ids = [str(value) for value in payload.get("referenceAssetIds", [])][:max_references]
     accessible_ids = {
         str(value)
@@ -4449,13 +4551,22 @@ def project_generate_image(request, project_id):
     }
     media_options.update({key: value for key, (field, value) in optional_options.items() if field in ui_fields})
     if media_model.media_type == AiModelProfile.MediaType.VIDEO:
+        allowed_durations = [int(value) for value in (defaults.get("durations") or [8])]
+        try:
+            duration_seconds = int(payload.get("durationSeconds") or defaults.get("duration") or allowed_durations[0])
+        except (TypeError, ValueError):
+            return JsonResponse({"error": "Choose a valid video duration."}, status=400)
+        if duration_seconds not in allowed_durations:
+            return JsonResponse({"error": "The selected model does not support this video duration."}, status=400)
         first_frame_id = str(payload.get("firstFrameAssetId") or "")
         last_frame_id = str(payload.get("lastFrameAssetId") or "")
         if first_frame_id and first_frame_id not in accessible_ids:
             return JsonResponse({"error": "The first frame is not accessible."}, status=400)
         if last_frame_id and last_frame_id not in accessible_ids:
             return JsonResponse({"error": "The last frame is not accessible."}, status=400)
-        media_options.update({"first_frame_asset_id": first_frame_id, "last_frame_asset_id": last_frame_id})
+        media_options.update({"reference_mode": reference_mode, "duration_seconds": duration_seconds})
+        if reference_mode == "FRAMES":
+            media_options.update({"first_frame_asset_id": first_frame_id, "last_frame_asset_id": last_frame_id})
     job = ImageGenerationJob.objects.create(
         workspace=project.workspace,
         project=project,

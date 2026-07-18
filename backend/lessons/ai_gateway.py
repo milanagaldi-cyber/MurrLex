@@ -374,18 +374,28 @@ def generate_google_image_with_usage(prompt: str, *, model: str, reference_image
     return media, selected_model, _extract_google_usage(payload), "image/png", "png"
 
 
-def generate_google_video_with_usage(prompt: str, *, model: str, reference_images=None, first_frame_image=None, last_frame_image=None, aspect_ratio="16:9", size="720p", **_options):
+def generate_google_video_with_usage(
+    prompt: str, *, model: str, reference_images=None, first_frame_image=None,
+    last_frame_image=None, reference_mode="FRAMES", aspect_ratio="16:9",
+    size="720p", duration_seconds=8, **_options,
+):
     selected_model = require_model(model, GOOGLE_VIDEO_MODELS, "veo-3.1-lite-generate-preview")
     instance = {"prompt": prompt.strip()}
     references = list(reference_images or [])[:3]
-    if first_frame_image or references:
+    use_frames = str(reference_mode).upper() == "FRAMES"
+    if use_frames and (first_frame_image or references):
         _, image_bytes, content_type = first_frame_image or references[0]
         instance["image"] = {"bytesBase64Encoded": base64.b64encode(image_bytes).decode("ascii"), "mimeType": content_type if content_type.startswith("image/") else "image/jpeg"}
-    if last_frame_image:
+    if use_frames and last_frame_image:
         _, image_bytes, content_type = last_frame_image
         instance["lastFrame"] = {"bytesBase64Encoded": base64.b64encode(image_bytes).decode("ascii"), "mimeType": content_type if content_type.startswith("image/") else "image/jpeg"}
-    parameters = {"aspectRatio": aspect_ratio, "resolution": size, "sampleCount": 1}
-    if len(references) > 1 and not last_frame_image:
+    parameters = {
+        "aspectRatio": aspect_ratio,
+        "resolution": size,
+        "sampleCount": 1,
+        "durationSeconds": max(4, min(int(duration_seconds), 8)),
+    }
+    if references and not use_frames:
         parameters["referenceImages"] = [{"image": {"bytesBase64Encoded": base64.b64encode(data).decode("ascii"), "mimeType": mime if mime.startswith("image/") else "image/jpeg"}, "referenceType": "asset"} for _, data, mime in references]
     try:
         response = requests.post(

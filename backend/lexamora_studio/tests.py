@@ -3695,6 +3695,68 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertEqual(options["aspect_ratio"], "9:16")
         self.assertNotIn("quality", options)
         self.assertNotIn("output_format", options)
+
+    @patch("lexamora_studio.views.user_has_ai_access", return_value=True)
+    def test_video_generation_supports_ingredients_and_duration(self, _has_access):
+        from .models import AiModelProfile, ImageGenerationJob
+
+        self.client.force_login(self.owner)
+        video_model = AiModelProfile.objects.create(
+            name="Veo ingredients test",
+            provider="Google",
+            model_id="veo-ingredients-test",
+            media_type=AiModelProfile.MediaType.VIDEO,
+            defaults={
+                "max_references": 2,
+                "max_ingredient_references": 3,
+                "reference_modes": ["FRAMES", "INGREDIENTS"],
+                "durations": [4, 8],
+                "duration": 8,
+                "ui_fields": ["video-reference-mode", "video-ratio", "video-size", "video-duration"],
+            },
+        )
+        response = self.client.post(
+            f"/studio/projects/{self.project.id}/image-generation/queue/",
+            data=json.dumps({
+                "prompt": "Use the selected characters as visual ingredients",
+                "modelProfileId": str(video_model.id),
+                "referenceMode": "INGREDIENTS",
+                "durationSeconds": 4,
+                "size": "720p",
+                "aspectRatio": "16:9",
+                "referenceAssetIds": [],
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 202, response.content)
+        options = ImageGenerationJob.objects.get(id=response.json()["jobId"]).options
+        self.assertEqual(options["reference_mode"], "INGREDIENTS")
+        self.assertEqual(options["duration_seconds"], 4)
+        self.assertNotIn("first_frame_asset_id", options)
+
+    def test_movie_editor_saves_project_timeline(self):
+        from .models import MovieTimeline
+
+        self.client.force_login(self.owner)
+        page = self.client.get(f"/studio/projects/{self.project.id}/movie-editor/")
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, "Auto rough cut")
+        response = self.client.post(
+            f"/studio/projects/{self.project.id}/movie-editor/",
+            data=json.dumps({
+                "title": "Episode draft",
+                "aspectRatio": "9:16",
+                "resolution": "1080x1920",
+                "fps": 25,
+                "timeline": {"tracks": [{"id": "video-1", "kind": "VIDEO", "clips": []}]},
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        timeline = MovieTimeline.objects.get(project=self.project)
+        self.assertEqual(timeline.title, "Episode draft")
+        self.assertEqual(timeline.aspect_ratio, "9:16")
+        self.assertEqual(len(timeline.timeline["tracks"]), 1)
     @patch("lexamora_studio.views.user_has_ai_access", return_value=True)
     def test_project_generation_can_queue_selected_model(self, _has_access):
         from .models import ImageGenerationJob
@@ -4042,6 +4104,7 @@ class StudioTokenAssistantComicTests(TestCase):
         self.assertEqual(review.content, "Continuity report")
         self.assertEqual(review.image_count, 0)
         self.assertEqual(mocked_run.call_args.kwargs["action"], "EPISODE_CONSISTENCY_REVIEW")
+        self.assertIn(self.project.documentation_language, mocked_run.call_args.kwargs["text"])
 
     @patch("lexamora_studio.views._run_logged_multimodal_text", return_value=("Visual panel plan", "gpt-5.4-mini"))
     def test_episode_comic_sends_scene_images_to_multimodal_model(self, mocked_run):
