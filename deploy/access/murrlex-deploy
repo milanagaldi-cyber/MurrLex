@@ -58,7 +58,14 @@ systemctl restart murrlex-backend.service
 systemctl is-active --quiet murrlex-backend.service
 systemctl restart murrlex-image-worker.service
 systemctl is-active --quiet murrlex-image-worker.service
-curl --fail --silent --show-error --max-time 10 http://127.0.0.1:8001/api/health >/dev/null
+for attempt in {1..30}; do
+  if curl --fail --silent --max-time 3 http://127.0.0.1:8001/api/health >/dev/null; then
+    backend_ready=1
+    break
+  fi
+  sleep 1
+done
+[[ "${backend_ready:-0}" -eq 1 ]] || { echo "Backend health check did not become ready." >&2; exit 1; }
 
 logger -t murrlex-deploy "success actor=${SUDO_USER:-root} old=${old_revision} new=${new_revision}"
 log "success ${old_revision:0:12} -> ${new_revision:0:12}"
