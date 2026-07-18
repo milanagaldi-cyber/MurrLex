@@ -76,6 +76,7 @@ urlpatterns = [
     path("projects/<uuid:project_id>/episodes/new/", views.episode_create, name="episode_create"),
     path("episodes/<uuid:episode_id>/edit/", views.episode_edit, name="episode_edit"),
     path("episodes/<uuid:episode_id>/comic/generate/", views.episode_comic_generate, name="episode_comic_generate"),
+    path("episodes/<uuid:episode_id>/consistency-reviews/", views.episode_consistency_review, name="episode_consistency_review"),
     path("episode-comics/<uuid:comic_id>/detach/", views.episode_comic_detach, name="episode_comic_detach"),
     path("usage/me/", views.user_token_usage, name="user_token_usage"),
     path("episodes/<uuid:episode_id>/images/new/", views.episode_image_upload, name="episode_image_upload"),

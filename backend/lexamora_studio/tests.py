@@ -350,6 +350,31 @@ class StudioAssetTests(TestCase):
         downloaded.close()
         self.assertTrue(AuditEvent.objects.filter(action="ASSET_VIEW", entity_id=asset_id).exists())
         self.assertTrue(AccessEvent.objects.filter(asset_id=asset_id, action="VIEW").exists())
+
+    def test_video_view_supports_byte_ranges_for_fast_preview(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        self.client.force_login(self.owner)
+        uploaded = self.client.post(
+            "/api/v1/studio/assets",
+            data={
+                "workspaceId": str(self.workspace.id),
+                "projectId": str(self.project.id),
+                "kind": "GENERATION_OUTPUT",
+                "file": SimpleUploadedFile("preview.mp4", b"0123456789abcdef", content_type="video/mp4"),
+            },
+        )
+        self.assertEqual(uploaded.status_code, 201, uploaded.content)
+
+        response = self.client.get(
+            f"/api/v1/studio/assets/{uploaded.json()['id']}/view",
+            HTTP_RANGE="bytes=4-9",
+        )
+
+        self.assertEqual(response.status_code, 206)
+        self.assertEqual(response["Content-Range"], "bytes 4-9/16")
+        self.assertEqual(response["Accept-Ranges"], "bytes")
+        self.assertEqual(b"".join(response.streaming_content), b"456789")
     def test_user_from_another_workspace_cannot_download_asset(self):
         response = self.upload_asset()
         self.client.force_login(self.outsider)
@@ -4001,6 +4026,22 @@ class StudioTokenAssistantComicTests(TestCase):
         self.assertEqual(comic.status, EpisodeComic.Status.SUCCESS)
         self.assertEqual(comic.asset.content_type, "application/pdf")
         self.assertTrue(comic.asset.projects.filter(id=self.project.id).exists())
+
+    @patch("lexamora_studio.views._run_logged_text", return_value=("Continuity report", "gpt-5.4-mini"))
+    def test_episode_consistency_review_is_saved_without_images(self, mocked_run):
+        from .models import EpisodeConsistencyReview
+
+        response = self.client.post(
+            f"/studio/episodes/{self.episode.id}/consistency-reviews/",
+            {"model": "gpt-5.4-mini"},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response["Location"].endswith("#consistency-reviews"))
+        review = EpisodeConsistencyReview.objects.get(episode=self.episode)
+        self.assertEqual(review.content, "Continuity report")
+        self.assertEqual(review.image_count, 0)
+        self.assertEqual(mocked_run.call_args.kwargs["action"], "EPISODE_CONSISTENCY_REVIEW")
 
     @patch("lexamora_studio.views._run_logged_multimodal_text", return_value=("Visual panel plan", "gpt-5.4-mini"))
     def test_episode_comic_sends_scene_images_to_multimodal_model(self, mocked_run):

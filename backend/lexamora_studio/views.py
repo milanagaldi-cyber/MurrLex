@@ -33,7 +33,7 @@ from .docx_imports import accept_docx_import, parse_docx
 from .docx_exports import generate_docx_export
 from .docx_roundtrip import compare_docx_export
 from .forms import AdditionalGenerationForm, AiModelProfileForm, AssetEditForm, CharacterCreateForm, CharacterForm, DialogueLineForm, DocxImportUploadForm, EpisodeForm, GenerationOutputUploadForm, ImageUploadForm, MultipleImageUploadForm, ProjectBulkMembershipForm, ProjectForm, ProjectMembershipForm, ProjectSettingsForm, ProjectUserSelectionForm, PromptBlockForm, PromptForm, RecommendedTrackForm, SceneForm, StudioTextModelForm, WorkspaceForm, WorkspaceMembershipForm, WorkspaceUserSelectionForm
-from .models import AdditionalGeneration, AiModelProfile, AiSuggestion, AiUsageLog, Asset, Character, DialogueLine, DocxImport, EmailDeliveryLog, Episode, EpisodeComic, EpisodeCover, ExportJob, GenerationOutput, ImageGenerationJob, Project, ProjectAccessExclusion, ProjectAssistantContext, ProjectMembership, Prompt, PromptBlock, RecommendedTrack, Scene, StudioTextModel, StudioUserPreference, SubtitleTrack, TranslationUnit, Workspace, WorkspaceMembership
+from .models import AdditionalGeneration, AiModelProfile, AiSuggestion, AiUsageLog, Asset, Character, DialogueLine, DocxImport, EmailDeliveryLog, Episode, EpisodeComic, EpisodeConsistencyReview, EpisodeCover, ExportJob, GenerationOutput, ImageGenerationJob, Project, ProjectAccessExclusion, ProjectAssistantContext, ProjectMembership, Prompt, PromptBlock, RecommendedTrack, Scene, StudioTextModel, StudioUserPreference, SubtitleTrack, TranslationUnit, Workspace, WorkspaceMembership
 from .notifications import notify_access_granted
 from .permissions import accessible_assets, accessible_projects, accessible_suggestions, accessible_workspaces, has_capability, has_object_capability, has_project_capability, is_workspace_owner_or_admin
 from .revisions import audit, record_revision
@@ -255,6 +255,7 @@ def workspace_detail(request, workspace_id):
         list(_accessible_workspace_images(request.user, workspace)),
         deduplicate=True,
     )
+    workspace_videos = _video_gallery_assets(request.user, workspace)
     return render(request, "studio/workspace_detail.html", {
         "workspace": workspace,
         "projects": projects,
@@ -274,6 +275,7 @@ def workspace_detail(request, workspace_id):
         "gallery_projects": projects,
         "project_assets": [],
         "workspace_assets": workspace_assets,
+        "gallery_videos": workspace_videos,
         "copy_target_workspaces": _project_copy_targets(request.user),
     })
 
@@ -1019,6 +1021,25 @@ def _accessible_workspace_images(user, workspace):
     ).distinct().order_by("-created_at")
 
 
+def _accessible_workspace_videos(user, workspace):
+    projects = accessible_projects(user).filter(workspace=workspace)
+    return Asset.objects.filter(
+        workspace=workspace,
+        content_type__startswith="video/",
+    ).filter(
+        Q(projects__in=projects) | Q(projects__isnull=True),
+    ).select_related("created_by", "updated_by").prefetch_related("projects").distinct().order_by("-created_at")
+
+
+def _video_gallery_assets(user, workspace, project=None):
+    videos = list(_accessible_workspace_videos(user, workspace))
+    project_id = str(project.id) if project else ""
+    for asset in videos:
+        asset.gallery_project_ids = ",".join(str(item.id) for item in asset.projects.all())
+        asset.is_current_project = bool(project_id and project_id in asset.gallery_project_ids.split(","))
+    return videos
+
+
 def _picker_assets(user, project):
     workspace_assets = _decorate_gallery_assets(
         user,
@@ -1575,6 +1596,76 @@ def episode_comic_generate(request, episode_id):
 
 
 @login_required
+def episode_consistency_review(request, episode_id):
+    episode = get_object_or_404(
+        Episode.objects.select_related("project__workspace").prefetch_related(
+            "cover_entries__asset", "scenes__reference_assets", "scenes__assets", "scenes__dialogue_lines",
+        ).filter(project__in=accessible_projects(request.user)),
+        id=episode_id,
+    )
+    if request.method != "POST" or not has_object_capability(request.user, episode, "use_ai"):
+        return HttpResponseForbidden("AI access is required.")
+    model = selected_text_model(request.POST.get("model") or project_text_model_id(episode.project))
+    scene_payload = []
+    assets = {}
+    for cover in episode.cover_entries.all():
+        if cover.asset.deleted_at is None:
+            assets[cover.asset_id] = cover.asset
+    for scene in episode.scenes.all():
+        dialogue = [
+            {"speaker": line.speaker, "text": line.text, "language": line.language}
+            for line in scene.dialogue_lines.all()
+        ]
+        scene_payload.append({
+            "number": scene.number, "title": scene.title, "description": scene.description,
+            "location": scene.location, "actions": scene.actions, "dialogue": dialogue,
+        })
+        for asset in [*scene.assets.all(), *scene.reference_assets.all()]:
+            if asset.deleted_at is None and asset.content_type.startswith("image/"):
+                assets[asset.id] = asset
+    reference_images = []
+    for asset in list(assets.values())[:20]:
+        try:
+            with asset.file.open("rb") as source:
+                reference_images.append((asset.original_filename, source.read(), asset.content_type))
+        except OSError:
+            continue
+    instruction = json.dumps({
+        "task": (
+            "Review this episode for visual continuity. Compare recurring characters and locations across all "
+            "provided frames. Identify likeness, wardrobe, proportions, color, props, architecture, lighting, and "
+            "timeline inconsistencies. Tie every finding to scene numbers, rank severity, and give concise fixes."
+        ),
+        "project": episode.project.title, "episode": episode.title, "scenes": scene_payload,
+    }, ensure_ascii=False)
+    review = EpisodeConsistencyReview.objects.create(
+        episode=episode, model=model, image_count=len(reference_images), created_by=request.user,
+    )
+    try:
+        runner = _run_logged_multimodal_text if reference_images else _run_logged_text
+        runner_kwargs = {
+            "workspace": episode.project.workspace,
+            "user": request.user,
+            "action": "EPISODE_CONSISTENCY_REVIEW",
+            "model": model,
+            "text": instruction,
+        }
+        if reference_images:
+            runner_kwargs["reference_images"] = reference_images
+        content, used_model = runner(**runner_kwargs)
+        review.model = used_model
+        review.content = content
+        review.save(update_fields=["model", "content"])
+        messages.success(request, "Episode consistency review completed")
+    except (ProviderError, TokenQuotaExceeded, ValidationError, OSError) as exc:
+        review.status = EpisodeConsistencyReview.Status.ERROR
+        review.error_message = str(exc)
+        review.save(update_fields=["status", "error_message"])
+        messages.error(request, "Episode consistency review failed")
+    return HttpResponseRedirect(reverse("studio:episode_edit", kwargs={"episode_id": episode.id}) + "#consistency-reviews")
+
+
+@login_required
 def episode_comic_detach(request, comic_id):
     comic = get_object_or_404(EpisodeComic.objects.select_related("episode__project__workspace", "asset").filter(episode__project__in=accessible_projects(request.user)), id=comic_id)
     episode_id = comic.episode_id
@@ -1869,6 +1960,7 @@ def project_detail(request, project_id):
     project_assets, workspace_assets = _picker_assets(request.user, project)
     recent_project_ids = {asset.id for asset in project_assets[:10]}
     gallery_assets = workspace_assets
+    gallery_videos = _video_gallery_assets(request.user, project.workspace, project)
     for asset in gallery_assets:
         asset.is_recent_project = asset.id in recent_project_ids
         asset.is_current_project = str(project.id) in asset.gallery_project_ids.split(",")
@@ -1880,6 +1972,7 @@ def project_detail(request, project_id):
         "project_assets": project_assets,
         "workspace_assets": workspace_assets,
         "gallery_assets": gallery_assets,
+        "gallery_videos": gallery_videos,
         "gallery_projects": [project],
     })
 
@@ -4006,6 +4099,17 @@ def prompt_generate_image(request, prompt_id):
         "aspect_ratio": str(payload.get("aspectRatio") or defaults.get("aspect_ratio") or ratio_by_composition.get(composition, "1:1")),
         "composition_preset": composition,
     }
+    max_references = max(0, min(int(defaults.get("max_references", 3)), 20))
+    reference_assets = list(prompt.reference_assets.filter(content_type__startswith="image/")[:max_references])
+    accessible_ids = {str(item.id) for item in reference_assets}
+    if media_model.media_type == AiModelProfile.MediaType.VIDEO:
+        first_frame_id = str(payload.get("firstFrameAssetId") or (reference_assets[0].id if reference_assets else ""))
+        last_frame_id = str(payload.get("lastFrameAssetId") or (reference_assets[1].id if len(reference_assets) > 1 else ""))
+        if first_frame_id and first_frame_id not in accessible_ids:
+            return JsonResponse({"error": "The first frame is not accessible."}, status=400)
+        if last_frame_id and last_frame_id not in accessible_ids:
+            return JsonResponse({"error": "The last frame is not accessible."}, status=400)
+        media_options.update({"first_frame_asset_id": first_frame_id, "last_frame_asset_id": last_frame_id})
     optional_options = {
         "quality": ("quality", str(payload.get("quality") or defaults.get("quality") or "low")),
         "output_format": ("format", str(payload.get("outputFormat") or defaults.get("output_format") or "png")),
@@ -4014,8 +4118,6 @@ def prompt_generate_image(request, prompt_id):
         "moderation": ("moderation", str(payload.get("moderation") or defaults.get("moderation") or "auto")),
     }
     media_options.update({key: value for key, (field, value) in optional_options.items() if field in ui_fields or media_model.media_type == AiModelProfile.MediaType.IMAGE})
-    max_references = max(0, min(int(defaults.get("max_references", 3)), 20))
-    reference_assets = list(prompt.reference_assets.filter(content_type__startswith="image/")[:max_references])
     job = ImageGenerationJob.objects.create(
         workspace=project.workspace,
         project=project,
@@ -4346,6 +4448,14 @@ def project_generate_image(request, project_id):
         "moderation": ("moderation", str(payload.get("moderation") or defaults.get("moderation") or "auto")),
     }
     media_options.update({key: value for key, (field, value) in optional_options.items() if field in ui_fields})
+    if media_model.media_type == AiModelProfile.MediaType.VIDEO:
+        first_frame_id = str(payload.get("firstFrameAssetId") or "")
+        last_frame_id = str(payload.get("lastFrameAssetId") or "")
+        if first_frame_id and first_frame_id not in accessible_ids:
+            return JsonResponse({"error": "The first frame is not accessible."}, status=400)
+        if last_frame_id and last_frame_id not in accessible_ids:
+            return JsonResponse({"error": "The last frame is not accessible."}, status=400)
+        media_options.update({"first_frame_asset_id": first_frame_id, "last_frame_asset_id": last_frame_id})
     job = ImageGenerationJob.objects.create(
         workspace=project.workspace,
         project=project,

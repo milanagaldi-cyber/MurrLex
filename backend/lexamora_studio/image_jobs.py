@@ -57,12 +57,17 @@ def execute_image_generation_job(job_id):
     try:
         provider_options = {
             key: value for key, value in job.options.items()
-            if key != "composition_preset"
+            if key not in {"composition_preset", "first_frame_asset_id", "last_frame_asset_id"}
         }
         provider = job.model_profile.provider.strip().lower()
         if "google" in provider and job.model_profile.media_type == job.model_profile.MediaType.VIDEO:
+            first_frame = reference_map.get(str(job.options.get("first_frame_asset_id") or ""))
+            last_frame = reference_map.get(str(job.options.get("last_frame_asset_id") or ""))
+            first_frame_image = next((item for asset, item in zip(reference_assets, references) if first_frame and asset.id == first_frame.id), None)
+            last_frame_image = next((item for asset, item in zip(reference_assets, references) if last_frame and asset.id == last_frame.id), None)
             media_bytes, model, provider_usage, content_type, extension = generate_google_video_with_usage(
-                job.request_prompt, model=job.model_profile.model_id, reference_images=references, **provider_options,
+                job.request_prompt, model=job.model_profile.model_id, reference_images=references,
+                first_frame_image=first_frame_image, last_frame_image=last_frame_image, **provider_options,
             )
         elif "google" in provider:
             media_bytes, model, provider_usage, content_type, extension = generate_google_image_with_usage(

@@ -793,6 +793,27 @@ class EpisodeComic(models.Model):
         ordering = ["-created_at", "id"]
 
 
+class EpisodeConsistencyReview(models.Model):
+    class Status(models.TextChoices):
+        SUCCESS = "SUCCESS", "Completed"
+        ERROR = "ERROR", "Failed"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    episode = models.ForeignKey(Episode, on_delete=models.CASCADE, related_name="consistency_reviews")
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.SUCCESS)
+    model = models.CharField(max_length=160, blank=True)
+    content = models.TextField(blank=True)
+    error_message = models.TextField(blank=True)
+    image_count = models.PositiveIntegerField(default=0)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="studio_episode_consistency_reviews",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "id"]
+
+
 class ImageGenerationJob(models.Model):
     class Status(models.TextChoices):
         QUEUED = "QUEUED", "Queued"

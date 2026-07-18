@@ -54,4 +54,5 @@
 
 {% url 'studio:workspace_image_upload' workspace.id as workspace_upload_url %}
 {% include "studio/_media_gallery.html" with gallery_title="Workspace Images" gallery_id="workspace-images" gallery_view_key="workspace-images" gallery_picker_id="workspace-image-picker" gallery_upload_url=workspace_upload_url gallery_default_scope="workspace" gallery_mode="workspace" gallery_attach_scope="workspace" gallery_owner_id=workspace.id %}
+{% include "studio/_video_gallery.html" with video_gallery_title="Workspace Videos" video_gallery_id="workspace-videos" video_gallery_mode="workspace" %}
 {% endblock %}

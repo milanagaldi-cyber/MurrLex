@@ -2,10 +2,11 @@ import json
 
 from django.contrib.auth import get_user_model
 from django.db import transaction
-from django.http import FileResponse, JsonResponse
+from django.http import FileResponse, HttpResponse, JsonResponse, StreamingHttpResponse
 from django.shortcuts import get_object_or_404
 from django.core.exceptions import ValidationError
 from django.views.decorators.http import require_http_methods
+from django.utils.http import content_disposition_header
 
 from make_mistake_backend.observability import current_request_id
 
@@ -37,6 +38,58 @@ def payload(request):
 
 def require_user(request):
     return request.user if request.user.is_authenticated else None
+
+
+def _asset_file_response(request, item):
+    range_header = request.headers.get("Range", "")
+    if not item.content_type.startswith("video/") or not range_header.startswith("bytes="):
+        response = FileResponse(
+            item.file.open("rb"), as_attachment=False,
+            filename=item.original_filename, content_type=item.content_type,
+        )
+        if item.content_type.startswith("video/"):
+            response["Accept-Ranges"] = "bytes"
+        return response
+
+    file_size = item.file.size
+    byte_range = range_header[6:].split(",", 1)[0]
+    try:
+        start_text, end_text = byte_range.split("-", 1)
+        if start_text:
+            start = int(start_text)
+            end = min(int(end_text), file_size - 1) if end_text else file_size - 1
+        else:
+            suffix_length = min(int(end_text), file_size)
+            start, end = file_size - suffix_length, file_size - 1
+        if start < 0 or start > end or start >= file_size:
+            raise ValueError
+    except (TypeError, ValueError):
+        response = HttpResponse(status=416)
+        response["Content-Range"] = f"bytes */{file_size}"
+        return response
+
+    source = item.file.open("rb")
+    source.seek(start)
+    remaining = end - start + 1
+
+    def stream():
+        nonlocal remaining
+        try:
+            while remaining:
+                chunk = source.read(min(64 * 1024, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+                yield chunk
+        finally:
+            source.close()
+
+    response = StreamingHttpResponse(stream(), status=206, content_type=item.content_type)
+    response["Content-Length"] = str(end - start + 1)
+    response["Content-Range"] = f"bytes {start}-{end}/{file_size}"
+    response["Accept-Ranges"] = "bytes"
+    response["Content-Disposition"] = content_disposition_header(False, item.original_filename)
+    return response
 
 
 def workspace_json(item):
@@ -489,7 +542,7 @@ def asset_view(request, asset_id):
     item = _accessible_asset(user, asset_id)
     AccessEvent.objects.create(workspace=item.workspace, actor=user, asset=item, action="VIEW", request_id=current_request_id())
     audit(workspace=item.workspace, actor=user, action="ASSET_VIEW", instance=item, metadata={"filename": item.original_filename})
-    return FileResponse(item.file.open("rb"), as_attachment=False, filename=item.original_filename, content_type=item.content_type)
+    return _asset_file_response(request, item)
 
 
 @require_http_methods(["GET"])
