@@ -25,10 +25,17 @@ DEBUG=true GOOGLE_OAUTH_ENABLED=false GOOGLE_OAUTH_CLIENT_ID= GOOGLE_OAUTH_CLIEN
 
 sudo /usr/bin/install -m 0644 "$APP_DIR/deploy/systemd/murrlex-credit-refill.service" /etc/systemd/system/murrlex-credit-refill.service
 sudo /usr/bin/install -m 0644 "$APP_DIR/deploy/systemd/murrlex-credit-refill.timer" /etc/systemd/system/murrlex-credit-refill.timer
+sudo /usr/bin/install -m 0644 "$APP_DIR/deploy/systemd/murrlex-media-worker.service" /etc/systemd/system/murrlex-media-worker.service
+sudo /usr/bin/install -m 0644 "$APP_DIR/deploy/systemd/murrlex-render-worker.service" /etc/systemd/system/murrlex-render-worker.service
 sudo /usr/bin/systemctl daemon-reload
 sudo /usr/bin/systemctl enable --now murrlex-credit-refill.timer
+sudo /usr/bin/systemctl enable murrlex-media-worker.service murrlex-render-worker.service
 
 sudo /usr/bin/systemctl restart murrlex-backend.service
 sudo /usr/bin/systemctl is-active --quiet murrlex-backend.service
 sudo /usr/bin/systemctl restart murrlex-image-worker.service
 sudo /usr/bin/systemctl is-active --quiet murrlex-image-worker.service
+sudo /usr/bin/systemctl restart murrlex-media-worker.service
+sudo /usr/bin/systemctl is-active --quiet murrlex-media-worker.service
+sudo /usr/bin/systemctl restart murrlex-render-worker.service
+sudo /usr/bin/systemctl is-active --quiet murrlex-render-worker.service

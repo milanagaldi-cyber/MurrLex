@@ -1,0 +1,16 @@
+[Unit]
+Description=MurrLex Draft Editor render worker
+After=network.target murrlex-backend.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/MurrLex/backend
+EnvironmentFile=/opt/MurrLex/.env
+ExecStart=/opt/MurrLex/backend/.venv/bin/python manage.py run_movie_render_worker --poll-interval 1
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

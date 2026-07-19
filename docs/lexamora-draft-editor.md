@@ -73,3 +73,20 @@ versioned schema above. The current editing surface supports:
 
 The server rejects track/media type mismatches, inaccessible media, media that
 is not ready, and source ranges extending past the probed source duration.
+
+## Rough-cut rendering
+
+Saved timelines can be queued as immutable server-side MP4 render jobs. The
+editor offers a fast 720p draft profile and a 1080p review profile. Each job
+stores the exact timeline snapshot, canvas, frame rate and source trim values,
+so later edits cannot silently change an already queued export.
+
+`murrlex-render-worker.service` composes jobs with FFmpeg independently from the
+media ingest worker. Video clips are scaled and padded to the selected canvas,
+overlapping video tracks are composited, and enabled sound is delayed, mixed and
+volume-adjusted on the shared timeline. A silent stereo track is generated when
+the edit contains no audio.
+
+The editor shows queue and render progress. Users with export permission can
+cancel active work, retry failed or cancelled jobs, and download successful MP4
+assets from protected workspace storage.

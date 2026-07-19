@@ -14,6 +14,7 @@ STUDIO_MEDIA_MAX_UPLOAD_BYTES=536870912
 STUDIO_FFMPEG_BINARY=ffmpeg
 STUDIO_FFPROBE_BINARY=ffprobe
 STUDIO_MEDIA_PROCESS_TIMEOUT_SECONDS=1800
+STUDIO_MOVIE_RENDER_TIMEOUT_SECONDS=7200
 STUDIO_AI_RATE_PER_MINUTE=10
 STUDIO_EXPORT_RATE_PER_HOUR=10
 STUDIO_STORAGE_BACKEND=filesystem
@@ -49,6 +50,10 @@ Uploaded video and audio are processed by `murrlex-media-worker.service`. The wo
 uses FFprobe for metadata and FFmpeg for immutable browser proxies, video thumbnails
 and audio waveforms. The deploy command installs FFmpeg when it is missing, enables
 the worker and aligns the Nginx request limit with `STUDIO_MEDIA_MAX_UPLOAD_BYTES`.
+
+Draft Editor MP4 exports are processed independently by
+`murrlex-render-worker.service`. Keeping rough-cut rendering outside the ingest
+worker prevents long edits from blocking new proxies, thumbnails and waveforms.
 
 ## Rollback
 

@@ -9,11 +9,12 @@
 .movie-timeline-shell{display:grid;grid-template-columns:128px minmax(0,1fr);height:min(520px,58vh);min-height:260px;border:1px solid var(--line);border-radius:7px;overflow:hidden;background:var(--panel-2)}.movie-track-sidebar{position:relative;z-index:3;overflow:hidden;border-right:1px solid var(--line);background:var(--panel)}.movie-sidebar-spacer{height:34px;border-bottom:1px solid var(--line)}.movie-track-heads{will-change:transform}.movie-track-head{display:flex;align-items:center;gap:5px;height:72px;padding:8px;border-bottom:1px solid var(--line)}.movie-track-head strong{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.movie-track-head.locked{opacity:.65}.movie-timeline-scroll{position:relative;overflow:auto;overscroll-behavior:contain}.movie-timeline-canvas{position:relative;min-height:100%;will-change:width}.movie-ruler{position:relative;height:34px;border-bottom:1px solid var(--line);background:var(--panel);cursor:crosshair;user-select:none}.movie-ruler-tick{position:absolute;bottom:0;height:9px;border-left:1px solid var(--muted);pointer-events:none}.movie-ruler-tick.major{height:16px;border-color:var(--accent)}.movie-ruler-label{position:absolute;top:2px;transform:translateX(4px);color:var(--muted);font-size:10px;white-space:nowrap;pointer-events:none}.movie-lanes{position:relative}.movie-track-lane{position:relative;height:72px;border-bottom:1px solid var(--line);background:repeating-linear-gradient(90deg,transparent 0 var(--grid-step-minus),color-mix(in srgb,var(--line) 55%,transparent) var(--grid-step-minus) var(--grid-step));overflow:hidden}.movie-track-lane.drop-target{background-color:color-mix(in srgb,var(--accent) 10%,transparent)}.movie-empty{display:grid;height:100%;place-items:center;color:var(--muted);font-size:12px;pointer-events:none}
 .movie-clip{position:absolute;top:8px;height:56px;min-width:8px;overflow:hidden;border:1px solid var(--accent);border-radius:5px;background:color-mix(in srgb,var(--accent) 22%,var(--panel));color:var(--ink);cursor:grab;user-select:none;touch-action:none}.movie-clip.audio{border-color:var(--good);background:color-mix(in srgb,var(--good) 18%,var(--panel))}.movie-clip.selected{z-index:2;box-shadow:0 0 0 3px var(--focus)}.movie-clip.dragging{opacity:.82;cursor:grabbing}.movie-clip-body{position:absolute;inset:0 8px;display:grid;align-content:center;gap:2px;overflow:hidden;padding:4px}.movie-clip-body strong,.movie-clip-body small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;pointer-events:none}.movie-clip-body small{font-size:10px;color:var(--muted)}.movie-clip-wave{position:absolute;inset:0; width:100%;height:100%;object-fit:fill;opacity:.22;pointer-events:none}.movie-trim{position:absolute;z-index:3;top:0;width:8px;height:100%;background:color-mix(in srgb,var(--accent) 80%,transparent);cursor:ew-resize}.movie-trim.left{left:0}.movie-trim.right{right:0}.movie-snap-guide{position:absolute;z-index:5;top:34px;bottom:0;width:1px;background:var(--warn);pointer-events:none}.movie-playhead{position:absolute;z-index:6;top:27px;bottom:0;width:1px;background:var(--danger);pointer-events:none}.movie-playhead::before{content:"";position:absolute;top:0;left:-5px;width:11px;height:11px;border-radius:50% 50% 50% 0;background:var(--danger);transform:rotate(-45deg)}
 .movie-history{padding:13px}.movie-history-list{display:grid;gap:7px;margin-top:10px}.movie-history-row{padding:9px;border:1px solid var(--line);border-radius:6px;background:var(--panel-2)}.movie-history-copy{display:grid;gap:2px;min-width:0}.movie-history-copy strong,.movie-history-copy span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.movie-history-copy span{color:var(--muted);font-size:12px}
+.movie-renders{padding:13px}.movie-render-head,.movie-render-form,.movie-render-row,.movie-render-actions{display:flex;align-items:center;gap:9px}.movie-render-head{justify-content:space-between}.movie-render-form{flex-wrap:wrap}.movie-render-form label{margin:0}.movie-render-form select{width:auto;min-width:140px}.movie-render-list{display:grid;gap:8px;margin-top:12px}.movie-render-row{padding:9px;border:1px solid var(--line);border-radius:6px;background:var(--panel-2)}.movie-render-copy{display:grid;gap:3px;min-width:0;flex:1}.movie-render-copy strong,.movie-render-copy span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.movie-render-copy span{font-size:11px;color:var(--muted)}.movie-render-progress{height:5px;background:var(--line);border-radius:3px;overflow:hidden}.movie-render-progress i{display:block;height:100%;background:var(--good);transition:width .25s}.movie-render-error{color:var(--danger)!important;white-space:normal!important}
 @media(max-width:900px){.movie-workbench{grid-template-columns:1fr}.movie-preview{height:280px}.movie-toolbar,.movie-timeline-head{align-items:flex-start;flex-direction:column}.movie-timeline-shell{grid-template-columns:104px minmax(0,1fr)}}
 </style>{% endblock %}
 {% block content %}
 {% include "studio/_project_navigation.html" %}
-<section class="movie-editor" data-movie-editor data-can-edit="{{ can_edit|yesno:'true,false' }}" data-aspect-ratio="{{ movie_timeline.aspect_ratio }}" data-resolution="{{ movie_timeline.resolution }}" data-fps="{{ movie_timeline.fps }}" data-save-url="{% url 'studio:project_movie_editor' project.id %}" data-history-url="{% url 'studio:project_movie_editor_revisions' project.id %}" data-media-url="{{ movie_media_url }}">
+<section class="movie-editor" data-movie-editor data-can-edit="{{ can_edit|yesno:'true,false' }}" data-can-export="{{ can_export|yesno:'true,false' }}" data-aspect-ratio="{{ movie_timeline.aspect_ratio }}" data-resolution="{{ movie_timeline.resolution }}" data-fps="{{ movie_timeline.fps }}" data-save-url="{% url 'studio:project_movie_editor' project.id %}" data-history-url="{% url 'studio:project_movie_editor_revisions' project.id %}" data-media-url="{{ movie_media_url }}" data-render-url="{{ movie_render_url }}">
   <div class="panel movie-toolbar">
     <div class="movie-settings">
       <label>Title<input data-movie-title value="{{ movie_timeline.title }}"></label>
@@ -25,6 +26,7 @@
       <span class="movie-editor-state" data-movie-state>Saved</span>
       <button class="secondary" type="button" data-auto-cut>Auto rough cut</button>
       <button class="secondary" type="button" data-export-timeline>Export EDL</button>
+      {% if can_export %}<button type="button" data-render-toggle>Render MP4</button>{% endif %}
       <button class="secondary" type="button" data-movie-history-toggle>History</button>
       {% if can_edit %}<button type="button" data-save-movie>Save</button>{% endif %}
     </div>
@@ -32,6 +34,14 @@
   <section class="panel movie-history" data-movie-history hidden>
     <div class="movie-history-head"><div><h3>Timeline history</h3><p class="muted">The latest 50 previous saves are retained.</p></div><button class="icon-button secondary" type="button" data-movie-history-close title="Close history" aria-label="Close history">&times;</button></div>
     <div class="movie-history-list" data-movie-history-list><p class="muted">Loading history</p></div>
+  </section>
+  <section class="panel movie-renders" data-movie-renders hidden>
+    <div class="movie-render-head">
+      <div><h3>Rough-cut exports</h3><p class="muted">Renders continue on the server after you leave this page</p></div>
+      <button class="icon-button secondary" type="button" data-render-close title="Close exports" aria-label="Close exports">&times;</button>
+    </div>
+    {% if can_export %}<div class="movie-render-form"><label>Profile<select data-render-profile><option value="DRAFT_720">Draft 720p</option><option value="REVIEW_1080">Review 1080p</option></select></label><button type="button" data-render-start>Queue MP4 render</button></div>{% endif %}
+    <div class="movie-render-list" data-render-list><p class="muted">No exports yet</p></div>
   </section>
   <div class="movie-workbench">
     <aside class="panel movie-bin">
@@ -56,6 +66,6 @@
     </div>
   </section>
 </section>
-{{ movie_timeline_data|json_script:"movie-timeline-data" }}{{ movie_assets|json_script:"movie-assets-data" }}
+{{ movie_timeline_data|json_script:"movie-timeline-data" }}{{ movie_assets|json_script:"movie-assets-data" }}{{ movie_render_jobs|json_script:"movie-render-jobs-data" }}
 {% endblock %}
 {% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}"></script>{% endblock %}

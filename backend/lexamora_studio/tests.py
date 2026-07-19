@@ -3746,6 +3746,8 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertContains(page, "data-timeline-split")
         self.assertContains(page, "data-timeline-zoom")
         self.assertContains(page, "data-playhead")
+        self.assertContains(page, "data-render-start")
+        self.assertContains(page, "Rough-cut exports")
         self.assertContains(page, "studio/movie_editor.js")
         response = self.client.post(
             f"/studio/projects/{self.project.id}/movie-editor/",
@@ -3923,6 +3925,147 @@ class StudioProductionPilotFeaturesTests(TestCase):
         asset.refresh_from_db()
         self.assertEqual(asset.processing_status, Asset.ProcessingStatus.QUEUED)
         self.assertEqual(asset.processing_error, "")
+
+    def test_movie_editor_queues_cancels_and_retries_rough_cut_render(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from .models import Asset, MovieRenderJob, MovieTimeline
+        from .storage import create_asset
+
+        asset = create_asset(
+            user=self.owner, workspace=self.workspace,
+            uploaded=SimpleUploadedFile("render-source.mp4", b"video", content_type="video/mp4"),
+            kind=Asset.Kind.OTHER, project=self.project,
+        )
+        Asset.objects.filter(id=asset.id).update(
+            duration_ms=8000,
+            media_metadata={"video": {"codec": "h264"}, "audio": {"codec": "aac"}},
+            processing_status=Asset.ProcessingStatus.READY,
+        )
+        self.client.force_login(self.owner)
+        timeline_payload = {
+            "schemaVersion": 1,
+            "tracks": [{
+                "id": "video-1", "kind": "VIDEO", "clips": [{
+                    "id": "clip-1", "assetId": str(asset.id), "name": "Opening",
+                    "start": 500, "sourceStart": 1000, "duration": 4000, "volume": 0.8,
+                }],
+            }],
+        }
+        saved = self.client.post(
+            f"/studio/projects/{self.project.id}/movie-editor/",
+            data=json.dumps({"title": "Episode render", "aspectRatio": "9:16", "fps": 25, "timeline": timeline_payload}),
+            content_type="application/json",
+        )
+        self.assertEqual(saved.status_code, 200, saved.content)
+        response = self.client.post(
+            f"/studio/projects/{self.project.id}/movie-editor/renders/",
+            data=json.dumps({"profile": "DRAFT_720"}), content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 202, response.content)
+        job = MovieRenderJob.objects.get(id=response.json()["id"])
+        self.assertEqual((job.width, job.height), (720, 1280))
+        self.assertEqual(job.duration_ms, 4500)
+        self.assertEqual(job.snapshot, MovieTimeline.objects.get(project=self.project).timeline)
+
+        cancelled = self.client.post(
+            f"/studio/projects/{self.project.id}/movie-editor/renders/{job.id}/",
+            data=json.dumps({"action": "cancel"}), content_type="application/json",
+        )
+        self.assertEqual(cancelled.status_code, 202, cancelled.content)
+        job.refresh_from_db()
+        self.assertEqual(job.status, MovieRenderJob.Status.CANCELLED)
+        retried = self.client.post(
+            f"/studio/projects/{self.project.id}/movie-editor/renders/{job.id}/",
+            data=json.dumps({"action": "retry"}), content_type="application/json",
+        )
+        self.assertEqual(retried.status_code, 202, retried.content)
+        job.refresh_from_db()
+        self.assertEqual(job.status, MovieRenderJob.Status.QUEUED)
+        self.assertFalse(job.cancel_requested)
+
+    def test_movie_render_command_trims_composes_and_mixes_timeline(self):
+        from types import SimpleNamespace
+        from .movie_rendering import build_render_command
+
+        video = SimpleNamespace(
+            id="asset-1", proxy_file=SimpleNamespace(path="/tmp/video.mp4"),
+            file=SimpleNamespace(path="/tmp/original.mp4"),
+            processing_status="READY", media_metadata={"audio": {"codec": "aac"}},
+        )
+        job = SimpleNamespace(
+            snapshot={"tracks": [{"kind": "VIDEO", "muted": False, "clips": [{
+                "assetId": "asset-1", "start": 1200, "sourceStart": 500,
+                "duration": 3000, "volume": 0.75,
+            }]}]},
+            duration_ms=4200, width=1280, height=720, fps=25,
+        )
+        command = build_render_command(job, {"asset-1": video}, "/tmp/output.mp4")
+        joined = " ".join(command)
+        self.assertIn("trim=start=0.500:duration=3.000", joined)
+        self.assertIn("overlay=eof_action=pass", joined)
+        self.assertIn("volume=0.7500", joined)
+        self.assertIn("amix=inputs=1", joined)
+        self.assertIn("libx264", command)
+
+    def test_movie_render_worker_persists_completed_mp4_asset(self):
+        import io
+        from pathlib import Path
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from .models import Asset, MovieRenderJob, MovieTimeline
+        from .movie_rendering import process_movie_render
+        from .storage import create_asset
+
+        source = create_asset(
+            user=self.owner, workspace=self.workspace,
+            uploaded=SimpleUploadedFile("worker-source.mp4", b"source", content_type="video/mp4"),
+            kind=Asset.Kind.OTHER, project=self.project,
+        )
+        Asset.objects.filter(id=source.id).update(
+            duration_ms=2000, media_metadata={"video": {"codec": "h264"}},
+            processing_status=Asset.ProcessingStatus.READY,
+        )
+        timeline = MovieTimeline.objects.create(
+            project=self.project, title="Worker render", aspect_ratio="16:9",
+            resolution="1280x720", fps=25, created_by=self.owner, updated_by=self.owner,
+            timeline={"schemaVersion": 1, "tracks": [{
+                "id": "video-1", "kind": "VIDEO", "muted": False, "clips": [{
+                    "id": "clip-1", "assetId": str(source.id), "name": "Source",
+                    "start": 0, "sourceStart": 0, "duration": 1000, "volume": 1,
+                }],
+            }]},
+        )
+        job = MovieRenderJob.objects.create(
+            timeline=timeline, project=self.project, title="Worker render",
+            profile=MovieRenderJob.Profile.DRAFT_720, aspect_ratio="16:9",
+            width=1280, height=720, fps=25, duration_ms=1000,
+            snapshot=timeline.timeline, requested_by=self.owner,
+        )
+
+        class FakeProcess:
+            def __init__(self, command):
+                Path(command[-1]).write_bytes(b"rendered-mp4")
+                self.stdout = iter(["out_time_ms=1000000\n", "progress=end\n"])
+                self.stderr = io.StringIO("")
+
+            def wait(self, timeout=None):
+                return 0
+
+            def poll(self):
+                return 0
+
+            def kill(self):
+                return None
+
+        with patch("lexamora_studio.movie_rendering.subprocess.Popen", side_effect=lambda command, **_kwargs: FakeProcess(command)):
+            process_movie_render(job.id)
+        job.refresh_from_db()
+        self.assertEqual(job.status, MovieRenderJob.Status.SUCCEEDED)
+        self.assertEqual(job.progress, 100)
+        self.assertIsNotNone(job.output_asset_id)
+        self.assertEqual(job.output_asset.kind, Asset.Kind.EXPORT)
+        self.assertEqual(job.output_asset.content_type, "video/mp4")
+        if job.output_asset.file.storage.exists(job.output_asset.file.name):
+            job.output_asset.file.storage.delete(job.output_asset.file.name)
 
     def test_media_metadata_extracts_video_audio_and_duration(self):
         from .media_processing import _metadata

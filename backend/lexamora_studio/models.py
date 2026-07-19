@@ -930,6 +930,50 @@ class MovieTimelineRevision(models.Model):
         indexes = [models.Index(fields=["timeline", "-created_at"], name="studio_movie_rev_time")]
 
 
+class MovieRenderJob(models.Model):
+    class Status(models.TextChoices):
+        QUEUED = "QUEUED", "Queued"
+        RUNNING = "RUNNING", "Running"
+        SUCCEEDED = "SUCCEEDED", "Succeeded"
+        FAILED = "FAILED", "Failed"
+        CANCELLED = "CANCELLED", "Cancelled"
+
+    class Profile(models.TextChoices):
+        DRAFT_720 = "DRAFT_720", "Draft 720p"
+        REVIEW_1080 = "REVIEW_1080", "Review 1080p"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    timeline = models.ForeignKey(MovieTimeline, on_delete=models.PROTECT, related_name="render_jobs")
+    project = models.ForeignKey(Project, on_delete=models.PROTECT, related_name="movie_render_jobs")
+    title = models.CharField(max_length=200)
+    profile = models.CharField(max_length=20, choices=Profile.choices, default=Profile.DRAFT_720)
+    aspect_ratio = models.CharField(max_length=12)
+    width = models.PositiveIntegerField()
+    height = models.PositiveIntegerField()
+    fps = models.PositiveSmallIntegerField()
+    duration_ms = models.PositiveBigIntegerField(default=0)
+    schema_version = models.PositiveSmallIntegerField(default=MOVIE_TIMELINE_SCHEMA_VERSION)
+    snapshot = models.JSONField(default=dict)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.QUEUED)
+    progress = models.PositiveSmallIntegerField(default=0)
+    cancel_requested = models.BooleanField(default=False)
+    output_asset = models.ForeignKey(
+        Asset, on_delete=models.PROTECT, related_name="movie_render_jobs", null=True, blank=True,
+    )
+    error_message = models.TextField(blank=True)
+    requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="movie_render_jobs",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        indexes = [models.Index(fields=["status", "created_at"], name="studio_render_queue")]
+
+
 class SubtitleTrack(SoftDeleteModel):
     class Kind(models.TextChoices):
         WORKING = "WORKING", "Working"

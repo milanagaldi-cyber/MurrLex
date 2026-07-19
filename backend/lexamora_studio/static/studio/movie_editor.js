@@ -3,7 +3,9 @@
   if (!root) return;
 
   const canEdit = root.dataset.canEdit === "true";
+  const canExport = root.dataset.canExport === "true";
   let assets = JSON.parse(document.getElementById("movie-assets-data").textContent || "[]");
+  let renderJobs = JSON.parse(document.getElementById("movie-render-jobs-data")?.textContent || "[]");
   const saved = JSON.parse(document.getElementById("movie-timeline-data").textContent || "{}");
   let timeline = saved && Array.isArray(saved.tracks) ? saved : {schemaVersion: 1, tracks: []};
   let selectedId = null;
@@ -16,6 +18,7 @@
   let playbackOrigin = 0;
   let playbackStartedAt = 0;
   let mediaPoll = null;
+  let renderPoll = null;
 
   const bin = root.querySelector("[data-movie-bin]");
   const tracksNode = root.querySelector("[data-movie-tracks]");
@@ -32,6 +35,8 @@
   const ruler = root.querySelector("[data-movie-ruler]");
   const historyPanel = root.querySelector("[data-movie-history]");
   const historyList = root.querySelector("[data-movie-history-list]");
+  const renderPanel = root.querySelector("[data-movie-renders]");
+  const renderList = root.querySelector("[data-render-list]");
   const zoomInput = root.querySelector("[data-timeline-zoom]");
   const assetMap = new Map();
   const audioPlayers = new Map();
@@ -179,6 +184,125 @@
     renderTimeline();
     clearTimeout(mediaPoll);
     if (assets.some(item => ["QUEUED", "PROCESSING"].includes(item.status))) mediaPoll = setTimeout(refreshMedia, 2500);
+  }
+
+  const renderDate = value => value ? new Date(value).toLocaleString([], {dateStyle: "medium", timeStyle: "short"}) : "";
+
+  async function renderAction(job, action) {
+    const response = await fetch(job.actionUrl, {
+      method: "POST",
+      headers: {"Content-Type": "application/json", "X-CSRFToken": csrfToken()},
+      body: JSON.stringify({action}),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) return toast(data.error || `Could not ${action} render`, "error");
+    const index = renderJobs.findIndex(item => item.id === data.id);
+    if (index >= 0) renderJobs[index] = data;
+    renderRenderJobs();
+    scheduleRenderPoll();
+  }
+
+  function renderRenderJobs() {
+    if (!renderList) return;
+    renderList.replaceChildren();
+    if (!renderJobs.length) {
+      const empty = document.createElement("p");
+      empty.className = "muted";
+      empty.textContent = "No exports yet";
+      renderList.append(empty);
+      return;
+    }
+    renderJobs.forEach(job => {
+      const row = document.createElement("div");
+      const copy = document.createElement("div");
+      const title = document.createElement("strong");
+      const details = document.createElement("span");
+      const progress = document.createElement("div");
+      const bar = document.createElement("i");
+      const actions = document.createElement("div");
+      row.className = "movie-render-row";
+      copy.className = "movie-render-copy";
+      actions.className = "movie-render-actions";
+      progress.className = "movie-render-progress";
+      title.textContent = job.title;
+      details.textContent = `${job.profileLabel} / ${job.width}x${job.height} / ${job.statusLabel} / ${renderDate(job.createdAt)}`;
+      bar.style.width = `${job.progress || 0}%`;
+      progress.append(bar);
+      copy.append(title, details);
+      if (["QUEUED", "RUNNING"].includes(job.status)) copy.append(progress);
+      if (job.error) {
+        const error = document.createElement("span");
+        error.className = "movie-render-error";
+        error.textContent = job.error;
+        copy.append(error);
+      }
+      if (job.downloadUrl) {
+        const download = document.createElement("a");
+        download.className = "button secondary";
+        download.href = job.downloadUrl;
+        download.textContent = "Download";
+        actions.append(download);
+      }
+      if (job.canCancel && canExport) {
+        const cancel = document.createElement("button");
+        cancel.type = "button";
+        cancel.className = "secondary";
+        cancel.textContent = "Cancel";
+        cancel.addEventListener("click", () => renderAction(job, "cancel"));
+        actions.append(cancel);
+      }
+      if (job.canRetry && canExport) {
+        const retry = document.createElement("button");
+        retry.type = "button";
+        retry.className = "secondary";
+        retry.textContent = "Retry";
+        retry.addEventListener("click", () => renderAction(job, "retry"));
+        actions.append(retry);
+      }
+      row.append(copy, actions);
+      renderList.append(row);
+    });
+  }
+
+  async function refreshRenders() {
+    if (!root.dataset.renderUrl) return;
+    const response = await fetch(root.dataset.renderUrl, {headers: {"X-Requested-With": "XMLHttpRequest"}});
+    const data = await response.json().catch(() => ({}));
+    if (response.ok) {
+      renderJobs = data.items || [];
+      renderRenderJobs();
+    }
+    scheduleRenderPoll();
+  }
+
+  function scheduleRenderPoll() {
+    clearTimeout(renderPoll);
+    if (renderJobs.some(job => ["QUEUED", "RUNNING"].includes(job.status))) {
+      renderPoll = setTimeout(refreshRenders, document.hidden ? 5000 : 1800);
+    }
+  }
+
+  async function queueRender() {
+    if (dirty) return toast("Save the timeline before rendering", "error");
+    const button = root.querySelector("[data-render-start]");
+    button.disabled = true;
+    button.textContent = "Queueing";
+    const response = await fetch(root.dataset.renderUrl, {
+      method: "POST",
+      headers: {"Content-Type": "application/json", "X-CSRFToken": csrfToken()},
+      body: JSON.stringify({
+        title: root.querySelector("[data-movie-title]").value,
+        profile: root.querySelector("[data-render-profile]").value,
+      }),
+    });
+    const data = await response.json().catch(() => ({}));
+    button.disabled = false;
+    button.textContent = "Queue MP4 render";
+    if (!response.ok) return toast(data.error || "Could not queue render", "error");
+    renderJobs.unshift(data);
+    renderRenderJobs();
+    toast("MP4 render queued");
+    scheduleRenderPoll();
   }
 
   function timelineCandidates(excludeId) {
@@ -818,6 +942,12 @@
     if (!historyPanel.hidden) await loadHistory();
   });
   root.querySelector("[data-movie-history-close]").addEventListener("click", () => { historyPanel.hidden = true; });
+  root.querySelector("[data-render-toggle]")?.addEventListener("click", () => {
+    renderPanel.hidden = !renderPanel.hidden;
+    if (!renderPanel.hidden) refreshRenders();
+  });
+  root.querySelector("[data-render-close]")?.addEventListener("click", () => { renderPanel.hidden = true; });
+  root.querySelector("[data-render-start]")?.addEventListener("click", queueRender);
   root.querySelector("[data-save-movie]")?.addEventListener("click", async () => {
     stateNode.textContent = "Saving";
     const response = await fetch(root.dataset.saveUrl, {
@@ -882,6 +1012,8 @@
   renderBin();
   renderTimeline();
   renderInspector();
+  renderRenderJobs();
+  scheduleRenderPoll();
   setPlayhead(0, false);
   refreshMedia();
 })();

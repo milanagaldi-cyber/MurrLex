@@ -25,8 +25,9 @@ Run after every deployment:
 
 1. `manage.py check --deploy` with the production environment.
 2. `manage.py migrate --noinput` and `manage.py collectstatic --noinput`.
-3. Restart `murrlex-backend.service`, `murrlex-image-worker.service` and
-   `murrlex-media-worker.service`; confirm all three are active.
+3. Restart `murrlex-backend.service`, `murrlex-image-worker.service`,
+   `murrlex-media-worker.service` and `murrlex-render-worker.service`; confirm all
+   four are active.
 4. Confirm `/api/health` and `/api/ready` return HTTP 200.
 5. Confirm an unauthenticated `/studio/` request redirects to `/login/`.
 6. Sign in, open an allowed workspace, create a temporary project and remove it.

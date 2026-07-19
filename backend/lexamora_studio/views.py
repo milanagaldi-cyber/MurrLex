@@ -34,8 +34,9 @@ from .docx_imports import accept_docx_import, parse_docx
 from .docx_exports import generate_docx_export
 from .docx_roundtrip import compare_docx_export
 from .forms import AdditionalGenerationForm, AiModelProfileForm, AssetEditForm, CharacterCreateForm, CharacterForm, DialogueLineForm, DocxImportUploadForm, EpisodeForm, GenerationOutputUploadForm, ImageUploadForm, MultipleImageUploadForm, ProjectBulkMembershipForm, ProjectForm, ProjectMembershipForm, ProjectSettingsForm, ProjectUserSelectionForm, PromptBlockForm, PromptForm, RecommendedTrackForm, SceneForm, StudioTextModelForm, WorkspaceForm, WorkspaceMembershipForm, WorkspaceUserSelectionForm
-from .models import AdditionalGeneration, AiModelProfile, AiSuggestion, AiUsageLog, Asset, Character, DialogueLine, DocxImport, EmailDeliveryLog, Episode, EpisodeComic, EpisodeConsistencyReview, EpisodeCover, ExportJob, GenerationOutput, ImageGenerationJob, MovieTimeline, MovieTimelineRevision, Project, ProjectAccessExclusion, ProjectAssistantContext, ProjectMembership, Prompt, PromptBlock, RecommendedTrack, Scene, StudioTextModel, StudioUserPreference, SubtitleTrack, TranslationUnit, Workspace, WorkspaceMembership
+from .models import AdditionalGeneration, AiModelProfile, AiSuggestion, AiUsageLog, Asset, Character, DialogueLine, DocxImport, EmailDeliveryLog, Episode, EpisodeComic, EpisodeConsistencyReview, EpisodeCover, ExportJob, GenerationOutput, ImageGenerationJob, MovieRenderJob, MovieTimeline, MovieTimelineRevision, Project, ProjectAccessExclusion, ProjectAssistantContext, ProjectMembership, Prompt, PromptBlock, RecommendedTrack, Scene, StudioTextModel, StudioUserPreference, SubtitleTrack, TranslationUnit, Workspace, WorkspaceMembership
 from .movie_timeline import MOVIE_TIMELINE_SCHEMA_VERSION, MovieTimelineValidationError, default_movie_timeline, movie_timeline_asset_ids, normalize_movie_timeline
+from .movie_rendering import profile_dimensions, timeline_duration_ms
 from .notifications import notify_access_granted
 from .permissions import accessible_assets, accessible_projects, accessible_suggestions, accessible_workspaces, has_capability, has_object_capability, has_project_capability, is_workspace_owner_or_admin
 from .revisions import audit, record_revision
@@ -4428,6 +4429,33 @@ def _movie_timeline_json(timeline):
     }
 
 
+def _movie_render_payload(job):
+    active = job.status in {MovieRenderJob.Status.QUEUED, MovieRenderJob.Status.RUNNING}
+    return {
+        "id": str(job.id),
+        "title": job.title,
+        "profile": job.profile,
+        "profileLabel": job.get_profile_display(),
+        "status": job.status,
+        "statusLabel": job.get_status_display(),
+        "progress": job.progress,
+        "durationMs": job.duration_ms,
+        "width": job.width,
+        "height": job.height,
+        "fps": job.fps,
+        "error": job.error_message,
+        "createdAt": job.created_at.isoformat(),
+        "startedAt": job.started_at.isoformat() if job.started_at else None,
+        "completedAt": job.completed_at.isoformat() if job.completed_at else None,
+        "requestedBy": job.requested_by.get_full_name() or job.requested_by.get_username(),
+        "downloadUrl": reverse("studio_api:asset_download", kwargs={"asset_id": job.output_asset_id}) if job.output_asset_id else "",
+        "viewUrl": reverse("studio_api:asset_view", kwargs={"asset_id": job.output_asset_id}) if job.output_asset_id else "",
+        "actionUrl": reverse("studio:project_movie_render_job", kwargs={"project_id": job.project_id, "job_id": job.id}),
+        "canCancel": active,
+        "canRetry": job.status in {MovieRenderJob.Status.FAILED, MovieRenderJob.Status.CANCELLED},
+    }
+
+
 def _movie_media_payload(asset, project):
     ready = asset.processing_status == Asset.ProcessingStatus.READY
     metadata = asset.media_metadata if isinstance(asset.media_metadata, dict) else {}
@@ -4539,7 +4567,12 @@ def project_movie_editor(request, project_id):
         "movie_timeline_data": normalize_movie_timeline(timeline.timeline or default_movie_timeline()),
         "movie_assets": asset_data,
         "movie_media_url": reverse("studio:project_movie_media", kwargs={"project_id": project.id}),
+        "movie_render_url": reverse("studio:project_movie_renders", kwargs={"project_id": project.id}),
+        "movie_render_jobs": [
+            _movie_render_payload(job) for job in timeline.render_jobs.select_related("requested_by", "output_asset")[:20]
+        ],
         "can_edit": can_edit,
+        "can_export": has_project_capability(request.user, project, "export"),
         **_project_header_context(request.user, project),
     })
 
@@ -4607,6 +4640,107 @@ def project_movie_media_retry(request, project_id, asset_id):
         instance=asset, metadata={"projectId": str(project.id)},
     )
     return JsonResponse(_movie_media_payload(asset, project), status=202)
+
+
+@login_required
+def project_movie_renders(request, project_id):
+    project = get_object_or_404(
+        accessible_projects(request.user).select_related("workspace"), id=project_id,
+    )
+    timeline = get_object_or_404(MovieTimeline, project=project)
+    jobs = timeline.render_jobs.select_related("requested_by", "output_asset")
+    if request.method == "GET":
+        return JsonResponse({
+            "items": [_movie_render_payload(job) for job in jobs[:50]],
+            "canExport": has_project_capability(request.user, project, "export"),
+        })
+    if request.method != "POST":
+        return JsonResponse({"error": "GET or POST is required."}, status=405)
+    if not has_project_capability(request.user, project, "export"):
+        return JsonResponse({"error": "Export permission is required."}, status=403)
+    try:
+        payload = json.loads(request.body or b"{}")
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "The render request is not valid JSON."}, status=400)
+    profile = str(payload.get("profile") or MovieRenderJob.Profile.DRAFT_720)
+    if profile not in MovieRenderJob.Profile.values:
+        return JsonResponse({"error": "Unsupported render profile."}, status=400)
+    snapshot = normalize_movie_timeline(timeline.timeline or default_movie_timeline())
+    media_error = _movie_timeline_media_error(request.user, project, snapshot)
+    if media_error:
+        return JsonResponse({"error": media_error}, status=400)
+    duration_ms = timeline_duration_ms(snapshot)
+    if duration_ms <= 0:
+        return JsonResponse({"error": "Add at least one clip before rendering."}, status=400)
+    width, height = profile_dimensions(timeline.aspect_ratio, profile)
+    job = MovieRenderJob.objects.create(
+        timeline=timeline,
+        project=project,
+        title=str(payload.get("title") or timeline.title).strip()[:200] or "Rough cut",
+        profile=profile,
+        aspect_ratio=timeline.aspect_ratio,
+        width=width,
+        height=height,
+        fps=min(60, max(1, timeline.fps)),
+        duration_ms=duration_ms,
+        schema_version=timeline.schema_version,
+        snapshot=snapshot,
+        requested_by=request.user,
+    )
+    audit(
+        workspace=project.workspace, actor=request.user, action="MOVIE_RENDER_QUEUED",
+        instance=project, metadata={"renderId": str(job.id), "profile": profile, "durationMs": duration_ms},
+    )
+    return JsonResponse(_movie_render_payload(job), status=202)
+
+
+@login_required
+def project_movie_render_job(request, project_id, job_id):
+    project = get_object_or_404(accessible_projects(request.user), id=project_id)
+    job = get_object_or_404(
+        MovieRenderJob.objects.select_related("requested_by", "output_asset"), id=job_id, project=project,
+    )
+    if request.method == "GET":
+        return JsonResponse(_movie_render_payload(job))
+    if request.method != "POST":
+        return JsonResponse({"error": "GET or POST is required."}, status=405)
+    if not has_project_capability(request.user, project, "export"):
+        return JsonResponse({"error": "Export permission is required."}, status=403)
+    try:
+        payload = json.loads(request.body or b"{}")
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "The render action is not valid JSON."}, status=400)
+    action = str(payload.get("action") or "").lower()
+    if action == "cancel":
+        if job.status not in {MovieRenderJob.Status.QUEUED, MovieRenderJob.Status.RUNNING}:
+            return JsonResponse({"error": "This render cannot be cancelled."}, status=409)
+        job.cancel_requested = True
+        if job.status == MovieRenderJob.Status.QUEUED:
+            job.status = MovieRenderJob.Status.CANCELLED
+            job.completed_at = timezone.now()
+            job.progress = 0
+        job.save(update_fields=["cancel_requested", "status", "completed_at", "progress", "updated_at"])
+    elif action == "retry":
+        if job.status not in {MovieRenderJob.Status.FAILED, MovieRenderJob.Status.CANCELLED}:
+            return JsonResponse({"error": "This render cannot be retried."}, status=409)
+        job.status = MovieRenderJob.Status.QUEUED
+        job.progress = 0
+        job.cancel_requested = False
+        job.error_message = ""
+        job.started_at = None
+        job.completed_at = None
+        job.output_asset = None
+        job.save(update_fields=[
+            "status", "progress", "cancel_requested", "error_message", "started_at",
+            "completed_at", "output_asset", "updated_at",
+        ])
+    else:
+        return JsonResponse({"error": "Choose cancel or retry."}, status=400)
+    audit(
+        workspace=project.workspace, actor=request.user, action=f"MOVIE_RENDER_{action.upper()}",
+        instance=project, metadata={"renderId": str(job.id)},
+    )
+    return JsonResponse(_movie_render_payload(job), status=202)
 
 
 @login_required
