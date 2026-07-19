@@ -40,12 +40,48 @@ def _clip_audio_cleanup(job):
     return ""
 
 
-def timeline_duration_ms(snapshot):
+def _asset_kind(asset):
+    content_type = str(getattr(asset, "content_type", "") or "")
+    if content_type.startswith("audio/"):
+        return "AUDIO"
+    if content_type.startswith("video/"):
+        return "VIDEO"
+    metadata = getattr(asset, "media_metadata", {}) or {}
+    if metadata.get("video"):
+        return "VIDEO"
+    source = getattr(getattr(asset, "proxy_file", None), "path", "") or getattr(
+        getattr(asset, "file", None), "path", ""
+    )
+    if Path(str(source)).suffix.lower() in {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi"}:
+        return "VIDEO"
+    return "AUDIO"
+
+
+def timeline_duration_ms(snapshot, assets=None):
+    clips = [
+        clip for track in snapshot.get("tracks", []) for clip in track.get("clips", [])
+        if not assets or _asset_kind(assets.get(str(clip.get("assetId")))) == "VIDEO"
+    ]
     return max(
-        (int(clip.get("start", 0)) + int(clip.get("duration", 0))
-         for track in snapshot.get("tracks", []) for clip in track.get("clips", [])),
+        (int(clip.get("start", 0)) + int(clip.get("duration", 0)) for clip in clips),
         default=0,
     )
+
+
+def _subtract_intervals(interval, blockers):
+    remaining = [interval]
+    for blocker_start, blocker_end in blockers:
+        next_remaining = []
+        for start, end in remaining:
+            if blocker_end <= start or blocker_start >= end:
+                next_remaining.append((start, end))
+                continue
+            if blocker_start > start:
+                next_remaining.append((start, min(end, blocker_start)))
+            if blocker_end < end:
+                next_remaining.append((max(start, blocker_end), end))
+        remaining = next_remaining
+    return [(start, end) for start, end in remaining if end - start >= 0.01]
 
 
 def profile_dimensions(aspect_ratio, profile):
@@ -71,50 +107,72 @@ def build_render_command(job, assets, output_path):
     duration_seconds = max(0.2, job.duration_ms / 1000)
     inputs = []
     clips = []
-    for track in snapshot.get("tracks", []):
+    for track_index, track in enumerate(snapshot.get("tracks", [])):
         if track.get("kind") not in {"VIDEO", "AUDIO"} or track.get("muted"):
             continue
-        for clip in track.get("clips", []):
+        for clip_index, clip in enumerate(track.get("clips", [])):
             asset = assets[str(clip["assetId"])]
             input_index = len(inputs)
             inputs.extend(["-i", str(_source_path(asset))])
-            clips.append((track, clip, asset, input_index))
+            clips.append((track_index, clip_index, track, clip, asset, input_index))
 
     filters = [f"color=c=black:s={job.width}x{job.height}:r={job.fps}:d={duration_seconds:.3f}[base]"]
     video_label = "base"
     video_number = 0
     audio_labels = []
-    for track, clip, asset, input_index in clips:
+    video_clips = [item for item in clips if _asset_kind(item[4]) == "VIDEO"]
+    visual_order = sorted(video_clips, key=lambda item: (-item[0], item[1]))
+    for track_index, clip_index, track, clip, asset, input_index in visual_order:
+        source_start = int(clip.get("sourceStart", 0)) / 1000
+        clip_duration = int(clip.get("duration", 0)) / 1000
+        timeline_start = int(clip.get("start", 0)) / 1000
+        prepared = f"v{video_number}"
+        composed = f"vc{video_number}"
+        filters.append(
+            f"[{input_index}:v]trim=start={source_start:.3f}:duration={clip_duration:.3f},"
+            f"setpts=PTS-STARTPTS+{timeline_start:.3f}/TB,"
+            f"scale={job.width}:{job.height}:force_original_aspect_ratio=decrease,"
+            f"pad={job.width}:{job.height}:(ow-iw)/2:(oh-ih)/2:black,setsar=1,format=yuv420p[{prepared}]"
+        )
+        filters.append(
+            f"[{video_label}][{prepared}]overlay=eof_action=pass:repeatlast=0:shortest=0:"
+            f"enable='between(t,{timeline_start:.3f},{timeline_start + clip_duration:.3f})'[{composed}]"
+        )
+        video_label = composed
+        video_number += 1
+
+    for track_index, clip_index, track, clip, asset, input_index in clips:
         source_start = int(clip.get("sourceStart", 0)) / 1000
         clip_duration = int(clip.get("duration", 0)) / 1000
         timeline_start = int(clip.get("start", 0)) / 1000
         volume = float(clip.get("volume", 1))
-        if track.get("kind") == "VIDEO":
-            prepared = f"v{video_number}"
-            composed = f"vc{video_number}"
-            filters.append(
-                f"[{input_index}:v]trim=start={source_start:.3f}:duration={clip_duration:.3f},"
-                f"setpts=PTS-STARTPTS+{timeline_start:.3f}/TB,"
-                f"scale={job.width}:{job.height}:force_original_aspect_ratio=decrease,"
-                f"pad={job.width}:{job.height}:(ow-iw)/2:(oh-ih)/2:black,setsar=1,format=yuv420p[{prepared}]"
-            )
-            filters.append(
-                f"[{video_label}][{prepared}]overlay=eof_action=pass:repeatlast=0:shortest=0:"
-                f"enable='between(t,{timeline_start:.3f},{timeline_start + clip_duration:.3f})'[{composed}]"
-            )
-            video_label = composed
-            video_number += 1
         has_audio = bool((asset.media_metadata or {}).get("audio"))
         if has_audio:
-            audio_label = f"a{len(audio_labels)}"
-            delay_ms = int(clip.get("start", 0))
-            cleanup = _clip_audio_cleanup(job)
-            filters.append(
-                f"[{input_index}:a]atrim=start={source_start:.3f}:duration={clip_duration:.3f},"
-                f"asetpts=PTS-STARTPTS,volume={volume:.4f},{cleanup}"
-                f"adelay={delay_ms}|{delay_ms}[{audio_label}]"
-            )
-            audio_labels.append(audio_label)
+            visible_intervals = [(timeline_start, timeline_start + clip_duration)]
+            if _asset_kind(asset) == "VIDEO":
+                blockers = []
+                for other_track_index, other_clip_index, _, other_clip, other_asset, _ in video_clips:
+                    is_above = other_track_index < track_index or (
+                        other_track_index == track_index and other_clip_index > clip_index
+                    )
+                    if not is_above or _asset_kind(other_asset) != "VIDEO":
+                        continue
+                    other_start = int(other_clip.get("start", 0)) / 1000
+                    other_end = other_start + int(other_clip.get("duration", 0)) / 1000
+                    blockers.append((other_start, other_end))
+                visible_intervals = _subtract_intervals(visible_intervals[0], blockers)
+            for segment_start, segment_end in visible_intervals:
+                segment_source = source_start + segment_start - timeline_start
+                segment_duration = segment_end - segment_start
+                audio_label = f"a{len(audio_labels)}"
+                delay_ms = round(segment_start * 1000)
+                cleanup = _clip_audio_cleanup(job)
+                filters.append(
+                    f"[{input_index}:a]atrim=start={segment_source:.3f}:duration={segment_duration:.3f},"
+                    f"asetpts=PTS-STARTPTS,volume={volume:.4f},{cleanup}"
+                    f"adelay={delay_ms}|{delay_ms}[{audio_label}]"
+                )
+                audio_labels.append(audio_label)
 
     if audio_labels:
         joined = "".join(f"[{label}]" for label in audio_labels)

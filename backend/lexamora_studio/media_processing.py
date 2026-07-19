@@ -136,8 +136,8 @@ def _create_filmstrip(source, target, duration_ms):
         settings.STUDIO_FFMPEG_BINARY, "-y", "-i", str(source),
         "-vf", (
             "fps=1/2:start_time=0,"
-            "scale=72:72:force_original_aspect_ratio=decrease,"
-            "pad=72:72:(ow-iw)/2:(oh-ih)/2:color=black,"
+            "scale=72:72:force_original_aspect_ratio=increase,"
+            "crop=72:72,"
             f"tile={frame_count}x1"
         ),
         "-frames:v", "1", "-q:v", "4", str(target),

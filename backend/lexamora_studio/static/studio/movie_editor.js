@@ -14,6 +14,8 @@
   const saved = readJson("movie-timeline-data");
   let timeline = saved && Array.isArray(saved.tracks) ? saved : {schemaVersion: 1, tracks: []};
   let selectedId = null;
+  let selectedIds = new Set();
+  let clipClipboard = [];
   let playheadMs = 0;
   let dirty = false;
   let snapping = true;
@@ -30,6 +32,7 @@
   let savedSignature = "";
   let libraryScope = "project";
   let standalonePreviewAssetId = null;
+  let trackHeight = Number(localStorage.getItem("studio-movie-track-height")) || 84;
   const settingSnapshots = new WeakMap();
   const PRECISION_MS = 10;
 
@@ -66,6 +69,7 @@
   const csrfToken = () => document.cookie.match(/csrftoken=([^;]+)/)?.[1] || "";
   const uid = () => crypto.randomUUID ? crypto.randomUUID() : `clip-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const clamp = (value, minimum, maximum) => Math.max(minimum, Math.min(maximum, value));
+  trackHeight = clamp(trackHeight, 56, 160);
   const quantize = value => Math.round(Number(value || 0) / PRECISION_MS) * PRECISION_MS;
   const frameMs = () => 1000 / Math.max(1, Number(q("[data-movie-fps]").value) || 25);
   const clock = ms => {
@@ -84,7 +88,10 @@
     if (!response.ok) throw new Error(data.error || data.detail || `HTTP ${response.status}`);
     return data;
   };
-  const timelineEnd = () => Math.max(0, ...timeline.tracks.flatMap(track => track.clips.map(clip => clip.start + clip.duration)));
+  const clipKind = clip => assetMap.get(clip.assetId)?.kind || "VIDEO";
+  const timelineEnd = () => Math.max(0, ...timeline.tracks.flatMap(track =>
+    track.clips.filter(clip => clipKind(clip) === "VIDEO").map(clip => clip.start + clip.duration)
+  ));
   const visibleDuration = () => Math.max(60000, timelineEnd() + 15000);
   const assetDuration = clip => Math.max(200, assetMap.get(clip.assetId)?.durationMs || clip.sourceStart + clip.duration);
   const findClip = id => {
@@ -96,8 +103,8 @@
   };
   const activeClip = (kind, at) => {
     for (const track of timeline.tracks) {
-      if (track.kind !== kind || track.muted) continue;
-      const clip = track.clips.find(item => at >= item.start && at < item.start + item.duration);
+      if (track.muted) continue;
+      const clip = [...track.clips].reverse().find(item => clipKind(item) === kind && at >= item.start && at < item.start + item.duration);
       if (clip) return {clip, track};
     }
     return null;
@@ -133,6 +140,7 @@
     stopPlayback();
     timeline = structuredClone(state.timeline);
     selectedId = state.selectedId || null;
+    selectedIds = new Set(selectedId ? [selectedId] : []);
     q("[data-movie-title]").value = state.title;
     q("[data-movie-ratio]").value = state.aspectRatio;
     q("[data-movie-resolution]").value = state.resolution;
@@ -179,10 +187,6 @@
         clip.duration = clamp(quantize(clip.duration || 200), 200, available);
         clip.volume = clamp(Number(clip.volume ?? 1), 0, 2);
       });
-    });
-    timeline.tracks.sort((left, right) => {
-      const order = {VIDEO: 0, TEXT: 1, AUDIO: 2};
-      return (order[left.kind] ?? 1) - (order[right.kind] ?? 1);
     });
   }
 
@@ -449,7 +453,7 @@
 
   function setPlayhead(value, sync = true) {
     standalonePreviewAssetId = null;
-    playheadMs = clamp(quantize(value), 0, visibleDuration());
+    playheadMs = clamp(quantize(value), 0, Math.max(0, timelineEnd()));
     playheadNode.style.left = `${playheadMs / 1000 * zoom}px`;
     playheadLabel.textContent = clock(playheadMs);
     previewTime.textContent = `${clock(playheadMs)} / ${clock(timelineEnd())}`;
@@ -462,6 +466,7 @@
     if (!asset || asset.kind !== "VIDEO" || asset.status !== "READY") return;
     stopPlayback();
     selectedId = null;
+    selectedIds.clear();
     standalonePreviewAssetId = asset.id;
     renderTimeline();
     renderInspector();
@@ -516,19 +521,24 @@
       return;
     }
     setPlayer(preview, activeClip("VIDEO", playheadMs), shouldPlay, force);
-    const audioTracks = timeline.tracks.filter(track => track.kind === "AUDIO");
-    audioTracks.forEach(track => {
-      let player = audioPlayers.get(track.id);
+    const activeAudio = [];
+    timeline.tracks.forEach(track => {
+      if (track.muted) return;
+      track.clips.forEach(clip => {
+        if (clipKind(clip) === "AUDIO" && playheadMs >= clip.start && playheadMs < clip.start + clip.duration) activeAudio.push({clip, track});
+      });
+    });
+    activeAudio.forEach(active => {
+      let player = audioPlayers.get(active.clip.id);
       if (!player) {
         player = new Audio();
         player.preload = "auto";
-        audioPlayers.set(track.id, player);
+        audioPlayers.set(active.clip.id, player);
       }
-      const clip = !track.muted ? track.clips.find(item => playheadMs >= item.start && playheadMs < item.start + item.duration) : null;
-      setPlayer(player, clip ? {clip, track} : null, shouldPlay, force);
+      setPlayer(player, active, shouldPlay, force);
     });
-    [...audioPlayers.entries()].forEach(([trackId, player]) => {
-      if (!audioTracks.some(track => track.id === trackId)) { player.pause(); audioPlayers.delete(trackId); }
+    [...audioPlayers.entries()].forEach(([clipId, player]) => {
+      if (!activeAudio.some(item => item.clip.id === clipId)) { player.pause(); audioPlayers.delete(clipId); }
     });
   }
 
@@ -561,6 +571,21 @@
   }
 
   function togglePlayback() {
+    if (standalonePreviewAssetId) {
+      if (preview.paused) {
+        q("[data-preview-play]").innerHTML = "&#10074;&#10074;";
+        previewStatus.textContent = "Playing";
+        preview.play().catch(error => {
+          q("[data-preview-play]").innerHTML = "&#9654;";
+          previewStatus.textContent = error.message;
+        });
+      } else {
+        preview.pause();
+        q("[data-preview-play]").innerHTML = "&#9654;";
+        previewStatus.textContent = "Ready";
+      }
+      return;
+    }
     if (playing) return stopPlayback();
     if (!timelineEnd()) return toast("Add clips to the timeline first");
     if (playheadMs >= timelineEnd()) setPlayhead(0, false);
@@ -598,10 +623,6 @@
     const sourceStart = numberInput((clip.sourceStart / 1000).toFixed(3), ".01", "0");
     const duration = numberInput((clip.duration / 1000).toFixed(3), ".01", ".2");
     const volume = document.createElement("input");
-    const actions = document.createElement("div");
-    const remove = document.createElement("button");
-    const moveUp = document.createElement("button");
-    const moveDown = document.createElement("button");
     name.value = clip.name || asset?.name || "Clip";
     volume.type = "range"; volume.min = "0"; volume.max = "2"; volume.step = ".05"; volume.value = clip.volume ?? 1;
     [name, start, sourceStart, duration, volume].forEach(control => control.disabled = !canEdit || track.locked);
@@ -614,21 +635,23 @@
     });
     duration.onchange = event => mutate(() => { clip.duration = clamp(quantize(Number(event.target.value) * 1000), 200, assetDuration(clip) - clip.sourceStart); renderTimeline(); });
     volume.onchange = event => mutate(() => { clip.volume = Number(event.target.value); syncPlayers(false, true); });
-    [moveUp, moveDown, remove].forEach(button => { button.type = "button"; button.className = "secondary"; button.disabled = !canEdit || track.locked; });
-    moveUp.textContent = "Move up"; moveUp.onclick = () => moveSelectedToAdjacentTrack(-1);
-    moveDown.textContent = "Move down"; moveDown.onclick = () => moveSelectedToAdjacentTrack(1);
-    remove.textContent = "Delete clip"; remove.onclick = deleteSelected;
-    actions.className = "movie-inspector-actions"; actions.append(moveUp, moveDown, remove);
-    inspector.append(field("Name", name), field("Timeline start (s)", start), field("Source in (s)", sourceStart), field("Duration (s)", duration), field("Volume", volume), actions);
+    inspector.append(field("Name", name), field("Timeline start (s)", start), field("Source in (s)", sourceStart), field("Duration (s)", duration), field("Volume", volume));
     const readout = document.createElement("div");
     readout.className = "movie-inspector-readout";
     readout.textContent = `${track.name} / ${track.kind} / ${clock(clip.start)} - ${clock(clip.start + clip.duration)} / 10 ms grid`;
     inspector.append(readout);
   }
 
-  function selectClip(id, movePlayhead = false) {
-    selectedId = id;
-    qa(".movie-clip").forEach(node => node.classList.toggle("selected", node.dataset.clipId === id));
+  function selectClip(id, movePlayhead = false, additive = false) {
+    if (additive) {
+      if (selectedIds.has(id)) selectedIds.delete(id);
+      else selectedIds.add(id);
+      selectedId = selectedIds.has(id) ? id : [...selectedIds].at(-1) || null;
+    } else {
+      selectedIds = new Set(id ? [id] : []);
+      selectedId = id;
+    }
+    qa(".movie-clip").forEach(node => node.classList.toggle("selected", selectedIds.has(node.dataset.clipId)));
     if (movePlayhead) {
       const found = findClip(id);
       if (found) setPlayhead(found.clip.start);
@@ -637,10 +660,57 @@
   }
 
   function deleteSelected() {
-    const found = findClip(selectedId);
-    if (!found || found.track.locked) return;
-    mutate(() => { found.track.clips = found.track.clips.filter(item => item.id !== selectedId); selectedId = null; });
+    const removable = new Set([...selectedIds].filter(id => !findClip(id)?.track.locked));
+    if (!removable.size) return;
+    mutate(() => {
+      timeline.tracks.forEach(track => { track.clips = track.clips.filter(item => !removable.has(item.id)); });
+      selectedId = null; selectedIds.clear();
+    });
     renderTimeline(); renderInspector(); syncPlayers(false, true);
+  }
+
+  function copySelected() {
+    const items = [...selectedIds].map(id => {
+      const found = findClip(id);
+      return found ? {clip: structuredClone(found.clip), trackId: found.track.id} : null;
+    }).filter(Boolean);
+    if (!items.length) return toast("Select one or more clips first");
+    const origin = Math.min(...items.map(item => item.clip.start));
+    clipClipboard = items.map(item => ({...item, offset: item.clip.start - origin}));
+    toast(`${clipClipboard.length} clip${clipClipboard.length === 1 ? "" : "s"} copied`);
+  }
+
+  function pasteSelected() {
+    if (!clipClipboard.length) return toast("Copy clips first");
+    const pasted = [];
+    mutate(() => {
+      clipClipboard.forEach(item => {
+        const originalTrack = timeline.tracks.find(track => track.id === item.trackId && !track.locked);
+        const target = originalTrack || timeline.tracks.find(track => !track.locked);
+        if (!target) return;
+        const clip = {...structuredClone(item.clip), id: uid(), start: quantize(playheadMs + item.offset)};
+        target.clips.push(clip); pasted.push(clip.id);
+      });
+      selectedIds = new Set(pasted); selectedId = pasted.at(-1) || null;
+    });
+    renderTimeline(); renderInspector();
+  }
+
+  function joinSelected() {
+    const items = [...selectedIds].map(findClip).filter(Boolean).sort((a, b) => a.clip.start - b.clip.start);
+    if (items.length !== 2) return toast("Select exactly two clips to join");
+    if (items.some(item => item.track.locked)) return;
+    const [first, second] = items;
+    mutate(() => {
+      if (second.track !== first.track) {
+        second.track.clips = second.track.clips.filter(item => item.id !== second.clip.id);
+        first.track.clips.push(second.clip);
+      }
+      second.clip.start = quantize(first.clip.start + first.clip.duration);
+      const groupId = first.clip.groupId || second.clip.groupId || uid();
+      first.clip.groupId = groupId; second.clip.groupId = groupId;
+    });
+    renderTimeline(); renderInspector(); toast("Selected clips joined");
   }
 
   function splitSelected() {
@@ -654,28 +724,25 @@
       clip.duration = offset;
       track.clips.push(right);
       selectedId = right.id;
+      selectedIds = new Set([right.id]);
     });
     renderTimeline(); renderInspector();
   }
 
   function nudgeSelected(direction) {
-    const found = findClip(selectedId);
-    if (!found || found.track.locked) return;
-    mutate(() => { found.clip.start = Math.max(0, quantize(found.clip.start + direction * frameMs())); });
-    renderTimeline(); renderInspector(); setPlayhead(found.clip.start, false);
-  }
-
-  function trackHasCollision(track, clip) {
-    return track.clips.some(item => item.id !== clip.id && clip.start < item.start + item.duration && clip.start + clip.duration > item.start);
+    const found = [...selectedIds].map(findClip).filter(item => item && !item.track.locked);
+    if (!found.length) return;
+    const delta = direction * frameMs();
+    mutate(() => { found.forEach(item => { item.clip.start = Math.max(0, quantize(item.clip.start + delta)); }); });
+    renderTimeline(); renderInspector(); setPlayhead(Math.min(...found.map(item => item.clip.start)), false);
   }
 
   function moveSelectedToAdjacentTrack(direction) {
     const found = findClip(selectedId);
     if (!found || found.track.locked) return;
-    const compatible = timeline.tracks.filter(track => track.kind === found.track.kind && !track.locked);
-    const target = compatible[compatible.indexOf(found.track) + direction];
-    if (!target) return toast("No compatible track in that direction");
-    if (trackHasCollision(target, found.clip)) return toast("That position is occupied on the target track", "error");
+    const available = timeline.tracks.filter(track => !track.locked);
+    const target = available[available.indexOf(found.track) + direction];
+    if (!target) return toast("No track in that direction");
     mutate(() => {
       found.track.clips = found.track.clips.filter(item => item.id !== found.clip.id);
       target.clips.push(found.clip);
@@ -695,8 +762,7 @@
   }
 
   function moveTrack(track, direction) {
-    const compatible = timeline.tracks.filter(item => item.kind === track.kind);
-    const swapWith = compatible[compatible.indexOf(track) + direction];
+    const swapWith = timeline.tracks[timeline.tracks.indexOf(track) + direction];
     if (!swapWith) return;
     mutate(() => {
       const first = timeline.tracks.indexOf(track);
@@ -708,12 +774,13 @@
 
   function addClip(track, assetId, start) {
     const asset = assetMap.get(assetId);
-    if (!asset || asset.status !== "READY" || track.kind !== asset.kind || track.locked) return;
+    if (!asset || asset.status !== "READY" || track.locked) return;
     let clip;
     mutate(() => {
       clip = {id: uid(), assetId, name: asset.name, start: snapTime(start, null), sourceStart: 0, duration: Math.max(200, asset.durationMs || 8000), volume: 1};
       track.clips.push(clip);
       selectedId = clip.id;
+      selectedIds = new Set([clip.id]);
     });
     snapGuide.hidden = true;
     renderTimeline();
@@ -755,23 +822,45 @@
     return head;
   }
 
-  function closestCompatibleTrack(clientY, kind) {
+  function closestTrack(clientY) {
     const candidates = qa(".movie-track-lane").map(lane => {
       const track = timeline.tracks.find(item => item.id === lane.dataset.trackId);
       const rect = lane.getBoundingClientRect();
       return {lane, track, distance: clientY < rect.top ? rect.top - clientY : clientY > rect.bottom ? clientY - rect.bottom : 0};
-    }).filter(item => item.track?.kind === kind && !item.track.locked);
+    }).filter(item => item.track && !item.track.locked);
     candidates.sort((a, b) => a.distance - b.distance);
     return candidates[0] || null;
+  }
+
+  function insertionPoint(candidate, clientX, draggedId, duration) {
+    if (!candidate) return null;
+    const hovered = [...candidate.lane.querySelectorAll(".movie-clip")].find(node => {
+      if (node.dataset.clipId === draggedId) return false;
+      const rect = node.getBoundingClientRect();
+      return clientX >= rect.left && clientX <= rect.right;
+    });
+    if (!hovered) return null;
+    const found = findClip(hovered.dataset.clipId);
+    if (!found) return null;
+    const rect = hovered.getBoundingClientRect();
+    const before = clientX < rect.left + rect.width / 2;
+    const edge = before ? found.clip.start : found.clip.start + found.clip.duration;
+    return {start: Math.max(0, quantize(before ? edge - duration : edge)), edge, side: before ? "left" : "right"};
   }
 
   function beginClipGesture(event, clip, track, mode, node) {
     if (!canEdit || track.locked || event.button !== 0) return;
     event.preventDefault(); event.stopPropagation();
-    selectClip(clip.id);
+    if (mode === "move" && (event.ctrlKey || event.metaKey || event.shiftKey)) {
+      selectClip(clip.id, false, true);
+      node.dataset.suppressClick = "true";
+      return;
+    }
+    if (!selectedIds.has(clip.id)) selectClip(clip.id);
     remember();
     const originX = event.clientX;
     const originScroll = timelineScroll.scrollLeft;
+    const originLaneTop = node.closest(".movie-track-lane")?.getBoundingClientRect().top || 0;
     const original = {start: clip.start, sourceStart: clip.sourceStart, duration: clip.duration};
     let targetTrack = track;
     let changed = false;
@@ -784,8 +873,18 @@
       const delta = (next.clientX - originX + timelineScroll.scrollLeft - originScroll) / zoom * 1000;
       if (mode === "move") {
         clip.start = snapTime(original.start + delta, clip.id);
-        const candidate = closestCompatibleTrack(next.clientY, track.kind);
-        if (candidate) targetTrack = candidate.track;
+        const candidate = closestTrack(next.clientY);
+        if (candidate) {
+          targetTrack = candidate.track;
+          node.style.transform = `translateY(${candidate.lane.getBoundingClientRect().top - originLaneTop}px)`;
+          const insertion = insertionPoint(candidate, next.clientX, clip.id, clip.duration);
+          if (insertion) {
+            clip.start = insertion.start;
+            snapGuide.style.left = `${insertion.edge / 1000 * zoom}px`;
+            snapGuide.dataset.side = insertion.side;
+            snapGuide.hidden = false;
+          }
+        }
         qa(".movie-track-lane").forEach(lane => lane.classList.toggle("drop-target", lane.dataset.trackId === targetTrack.id));
       } else if (mode === "left") {
         let shift = snapTime(original.start + delta, clip.id) - original.start;
@@ -801,8 +900,8 @@
       node.querySelector("small").textContent = `${clock(clip.sourceStart)} / ${clock(clip.duration)}`;
     };
     const cleanup = () => {
-      node.removeEventListener("pointermove", move); node.removeEventListener("pointerup", finish); node.removeEventListener("pointercancel", cancel);
-      node.classList.remove("dragging"); qa(".movie-track-lane").forEach(lane => lane.classList.remove("drop-target")); snapGuide.hidden = true;
+      window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", finish); window.removeEventListener("pointercancel", cancel);
+      node.classList.remove("dragging"); node.style.transform = ""; qa(".movie-track-lane").forEach(lane => lane.classList.remove("drop-target")); snapGuide.hidden = true;
     };
     const finish = () => {
       cleanup();
@@ -810,10 +909,7 @@
       else {
         node.dataset.suppressClick = "true";
         if (mode === "move") {
-          if (trackHasCollision(targetTrack, clip)) {
-            Object.assign(clip, original);
-            toast("That position is occupied on the target track", "error");
-          } else if (targetTrack !== track) {
+          if (targetTrack !== track) {
             track.clips = track.clips.filter(item => item.id !== clip.id);
             targetTrack.clips.push(clip);
           }
@@ -823,7 +919,7 @@
       renderTimeline(); renderInspector();
     };
     const cancel = () => { Object.assign(clip, original); changed = false; finish(); };
-    node.addEventListener("pointermove", move); node.addEventListener("pointerup", finish); node.addEventListener("pointercancel", cancel);
+    window.addEventListener("pointermove", move); window.addEventListener("pointerup", finish); window.addEventListener("pointercancel", cancel);
   }
 
   function makeClipNode(clip, track) {
@@ -835,33 +931,35 @@
     const left = document.createElement("i");
     const right = document.createElement("i");
     const asset = assetMap.get(clip.assetId);
-    node.className = `movie-clip ${track.kind.toLowerCase()}${selectedId === clip.id ? " selected" : ""}`;
+    const mediaKind = asset?.kind || track.kind;
+    node.className = `movie-clip ${mediaKind.toLowerCase()}${selectedIds.has(clip.id) ? " selected" : ""}${clip.groupId ? " joined" : ""}`;
     node.dataset.clipId = clip.id;
     node.style.left = `${clip.start / 1000 * zoom}px`;
     node.style.width = `${Math.max(8, clip.duration / 1000 * zoom)}px`;
     strip.className = "movie-clip-strip";
-    if (track.kind === "VIDEO" && (asset?.filmstripUrl || asset?.thumbnailUrl)) {
+    if (mediaKind === "VIDEO" && (asset?.filmstripUrl || asset?.thumbnailUrl)) {
       const interval = asset.filmstripIntervalMs || 2000;
       const total = asset.filmstripFrameCount || 1;
-      const tile = asset.filmstripTileSize || 72;
+      const frameSize = Math.max(32, trackHeight - (asset?.waveformUrl ? 25 : 8));
       const visible = Math.max(1, Math.ceil(clip.duration / interval));
       const first = Math.floor(clip.sourceStart / interval);
+      node.style.setProperty("--movie-frame-height", `${frameSize}px`);
       for (let offset = 0; offset < visible; offset += 1) {
         const frame = document.createElement("b");
         const index = Math.min(total - 1, first + offset);
         frame.className = "movie-clip-frame";
         frame.style.backgroundImage = `url("${asset.filmstripUrl || asset.thumbnailUrl}")`;
         if (asset.filmstripUrl) {
-          frame.style.backgroundSize = `${total * tile}px ${tile}px`;
-          frame.style.backgroundPosition = `-${index * tile}px 0`;
+          frame.style.backgroundSize = `${total * frameSize}px ${frameSize}px`;
+          frame.style.backgroundPosition = `-${index * frameSize}px 0`;
         }
         strip.append(frame);
       }
       if (!asset.filmstripUrl) node.classList.add("fallback-strip");
       node.append(strip);
     }
-    if (track.kind === "AUDIO" && asset?.waveformUrl) {
-      const wave = document.createElement("img"); wave.className = "movie-clip-wave"; wave.src = asset.waveformUrl; wave.alt = ""; node.append(wave);
+    if (asset?.waveformUrl) {
+      const wave = document.createElement("img"); wave.className = `movie-clip-wave${mediaKind === "VIDEO" ? " video-wave" : ""}`; wave.src = asset.waveformUrl; wave.alt = ""; node.append(wave);
     }
     body.className = "movie-clip-body"; title.textContent = clip.name; detail.textContent = `${clock(clip.sourceStart)} / ${clock(clip.duration)}`; body.append(title, detail);
     left.className = "movie-trim left"; right.className = "movie-trim right";
@@ -869,7 +967,7 @@
     node.onclick = event => {
       event.stopPropagation();
       if (node.dataset.suppressClick === "true") { node.dataset.suppressClick = ""; return; }
-      selectClip(clip.id, true);
+      selectClip(clip.id, true, event.ctrlKey || event.metaKey || event.shiftKey);
     };
     node.ondblclick = event => { event.stopPropagation(); selectClip(clip.id, true); togglePlayback(); };
     body.onpointerdown = event => beginClipGesture(event, clip, track, "move", node);
@@ -890,6 +988,7 @@
 
   function renderTimeline() {
     normalizeTimeline();
+    q("[data-timeline-shell]")?.style.setProperty("--track-height", `${trackHeight}px`);
     const duration = visibleDuration();
     timelineCanvas.style.width = `${Math.max(timelineScroll.clientWidth || 600, duration / 1000 * zoom)}px`;
     const minor = Math.max(4, (zoom >= 50 ? 200 : zoom >= 20 ? 1000 : 2000) / 1000 * zoom);
@@ -968,7 +1067,7 @@
             restore.disabled = true;
             try {
               const data = await requestJson(item.restoreUrl, {method: "POST", headers: {"X-CSRFToken": csrfToken()}});
-              timeline = data.timeline; selectedId = null;
+              timeline = data.timeline; selectedId = null; selectedIds.clear();
               q("[data-movie-title]").value = data.title; q("[data-movie-ratio]").value = data.aspectRatio; q("[data-movie-resolution]").value = data.resolution; q("[data-movie-fps]").value = data.fps;
               savedSignature = signature(); historyUndo = []; historyRedo = []; applyCanvas(); renderTimeline(); renderInspector(); updateDirty(); updateHistoryButtons(); toast("Timeline restored"); await loadHistory();
             } catch (error) { restore.disabled = false; toast(error.message, "error"); }
@@ -1017,9 +1116,20 @@
   previewScrub.oninput = event => { stopPlayback(); setPlayhead(Number(event.target.value)); };
   preview.addEventListener("waiting", () => { previewStatus.textContent = "Buffering"; });
   preview.addEventListener("playing", () => { previewStatus.textContent = "Playing"; });
+  preview.addEventListener("ended", () => {
+    if (!standalonePreviewAssetId) return;
+    q("[data-preview-play]").innerHTML = "&#9654;";
+    previewStatus.textContent = "Ready";
+  });
   preview.addEventListener("play", () => { if (!playing && !standalonePreviewAssetId) togglePlayback(); });
   preview.addEventListener("error", () => { previewStatus.textContent = preview.error?.message || "Preview failed"; });
   q("[data-timeline-split]").onclick = splitSelected;
+  q("[data-clip-copy]")?.addEventListener("click", copySelected);
+  q("[data-clip-paste]")?.addEventListener("click", pasteSelected);
+  q("[data-clip-join]")?.addEventListener("click", joinSelected);
+  q("[data-delete-selected]")?.addEventListener("click", deleteSelected);
+  q("[data-selected-up]")?.addEventListener("click", () => moveSelectedToAdjacentTrack(-1));
+  q("[data-selected-down]")?.addEventListener("click", () => moveSelectedToAdjacentTrack(1));
   qa("[data-clip-nudge]").forEach(button => button.onclick = () => nudgeSelected(Number(button.dataset.clipNudge)));
   q("[data-timeline-snap]").onclick = event => { snapping = !snapping; event.currentTarget.classList.toggle("active", snapping); toast(snapping ? "Snapping enabled" : "Snapping disabled"); };
   ruler.onpointerdown = event => {
@@ -1029,9 +1139,15 @@
   };
   timelineScroll.addEventListener("scroll", () => { headsNode.style.transform = `translateY(-${timelineScroll.scrollTop}px)`; }, {passive: true});
   timelineScroll.addEventListener("wheel", event => {
-    if (!event.ctrlKey || Math.abs(event.deltaY) < Math.abs(event.deltaX)) return;
-    event.preventDefault();
-    changeZoom(zoom + (event.deltaY < 0 ? 4 : -4), event.clientX);
+    if (event.ctrlKey && Math.abs(event.deltaY) >= Math.abs(event.deltaX)) {
+      event.preventDefault();
+      changeZoom(zoom + (event.deltaY < 0 ? 4 : -4), event.clientX);
+      return;
+    }
+    if (!event.ctrlKey && Math.abs(event.deltaY) >= Math.abs(event.deltaX)) {
+      event.preventDefault();
+      window.scrollBy({top: event.deltaY, behavior: "auto"});
+    }
   }, {passive: false});
   zoomInput.oninput = event => changeZoom(Number(event.target.value));
   q("[data-zoom-out]").onclick = () => changeZoom(zoom - 4);
@@ -1066,6 +1182,8 @@
     const editing = event.target.matches("input,textarea,select") || event.target.isContentEditable;
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") { event.preventDefault(); event.shiftKey ? redo() : undo(); return; }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "y") { event.preventDefault(); redo(); return; }
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "c" && !editing) { event.preventDefault(); copySelected(); return; }
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v" && !editing) { event.preventDefault(); pasteSelected(); return; }
     if (editing) return;
     if (event.code === "Space") { event.preventDefault(); togglePlayback(); }
     else if (event.key.toLowerCase() === "s" && !event.ctrlKey && !event.metaKey) { event.preventDefault(); splitSelected(); }
@@ -1096,6 +1214,15 @@
     const applyTrackWidth = () => timelineShell.style.setProperty("--track-sidebar-width", `${trackWidth.value}px`);
     trackWidth.oninput = () => { applyTrackWidth(); localStorage.setItem("studio-movie-track-width", trackWidth.value); };
     applyTrackWidth();
+  }
+  const heightInput = q("[data-track-height]");
+  if (heightInput && timelineShell) {
+    heightInput.value = trackHeight;
+    heightInput.oninput = () => {
+      trackHeight = clamp(Number(heightInput.value), 56, 160);
+      localStorage.setItem("studio-movie-track-height", String(trackHeight));
+      renderTimeline();
+    };
   }
 
   q("[data-movie-ratio]").value = root.dataset.aspectRatio || "16:9";

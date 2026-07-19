@@ -4404,9 +4404,6 @@ def _movie_timeline_media_error(user, project, timeline_data):
                 continue
             if asset.processing_status != Asset.ProcessingStatus.READY:
                 return f"Media {asset.original_filename} is not ready for timeline editing."
-            asset_kind = "VIDEO" if asset.content_type.startswith("video/") else "AUDIO"
-            if track.get("kind") != asset_kind:
-                return f"{asset_kind.title()} media must be placed on a {asset_kind.lower()} track."
             source_end = int(clip.get("sourceStart", 0)) + int(clip.get("duration", 0))
             if asset.duration_ms and source_end > asset.duration_ms + 50:
                 return f"Clip {clip.get('name') or clip.get('id')} extends beyond its source media."
@@ -4746,7 +4743,12 @@ def project_movie_renders(request, project_id):
     media_error = _movie_timeline_media_error(request.user, project, snapshot)
     if media_error:
         return JsonResponse({"error": media_error}, status=400)
-    duration_ms = timeline_duration_ms(snapshot)
+    render_assets = {
+        str(asset.id): asset for asset in Asset.objects.filter(
+            id__in=movie_timeline_asset_ids(snapshot),
+        )
+    }
+    duration_ms = timeline_duration_ms(snapshot, render_assets)
     if duration_ms <= 0:
         return JsonResponse({"error": "Add at least one clip before rendering."}, status=400)
     width, height = profile_dimensions(timeline.aspect_ratio, profile)

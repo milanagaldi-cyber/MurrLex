@@ -3807,7 +3807,7 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("not supported", response.json()["error"])
 
-    def test_movie_editor_rejects_media_on_incompatible_track(self):
+    def test_movie_editor_accepts_media_on_any_organizational_track(self):
         from django.core.files.uploadedfile import SimpleUploadedFile
         from .models import Asset
         from .storage import create_asset
@@ -3844,8 +3844,7 @@ class StudioProductionPilotFeaturesTests(TestCase):
             }),
             content_type="application/json",
         )
-        self.assertEqual(response.status_code, 400, response.content)
-        self.assertIn("video track", response.json()["error"].lower())
+        self.assertEqual(response.status_code, 200, response.content)
 
     def test_movie_editor_clamps_trim_to_source_duration(self):
         from django.core.files.uploadedfile import SimpleUploadedFile
@@ -4052,6 +4051,70 @@ class StudioProductionPilotFeaturesTests(TestCase):
         original = " ".join(build_render_command(job, {"asset-1": video}, "/tmp/original-output.mp4"))
         self.assertNotIn("afftdn=", original)
         self.assertNotIn("loudnorm=", original)
+
+    def test_movie_render_accepts_video_on_an_organizational_audio_lane(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from .models import Asset
+        from .storage import create_asset
+
+        asset = create_asset(
+            user=self.owner, workspace=self.workspace,
+            uploaded=SimpleUploadedFile("lane-video.mp4", b"video", content_type="video/mp4"),
+            kind=Asset.Kind.OTHER, project=self.project,
+        )
+        Asset.objects.filter(id=asset.id).update(
+            duration_ms=2000, media_metadata={"video": {"codec": "h264"}, "audio": {"codec": "aac"}},
+            processing_status=Asset.ProcessingStatus.READY,
+        )
+        self.client.force_login(self.owner)
+        saved = self.client.post(
+            f"/studio/projects/{self.project.id}/movie-editor/",
+            data=json.dumps({"timeline": {"schemaVersion": 1, "tracks": [{
+                "id": "free-lane", "kind": "AUDIO", "clips": [{
+                    "id": "video-clip", "assetId": str(asset.id), "name": "Video on a free lane",
+                    "start": 0, "sourceStart": 0, "duration": 1500, "volume": 1,
+                }],
+            }]}}), content_type="application/json",
+        )
+        self.assertEqual(saved.status_code, 200, saved.content)
+        queued = self.client.post(
+            f"/studio/projects/{self.project.id}/movie-editor/renders/",
+            data=json.dumps({"profile": "DRAFT_720"}), content_type="application/json",
+        )
+        self.assertEqual(queued.status_code, 202, queued.content)
+
+    def test_movie_render_uses_only_visible_video_audio_during_overlap(self):
+        from types import SimpleNamespace
+        from .movie_rendering import build_render_command, timeline_duration_ms
+
+        lower = SimpleNamespace(
+            id="lower", content_type="video/mp4", proxy_file=SimpleNamespace(path="/tmp/lower.mp4"),
+            file=SimpleNamespace(path="/tmp/lower.mp4"), processing_status="READY",
+            media_metadata={"video": {"codec": "h264"}, "audio": {"codec": "aac"}},
+        )
+        upper = SimpleNamespace(
+            id="upper", content_type="video/mp4", proxy_file=SimpleNamespace(path="/tmp/upper.mp4"),
+            file=SimpleNamespace(path="/tmp/upper.mp4"), processing_status="READY",
+            media_metadata={"video": {"codec": "h264"}, "audio": {"codec": "aac"}},
+        )
+        audio = SimpleNamespace(
+            id="music", content_type="audio/mpeg", proxy_file=SimpleNamespace(path="/tmp/music.mp3"),
+            file=SimpleNamespace(path="/tmp/music.mp3"), processing_status="READY",
+            media_metadata={"audio": {"codec": "mp3"}},
+        )
+        snapshot = {"tracks": [
+            {"kind": "VIDEO", "muted": False, "clips": [{
+                "assetId": "upper", "start": 1000, "sourceStart": 0, "duration": 2000, "volume": 1,
+            }]},
+            {"kind": "AUDIO", "muted": False, "clips": [{
+                "assetId": "lower", "start": 0, "sourceStart": 0, "duration": 4000, "volume": 1,
+            }, {"assetId": "music", "start": 0, "sourceStart": 0, "duration": 6000, "volume": 1}]},
+        ]}
+        job = SimpleNamespace(snapshot=snapshot, duration_ms=4000, width=1280, height=720, fps=25)
+        command = " ".join(build_render_command(job, {"lower": lower, "upper": upper, "music": audio}, "/tmp/visible.mp4"))
+        self.assertIn("atrim=start=0.000:duration=1.000", command)
+        self.assertIn("atrim=start=3.000:duration=1.000", command)
+        self.assertEqual(timeline_duration_ms(snapshot, {"lower": lower, "upper": upper, "music": audio}), 4000)
 
     def test_movie_render_worker_persists_completed_mp4_asset(self):
         import io

@@ -50,7 +50,7 @@ Media ingest is handled asynchronously by `murrlex-media-worker.service`:
 
 1. FFprobe records duration, codecs, frame rate, dimensions and audio properties.
 2. FFmpeg creates a 720p H.264/AAC browser proxy for video or an AAC proxy for audio.
-3. Video receives a JPEG thumbnail and a 12-frame filmstrip; media with audio
+3. Video receives a JPEG thumbnail and a square-cropped filmstrip sampled about every two seconds; media with audio
    receives a PNG waveform.
 4. The editor polls queued/processing assets and enables dragging only after the proxy is ready.
 5. A failed job keeps the original and can be retried from the Media Bin.
@@ -60,24 +60,26 @@ Media ingest is handled asynchronously by `murrlex-media-worker.service`:
 The editor uses a horizontally scrollable millisecond timeline backed by the
 versioned schema above. The current editing surface supports:
 
-- multiple compatible video and audio tracks with mute and lock controls;
+- free-form organizational lanes with mute and lock controls; the source asset type, not the lane label, drives preview and rendering;
 - dragging media from the Media Bin or double-clicking it into the rough cut;
-- moving clips along a track or between tracks of the same media type;
+- moving clips freely across time and lanes, including magnetic before/after insertion guides;
+- multi-select, copy/paste, and joining two selected clips into a contiguous grouped cut;
 - left and right source trimming without modifying the original file;
 - splitting the selected clip at the playhead;
 - snapping to the playhead, clip starts, clip ends and timeline zero;
-- adaptive zoom from 6 to 160 pixels per second, anchored to the mouse pointer;
+- Ctrl plus mouse-wheel zoom from 6 to 160 pixels per second, anchored to the mouse pointer;
+- adjustable lane height, collapsible clip inspector, and a collapsible Media Bin docked to the right of the timeline;
 - frame stepping, playhead scrubbing and synchronized proxy playback;
 - 10 ms clip positioning, one-frame clip nudging, filmstrip thumbnails, audio
   waveform display, per-clip volume and precise inspector values;
 - undo and redo for timeline, clip, track and canvas changes;
 - a shared Project/Workspace media picker with upload and attach operations;
 - keyboard actions: Space to play/pause, S to split, Delete to remove,
-  arrows to nudge a selected clip by one frame, Ctrl/Cmd+Z or Y for history,
-  and the mouse wheel or Ctrl/Cmd plus or minus to zoom.
+  arrows to nudge selected clips by one frame, Ctrl/Cmd+C or V to copy/paste,
+  Ctrl/Cmd+Z or Y for history, and Ctrl plus the mouse wheel to zoom.
 
-The server rejects track/media type mismatches, inaccessible media, media that
-is not ready, and source ranges extending past the probed source duration.
+The server rejects inaccessible media, media that is not ready, and source
+ranges extending past the probed source duration.
 
 ## Rough-cut rendering
 
@@ -89,8 +91,9 @@ so later edits cannot silently change an already queued export.
 
 `murrlex-render-worker.service` composes jobs with FFmpeg independently from the
 media ingest worker. Video clips are scaled and padded to the selected canvas,
-overlapping video tracks are composited, and enabled sound is delayed, mixed and
-volume-adjusted on the shared timeline. A silent stereo track is generated when
+overlapping video tracks are composited. The upper visible video owns its
+embedded sound during an overlap, while independent audio assets are delayed,
+mixed and volume-adjusted on the shared timeline. A silent stereo track is generated when
 the edit contains no audio.
 
 The editor shows queue and render progress. Users with export permission can
