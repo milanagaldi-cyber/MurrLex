@@ -4413,6 +4413,28 @@ def _movie_timeline_media_error(user, project, timeline_data):
     return ""
 
 
+def _clamp_movie_timeline_to_sources(user, project, timeline_data):
+    """Repair clips whose saved duration exceeds the processed source duration."""
+    asset_ids = movie_timeline_asset_ids(timeline_data)
+    assets = {
+        str(asset.id): asset for asset in accessible_assets(user).filter(
+            workspace=project.workspace, id__in=asset_ids,
+        ).filter(Q(project=project) | Q(projects=project)).distinct()
+    }
+    repaired = False
+    for track in timeline_data.get("tracks", []):
+        for clip in track.get("clips", []):
+            asset = assets.get(str(clip.get("assetId")))
+            if not asset or not asset.duration_ms:
+                continue
+            source_start = int(clip.get("sourceStart", 0))
+            available = int(asset.duration_ms) - source_start
+            if available >= 200 and int(clip.get("duration", 0)) > available:
+                clip["duration"] = available
+                repaired = True
+    return timeline_data, repaired
+
+
 def _movie_timeline_assets_are_accessible(user, project, timeline_data):
     return not _movie_timeline_media_error(user, project, timeline_data)
 
@@ -4481,6 +4503,9 @@ def _movie_media_payload(asset, project):
         "thumbnailUrl": reverse("studio_api:asset_thumbnail", kwargs={"asset_id": asset.id}) if asset.thumbnail else "",
         "waveformUrl": reverse("studio_api:asset_waveform", kwargs={"asset_id": asset.id}) if asset.waveform_file else "",
         "filmstripUrl": reverse("studio_api:asset_filmstrip", kwargs={"asset_id": asset.id}) if asset.filmstrip_file else "",
+        "filmstripIntervalMs": 2000,
+        "filmstripFrameCount": max(1, min(120, (int(asset.duration_ms or 0) + 1999) // 2000)),
+        "filmstripTileSize": 72,
         "attached": bool(
             asset.project_id == project.id
             or any(item.id == project.id for item in getattr(asset, "_movie_projects", []))
@@ -4533,6 +4558,7 @@ def project_movie_editor(request, project_id):
             timeline_data = normalize_movie_timeline(payload.get("timeline"))
         except MovieTimelineValidationError as exc:
             return JsonResponse({"error": str(exc)}, status=400)
+        timeline_data, repaired = _clamp_movie_timeline_to_sources(request.user, project, timeline_data)
         media_error = _movie_timeline_media_error(request.user, project, timeline_data)
         if media_error:
             return JsonResponse({"error": media_error}, status=400)
@@ -4569,6 +4595,8 @@ def project_movie_editor(request, project_id):
         )
         return JsonResponse({
             "ok": True,
+            "timeline": timeline_data,
+            "repaired": repaired,
             "updatedAt": timeline.updated_at.isoformat(),
             "schemaVersion": timeline.schema_version,
             "revisionCount": timeline.revisions.count(),

@@ -3847,7 +3847,7 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertEqual(response.status_code, 400, response.content)
         self.assertIn("video track", response.json()["error"].lower())
 
-    def test_movie_editor_rejects_trim_beyond_source_duration(self):
+    def test_movie_editor_clamps_trim_to_source_duration(self):
         from django.core.files.uploadedfile import SimpleUploadedFile
         from .models import Asset
         from .storage import create_asset
@@ -3885,8 +3885,9 @@ class StudioProductionPilotFeaturesTests(TestCase):
             }),
             content_type="application/json",
         )
-        self.assertEqual(response.status_code, 400, response.content)
-        self.assertIn("source media", response.json()["error"])
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertTrue(response.json()["repaired"])
+        self.assertEqual(response.json()["timeline"]["tracks"][0]["clips"][0]["duration"], 500)
 
     def test_movie_editor_upload_queues_media_and_reports_status(self):
         from django.core.files.uploadedfile import SimpleUploadedFile

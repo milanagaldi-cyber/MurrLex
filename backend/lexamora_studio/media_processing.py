@@ -131,15 +131,14 @@ def _create_thumbnail(source, target, duration_ms):
 
 
 def _create_filmstrip(source, target, duration_ms):
-    duration_seconds = max(0.2, duration_ms / 1000)
-    sample_rate = 12 / duration_seconds
+    frame_count = max(1, min(120, (int(duration_ms) + 1999) // 2000))
     _run([
         settings.STUDIO_FFMPEG_BINARY, "-y", "-i", str(source),
         "-vf", (
-            f"fps={sample_rate:.8f},"
-            "scale=160:90:force_original_aspect_ratio=decrease,"
-            "pad=160:90:(ow-iw)/2:(oh-ih)/2:color=black,"
-            "tile=12x1"
+            "fps=1/2:start_time=0,"
+            "scale=72:72:force_original_aspect_ratio=decrease,"
+            "pad=72:72:(ow-iw)/2:(oh-ih)/2:color=black,"
+            f"tile={frame_count}x1"
         ),
         "-frames:v", "1", "-q:v", "4", str(target),
     ])
