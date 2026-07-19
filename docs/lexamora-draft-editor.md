@@ -54,5 +54,22 @@ Media ingest is handled asynchronously by `murrlex-media-worker.service`:
 4. The editor polls queued/processing assets and enables dragging only after the proxy is ready.
 5. A failed job keeps the original and can be retried from the Media Bin.
 
-The next implementation phase expands timeline editing operations and uses the
-waveform/proxy metadata for precise trimming and synchronized playback.
+## Timeline editing
+
+The editor uses a horizontally scrollable millisecond timeline backed by the
+versioned schema above. The current editing surface supports:
+
+- multiple compatible video and audio tracks with mute and lock controls;
+- dragging media from the Media Bin or double-clicking it into the rough cut;
+- moving clips along a track or between tracks of the same media type;
+- left and right source trimming without modifying the original file;
+- splitting the selected clip at the playhead;
+- snapping to the playhead, clip starts, clip ends and timeline zero;
+- adaptive zoom from 6 to 80 pixels per second;
+- frame stepping, playhead scrubbing and synchronized proxy playback;
+- audio waveform display, per-clip volume and precise inspector values;
+- keyboard actions: Space to play/pause, S to split, Delete to remove,
+  arrows to step, and Ctrl/Cmd plus or minus to zoom.
+
+The server rejects track/media type mismatches, inaccessible media, media that
+is not ready, and source ranges extending past the probed source duration.

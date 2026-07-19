@@ -3743,6 +3743,10 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertContains(page, "Auto rough cut")
         self.assertContains(page, "Draft Editor")
         self.assertNotContains(page, "Movie Editor 2")
+        self.assertContains(page, "data-timeline-split")
+        self.assertContains(page, "data-timeline-zoom")
+        self.assertContains(page, "data-playhead")
+        self.assertContains(page, "studio/movie_editor.js")
         response = self.client.post(
             f"/studio/projects/{self.project.id}/movie-editor/",
             data=json.dumps({
@@ -3797,6 +3801,87 @@ class StudioProductionPilotFeaturesTests(TestCase):
         )
         self.assertEqual(response.status_code, 400)
         self.assertIn("not supported", response.json()["error"])
+
+    def test_movie_editor_rejects_media_on_incompatible_track(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from .models import Asset
+        from .storage import create_asset
+
+        asset = create_asset(
+            user=self.owner,
+            workspace=self.workspace,
+            project=self.project,
+            uploaded=SimpleUploadedFile("source.mp4", b"video", content_type="video/mp4"),
+            kind=Asset.Kind.OTHER,
+        )
+        Asset.objects.filter(id=asset.id).update(
+            duration_ms=5000,
+            processing_status=Asset.ProcessingStatus.READY,
+        )
+        self.client.force_login(self.owner)
+        response = self.client.post(
+            f"/studio/projects/{self.project.id}/movie-editor/",
+            data=json.dumps({
+                "timeline": {
+                    "schemaVersion": 1,
+                    "tracks": [{
+                        "id": "audio-1",
+                        "kind": "AUDIO",
+                        "clips": [{
+                            "id": "clip-1",
+                            "assetId": str(asset.id),
+                            "start": 0,
+                            "sourceStart": 0,
+                            "duration": 1000,
+                        }],
+                    }],
+                },
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn("video track", response.json()["error"].lower())
+
+    def test_movie_editor_rejects_trim_beyond_source_duration(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from .models import Asset
+        from .storage import create_asset
+
+        asset = create_asset(
+            user=self.owner,
+            workspace=self.workspace,
+            project=self.project,
+            uploaded=SimpleUploadedFile("trim.mp4", b"video", content_type="video/mp4"),
+            kind=Asset.Kind.OTHER,
+        )
+        Asset.objects.filter(id=asset.id).update(
+            duration_ms=5000,
+            processing_status=Asset.ProcessingStatus.READY,
+        )
+        self.client.force_login(self.owner)
+        response = self.client.post(
+            f"/studio/projects/{self.project.id}/movie-editor/",
+            data=json.dumps({
+                "timeline": {
+                    "schemaVersion": 1,
+                    "tracks": [{
+                        "id": "video-1",
+                        "kind": "VIDEO",
+                        "clips": [{
+                            "id": "clip-1",
+                            "assetId": str(asset.id),
+                            "name": "Invalid trim",
+                            "start": 0,
+                            "sourceStart": 4500,
+                            "duration": 1000,
+                        }],
+                    }],
+                },
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 400, response.content)
+        self.assertIn("source media", response.json()["error"])
 
     def test_movie_editor_upload_queues_media_and_reports_status(self):
         from django.core.files.uploadedfile import SimpleUploadedFile

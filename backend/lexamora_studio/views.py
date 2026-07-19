@@ -4381,18 +4381,39 @@ def _movie_timeline_snapshot(timeline, user, reason=MovieTimelineRevision.Reason
     return revision
 
 
-def _movie_timeline_assets_are_accessible(user, project, timeline_data):
+def _movie_timeline_media_error(user, project, timeline_data):
     asset_ids = movie_timeline_asset_ids(timeline_data)
     if not asset_ids:
-        return True
-    allowed_ids = {
-        str(value) for value in accessible_assets(user).filter(
+        return ""
+    assets = {
+        str(asset.id): asset for asset in accessible_assets(user).filter(
             workspace=project.workspace, id__in=asset_ids,
         ).filter(
             Q(content_type__startswith="video/") | Q(content_type__startswith="audio/"),
-        ).filter(Q(project=project) | Q(projects=project)).values_list("id", flat=True)
+        ).filter(Q(project=project) | Q(projects=project)).distinct()
     }
-    return asset_ids == allowed_ids
+    if asset_ids != set(assets):
+        return "One or more timeline media files are not accessible."
+    for track in timeline_data.get("tracks", []):
+        if track.get("kind") not in {"VIDEO", "AUDIO"}:
+            continue
+        for clip in track.get("clips", []):
+            asset = assets.get(str(clip.get("assetId")))
+            if not asset:
+                continue
+            if asset.processing_status != Asset.ProcessingStatus.READY:
+                return f"Media {asset.original_filename} is not ready for timeline editing."
+            asset_kind = "VIDEO" if asset.content_type.startswith("video/") else "AUDIO"
+            if track.get("kind") != asset_kind:
+                return f"{asset_kind.title()} media must be placed on a {asset_kind.lower()} track."
+            source_end = int(clip.get("sourceStart", 0)) + int(clip.get("duration", 0))
+            if asset.duration_ms and source_end > asset.duration_ms + 50:
+                return f"Clip {clip.get('name') or clip.get('id')} extends beyond its source media."
+    return ""
+
+
+def _movie_timeline_assets_are_accessible(user, project, timeline_data):
+    return not _movie_timeline_media_error(user, project, timeline_data)
 
 
 def _movie_timeline_json(timeline):
@@ -4471,8 +4492,9 @@ def project_movie_editor(request, project_id):
             timeline_data = normalize_movie_timeline(payload.get("timeline"))
         except MovieTimelineValidationError as exc:
             return JsonResponse({"error": str(exc)}, status=400)
-        if not _movie_timeline_assets_are_accessible(request.user, project, timeline_data):
-            return JsonResponse({"error": "One or more timeline videos are not accessible."}, status=400)
+        media_error = _movie_timeline_media_error(request.user, project, timeline_data)
+        if media_error:
+            return JsonResponse({"error": media_error}, status=400)
         with transaction.atomic():
             timeline = MovieTimeline.objects.select_for_update().get(id=timeline.id)
             next_title = str(payload.get("title") or timeline.title).strip()[:200] or "Main edit"
