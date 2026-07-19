@@ -40,7 +40,12 @@
       <div><h3>Rough-cut exports</h3><p class="muted">Renders continue on the server after you leave this page</p></div>
       <button class="icon-button secondary" type="button" data-render-close title="Close exports" aria-label="Close exports">&times;</button>
     </div>
-    {% if can_export %}<div class="movie-render-form"><label>Profile<select data-render-profile><option value="DRAFT_720">Draft 720p</option><option value="REVIEW_1080">Review 1080p</option></select></label><button type="button" data-render-start>Queue MP4 render</button></div>{% endif %}
+    {% if can_export %}<div class="movie-render-form">
+      <label>Video<select data-render-profile><option value="DRAFT_720">Draft 720p</option><option value="REVIEW_1080">Review 1080p</option></select></label>
+      <label>Audio cleanup<select data-render-audio-profile title="Original keeps the mix unchanged. Balanced evens levels. Clean speech also reduces steady noise and rumble."><option value="CLEAN_SPEECH">Clean speech</option><option value="BALANCED">Balanced</option><option value="ORIGINAL">Original mix</option></select></label>
+      <label>Target<select data-render-target-lufs title="Target integrated loudness for the finished rough cut"><option value="-14">-14 LUFS / social</option><option value="-16" selected>-16 LUFS / voice</option><option value="-18">-18 LUFS / calm</option><option value="-23">-23 LUFS / broadcast</option></select></label>
+      <button type="button" data-render-start>Queue MP4 render</button>
+    </div>{% endif %}
     <div class="movie-render-list" data-render-list><p class="muted">No exports yet</p></div>
   </section>
   <div class="movie-workbench">

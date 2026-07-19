@@ -34,6 +34,11 @@ Run after every deployment:
 7. Confirm a user without membership cannot fetch a project by UUID.
 8. Inspect JSON logs and verify the response `X-Request-ID` is present.
 
+Draft Editor rendering runs separately from media ingest. Render jobs preserve
+their audio cleanup profile and LUFS target. `Clean speech` applies denoise,
+rumble filtering, compression and loudness normalization to the exported rough
+cut while leaving source assets and browser proxies unchanged.
+
 ## Security settings
 
 Production defaults enable secure cookies, HTTPS redirect, HSTS, MIME sniffing

@@ -18,6 +18,28 @@ class MovieRenderingError(RuntimeError):
     pass
 
 
+def _audio_profile(job):
+    return getattr(job, "audio_profile", MovieRenderJob.AudioProfile.CLEAN_SPEECH)
+
+
+def _target_lufs(job):
+    value = int(getattr(job, "target_lufs", -16))
+    return value if value in {-14, -16, -18, -23} else -16
+
+
+def _clip_audio_cleanup(job):
+    profile = _audio_profile(job)
+    if profile == MovieRenderJob.AudioProfile.CLEAN_SPEECH:
+        return (
+            "highpass=f=80,lowpass=f=14000,"
+            "afftdn=nf=-25:tn=1,"
+            "acompressor=threshold=0.125:ratio=3:attack=20:release=250:makeup=1.5,"
+        )
+    if profile == MovieRenderJob.AudioProfile.BALANCED:
+        return "highpass=f=40,acompressor=threshold=0.18:ratio=2:attack=20:release=250:makeup=1.2,"
+    return ""
+
+
 def timeline_duration_ms(snapshot):
     return max(
         (int(clip.get("start", 0)) + int(clip.get("duration", 0))
@@ -86,17 +108,22 @@ def build_render_command(job, assets, output_path):
         if has_audio:
             audio_label = f"a{len(audio_labels)}"
             delay_ms = int(clip.get("start", 0))
+            cleanup = _clip_audio_cleanup(job)
             filters.append(
                 f"[{input_index}:a]atrim=start={source_start:.3f}:duration={clip_duration:.3f},"
-                f"asetpts=PTS-STARTPTS,volume={volume:.4f},adelay={delay_ms}|{delay_ms}[{audio_label}]"
+                f"asetpts=PTS-STARTPTS,volume={volume:.4f},{cleanup}"
+                f"adelay={delay_ms}|{delay_ms}[{audio_label}]"
             )
             audio_labels.append(audio_label)
 
     if audio_labels:
         joined = "".join(f"[{label}]" for label in audio_labels)
+        mastering = ""
+        if _audio_profile(job) != MovieRenderJob.AudioProfile.ORIGINAL:
+            mastering = f"loudnorm=I={_target_lufs(job)}:TP=-1.5:LRA=11,"
         filters.append(
             f"{joined}amix=inputs={len(audio_labels)}:duration=longest:dropout_transition=0:normalize=0,"
-            f"atrim=duration={duration_seconds:.3f},aresample=48000[aout]"
+            f"atrim=duration={duration_seconds:.3f},{mastering}aresample=48000[aout]"
         )
     else:
         filters.append(f"anullsrc=r=48000:cl=stereo,atrim=duration={duration_seconds:.3f}[aout]")
@@ -130,7 +157,14 @@ def _store_result(job, output_path):
         width=job.width,
         height=job.height,
         duration_ms=job.duration_ms,
-        media_metadata={"format": "mp4", "video": {"codec": "h264", "width": job.width, "height": job.height, "frameRate": job.fps}, "audio": {"codec": "aac", "channels": 2, "sampleRate": 48000}},
+        media_metadata={
+            "format": "mp4",
+            "video": {"codec": "h264", "width": job.width, "height": job.height, "frameRate": job.fps},
+            "audio": {
+                "codec": "aac", "channels": 2, "sampleRate": 48000,
+                "cleanupProfile": _audio_profile(job), "targetLufs": _target_lufs(job),
+            },
+        },
         processing_status=Asset.ProcessingStatus.READY,
         processing_finished_at=timezone.now(),
         created_by=job.requested_by,

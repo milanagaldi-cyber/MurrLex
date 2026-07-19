@@ -3959,12 +3959,17 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertEqual(saved.status_code, 200, saved.content)
         response = self.client.post(
             f"/studio/projects/{self.project.id}/movie-editor/renders/",
-            data=json.dumps({"profile": "DRAFT_720"}), content_type="application/json",
+            data=json.dumps({
+                "profile": "DRAFT_720", "audioProfile": "BALANCED", "targetLufs": -14,
+            }), content_type="application/json",
         )
         self.assertEqual(response.status_code, 202, response.content)
         job = MovieRenderJob.objects.get(id=response.json()["id"])
         self.assertEqual((job.width, job.height), (720, 1280))
         self.assertEqual(job.duration_ms, 4500)
+        self.assertEqual(job.audio_profile, MovieRenderJob.AudioProfile.BALANCED)
+        self.assertEqual(job.target_lufs, -14)
+        self.assertEqual(response.json()["audioProfileLabel"], "Balanced")
         self.assertEqual(job.snapshot, MovieTimeline.objects.get(project=self.project).timeline)
 
         cancelled = self.client.post(
@@ -4004,8 +4009,17 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertIn("trim=start=0.500:duration=3.000", joined)
         self.assertIn("overlay=eof_action=pass", joined)
         self.assertIn("volume=0.7500", joined)
+        self.assertIn("highpass=f=80", joined)
+        self.assertIn("afftdn=nf=-25:tn=1", joined)
+        self.assertIn("acompressor=threshold=0.125", joined)
         self.assertIn("amix=inputs=1", joined)
+        self.assertIn("loudnorm=I=-16:TP=-1.5:LRA=11", joined)
         self.assertIn("libx264", command)
+
+        job.audio_profile = "ORIGINAL"
+        original = " ".join(build_render_command(job, {"asset-1": video}, "/tmp/original-output.mp4"))
+        self.assertNotIn("afftdn=", original)
+        self.assertNotIn("loudnorm=", original)
 
     def test_movie_render_worker_persists_completed_mp4_asset(self):
         import io
@@ -4064,6 +4078,8 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertIsNotNone(job.output_asset_id)
         self.assertEqual(job.output_asset.kind, Asset.Kind.EXPORT)
         self.assertEqual(job.output_asset.content_type, "video/mp4")
+        self.assertEqual(job.output_asset.media_metadata["audio"]["cleanupProfile"], "CLEAN_SPEECH")
+        self.assertEqual(job.output_asset.media_metadata["audio"]["targetLufs"], -16)
         if job.output_asset.file.storage.exists(job.output_asset.file.name):
             job.output_asset.file.storage.delete(job.output_asset.file.name)
 

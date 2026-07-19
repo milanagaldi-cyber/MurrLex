@@ -225,7 +225,7 @@
       actions.className = "movie-render-actions";
       progress.className = "movie-render-progress";
       title.textContent = job.title;
-      details.textContent = `${job.profileLabel} / ${job.width}x${job.height} / ${job.statusLabel} / ${renderDate(job.createdAt)}`;
+      details.textContent = `${job.profileLabel} / ${job.audioProfileLabel} ${job.targetLufs} LUFS / ${job.width}x${job.height} / ${job.statusLabel} / ${renderDate(job.createdAt)}`;
       bar.style.width = `${job.progress || 0}%`;
       progress.append(bar);
       copy.append(title, details);
@@ -293,6 +293,8 @@
       body: JSON.stringify({
         title: root.querySelector("[data-movie-title]").value,
         profile: root.querySelector("[data-render-profile]").value,
+        audioProfile: root.querySelector("[data-render-audio-profile]").value,
+        targetLufs: Number(root.querySelector("[data-render-target-lufs]").value),
       }),
     });
     const data = await response.json().catch(() => ({}));

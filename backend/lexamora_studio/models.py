@@ -942,11 +942,20 @@ class MovieRenderJob(models.Model):
         DRAFT_720 = "DRAFT_720", "Draft 720p"
         REVIEW_1080 = "REVIEW_1080", "Review 1080p"
 
+    class AudioProfile(models.TextChoices):
+        ORIGINAL = "ORIGINAL", "Original mix"
+        BALANCED = "BALANCED", "Balanced"
+        CLEAN_SPEECH = "CLEAN_SPEECH", "Clean speech"
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     timeline = models.ForeignKey(MovieTimeline, on_delete=models.PROTECT, related_name="render_jobs")
     project = models.ForeignKey(Project, on_delete=models.PROTECT, related_name="movie_render_jobs")
     title = models.CharField(max_length=200)
     profile = models.CharField(max_length=20, choices=Profile.choices, default=Profile.DRAFT_720)
+    audio_profile = models.CharField(
+        max_length=20, choices=AudioProfile.choices, default=AudioProfile.CLEAN_SPEECH,
+    )
+    target_lufs = models.SmallIntegerField(default=-16)
     aspect_ratio = models.CharField(max_length=12)
     width = models.PositiveIntegerField()
     height = models.PositiveIntegerField()

@@ -4436,6 +4436,9 @@ def _movie_render_payload(job):
         "title": job.title,
         "profile": job.profile,
         "profileLabel": job.get_profile_display(),
+        "audioProfile": job.audio_profile,
+        "audioProfileLabel": job.get_audio_profile_display(),
+        "targetLufs": job.target_lufs,
         "status": job.status,
         "statusLabel": job.get_status_display(),
         "progress": job.progress,
@@ -4665,6 +4668,15 @@ def project_movie_renders(request, project_id):
     profile = str(payload.get("profile") or MovieRenderJob.Profile.DRAFT_720)
     if profile not in MovieRenderJob.Profile.values:
         return JsonResponse({"error": "Unsupported render profile."}, status=400)
+    audio_profile = str(payload.get("audioProfile") or MovieRenderJob.AudioProfile.CLEAN_SPEECH)
+    if audio_profile not in MovieRenderJob.AudioProfile.values:
+        return JsonResponse({"error": "Unsupported audio cleanup profile."}, status=400)
+    try:
+        target_lufs = int(payload.get("targetLufs", -16))
+    except (TypeError, ValueError):
+        return JsonResponse({"error": "Target loudness must be a valid LUFS value."}, status=400)
+    if target_lufs not in {-14, -16, -18, -23}:
+        return JsonResponse({"error": "Choose -14, -16, -18 or -23 LUFS."}, status=400)
     snapshot = normalize_movie_timeline(timeline.timeline or default_movie_timeline())
     media_error = _movie_timeline_media_error(request.user, project, snapshot)
     if media_error:
@@ -4678,6 +4690,8 @@ def project_movie_renders(request, project_id):
         project=project,
         title=str(payload.get("title") or timeline.title).strip()[:200] or "Rough cut",
         profile=profile,
+        audio_profile=audio_profile,
+        target_lufs=target_lufs,
         aspect_ratio=timeline.aspect_ratio,
         width=width,
         height=height,
@@ -4689,7 +4703,10 @@ def project_movie_renders(request, project_id):
     )
     audit(
         workspace=project.workspace, actor=request.user, action="MOVIE_RENDER_QUEUED",
-        instance=project, metadata={"renderId": str(job.id), "profile": profile, "durationMs": duration_ms},
+        instance=project, metadata={
+            "renderId": str(job.id), "profile": profile, "audioProfile": audio_profile,
+            "targetLufs": target_lufs, "durationMs": duration_ms,
+        },
     )
     return JsonResponse(_movie_render_payload(job), status=202)
 

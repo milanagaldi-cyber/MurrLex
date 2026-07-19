@@ -90,3 +90,19 @@ the edit contains no audio.
 The editor shows queue and render progress. Users with export permission can
 cancel active work, retry failed or cancelled jobs, and download successful MP4
 assets from protected workspace storage.
+
+## Audio cleanup
+
+Each render stores an immutable audio-cleanup profile and target loudness next
+to its timeline snapshot. Source media and browser proxies are never modified.
+
+- `Original mix` preserves clip volume and timing without mastering.
+- `Balanced` removes sub-bass rumble, applies gentle compression and normalizes
+  the final mix.
+- `Clean speech` additionally removes steady background noise, limits the useful
+  speech band and applies stronger voice compression before final mastering.
+
+The available integrated loudness targets are -14 LUFS for social delivery,
+-16 LUFS for voice-led web drafts, -18 LUFS for a calmer mix and -23 LUFS for
+broadcast-style handoff. Processed export assets record both settings in their
+media metadata so an editor can identify exactly how a rough cut was prepared.
