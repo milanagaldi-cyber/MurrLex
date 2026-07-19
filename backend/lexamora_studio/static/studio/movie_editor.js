@@ -33,6 +33,7 @@
   let libraryScope = "project";
   let standalonePreviewAssetId = null;
   let trackHeight = Number(localStorage.getItem("studio-movie-track-height")) || 84;
+  let previewZoom = Number(localStorage.getItem("studio-movie-preview-zoom")) || 1;
   const settingSnapshots = new WeakMap();
   const PRECISION_MS = 10;
 
@@ -43,6 +44,7 @@
   const headsNode = q("[data-track-heads]");
   const preview = q("[data-movie-preview]");
   const previewStage = q("[data-preview-stage]");
+  const previewOutline = q("[data-preview-outline]");
   const previewEmpty = q("[data-preview-empty]");
   const previewStatus = q("[data-preview-status]");
   const previewScrub = q("[data-preview-scrub]");
@@ -70,6 +72,7 @@
   const csrfToken = () => document.cookie.match(/csrftoken=([^;]+)/)?.[1] || "";
   const uid = () => crypto.randomUUID ? crypto.randomUUID() : `clip-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const clamp = (value, minimum, maximum) => Math.max(minimum, Math.min(maximum, value));
+  previewZoom = clamp(previewZoom, .5, 2);
   trackHeight = clamp(trackHeight, 56, 160);
   const quantize = value => Math.round(Number(value || 0) / PRECISION_MS) * PRECISION_MS;
   const frameMs = () => 1000 / Math.max(1, Number(q("[data-movie-fps]").value) || 25);
@@ -199,6 +202,40 @@
     if (!qa(`[data-movie-resolution] option`).some(option => option.value === q("[data-movie-resolution]").value)) {
       q("[data-movie-resolution]").value = defaults[ratio];
     }
+    updatePreviewGeometry();
+  }
+
+  function previewAssetData() {
+    const active = standalonePreviewAssetId ? {clip: {assetId: standalonePreviewAssetId}} : activeClip("VIDEO", playheadMs);
+    return active ? assetMap.get(active.clip.assetId) : null;
+  }
+
+  function updatePreviewGeometry(asset = previewAssetData()) {
+    const [canvasWidth, canvasHeight] = (q("[data-movie-ratio]").value || "16:9").split(":").map(Number);
+    const canvasRatio = canvasWidth / canvasHeight;
+    const sourceWidth = asset?.width || preview.videoWidth;
+    const sourceHeight = asset?.height || preview.videoHeight;
+    const sourceRatio = sourceWidth && sourceHeight ? sourceWidth / sourceHeight : canvasRatio;
+    let width = sourceRatio >= canvasRatio ? sourceRatio / canvasRatio * 100 : 100;
+    let height = sourceRatio >= canvasRatio ? 100 : canvasRatio / sourceRatio * 100;
+    const fit = Math.min(1, 160 / Math.max(width, height));
+    width *= fit; height *= fit;
+    [preview, previewOutline].forEach(node => {
+      if (!node) return;
+      node.style.width = `${width}%`;
+      node.style.height = `${height}%`;
+      node.style.transform = `translate(-50%,-50%) scale(${previewZoom})`;
+    });
+    if (previewOutline) previewOutline.hidden = !asset;
+    previewStage.classList.toggle("source-mismatch", Math.abs(sourceRatio - canvasRatio) > .01);
+    const label = q("[data-preview-zoom-label]");
+    if (label) label.textContent = `${Math.round(previewZoom * 100)}%`;
+  }
+
+  function changePreviewZoom(delta) {
+    previewZoom = clamp(Math.round((previewZoom + delta) * 10) / 10, .5, 2);
+    localStorage.setItem("studio-movie-preview-zoom", String(previewZoom));
+    updatePreviewGeometry();
   }
 
   function mediaStatus(asset) {
@@ -439,7 +476,7 @@
     const precise = Math.max(0, quantize(value));
     snapGuide.hidden = true;
     if (!snapping) return precise;
-    const threshold = Math.max(PRECISION_MS, 10 / zoom * 1000);
+    const threshold = Math.max(PRECISION_MS, 7 / zoom * 1000);
     let closest = null;
     let distance = threshold + 1;
     timelineCandidates(new Set(excludeId ? [excludeId] : [])).forEach(candidate => {
@@ -460,7 +497,7 @@
     const bounded = Math.max(-minimumStart, precise);
     if (!snapping) return bounded;
     const excluded = new Set(items.map(item => item.clip.id));
-    const threshold = Math.max(PRECISION_MS, 10 / zoom * 1000);
+    const threshold = Math.max(PRECISION_MS, 7 / zoom * 1000);
     let best = null;
     timelineCandidates(excluded).forEach(candidate => {
       [minimumStart + bounded, maximumEnd + bounded].forEach(edge => {
@@ -486,6 +523,26 @@
     if (sync && !playing) syncPlayers(false, true);
   }
 
+  function beginPlayheadGesture(event) {
+    if (event.button !== 0) return;
+    event.preventDefault(); event.stopPropagation(); stopPlayback();
+    const update = next => {
+      const bounds = timelineScroll.getBoundingClientRect();
+      if (next.clientX > bounds.right - 24) timelineScroll.scrollLeft += 18;
+      else if (next.clientX < bounds.left + 24) timelineScroll.scrollLeft = Math.max(0, timelineScroll.scrollLeft - 18);
+      setPlayhead((next.clientX - bounds.left + timelineScroll.scrollLeft) / zoom * 1000);
+    };
+    update(event);
+    const finish = () => {
+      window.removeEventListener("pointermove", update);
+      window.removeEventListener("pointerup", finish);
+      playheadNode.classList.remove("dragging");
+    };
+    playheadNode.classList.add("dragging");
+    window.addEventListener("pointermove", update);
+    window.addEventListener("pointerup", finish);
+  }
+
   function previewAsset(asset) {
     if (!asset || asset.kind !== "VIDEO" || asset.status !== "READY") return;
     stopPlayback();
@@ -495,11 +552,13 @@
     renderTimeline();
     renderInspector();
     preview.hidden = false;
+    if (previewOutline) previewOutline.hidden = false;
     previewEmpty.hidden = true;
     preview.dataset.assetId = asset.id;
     preview.dataset.clipId = "standalone";
     preview.src = asset.proxyUrl || asset.originalUrl;
     preview.load();
+    updatePreviewGeometry(asset);
     previewStatus.textContent = `Previewing ${asset.name}`;
   }
 
@@ -509,6 +568,7 @@
       player.dataset.clipId = "";
       if (player === preview) {
         preview.hidden = true;
+        if (previewOutline) previewOutline.hidden = true;
         previewEmpty.hidden = false;
       }
       return;
@@ -530,7 +590,9 @@
     player.dataset.clipId = clip.id;
     if (player === preview) {
       preview.hidden = false;
+      if (previewOutline) previewOutline.hidden = false;
       previewEmpty.hidden = true;
+      updatePreviewGeometry(asset);
     }
     if (changed || player.currentSrc !== new URL(source, location.href).href) {
       player.src = source;
@@ -954,8 +1016,6 @@
           item.node.style.left = `${item.clip.start / 1000 * zoom}px`;
           item.node.style.transform = `translateY(${targetTop - item.laneTop}px)`;
         });
-        const targetIds = new Set(items.map(item => item.targetTrack.id));
-        qa(".movie-track-lane").forEach(lane => lane.classList.toggle("drop-target", targetIds.has(lane.dataset.trackId)));
       } else if (mode === "left") {
         let shift = snapTime(anchor.original.start + delta, clip.id) - anchor.original.start;
         shift = clamp(quantize(shift), -anchor.original.sourceStart, anchor.original.duration - 200);
@@ -978,17 +1038,23 @@
     };
     const finish = () => {
       cleanup();
+      const placedTrackIds = new Set();
       if (!changed) historyUndo.pop();
       else {
         items.forEach(item => { item.node.dataset.suppressClick = "true"; });
         if (mode === "move") {
           const movedIds = new Set(items.map(item => item.clip.id));
           timeline.tracks.forEach(item => { item.clips = item.clips.filter(existing => !movedIds.has(existing.id)); });
-          items.forEach(item => item.targetTrack.clips.push(item.clip));
+          items.forEach(item => { item.targetTrack.clips.push(item.clip); placedTrackIds.add(item.targetTrack.id); });
         }
         historyRedo = []; updateDirty(); updateHistoryButtons();
       }
       renderTimeline(); renderInspector();
+      placedTrackIds.forEach(id => {
+        const lane = q(`.movie-track-lane[data-track-id="${CSS.escape(id)}"]`);
+        lane?.classList.add("placed");
+        setTimeout(() => lane?.classList.remove("placed"), 320);
+      });
     };
     const cancel = () => {
       items.forEach(item => Object.assign(item.clip, item.original));
@@ -1112,9 +1178,16 @@
       headsNode.append(makeTrackHead(track));
       const lane = document.createElement("div"); lane.className = "movie-track-lane"; lane.dataset.trackId = track.id;
       lane.onpointerdown = event => { if (event.target === lane) beginMarquee(event, lane); };
-      lane.ondragover = event => { if (!track.locked && canEdit) { event.preventDefault(); lane.classList.add("drop-target"); } };
-      lane.ondragleave = () => lane.classList.remove("drop-target");
-      lane.ondrop = event => { event.preventDefault(); lane.classList.remove("drop-target"); addClip(track, event.dataTransfer.getData("text/asset-id"), (event.clientX - lane.getBoundingClientRect().left) / zoom * 1000); };
+      lane.ondragover = event => { if (!track.locked && canEdit) event.preventDefault(); };
+      lane.ondrop = event => {
+        event.preventDefault();
+        addClip(track, event.dataTransfer.getData("text/asset-id"), (event.clientX - lane.getBoundingClientRect().left) / zoom * 1000);
+        requestAnimationFrame(() => {
+          const placedLane = q(`.movie-track-lane[data-track-id="${CSS.escape(track.id)}"]`);
+          placedLane?.classList.add("placed");
+          setTimeout(() => placedLane?.classList.remove("placed"), 320);
+        });
+      };
       track.clips.sort((a, b) => a.start - b.start).forEach(clip => lane.append(makeClipNode(clip, track)));
       if (!track.clips.length) lane.innerHTML = '<span class="movie-empty">Drop a clip anywhere across this track</span>';
       tracksNode.append(lane);
@@ -1236,7 +1309,12 @@
     previewStatus.textContent = "Ready";
   });
   preview.addEventListener("play", () => { if (!playing && !standalonePreviewAssetId) togglePlayback(); });
+  preview.addEventListener("loadedmetadata", () => updatePreviewGeometry());
   preview.addEventListener("error", () => { previewStatus.textContent = preview.error?.message || "Preview failed"; });
+  playheadNode.addEventListener("pointerdown", beginPlayheadGesture);
+  q("[data-preview-zoom-out]")?.addEventListener("click", () => changePreviewZoom(-.1));
+  q("[data-preview-zoom-in]")?.addEventListener("click", () => changePreviewZoom(.1));
+  q("[data-preview-zoom-reset]")?.addEventListener("click", () => { previewZoom = 1; localStorage.setItem("studio-movie-preview-zoom", "1"); updatePreviewGeometry(); });
   q("[data-timeline-split]").onclick = splitSelected;
   q("[data-clip-copy]")?.addEventListener("click", copySelected);
   q("[data-clip-paste]")?.addEventListener("click", pasteSelected);
@@ -1289,8 +1367,9 @@
 
   document.addEventListener("keydown", event => {
     const editing = event.target.matches("input,textarea,select") || event.target.isContentEditable;
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") { event.preventDefault(); event.shiftKey ? redo() : undo(); return; }
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "y") { event.preventDefault(); redo(); return; }
+    const shortcut = event.ctrlKey || event.metaKey;
+    if (shortcut && (event.code === "KeyZ" || event.key.toLowerCase() === "z")) { event.preventDefault(); event.shiftKey ? redo() : undo(); return; }
+    if (shortcut && (event.code === "KeyY" || event.key.toLowerCase() === "y")) { event.preventDefault(); redo(); return; }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "c" && !editing) { event.preventDefault(); copySelected(); return; }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v" && !editing) { event.preventDefault(); pasteSelected(); return; }
     if (editing) return;
