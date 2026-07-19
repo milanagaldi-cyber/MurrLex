@@ -130,6 +130,21 @@ def _create_thumbnail(source, target, duration_ms):
     ])
 
 
+def _create_filmstrip(source, target, duration_ms):
+    duration_seconds = max(0.2, duration_ms / 1000)
+    sample_rate = 12 / duration_seconds
+    _run([
+        settings.STUDIO_FFMPEG_BINARY, "-y", "-i", str(source),
+        "-vf", (
+            f"fps={sample_rate:.8f},"
+            "scale=160:90:force_original_aspect_ratio=decrease,"
+            "pad=160:90:(ow-iw)/2:(oh-ih)/2:color=black,"
+            "tile=12x1"
+        ),
+        "-frames:v", "1", "-q:v", "4", str(target),
+    ])
+
+
 def _create_waveform(source, target):
     _run([
         settings.STUDIO_FFMPEG_BINARY, "-y", "-i", str(source),
@@ -181,9 +196,12 @@ def process_media_asset(asset_id):
                 _create_video_proxy(source, proxy)
                 thumbnail = temporary / "thumbnail.jpg"
                 _create_thumbnail(source, thumbnail, duration_ms)
+                filmstrip = temporary / "filmstrip.jpg"
+                _create_filmstrip(source, filmstrip, duration_ms)
             else:
                 _create_audio_proxy(source, proxy)
                 thumbnail = None
+                filmstrip = None
             waveform = temporary / "waveform.png" if audio_stream else None
             if waveform:
                 _create_waveform(source, waveform)
@@ -195,6 +213,8 @@ def process_media_asset(asset_id):
                 _replace_file(asset.proxy_file, proxy, proxy.name)
                 if thumbnail:
                     _replace_file(asset.thumbnail, thumbnail, thumbnail.name)
+                if filmstrip:
+                    _replace_file(asset.filmstrip_file, filmstrip, filmstrip.name)
                 if waveform:
                     _replace_file(asset.waveform_file, waveform, waveform.name)
                 asset.duration_ms = duration_ms

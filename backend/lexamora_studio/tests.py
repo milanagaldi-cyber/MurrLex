@@ -3748,6 +3748,9 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertContains(page, "data-playhead")
         self.assertContains(page, "data-render-start")
         self.assertContains(page, "Rough-cut exports")
+        self.assertContains(page, "data-editor-undo")
+        self.assertContains(page, "data-preview-scrub")
+        self.assertContains(page, "data-media-library-dialog")
         self.assertContains(page, "studio/movie_editor.js")
         response = self.client.post(
             f"/studio/projects/{self.project.id}/movie-editor/",
@@ -3903,6 +3906,34 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertEqual(status.status_code, 200)
         self.assertEqual(status.json()["items"][0]["status"], "QUEUED")
         self.assertEqual(status.json()["items"][0]["kind"], "VIDEO")
+
+    def test_movie_editor_can_attach_accessible_workspace_media(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from .models import Asset
+        from .storage import create_asset
+
+        asset = create_asset(
+            user=self.owner, workspace=self.workspace,
+            uploaded=SimpleUploadedFile("workspace-video.mp4", b"video", content_type="video/mp4"),
+            kind=Asset.Kind.OTHER,
+        )
+        Asset.objects.filter(id=asset.id).update(
+            duration_ms=4000, processing_status=Asset.ProcessingStatus.READY,
+        )
+        self.client.force_login(self.owner)
+        before = self.client.get(f"/studio/projects/{self.project.id}/movie-editor/media/")
+        self.assertEqual(before.status_code, 200)
+        self.assertFalse(any(item["id"] == str(asset.id) for item in before.json()["items"]))
+        self.assertTrue(any(item["id"] == str(asset.id) for item in before.json()["libraryItems"]))
+
+        attached = self.client.post(
+            f"/studio/projects/{self.project.id}/movie-editor/media/",
+            data=json.dumps({"assetId": str(asset.id)}),
+            content_type="application/json",
+        )
+        self.assertEqual(attached.status_code, 201, attached.content)
+        self.assertTrue(attached.json()["attached"])
+        self.assertTrue(asset.projects.filter(id=self.project.id).exists())
 
     def test_movie_editor_can_retry_failed_media(self):
         from django.core.files.uploadedfile import SimpleUploadedFile
@@ -4126,6 +4157,7 @@ class StudioProductionPilotFeaturesTests(TestCase):
             with patch("lexamora_studio.media_processing._probe", return_value=probe), \
                     patch("lexamora_studio.media_processing._create_video_proxy", side_effect=write_artifact), \
                     patch("lexamora_studio.media_processing._create_thumbnail", side_effect=write_artifact), \
+                    patch("lexamora_studio.media_processing._create_filmstrip", side_effect=write_artifact), \
                     patch("lexamora_studio.media_processing._create_waveform", side_effect=write_artifact):
                 process_media_asset(asset.id)
             asset.refresh_from_db()
@@ -4133,17 +4165,18 @@ class StudioProductionPilotFeaturesTests(TestCase):
             self.assertEqual(asset.duration_ms, 3200)
             self.assertTrue(asset.proxy_file.name)
             self.assertTrue(asset.thumbnail.name)
+            self.assertTrue(asset.filmstrip_file.name)
             self.assertTrue(asset.waveform_file.name)
 
             self.client.force_login(self.owner)
-            for endpoint in ("proxy", "waveform"):
+            for endpoint in ("proxy", "waveform", "filmstrip"):
                 response = self.client.get(f"/api/v1/studio/assets/{asset.id}/{endpoint}")
                 self.assertEqual(response.status_code, 200)
                 list(response.streaming_content)
                 response.close()
         finally:
             asset.refresh_from_db()
-            for field in (asset.file, asset.proxy_file, asset.thumbnail, asset.waveform_file):
+            for field in (asset.file, asset.proxy_file, asset.thumbnail, asset.filmstrip_file, asset.waveform_file):
                 if field.name and field.storage.exists(field.name):
                     field.storage.delete(field.name)
 

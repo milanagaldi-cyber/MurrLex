@@ -600,6 +600,17 @@ def asset_waveform(request, asset_id):
     return FileResponse(item.waveform_file.open("rb"), content_type="image/png")
 
 
+@require_http_methods(["GET"])
+def asset_filmstrip(request, asset_id):
+    user = require_user(request)
+    if user is None:
+        return error("authentication_required", "Login is required.", 401)
+    item = _accessible_asset(user, asset_id)
+    if not item.filmstrip_file:
+        return error("filmstrip_unavailable", "This media has no filmstrip.", 404)
+    return FileResponse(item.filmstrip_file.open("rb"), content_type="image/jpeg")
+
+
 @require_http_methods(["GET", "POST"])
 def scene_generations(request, scene_id):
     user = require_user(request)

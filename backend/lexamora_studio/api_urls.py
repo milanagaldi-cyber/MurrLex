@@ -24,6 +24,7 @@ urlpatterns = [
     path("assets/<uuid:asset_id>/thumbnail", api.asset_thumbnail, name="asset_thumbnail"),
     path("assets/<uuid:asset_id>/proxy", api.asset_proxy, name="asset_proxy"),
     path("assets/<uuid:asset_id>/waveform", api.asset_waveform, name="asset_waveform"),
+    path("assets/<uuid:asset_id>/filmstrip", api.asset_filmstrip, name="asset_filmstrip"),
     path("scenes/<uuid:scene_id>/generations", api.scene_generations, name="scene_generations"),
     path("generations/<uuid:generation_id>/outputs", api.generation_outputs, name="generation_outputs"),
     path("generation-outputs/<uuid:output_id>/final", api.generation_output_final, name="generation_output_final"),

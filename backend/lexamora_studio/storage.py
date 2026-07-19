@@ -224,7 +224,8 @@ def purge_asset(*, asset, user):
     storage = locked.file.storage
     file_names = [
         name for name in (
-            locked.file.name, locked.thumbnail.name, locked.proxy_file.name, locked.waveform_file.name,
+            locked.file.name, locked.thumbnail.name, locked.proxy_file.name,
+            locked.waveform_file.name, locked.filmstrip_file.name,
         ) if name
     ]
     locked.deleted_at = locked.deleted_at or timezone.now()
@@ -235,6 +236,7 @@ def purge_asset(*, asset, user):
     locked.thumbnail.name = ""
     locked.proxy_file.name = ""
     locked.waveform_file.name = ""
+    locked.filmstrip_file.name = ""
     locked.size_bytes = 0
     locked.checksum_sha256 = ""
     locked.width = None
@@ -246,7 +248,7 @@ def purge_asset(*, asset, user):
     locked.updated_by = user
     locked.save(update_fields=[
         "deleted_at", "deleted_by", "purged_at", "purged_by", "file", "thumbnail",
-        "proxy_file", "waveform_file", "size_bytes", "checksum_sha256", "width", "height",
+        "proxy_file", "waveform_file", "filmstrip_file", "size_bytes", "checksum_sha256", "width", "height",
         "duration_ms", "media_metadata", "processing_status", "processing_error",
         "updated_by", "updated_at",
     ])

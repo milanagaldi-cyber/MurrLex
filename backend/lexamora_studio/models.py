@@ -574,6 +574,10 @@ def studio_waveform_path(instance, filename):
     return f"studio/{instance.workspace_id}/{instance.id}/waveform.png"
 
 
+def studio_filmstrip_path(instance, filename):
+    return f"studio/{instance.workspace_id}/{instance.id}/filmstrip.jpg"
+
+
 class Asset(SoftDeleteModel):
     class Kind(models.TextChoices):
         CHARACTER_REFERENCE = "CHARACTER_REFERENCE", "Character reference"
@@ -602,6 +606,7 @@ class Asset(SoftDeleteModel):
     thumbnail = models.FileField(storage=private_storage, upload_to=studio_thumbnail_path, max_length=500, blank=True)
     proxy_file = models.FileField(storage=private_storage, upload_to=studio_proxy_path, max_length=500, blank=True)
     waveform_file = models.FileField(storage=private_storage, upload_to=studio_waveform_path, max_length=500, blank=True)
+    filmstrip_file = models.FileField(storage=private_storage, upload_to=studio_filmstrip_path, max_length=500, blank=True)
     original_filename = models.CharField(max_length=255)
     content_type = models.CharField(max_length=120)
     size_bytes = models.PositiveBigIntegerField()

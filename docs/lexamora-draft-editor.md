@@ -44,13 +44,14 @@ Unknown fields are retained so later effects and proxy metadata can be introduce
 
 Before a changed timeline is saved, the server records the previous state in `MovieTimelineRevision`. The latest 50 states are retained. Restoring a revision first snapshots the current state, so restoration itself is reversible. A revision cannot be restored if its media is no longer accessible.
 
-## Next implementation phase
+## Media preparation
 
 Media ingest is handled asynchronously by `murrlex-media-worker.service`:
 
 1. FFprobe records duration, codecs, frame rate, dimensions and audio properties.
 2. FFmpeg creates a 720p H.264/AAC browser proxy for video or an AAC proxy for audio.
-3. Video receives a JPEG thumbnail; media with audio receives a PNG waveform.
+3. Video receives a JPEG thumbnail and a 12-frame filmstrip; media with audio
+   receives a PNG waveform.
 4. The editor polls queued/processing assets and enables dragging only after the proxy is ready.
 5. A failed job keeps the original and can be retried from the Media Bin.
 
@@ -65,18 +66,23 @@ versioned schema above. The current editing surface supports:
 - left and right source trimming without modifying the original file;
 - splitting the selected clip at the playhead;
 - snapping to the playhead, clip starts, clip ends and timeline zero;
-- adaptive zoom from 6 to 80 pixels per second;
+- adaptive zoom from 6 to 160 pixels per second, anchored to the mouse pointer;
 - frame stepping, playhead scrubbing and synchronized proxy playback;
-- audio waveform display, per-clip volume and precise inspector values;
+- 10 ms clip positioning, one-frame clip nudging, filmstrip thumbnails, audio
+  waveform display, per-clip volume and precise inspector values;
+- undo and redo for timeline, clip, track and canvas changes;
+- a shared Project/Workspace media picker with upload and attach operations;
 - keyboard actions: Space to play/pause, S to split, Delete to remove,
-  arrows to step, and Ctrl/Cmd plus or minus to zoom.
+  arrows to nudge a selected clip by one frame, Ctrl/Cmd+Z or Y for history,
+  and the mouse wheel or Ctrl/Cmd plus or minus to zoom.
 
 The server rejects track/media type mismatches, inaccessible media, media that
 is not ready, and source ranges extending past the probed source duration.
 
 ## Rough-cut rendering
 
-Saved timelines can be queued as immutable server-side MP4 render jobs. The
+Timelines can be saved and queued as immutable server-side MP4 render jobs in
+one operation. The
 editor offers a fast 720p draft profile and a 1080p review profile. Each job
 stores the exact timeline snapshot, canvas, frame rate and source trim values,
 so later edits cannot silently change an already queued export.

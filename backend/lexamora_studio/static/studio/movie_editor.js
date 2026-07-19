@@ -4,47 +4,69 @@
 
   const canEdit = root.dataset.canEdit === "true";
   const canExport = root.dataset.canExport === "true";
-  let assets = JSON.parse(document.getElementById("movie-assets-data").textContent || "[]");
-  let renderJobs = JSON.parse(document.getElementById("movie-render-jobs-data")?.textContent || "[]");
-  const saved = JSON.parse(document.getElementById("movie-timeline-data").textContent || "{}");
+  const readJson = id => {
+    try { return JSON.parse(document.getElementById(id)?.textContent || "[]"); }
+    catch (_) { return []; }
+  };
+  let assets = readJson("movie-assets-data");
+  let libraryAssets = readJson("movie-library-data");
+  let renderJobs = readJson("movie-render-jobs-data");
+  const saved = readJson("movie-timeline-data");
   let timeline = saved && Array.isArray(saved.tracks) ? saved : {schemaVersion: 1, tracks: []};
   let selectedId = null;
   let playheadMs = 0;
   let dirty = false;
   let snapping = true;
-  let zoom = Math.max(6, Math.min(80, Number(localStorage.getItem("studio-movie-zoom")) || 24));
+  let zoom = Math.max(6, Math.min(160, Number(localStorage.getItem("studio-movie-zoom")) || 24));
   let playing = false;
   let playbackFrame = 0;
   let playbackOrigin = 0;
   let playbackStartedAt = 0;
+  let lastPlaybackSync = 0;
   let mediaPoll = null;
   let renderPoll = null;
+  let historyUndo = [];
+  let historyRedo = [];
+  let savedSignature = "";
+  let libraryScope = "project";
+  const settingSnapshots = new WeakMap();
+  const PRECISION_MS = 10;
 
-  const bin = root.querySelector("[data-movie-bin]");
-  const tracksNode = root.querySelector("[data-movie-tracks]");
-  const headsNode = root.querySelector("[data-track-heads]");
-  const preview = root.querySelector("[data-movie-preview]");
-  const inspector = root.querySelector("[data-clip-inspector]");
-  const stateNode = root.querySelector("[data-movie-state]");
-  const playheadLabel = root.querySelector("[data-playhead-label]");
-  const previewTime = root.querySelector("[data-preview-time]");
-  const playheadNode = root.querySelector("[data-playhead]");
-  const snapGuide = root.querySelector("[data-snap-guide]");
-  const timelineScroll = root.querySelector("[data-timeline-scroll]");
-  const timelineCanvas = root.querySelector("[data-timeline-canvas]");
-  const ruler = root.querySelector("[data-movie-ruler]");
-  const historyPanel = root.querySelector("[data-movie-history]");
-  const historyList = root.querySelector("[data-movie-history-list]");
-  const renderPanel = root.querySelector("[data-movie-renders]");
-  const renderList = root.querySelector("[data-render-list]");
-  const zoomInput = root.querySelector("[data-timeline-zoom]");
+  const q = selector => root.querySelector(selector);
+  const qa = selector => [...root.querySelectorAll(selector)];
+  const bin = q("[data-movie-bin]");
+  const tracksNode = q("[data-movie-tracks]");
+  const headsNode = q("[data-track-heads]");
+  const preview = q("[data-movie-preview]");
+  const previewStage = q("[data-preview-stage]");
+  const previewEmpty = q("[data-preview-empty]");
+  const previewStatus = q("[data-preview-status]");
+  const previewScrub = q("[data-preview-scrub]");
+  const inspector = q("[data-clip-inspector]");
+  const stateNode = q("[data-movie-state]");
+  const playheadLabel = q("[data-playhead-label]");
+  const previewTime = q("[data-preview-time]");
+  const playheadNode = q("[data-playhead]");
+  const snapGuide = q("[data-snap-guide]");
+  const timelineScroll = q("[data-timeline-scroll]");
+  const timelineCanvas = q("[data-timeline-canvas]");
+  const ruler = q("[data-movie-ruler]");
+  const historyPanel = q("[data-movie-history]");
+  const historyList = q("[data-movie-history-list]");
+  const renderPanel = q("[data-movie-renders]");
+  const renderList = q("[data-render-list]");
+  const zoomInput = q("[data-timeline-zoom]");
+  const libraryDialog = q("[data-media-library-dialog]");
+  const libraryGrid = q("[data-media-library-grid]");
   const assetMap = new Map();
   const audioPlayers = new Map();
 
-  const toast = (message, type) => window.studioToast ? window.studioToast(message, type) : console.info(message);
+  const toast = (message, type) => window.studioToast ? window.studioToast(String(message).replace(/\.$/, ""), type) : console.info(message);
   const csrfToken = () => document.cookie.match(/csrftoken=([^;]+)/)?.[1] || "";
   const uid = () => crypto.randomUUID ? crypto.randomUUID() : `clip-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const clamp = (value, minimum, maximum) => Math.max(minimum, Math.min(maximum, value));
+  const quantize = value => Math.round(Number(value || 0) / PRECISION_MS) * PRECISION_MS;
+  const frameMs = () => 1000 / Math.max(1, Number(q("[data-movie-fps]").value) || 25);
   const clock = ms => {
     const total = Math.max(0, Math.round(ms));
     const minutes = Math.floor(total / 60000);
@@ -52,11 +74,14 @@
     const millis = total % 1000;
     return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${String(millis).padStart(3, "0")}`;
   };
-  const frameMs = () => 1000 / Math.max(1, Number(root.querySelector("[data-movie-fps]").value) || 25);
-  const markDirty = () => {
-    if (!canEdit) return;
-    dirty = true;
-    stateNode.textContent = "Unsaved changes";
+  const requestJson = async (url, options = {}) => {
+    const response = await fetch(url, options);
+    const text = await response.text();
+    let data = {};
+    try { data = text ? JSON.parse(text) : {}; }
+    catch (_) { data = {error: text.slice(0, 300) || `HTTP ${response.status}`}; }
+    if (!response.ok) throw new Error(data.error || data.detail || `HTTP ${response.status}`);
+    return data;
   };
   const timelineEnd = () => Math.max(0, ...timeline.tracks.flatMap(track => track.clips.map(clip => clip.start + clip.duration)));
   const visibleDuration = () => Math.max(60000, timelineEnd() + 15000);
@@ -76,34 +101,94 @@
     }
     return null;
   };
-  const numberInput = (value, step, minimum) => {
-    const input = document.createElement("input");
-    input.type = "number";
-    input.value = value;
-    input.step = step;
-    input.min = minimum;
-    return input;
+  const currentState = () => ({
+    timeline: structuredClone(timeline),
+    title: q("[data-movie-title]").value,
+    aspectRatio: q("[data-movie-ratio]").value,
+    resolution: q("[data-movie-resolution]").value,
+    fps: q("[data-movie-fps]").value,
+    selectedId,
+  });
+  const signature = state => JSON.stringify(state || currentState());
+  const updateHistoryButtons = () => {
+    const undo = q("[data-editor-undo]");
+    const redo = q("[data-editor-redo]");
+    if (undo) undo.disabled = !canEdit || !historyUndo.length;
+    if (redo) redo.disabled = !canEdit || !historyRedo.length;
   };
-  const field = (text, input) => {
-    const label = document.createElement("label");
-    label.append(text, input);
-    return label;
+  const updateDirty = () => {
+    dirty = canEdit && signature() !== savedSignature;
+    stateNode.textContent = dirty ? "Unsaved changes" : "Saved";
+    stateNode.classList.remove("error");
+  };
+  const remember = () => {
+    if (!canEdit) return;
+    historyUndo.push(currentState());
+    if (historyUndo.length > 100) historyUndo.shift();
+    historyRedo = [];
+    updateHistoryButtons();
+  };
+  const applyState = state => {
+    stopPlayback();
+    timeline = structuredClone(state.timeline);
+    selectedId = state.selectedId || null;
+    q("[data-movie-title]").value = state.title;
+    q("[data-movie-ratio]").value = state.aspectRatio;
+    q("[data-movie-resolution]").value = state.resolution;
+    q("[data-movie-fps]").value = state.fps;
+    applyCanvas();
+    normalizeTimeline();
+    renderTimeline();
+    renderInspector();
+    updateDirty();
+    updateHistoryButtons();
+  };
+  const undo = () => {
+    if (!historyUndo.length) return;
+    historyRedo.push(currentState());
+    applyState(historyUndo.pop());
+  };
+  const redo = () => {
+    if (!historyRedo.length) return;
+    historyUndo.push(currentState());
+    applyState(historyRedo.pop());
+  };
+  const mutate = callback => {
+    if (!canEdit) return;
+    remember();
+    callback();
+    normalizeTimeline();
+    updateDirty();
   };
 
   function normalizeTimeline() {
     timeline.schemaVersion = 1;
     timeline.tracks = Array.isArray(timeline.tracks) ? timeline.tracks : [];
-    timeline.tracks.forEach(track => {
-      track.clips = Array.isArray(track.clips) ? track.clips : [];
+    timeline.tracks.forEach((track, trackIndex) => {
+      track.id ||= uid();
+      track.kind = ["VIDEO", "AUDIO", "TEXT"].includes(track.kind) ? track.kind : "VIDEO";
+      track.name ||= `${track.kind === "VIDEO" ? "Video" : "Audio"} ${trackIndex + 1}`;
       track.muted = Boolean(track.muted);
       track.locked = Boolean(track.locked);
+      track.clips = Array.isArray(track.clips) ? track.clips : [];
       track.clips.forEach(clip => {
-        clip.start = Math.max(0, Math.round(Number(clip.start) || 0));
-        clip.sourceStart = Math.max(0, Math.round(Number(clip.sourceStart) || 0));
-        clip.duration = Math.max(200, Math.round(Number(clip.duration) || 200));
+        clip.start = Math.max(0, quantize(clip.start));
+        clip.sourceStart = Math.max(0, quantize(clip.sourceStart));
+        const available = Math.max(200, assetDuration(clip) - clip.sourceStart);
+        clip.duration = clamp(quantize(clip.duration || 200), 200, available);
         clip.volume = clamp(Number(clip.volume ?? 1), 0, 2);
       });
     });
+  }
+
+  function applyCanvas() {
+    const ratio = q("[data-movie-ratio]").value || "16:9";
+    previewStage.style.aspectRatio = ratio.replace(":", "/");
+    previewStage.dataset.ratio = ratio;
+    const defaults = {"16:9": "1920x1080", "9:16": "1080x1920", "1:1": "1080x1080"};
+    if (!qa(`[data-movie-resolution] option`).some(option => option.value === q("[data-movie-resolution]").value)) {
+      q("[data-movie-resolution]").value = defaults[ratio];
+    }
   }
 
   function mediaStatus(asset) {
@@ -114,6 +199,7 @@
 
   function renderBin() {
     assetMap.clear();
+    libraryAssets.forEach(item => assetMap.set(item.id, item));
     assets.forEach(item => assetMap.set(item.id, item));
     bin.replaceChildren();
     assets.forEach(asset => {
@@ -135,16 +221,14 @@
         const image = document.createElement("img");
         image.src = asset.thumbnailUrl || asset.waveformUrl;
         image.alt = "";
-        visual.appendChild(image);
-      } else {
-        visual.textContent = asset.kind;
-      }
+        visual.append(image);
+      } else visual.textContent = asset.kind;
       copy.append(name, status);
       if (asset.error) {
         const detail = document.createElement("span");
         detail.textContent = asset.error;
         detail.title = asset.error;
-        copy.appendChild(detail);
+        copy.append(detail);
       }
       if (asset.status === "FAILED" && canEdit) {
         const retry = document.createElement("button");
@@ -153,12 +237,11 @@
         retry.textContent = "Retry";
         retry.onclick = async () => {
           retry.disabled = true;
-          const response = await fetch(asset.retryUrl, {method: "POST", headers: {"X-CSRFToken": csrfToken()}});
-          const data = await response.json();
-          if (!response.ok) toast(data.error || "Retry failed", "error");
+          try { await requestJson(asset.retryUrl, {method: "POST", headers: {"X-CSRFToken": csrfToken()}}); }
+          catch (error) { toast(error.message, "error"); }
           await refreshMedia();
         };
-        copy.appendChild(retry);
+        copy.append(retry);
       }
       item.append(visual, copy);
       item.addEventListener("dragstart", event => {
@@ -170,46 +253,41 @@
         if (!track) track = addTrack(asset.kind);
         addClip(track, asset.id, timelineEnd());
       });
-      bin.appendChild(item);
+      bin.append(item);
     });
-    if (!assets.length) bin.innerHTML = '<p class="empty">Upload the first video or audio file</p>';
+    if (!assets.length) bin.innerHTML = '<p class="empty">Open + to choose Project or Workspace media</p>';
   }
 
   async function refreshMedia() {
-    const response = await fetch(root.dataset.mediaUrl);
-    if (!response.ok) return;
-    const data = await response.json();
-    assets = data.items || [];
-    renderBin();
-    renderTimeline();
-    clearTimeout(mediaPoll);
-    if (assets.some(item => ["QUEUED", "PROCESSING"].includes(item.status))) mediaPoll = setTimeout(refreshMedia, 2500);
+    try {
+      const data = await requestJson(root.dataset.mediaUrl, {headers: {"X-Requested-With": "XMLHttpRequest"}});
+      assets = data.items || [];
+      libraryAssets = data.libraryItems || data.items || [];
+      renderBin();
+      renderTimeline();
+      renderLibrary();
+      clearTimeout(mediaPoll);
+      if (libraryAssets.some(item => ["QUEUED", "PROCESSING"].includes(item.status))) mediaPoll = setTimeout(refreshMedia, 2500);
+    } catch (error) { previewStatus.textContent = error.message; }
   }
 
   const renderDate = value => value ? new Date(value).toLocaleString([], {dateStyle: "medium", timeStyle: "short"}) : "";
 
   async function renderAction(job, action) {
-    const response = await fetch(job.actionUrl, {
-      method: "POST",
-      headers: {"Content-Type": "application/json", "X-CSRFToken": csrfToken()},
-      body: JSON.stringify({action}),
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) return toast(data.error || `Could not ${action} render`, "error");
-    const index = renderJobs.findIndex(item => item.id === data.id);
-    if (index >= 0) renderJobs[index] = data;
-    renderRenderJobs();
-    scheduleRenderPoll();
+    try {
+      const data = await requestJson(job.actionUrl, {method: "POST", headers: {"Content-Type": "application/json", "X-CSRFToken": csrfToken()}, body: JSON.stringify({action})});
+      const index = renderJobs.findIndex(item => item.id === data.id);
+      if (index >= 0) renderJobs[index] = data;
+      renderRenderJobs();
+      scheduleRenderPoll();
+    } catch (error) { toast(error.message, "error"); }
   }
 
   function renderRenderJobs() {
     if (!renderList) return;
     renderList.replaceChildren();
     if (!renderJobs.length) {
-      const empty = document.createElement("p");
-      empty.className = "muted";
-      empty.textContent = "No exports yet";
-      renderList.append(empty);
+      renderList.innerHTML = '<p class="muted">No exports yet</p>';
       return;
     }
     renderJobs.forEach(job => {
@@ -217,19 +295,19 @@
       const copy = document.createElement("div");
       const title = document.createElement("strong");
       const details = document.createElement("span");
-      const progress = document.createElement("div");
-      const bar = document.createElement("i");
       const actions = document.createElement("div");
       row.className = "movie-render-row";
       copy.className = "movie-render-copy";
       actions.className = "movie-render-actions";
-      progress.className = "movie-render-progress";
       title.textContent = job.title;
       details.textContent = `${job.profileLabel} / ${job.audioProfileLabel} ${job.targetLufs} LUFS / ${job.width}x${job.height} / ${job.statusLabel} / ${renderDate(job.createdAt)}`;
-      bar.style.width = `${job.progress || 0}%`;
-      progress.append(bar);
       copy.append(title, details);
-      if (["QUEUED", "RUNNING"].includes(job.status)) copy.append(progress);
+      if (["QUEUED", "RUNNING"].includes(job.status)) {
+        const progress = document.createElement("div");
+        progress.className = "movie-render-progress";
+        progress.innerHTML = `<i style="width:${job.progress || 0}%"></i>`;
+        copy.append(progress);
+      }
       if (job.error) {
         const error = document.createElement("span");
         error.className = "movie-render-error";
@@ -244,20 +322,20 @@
         actions.append(download);
       }
       if (job.canCancel && canExport) {
-        const cancel = document.createElement("button");
-        cancel.type = "button";
-        cancel.className = "secondary";
-        cancel.textContent = "Cancel";
-        cancel.addEventListener("click", () => renderAction(job, "cancel"));
-        actions.append(cancel);
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "secondary";
+        button.textContent = "Cancel";
+        button.onclick = () => renderAction(job, "cancel");
+        actions.append(button);
       }
       if (job.canRetry && canExport) {
-        const retry = document.createElement("button");
-        retry.type = "button";
-        retry.className = "secondary";
-        retry.textContent = "Retry";
-        retry.addEventListener("click", () => renderAction(job, "retry"));
-        actions.append(retry);
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "secondary";
+        button.textContent = "Retry";
+        button.onclick = () => renderAction(job, "retry");
+        actions.append(button);
       }
       row.append(copy, actions);
       renderList.append(row);
@@ -266,45 +344,71 @@
 
   async function refreshRenders() {
     if (!root.dataset.renderUrl) return;
-    const response = await fetch(root.dataset.renderUrl, {headers: {"X-Requested-With": "XMLHttpRequest"}});
-    const data = await response.json().catch(() => ({}));
-    if (response.ok) {
+    try {
+      const data = await requestJson(root.dataset.renderUrl, {headers: {"X-Requested-With": "XMLHttpRequest"}});
       renderJobs = data.items || [];
       renderRenderJobs();
-    }
+    } catch (error) { toast(error.message, "error"); }
     scheduleRenderPoll();
   }
 
   function scheduleRenderPoll() {
     clearTimeout(renderPoll);
-    if (renderJobs.some(job => ["QUEUED", "RUNNING"].includes(job.status))) {
-      renderPoll = setTimeout(refreshRenders, document.hidden ? 5000 : 1800);
+    if (renderJobs.some(job => ["QUEUED", "RUNNING"].includes(job.status))) renderPoll = setTimeout(refreshRenders, document.hidden ? 5000 : 1800);
+  }
+
+  async function saveTimeline(silent = false) {
+    if (!canEdit) return true;
+    normalizeTimeline();
+    stateNode.textContent = "Saving";
+    stateNode.classList.remove("error");
+    try {
+      const data = await requestJson(root.dataset.saveUrl, {
+        method: "POST",
+        headers: {"Content-Type": "application/json", "X-CSRFToken": csrfToken()},
+        body: JSON.stringify({title: q("[data-movie-title]").value, aspectRatio: q("[data-movie-ratio]").value, resolution: q("[data-movie-resolution]").value, fps: Number(q("[data-movie-fps]").value), timeline}),
+      });
+      if (data.timeline) timeline = data.timeline;
+      savedSignature = signature();
+      dirty = false;
+      stateNode.textContent = "Saved";
+      historyUndo = [];
+      historyRedo = [];
+      updateHistoryButtons();
+      if (!silent) toast("Timeline saved");
+      if (historyPanel && !historyPanel.hidden) await loadHistory();
+      return true;
+    } catch (error) {
+      stateNode.textContent = error.message || "Save failed";
+      stateNode.classList.add("error");
+      toast(stateNode.textContent, "error");
+      return false;
     }
   }
 
   async function queueRender() {
-    if (dirty) return toast("Save the timeline before rendering", "error");
-    const button = root.querySelector("[data-render-start]");
+    const button = q("[data-render-start]");
     button.disabled = true;
+    button.textContent = dirty ? "Saving" : "Queueing";
+    if (dirty && !await saveTimeline(true)) {
+      button.disabled = false;
+      button.textContent = "Save and render MP4";
+      return;
+    }
     button.textContent = "Queueing";
-    const response = await fetch(root.dataset.renderUrl, {
-      method: "POST",
-      headers: {"Content-Type": "application/json", "X-CSRFToken": csrfToken()},
-      body: JSON.stringify({
-        title: root.querySelector("[data-movie-title]").value,
-        profile: root.querySelector("[data-render-profile]").value,
-        audioProfile: root.querySelector("[data-render-audio-profile]").value,
-        targetLufs: Number(root.querySelector("[data-render-target-lufs]").value),
-      }),
-    });
-    const data = await response.json().catch(() => ({}));
-    button.disabled = false;
-    button.textContent = "Queue MP4 render";
-    if (!response.ok) return toast(data.error || "Could not queue render", "error");
-    renderJobs.unshift(data);
-    renderRenderJobs();
-    toast("MP4 render queued");
-    scheduleRenderPoll();
+    try {
+      const data = await requestJson(root.dataset.renderUrl, {
+        method: "POST",
+        headers: {"Content-Type": "application/json", "X-CSRFToken": csrfToken()},
+        body: JSON.stringify({title: q("[data-movie-title]").value, profile: q("[data-render-profile]").value, audioProfile: q("[data-render-audio-profile]").value, targetLufs: Number(q("[data-render-target-lufs]").value)}),
+      });
+      renderJobs.unshift(data);
+      renderRenderJobs();
+      renderPanel.hidden = false;
+      toast("MP4 render queued");
+      scheduleRenderPoll();
+    } catch (error) { toast(error.message, "error"); }
+    finally { button.disabled = false; button.textContent = "Save and render MP4"; }
   }
 
   function timelineCandidates(excludeId) {
@@ -316,83 +420,83 @@
   }
 
   function snapTime(value, excludeId) {
+    const precise = Math.max(0, quantize(value));
     snapGuide.hidden = true;
-    if (!snapping) return Math.max(0, value);
-    const threshold = 10 / zoom * 1000;
+    if (!snapping) return precise;
+    const threshold = Math.max(PRECISION_MS, 10 / zoom * 1000);
     let closest = null;
     let distance = threshold + 1;
     timelineCandidates(excludeId).forEach(candidate => {
-      const nextDistance = Math.abs(candidate - value);
-      if (nextDistance < distance) {
-        closest = candidate;
-        distance = nextDistance;
-      }
+      const nextDistance = Math.abs(candidate - precise);
+      if (nextDistance < distance) { closest = candidate; distance = nextDistance; }
     });
-    if (closest === null || distance > threshold) return Math.max(0, value);
+    if (closest === null || distance > threshold) return precise;
     snapGuide.style.left = `${closest / 1000 * zoom}px`;
     snapGuide.hidden = false;
-    return Math.max(0, closest);
-  }
-
-  function hideSnapGuide() {
-    snapGuide.hidden = true;
+    return quantize(closest);
   }
 
   function setPlayhead(value, sync = true) {
-    playheadMs = clamp(Math.round(value), 0, visibleDuration());
+    playheadMs = clamp(quantize(value), 0, visibleDuration());
     playheadNode.style.left = `${playheadMs / 1000 * zoom}px`;
     playheadLabel.textContent = clock(playheadMs);
     previewTime.textContent = `${clock(playheadMs)} / ${clock(timelineEnd())}`;
-    if (sync && !playing) syncPlayers(false);
+    previewScrub.max = Math.max(PRECISION_MS, timelineEnd());
+    previewScrub.value = Math.min(playheadMs, Number(previewScrub.max));
+    if (sync && !playing) syncPlayers(false, true);
   }
 
-  function setPlayer(player, active, shouldPlay) {
+  function setPlayer(player, active, shouldPlay, force = false) {
     if (!active) {
       player.pause();
       player.dataset.clipId = "";
+      if (player === preview) {
+        preview.hidden = true;
+        previewEmpty.hidden = false;
+      }
       return;
     }
     const {clip} = active;
     const asset = assetMap.get(clip.assetId);
     if (!asset) return;
     const source = asset.proxyUrl || asset.originalUrl;
-    const target = (clip.sourceStart + playheadMs - clip.start) / 1000;
+    const target = Math.max(0, (clip.sourceStart + playheadMs - clip.start) / 1000);
+    const changed = player.dataset.assetId !== asset.id || player.dataset.clipId !== clip.id;
     const seek = () => {
-      if (Number.isFinite(player.duration)) player.currentTime = clamp(target, 0, Math.max(0, player.duration - 0.01));
+      const maximum = Number.isFinite(player.duration) ? Math.max(0, player.duration - 0.01) : target;
+      const safeTarget = clamp(target, 0, maximum);
+      if (force || changed || Math.abs((player.currentTime || 0) - safeTarget) > (shouldPlay ? 0.65 : 0.04)) player.currentTime = safeTarget;
       player.volume = Math.min(1, clip.volume ?? 1);
-      if (shouldPlay) player.play().catch(() => {});
+      if (shouldPlay && player.paused) player.play().catch(error => { if (player === preview) previewStatus.textContent = error.message; });
     };
-    if (player.dataset.assetId !== asset.id) {
-      player.dataset.assetId = asset.id;
-      player.dataset.clipId = clip.id;
+    player.dataset.assetId = asset.id;
+    player.dataset.clipId = clip.id;
+    if (player === preview) {
+      preview.hidden = false;
+      previewEmpty.hidden = true;
+    }
+    if (changed || player.currentSrc !== new URL(source, location.href).href) {
       player.src = source;
       player.load();
       player.addEventListener("loadedmetadata", seek, {once: true});
-    } else {
-      player.dataset.clipId = clip.id;
-      if (Math.abs((player.currentTime || 0) - target) > 0.3 || !shouldPlay) seek();
-      else if (shouldPlay && player.paused) player.play().catch(() => {});
-    }
+    } else seek();
   }
 
-  function syncPlayers(shouldPlay) {
-    setPlayer(preview, activeClip("VIDEO", playheadMs), shouldPlay);
+  function syncPlayers(shouldPlay, force = false) {
+    setPlayer(preview, activeClip("VIDEO", playheadMs), shouldPlay, force);
     const audioTracks = timeline.tracks.filter(track => track.kind === "AUDIO");
     audioTracks.forEach(track => {
       let player = audioPlayers.get(track.id);
       if (!player) {
         player = new Audio();
-        player.preload = "metadata";
+        player.preload = "auto";
         audioPlayers.set(track.id, player);
       }
       const clip = !track.muted ? track.clips.find(item => playheadMs >= item.start && playheadMs < item.start + item.duration) : null;
-      setPlayer(player, clip ? {clip, track} : null, shouldPlay);
+      setPlayer(player, clip ? {clip, track} : null, shouldPlay, force);
     });
     [...audioPlayers.entries()].forEach(([trackId, player]) => {
-      if (!audioTracks.some(track => track.id === trackId)) {
-        player.pause();
-        audioPlayers.delete(trackId);
-      }
+      if (!audioTracks.some(track => track.id === trackId)) { player.pause(); audioPlayers.delete(trackId); }
     });
   }
 
@@ -401,7 +505,8 @@
     cancelAnimationFrame(playbackFrame);
     preview.pause();
     audioPlayers.forEach(player => player.pause());
-    root.querySelector("[data-preview-play]").innerHTML = "&#9654;";
+    q("[data-preview-play]").innerHTML = "&#9654;";
+    previewStatus.textContent = "Ready";
     if (reset) setPlayhead(0);
   }
 
@@ -414,28 +519,38 @@
       setPlayhead(end, false);
       return;
     }
-    syncPlayers(true);
-    const playheadX = playheadMs / 1000 * zoom;
-    if (playheadX > timelineScroll.scrollLeft + timelineScroll.clientWidth - 36) {
-      timelineScroll.scrollLeft = Math.max(0, playheadX - timelineScroll.clientWidth * 0.2);
+    if (now - lastPlaybackSync > 200) {
+      syncPlayers(true);
+      lastPlaybackSync = now;
     }
+    const playheadX = playheadMs / 1000 * zoom;
+    if (playheadX > timelineScroll.scrollLeft + timelineScroll.clientWidth - 36) timelineScroll.scrollLeft = Math.max(0, playheadX - timelineScroll.clientWidth * .2);
     playbackFrame = requestAnimationFrame(playbackTick);
   }
 
   function togglePlayback() {
-    if (playing) {
-      stopPlayback();
-      return;
-    }
+    if (playing) return stopPlayback();
     if (!timelineEnd()) return toast("Add clips to the timeline first");
     if (playheadMs >= timelineEnd()) setPlayhead(0, false);
     playing = true;
     playbackOrigin = playheadMs;
     playbackStartedAt = performance.now();
-    root.querySelector("[data-preview-play]").innerHTML = "&#10074;&#10074;";
-    syncPlayers(true);
+    lastPlaybackSync = playbackStartedAt;
+    q("[data-preview-play]").innerHTML = "&#10074;&#10074;";
+    previewStatus.textContent = "Playing";
+    syncPlayers(true, true);
     playbackFrame = requestAnimationFrame(playbackTick);
   }
+
+  function numberInput(value, step, minimum) {
+    const input = document.createElement("input");
+    input.type = "number";
+    input.value = value;
+    input.step = step;
+    input.min = minimum;
+    return input;
+  }
+  const field = (text, input) => { const label = document.createElement("label"); label.append(text, input); return label; };
 
   function renderInspector() {
     inspector.replaceChildren();
@@ -447,259 +562,193 @@
     const {clip, track} = found;
     const asset = assetMap.get(clip.assetId);
     const name = document.createElement("input");
-    const start = numberInput((clip.start / 1000).toFixed(3), "0.04", "0");
-    const sourceStart = numberInput((clip.sourceStart / 1000).toFixed(3), "0.04", "0");
-    const duration = numberInput((clip.duration / 1000).toFixed(3), "0.04", "0.2");
+    const start = numberInput((clip.start / 1000).toFixed(3), ".01", "0");
+    const sourceStart = numberInput((clip.sourceStart / 1000).toFixed(3), ".01", "0");
+    const duration = numberInput((clip.duration / 1000).toFixed(3), ".01", ".2");
     const volume = document.createElement("input");
+    const actions = document.createElement("div");
+    const remove = document.createElement("button");
     name.value = clip.name || asset?.name || "Clip";
-    volume.type = "range";
-    volume.min = "0";
-    volume.max = "2";
-    volume.step = "0.05";
-    volume.value = clip.volume ?? 1;
+    volume.type = "range"; volume.min = "0"; volume.max = "2"; volume.step = ".05"; volume.value = clip.volume ?? 1;
     [name, start, sourceStart, duration, volume].forEach(control => control.disabled = !canEdit || track.locked);
-    name.oninput = event => {
-      clip.name = event.target.value;
-      markDirty();
-      root.querySelector(`[data-clip-id="${clip.id}"] strong`)?.replaceChildren(clip.name);
-    };
-    start.onchange = event => {
-      clip.start = Math.max(0, Math.round(Number(event.target.value) * 1000));
-      markDirty();
-      renderTimeline();
-    };
-    sourceStart.onchange = event => {
-      clip.sourceStart = clamp(Math.round(Number(event.target.value) * 1000), 0, assetDuration(clip) - 200);
+    name.onchange = event => mutate(() => { clip.name = event.target.value; renderTimeline(); });
+    start.onchange = event => mutate(() => { clip.start = Math.max(0, quantize(Number(event.target.value) * 1000)); renderTimeline(); });
+    sourceStart.onchange = event => mutate(() => {
+      clip.sourceStart = clamp(quantize(Number(event.target.value) * 1000), 0, assetDuration(clip) - 200);
       clip.duration = Math.min(clip.duration, assetDuration(clip) - clip.sourceStart);
-      markDirty();
       renderTimeline();
-    };
-    duration.onchange = event => {
-      clip.duration = clamp(Math.round(Number(event.target.value) * 1000), 200, assetDuration(clip) - clip.sourceStart);
-      markDirty();
-      renderTimeline();
-    };
-    volume.oninput = event => {
-      clip.volume = Number(event.target.value);
-      markDirty();
-      syncPlayers(false);
-    };
+    });
+    duration.onchange = event => mutate(() => { clip.duration = clamp(quantize(Number(event.target.value) * 1000), 200, assetDuration(clip) - clip.sourceStart); renderTimeline(); });
+    volume.onchange = event => mutate(() => { clip.volume = Number(event.target.value); syncPlayers(false, true); });
+    remove.type = "button"; remove.className = "secondary"; remove.textContent = "Delete clip"; remove.disabled = !canEdit || track.locked; remove.onclick = deleteSelected;
+    actions.className = "movie-inspector-actions"; actions.append(remove);
+    inspector.append(field("Name", name), field("Timeline start (s)", start), field("Source in (s)", sourceStart), field("Duration (s)", duration), field("Volume", volume), actions);
     const readout = document.createElement("div");
     readout.className = "movie-inspector-readout";
-    readout.innerHTML = `<span>Source: ${clock(assetDuration(clip))}</span><span>End: ${clock(clip.start + clip.duration)}</span><span>In: ${clock(clip.sourceStart)}</span><span>Out: ${clock(clip.sourceStart + clip.duration)}</span>`;
-    const actions = document.createElement("div");
-    actions.className = "movie-inspector-actions";
-    const split = document.createElement("button");
-    split.type = "button";
-    split.className = "secondary";
-    split.textContent = "Split";
-    split.disabled = !canEdit || track.locked;
-    split.onclick = splitSelected;
-    const remove = document.createElement("button");
-    remove.type = "button";
-    remove.className = "secondary";
-    remove.textContent = "Delete";
-    remove.disabled = !canEdit || track.locked;
-    remove.onclick = deleteSelected;
-    actions.append(split, remove);
-    inspector.append(field("Name", name), field("Timeline start", start), field("Source in", sourceStart), field("Duration", duration), field("Volume", volume), readout, actions);
+    readout.textContent = `${track.name} / ${track.kind} / ${clock(clip.start)} - ${clock(clip.start + clip.duration)} / 10 ms grid`;
+    inspector.append(readout);
   }
 
   function selectClip(id, movePlayhead = false) {
     selectedId = id;
-    const found = findClip(id);
-    if (found && movePlayhead && (playheadMs < found.clip.start || playheadMs >= found.clip.start + found.clip.duration)) {
-      setPlayhead(found.clip.start);
-    } else {
-      syncPlayers(false);
+    qa(".movie-clip").forEach(node => node.classList.toggle("selected", node.dataset.clipId === id));
+    if (movePlayhead) {
+      const found = findClip(id);
+      if (found) setPlayhead(found.clip.start);
     }
     renderInspector();
-    root.querySelectorAll(".movie-clip").forEach(node => node.classList.toggle("selected", node.dataset.clipId === id));
   }
 
   function deleteSelected() {
     const found = findClip(selectedId);
-    if (!found || found.track.locked || !canEdit) return;
-    found.track.clips = found.track.clips.filter(clip => clip.id !== selectedId);
-    selectedId = null;
-    markDirty();
-    renderTimeline();
-    renderInspector();
+    if (!found || found.track.locked) return;
+    mutate(() => { found.track.clips = found.track.clips.filter(item => item.id !== selectedId); selectedId = null; });
+    renderTimeline(); renderInspector(); syncPlayers(false, true);
   }
 
   function splitSelected() {
     const found = findClip(selectedId);
-    if (!found || found.track.locked || !canEdit) return;
+    if (!found || found.track.locked) return;
     const {clip, track} = found;
-    const splitAt = Math.round(playheadMs);
-    if (splitAt <= clip.start + 199 || splitAt >= clip.start + clip.duration - 199) {
-      return toast("Place the playhead inside the selected clip");
-    }
-    const leftDuration = splitAt - clip.start;
-    const right = {
-      ...clip,
-      id: uid(),
-      name: `${clip.name} (part 2)`,
-      start: splitAt,
-      sourceStart: clip.sourceStart + leftDuration,
-      duration: clip.duration - leftDuration,
-    };
-    clip.duration = leftDuration;
-    track.clips.push(right);
-    selectedId = right.id;
-    markDirty();
-    renderTimeline();
-    renderInspector();
+    const offset = quantize(playheadMs - clip.start);
+    if (offset < 200 || clip.duration - offset < 200) return toast("Put the playhead at least 0.2 s from either clip edge");
+    mutate(() => {
+      const right = {...clip, id: uid(), name: `${clip.name} B`, start: clip.start + offset, sourceStart: clip.sourceStart + offset, duration: clip.duration - offset};
+      clip.duration = offset;
+      track.clips.push(right);
+      selectedId = right.id;
+    });
+    renderTimeline(); renderInspector();
+  }
+
+  function nudgeSelected(direction) {
+    const found = findClip(selectedId);
+    if (!found || found.track.locked) return;
+    mutate(() => { found.clip.start = Math.max(0, quantize(found.clip.start + direction * frameMs())); });
+    renderTimeline(); renderInspector(); setPlayhead(found.clip.start, false);
   }
 
   function addTrack(kind) {
-    const track = {
-      id: uid(),
-      name: `${kind === "VIDEO" ? "Video" : "Audio"} ${timeline.tracks.filter(item => item.kind === kind).length + 1}`,
-      kind,
-      muted: false,
-      locked: false,
-      clips: [],
-    };
-    timeline.tracks.push(track);
-    markDirty();
+    let result;
+    mutate(() => {
+      const count = timeline.tracks.filter(item => item.kind === kind).length + 1;
+      result = {id: uid(), name: `${kind === "VIDEO" ? "Video" : "Audio"} ${count}`, kind, muted: false, locked: false, clips: []};
+      timeline.tracks.push(result);
+    });
     renderTimeline();
-    return track;
+    return result;
   }
 
   function addClip(track, assetId, start) {
     const asset = assetMap.get(assetId);
-    if (!asset) return;
-    if (asset.status !== "READY" || asset.kind !== track.kind) {
-      return toast(asset.kind !== track.kind ? `Drop ${asset.kind.toLowerCase()} onto a matching track` : "Wait until the proxy is ready");
-    }
-    if (track.locked || !canEdit) return toast("Unlock this track before editing");
-    const clip = {
-      id: uid(),
-      assetId,
-      name: asset.name,
-      start: snapTime(Math.max(0, start), null),
-      sourceStart: 0,
-      duration: Math.max(200, asset.durationMs || 8000),
-      volume: 1,
-    };
-    hideSnapGuide();
-    track.clips.push(clip);
-    selectedId = clip.id;
-    markDirty();
+    if (!asset || asset.status !== "READY" || track.kind !== asset.kind || track.locked) return;
+    let clip;
+    mutate(() => {
+      clip = {id: uid(), assetId, name: asset.name, start: snapTime(start, null), sourceStart: 0, duration: Math.max(200, asset.durationMs || 8000), volume: 1};
+      track.clips.push(clip);
+      selectedId = clip.id;
+    });
+    snapGuide.hidden = true;
     renderTimeline();
     selectClip(clip.id, true);
   }
 
   function makeTrackHead(track) {
     const head = document.createElement("div");
+    const nameWrap = document.createElement("div");
     const title = document.createElement("strong");
+    const kind = document.createElement("small");
+    const controls = document.createElement("div");
     const mute = document.createElement("button");
     const lock = document.createElement("button");
     const remove = document.createElement("button");
     head.className = `movie-track-head${track.locked ? " locked" : ""}`;
+    nameWrap.className = "movie-track-name";
+    controls.className = "movie-track-controls";
     title.textContent = track.name;
-    mute.type = lock.type = remove.type = "button";
-    mute.className = lock.className = remove.className = "icon-button secondary";
-    mute.textContent = track.muted ? "M" : "S";
-    mute.title = track.muted ? "Unmute track" : "Mute track";
-    lock.textContent = track.locked ? "L" : "U";
-    lock.title = track.locked ? "Unlock track" : "Lock track";
-    remove.textContent = "×";
-    remove.title = "Delete empty track";
-    mute.onclick = () => {
-      if (!canEdit) return;
-      track.muted = !track.muted;
-      markDirty();
-      renderTimeline();
-      syncPlayers(false);
-    };
-    lock.onclick = () => {
-      if (!canEdit) return;
-      track.locked = !track.locked;
-      markDirty();
-      renderTimeline();
-      renderInspector();
-    };
+    kind.textContent = `${track.kind} / ${track.clips.length} clip${track.clips.length === 1 ? "" : "s"}`;
+    nameWrap.append(title, kind);
+    [mute, lock, remove].forEach(button => { button.type = "button"; button.className = "icon-button secondary"; });
+    mute.textContent = "M"; mute.classList.toggle("active", track.muted); mute.title = track.muted ? "Unmute track" : "Mute track";
+    lock.textContent = "L"; lock.classList.toggle("active", track.locked); lock.title = track.locked ? "Unlock track" : "Lock track";
+    remove.textContent = "×"; remove.title = "Delete empty track";
+    mute.onclick = () => mutate(() => { track.muted = !track.muted; renderTimeline(); syncPlayers(false, true); });
+    lock.onclick = () => mutate(() => { track.locked = !track.locked; renderTimeline(); renderInspector(); });
     remove.onclick = () => {
-      if (!canEdit) return;
       if (track.clips.length) return toast("Remove clips before deleting this track");
-      timeline.tracks = timeline.tracks.filter(item => item.id !== track.id);
-      markDirty();
+      mutate(() => { timeline.tracks = timeline.tracks.filter(item => item.id !== track.id); });
       renderTimeline();
     };
-    head.append(title, mute, lock, remove);
+    controls.append(mute, lock, remove);
+    head.append(nameWrap, controls);
     return head;
+  }
+
+  function closestCompatibleTrack(clientY, kind) {
+    const candidates = qa(".movie-track-lane").map(lane => {
+      const track = timeline.tracks.find(item => item.id === lane.dataset.trackId);
+      const rect = lane.getBoundingClientRect();
+      return {lane, track, distance: clientY < rect.top ? rect.top - clientY : clientY > rect.bottom ? clientY - rect.bottom : 0};
+    }).filter(item => item.track?.kind === kind && !item.track.locked);
+    candidates.sort((a, b) => a.distance - b.distance);
+    return candidates[0] || null;
   }
 
   function beginClipGesture(event, clip, track, mode, node) {
     if (!canEdit || track.locked || event.button !== 0) return;
-    event.preventDefault();
-    event.stopPropagation();
+    event.preventDefault(); event.stopPropagation();
     selectClip(clip.id);
-    const pointerId = event.pointerId;
+    remember();
     const originX = event.clientX;
     const originScroll = timelineScroll.scrollLeft;
     const original = {start: clip.start, sourceStart: clip.sourceStart, duration: clip.duration};
     let targetTrack = track;
     let changed = false;
     node.classList.add("dragging");
-    node.setPointerCapture(pointerId);
-
+    node.setPointerCapture(event.pointerId);
     const move = next => {
-      const scrollBounds = timelineScroll.getBoundingClientRect();
-      if (next.clientX > scrollBounds.right - 28) timelineScroll.scrollLeft += 18;
-      else if (next.clientX < scrollBounds.left + 28) timelineScroll.scrollLeft = Math.max(0, timelineScroll.scrollLeft - 18);
+      const bounds = timelineScroll.getBoundingClientRect();
+      if (next.clientX > bounds.right - 36) timelineScroll.scrollLeft += 22;
+      else if (next.clientX < bounds.left + 36) timelineScroll.scrollLeft = Math.max(0, timelineScroll.scrollLeft - 22);
       const delta = (next.clientX - originX + timelineScroll.scrollLeft - originScroll) / zoom * 1000;
       if (mode === "move") {
-        clip.start = Math.round(snapTime(original.start + delta, clip.id));
-        const candidateLane = document.elementFromPoint(next.clientX, next.clientY)?.closest(".movie-track-lane");
-        const candidateTrack = candidateLane ? timeline.tracks.find(item => item.id === candidateLane.dataset.trackId) : null;
-        if (candidateTrack && candidateTrack.kind === track.kind && !candidateTrack.locked) targetTrack = candidateTrack;
-        document.querySelectorAll(".movie-track-lane").forEach(lane => lane.classList.toggle("drop-target", lane.dataset.trackId === targetTrack.id));
+        clip.start = snapTime(original.start + delta, clip.id);
+        const candidate = closestCompatibleTrack(next.clientY, track.kind);
+        if (candidate) targetTrack = candidate.track;
+        qa(".movie-track-lane").forEach(lane => lane.classList.toggle("drop-target", lane.dataset.trackId === targetTrack.id));
       } else if (mode === "left") {
-        let nextStart = snapTime(original.start + delta, clip.id);
-        let shift = nextStart - original.start;
-        shift = clamp(shift, -original.sourceStart, original.duration - 200);
-        clip.start = original.start + shift;
-        clip.sourceStart = original.sourceStart + shift;
-        clip.duration = original.duration - shift;
+        let shift = snapTime(original.start + delta, clip.id) - original.start;
+        shift = clamp(quantize(shift), -original.sourceStart, original.duration - 200);
+        clip.start = original.start + shift; clip.sourceStart = original.sourceStart + shift; clip.duration = original.duration - shift;
       } else {
-        let nextEnd = snapTime(original.start + original.duration + delta, clip.id);
-        clip.duration = clamp(nextEnd - original.start, 200, assetDuration(clip) - original.sourceStart);
+        const nextEnd = snapTime(original.start + original.duration + delta, clip.id);
+        clip.duration = clamp(quantize(nextEnd - original.start), 200, assetDuration(clip) - original.sourceStart);
       }
       changed = true;
       node.style.left = `${clip.start / 1000 * zoom}px`;
       node.style.width = `${Math.max(8, clip.duration / 1000 * zoom)}px`;
       node.querySelector("small").textContent = `${clock(clip.sourceStart)} / ${clock(clip.duration)}`;
     };
+    const cleanup = () => {
+      node.removeEventListener("pointermove", move); node.removeEventListener("pointerup", finish); node.removeEventListener("pointercancel", cancel);
+      node.classList.remove("dragging"); qa(".movie-track-lane").forEach(lane => lane.classList.remove("drop-target")); snapGuide.hidden = true;
+    };
     const finish = () => {
-      node.removeEventListener("pointermove", move);
-      node.removeEventListener("pointerup", finish);
-      node.removeEventListener("pointercancel", cancel);
-      node.classList.remove("dragging");
-      document.querySelectorAll(".movie-track-lane").forEach(lane => lane.classList.remove("drop-target"));
-      hideSnapGuide();
-      if (changed && mode === "move" && targetTrack !== track) {
-        track.clips = track.clips.filter(item => item.id !== clip.id);
-        targetTrack.clips.push(clip);
+      cleanup();
+      if (!changed) historyUndo.pop();
+      else {
+        if (mode === "move" && targetTrack !== track) { track.clips = track.clips.filter(item => item.id !== clip.id); targetTrack.clips.push(clip); }
+        historyRedo = []; updateDirty(); updateHistoryButtons();
       }
-      if (changed) markDirty();
-      renderTimeline();
-      renderInspector();
+      renderTimeline(); renderInspector();
     };
-    const cancel = () => {
-      Object.assign(clip, original);
-      changed = false;
-      finish();
-    };
-    node.addEventListener("pointermove", move);
-    node.addEventListener("pointerup", finish);
-    node.addEventListener("pointercancel", cancel);
+    const cancel = () => { Object.assign(clip, original); changed = false; finish(); };
+    node.addEventListener("pointermove", move); node.addEventListener("pointerup", finish); node.addEventListener("pointercancel", cancel);
   }
 
   function makeClipNode(clip, track) {
     const node = document.createElement("div");
+    const strip = document.createElement("i");
     const body = document.createElement("div");
     const title = document.createElement("strong");
     const detail = document.createElement("small");
@@ -710,312 +759,222 @@
     node.dataset.clipId = clip.id;
     node.style.left = `${clip.start / 1000 * zoom}px`;
     node.style.width = `${Math.max(8, clip.duration / 1000 * zoom)}px`;
-    body.className = "movie-clip-body";
-    title.textContent = clip.name;
-    detail.textContent = `${clock(clip.sourceStart)} / ${clock(clip.duration)}`;
-    body.append(title, detail);
-    if (track.kind === "AUDIO" && asset?.waveformUrl) {
-      const wave = document.createElement("img");
-      wave.className = "movie-clip-wave";
-      wave.src = asset.waveformUrl;
-      wave.alt = "";
-      node.appendChild(wave);
+    strip.className = "movie-clip-strip";
+    if (track.kind === "VIDEO" && (asset?.filmstripUrl || asset?.thumbnailUrl)) {
+      strip.style.backgroundImage = `url("${asset.filmstripUrl || asset.thumbnailUrl}")`;
+      if (!asset.filmstripUrl) node.classList.add("fallback-strip");
+      node.append(strip);
     }
-    left.className = "movie-trim left";
-    right.className = "movie-trim right";
+    if (track.kind === "AUDIO" && asset?.waveformUrl) {
+      const wave = document.createElement("img"); wave.className = "movie-clip-wave"; wave.src = asset.waveformUrl; wave.alt = ""; node.append(wave);
+    }
+    body.className = "movie-clip-body"; title.textContent = clip.name; detail.textContent = `${clock(clip.sourceStart)} / ${clock(clip.duration)}`; body.append(title, detail);
+    left.className = "movie-trim left"; right.className = "movie-trim right";
     node.append(left, body, right);
-    node.addEventListener("click", event => {
-      event.stopPropagation();
-      selectClip(clip.id, true);
-    });
-    body.addEventListener("pointerdown", event => beginClipGesture(event, clip, track, "move", node));
-    left.addEventListener("pointerdown", event => beginClipGesture(event, clip, track, "left", node));
-    right.addEventListener("pointerdown", event => beginClipGesture(event, clip, track, "right", node));
+    node.onclick = event => { event.stopPropagation(); selectClip(clip.id, true); };
+    body.onpointerdown = event => beginClipGesture(event, clip, track, "move", node);
+    left.onpointerdown = event => beginClipGesture(event, clip, track, "left", node);
+    right.onpointerdown = event => beginClipGesture(event, clip, track, "right", node);
     return node;
   }
 
   function renderRuler(durationMs) {
     ruler.replaceChildren();
-    const major = zoom >= 50 ? 1000 : zoom >= 20 ? 5000 : 10000;
+    const major = zoom >= 80 ? 1000 : zoom >= 30 ? 5000 : 10000;
     const minor = major / 5;
     for (let at = 0; at <= durationMs; at += minor) {
-      const tick = document.createElement("i");
-      tick.className = `movie-ruler-tick${at % major === 0 ? " major" : ""}`;
-      tick.style.left = `${at / 1000 * zoom}px`;
-      ruler.appendChild(tick);
-      if (at % major === 0) {
-        const label = document.createElement("span");
-        label.className = "movie-ruler-label";
-        label.style.left = tick.style.left;
-        label.textContent = clock(at).slice(0, 5);
-        ruler.appendChild(label);
-      }
+      const tick = document.createElement("i"); tick.className = `movie-ruler-tick${at % major === 0 ? " major" : ""}`; tick.style.left = `${at / 1000 * zoom}px`; ruler.append(tick);
+      if (at % major === 0) { const label = document.createElement("span"); label.className = "movie-ruler-label"; label.style.left = tick.style.left; label.textContent = clock(at).slice(0, 5); ruler.append(label); }
     }
   }
 
   function renderTimeline() {
     normalizeTimeline();
     const duration = visibleDuration();
-    const width = Math.max(timelineScroll.clientWidth || 600, duration / 1000 * zoom);
-    timelineCanvas.style.width = `${width}px`;
-    const minor = (zoom >= 50 ? 200 : zoom >= 20 ? 1000 : 2000) / 1000 * zoom;
-    tracksNode.style.setProperty("--grid-step", `${minor}px`);
-    tracksNode.style.setProperty("--grid-step-minus", `${Math.max(1, minor - 1)}px`);
-    headsNode.replaceChildren();
-    tracksNode.replaceChildren();
-    renderRuler(duration);
+    timelineCanvas.style.width = `${Math.max(timelineScroll.clientWidth || 600, duration / 1000 * zoom)}px`;
+    const minor = Math.max(4, (zoom >= 50 ? 200 : zoom >= 20 ? 1000 : 2000) / 1000 * zoom);
+    tracksNode.style.setProperty("--grid-step", `${minor}px`); tracksNode.style.setProperty("--grid-step-minus", `${Math.max(1, minor - 1)}px`);
+    headsNode.replaceChildren(); tracksNode.replaceChildren(); renderRuler(duration);
     timeline.tracks.forEach(track => {
-      headsNode.appendChild(makeTrackHead(track));
-      const lane = document.createElement("div");
-      lane.className = "movie-track-lane";
-      lane.dataset.trackId = track.id;
-      lane.addEventListener("pointerdown", event => {
-        if (event.target === lane) setPlayhead((event.clientX - lane.getBoundingClientRect().left) / zoom * 1000);
-      });
-      lane.addEventListener("dragover", event => {
-        if (!track.locked && canEdit) {
-          event.preventDefault();
-          lane.classList.add("drop-target");
-        }
-      });
-      lane.addEventListener("dragleave", () => lane.classList.remove("drop-target"));
-      lane.addEventListener("drop", event => {
-        event.preventDefault();
-        lane.classList.remove("drop-target");
-        const start = (event.clientX - lane.getBoundingClientRect().left) / zoom * 1000;
-        addClip(track, event.dataTransfer.getData("text/asset-id"), start);
-      });
-      track.clips.sort((a, b) => a.start - b.start).forEach(clip => lane.appendChild(makeClipNode(clip, track)));
-      if (!track.clips.length) lane.innerHTML = '<span class="movie-empty">Drop a clip here</span>';
-      tracksNode.appendChild(lane);
+      headsNode.append(makeTrackHead(track));
+      const lane = document.createElement("div"); lane.className = "movie-track-lane"; lane.dataset.trackId = track.id;
+      lane.onpointerdown = event => { if (event.target === lane) setPlayhead((event.clientX - lane.getBoundingClientRect().left) / zoom * 1000); };
+      lane.ondragover = event => { if (!track.locked && canEdit) { event.preventDefault(); lane.classList.add("drop-target"); } };
+      lane.ondragleave = () => lane.classList.remove("drop-target");
+      lane.ondrop = event => { event.preventDefault(); lane.classList.remove("drop-target"); addClip(track, event.dataTransfer.getData("text/asset-id"), (event.clientX - lane.getBoundingClientRect().left) / zoom * 1000); };
+      track.clips.sort((a, b) => a.start - b.start).forEach(clip => lane.append(makeClipNode(clip, track)));
+      if (!track.clips.length) lane.innerHTML = '<span class="movie-empty">Drop a clip anywhere across this track</span>';
+      tracksNode.append(lane);
     });
     setPlayhead(playheadMs, false);
-    root.querySelector("[data-zoom-label]").textContent = `${zoom} px/s`;
+    q("[data-zoom-label]").textContent = `${zoom} px/s`;
     zoomInput.value = zoom;
   }
 
-  function changeZoom(next) {
+  function changeZoom(next, anchorClientX = null) {
     const previous = zoom;
-    const centerMs = (timelineScroll.scrollLeft + timelineScroll.clientWidth / 2) / previous * 1000;
-    zoom = clamp(Math.round(next / 2) * 2, 6, 80);
+    const bounds = timelineScroll.getBoundingClientRect();
+    const anchor = anchorClientX == null ? timelineScroll.clientWidth / 2 : clamp(anchorClientX - bounds.left, 0, timelineScroll.clientWidth);
+    const anchorMs = (timelineScroll.scrollLeft + anchor) / previous * 1000;
+    zoom = clamp(Math.round(next / 2) * 2, 6, 160);
     localStorage.setItem("studio-movie-zoom", String(zoom));
     renderTimeline();
-    requestAnimationFrame(() => {
-      timelineScroll.scrollLeft = Math.max(0, centerMs / 1000 * zoom - timelineScroll.clientWidth / 2);
+    requestAnimationFrame(() => { timelineScroll.scrollLeft = Math.max(0, anchorMs / 1000 * zoom - anchor); });
+  }
+
+  function renderLibrary() {
+    if (!libraryGrid) return;
+    const kind = q("[data-media-kind]")?.value || "ALL";
+    const sort = q("[data-media-sort]")?.value || "latest";
+    let items = libraryAssets.filter(asset => (libraryScope === "workspace" || asset.attached) && (kind === "ALL" || asset.kind === kind));
+    if (sort === "alpha") items.sort((a, b) => a.name.localeCompare(b.name));
+    q("[data-media-library-count]").textContent = items.length;
+    libraryGrid.replaceChildren();
+    items.forEach(asset => {
+      const button = document.createElement("button");
+      const visual = document.createElement("div");
+      const copy = document.createElement("div");
+      button.type = "button"; button.className = `movie-library-card${asset.attached ? " attached" : ""}`;
+      visual.className = "movie-library-card-visual"; copy.className = "movie-library-card-copy";
+      if (asset.thumbnailUrl || asset.waveformUrl) { const image = document.createElement("img"); image.src = asset.thumbnailUrl || asset.waveformUrl; image.alt = ""; visual.append(image); }
+      else visual.textContent = asset.kind;
+      copy.innerHTML = `<strong>${asset.name}</strong><small>${asset.kind} / ${mediaStatus(asset)}</small><small>${asset.attached ? "Attached to project" : "Workspace media"}</small>`;
+      button.append(visual, copy);
+      button.onclick = async () => {
+        if (asset.attached) { libraryDialog.close(); bin.querySelector(`[data-asset-id="${asset.id}"]`)?.scrollIntoView({block: "nearest"}); return; }
+        button.disabled = true;
+        try { await requestJson(root.dataset.mediaUrl, {method: "POST", headers: {"Content-Type": "application/json", "X-CSRFToken": csrfToken()}, body: JSON.stringify({assetId: asset.id})}); await refreshMedia(); }
+        catch (error) { toast(error.message, "error"); }
+        button.disabled = false;
+      };
+      libraryGrid.append(button);
     });
+    if (!items.length) libraryGrid.innerHTML = '<p class="muted">No matching media</p>';
   }
 
   async function loadHistory() {
     historyList.innerHTML = '<p class="muted">Loading history</p>';
-    const response = await fetch(root.dataset.historyUrl);
-    const data = await response.json();
-    historyList.replaceChildren();
-    if (!response.ok) {
-      historyList.textContent = data.error || "History could not be loaded";
-      return;
-    }
-    if (!data.items.length) {
-      historyList.innerHTML = '<p class="muted">No previous saves yet</p>';
-      return;
-    }
-    data.items.forEach(item => {
-      const row = document.createElement("div");
-      const copy = document.createElement("div");
-      const title = document.createElement("strong");
-      const detail = document.createElement("span");
-      row.className = "movie-history-row";
-      copy.className = "movie-history-copy";
-      title.textContent = item.title;
-      detail.textContent = `${item.reason} / ${new Date(item.createdAt).toLocaleString()} / ${item.createdBy}`;
-      copy.append(title, detail);
-      row.appendChild(copy);
-      if (data.canRestore) {
-        const restore = document.createElement("button");
-        restore.type = "button";
-        restore.className = "secondary";
-        restore.textContent = "Restore";
-        restore.onclick = async () => {
-          restore.disabled = true;
-          const result = await fetch(item.restoreUrl, {method: "POST", headers: {"X-CSRFToken": csrfToken()}});
-          const restored = await result.json();
-          if (!result.ok) {
-            restore.disabled = false;
-            return toast(restored.error || "Restore failed", "error");
-          }
-          timeline = restored.timeline;
-          selectedId = null;
-          dirty = false;
-          stateNode.textContent = "Restored";
-          root.querySelector("[data-movie-title]").value = restored.title;
-          root.querySelector("[data-movie-ratio]").value = restored.aspectRatio;
-          root.querySelector("[data-movie-resolution]").value = restored.resolution;
-          root.querySelector("[data-movie-fps]").value = restored.fps;
-          setPlayhead(0, false);
-          renderTimeline();
-          renderInspector();
-          toast("Timeline restored");
-          await loadHistory();
-        };
-        row.appendChild(restore);
-      }
-      historyList.appendChild(row);
-    });
+    try {
+      const data = await requestJson(root.dataset.historyUrl);
+      historyList.replaceChildren();
+      if (!data.items.length) { historyList.innerHTML = '<p class="muted">No previous saves yet</p>'; return; }
+      data.items.forEach(item => {
+        const row = document.createElement("div"); const copy = document.createElement("div");
+        row.className = "movie-history-row"; copy.className = "movie-history-copy";
+        copy.innerHTML = `<strong>${item.title}</strong><span>${item.reason} / ${new Date(item.createdAt).toLocaleString()} / ${item.createdBy}</span>`; row.append(copy);
+        if (data.canRestore) {
+          const restore = document.createElement("button"); restore.type = "button"; restore.className = "secondary"; restore.textContent = "Restore";
+          restore.onclick = async () => {
+            restore.disabled = true;
+            try {
+              const data = await requestJson(item.restoreUrl, {method: "POST", headers: {"X-CSRFToken": csrfToken()}});
+              timeline = data.timeline; selectedId = null;
+              q("[data-movie-title]").value = data.title; q("[data-movie-ratio]").value = data.aspectRatio; q("[data-movie-resolution]").value = data.resolution; q("[data-movie-fps]").value = data.fps;
+              savedSignature = signature(); historyUndo = []; historyRedo = []; applyCanvas(); renderTimeline(); renderInspector(); updateDirty(); updateHistoryButtons(); toast("Timeline restored"); await loadHistory();
+            } catch (error) { restore.disabled = false; toast(error.message, "error"); }
+          };
+          row.append(restore);
+        }
+        historyList.append(row);
+      });
+    } catch (error) { historyList.textContent = error.message; }
   }
 
-  root.querySelector("[data-media-upload]")?.addEventListener("click", () => root.querySelector("[data-media-files]").click());
-  root.querySelector("[data-media-files]")?.addEventListener("change", event => {
-    const files = [...event.target.files];
+  q("[data-media-library-open]")?.addEventListener("click", () => { libraryScope = "project"; qa("[data-media-scope]").forEach(button => button.classList.toggle("active", button.dataset.mediaScope === libraryScope)); renderLibrary(); libraryDialog.showModal(); });
+  q("[data-media-library-close]")?.addEventListener("click", () => libraryDialog.close());
+  libraryDialog?.addEventListener("click", event => { if (event.target === libraryDialog) libraryDialog.close(); });
+  qa("[data-media-scope]").forEach(button => button.onclick = () => { libraryScope = button.dataset.mediaScope; qa("[data-media-scope]").forEach(item => item.classList.toggle("active", item === button)); renderLibrary(); });
+  q("[data-media-kind]")?.addEventListener("change", renderLibrary);
+  q("[data-media-sort]")?.addEventListener("change", renderLibrary);
+  q("[data-media-upload-form]")?.addEventListener("submit", event => {
+    event.preventDefault();
+    const input = q("[data-media-files]");
+    const files = [...input.files].slice(0, 10);
     if (!files.length) return;
-    const form = new FormData();
-    files.slice(0, 10).forEach(file => form.append("files", file));
-    const progress = root.querySelector("[data-media-progress]");
-    const bar = progress.querySelector("i");
-    progress.hidden = false;
-    bar.style.width = "0";
-    const xhr = new XMLHttpRequest();
-    xhr.open("POST", root.dataset.mediaUrl);
-    xhr.setRequestHeader("X-CSRFToken", csrfToken());
-    xhr.upload.onprogress = update => {
-      if (update.lengthComputable) bar.style.width = `${Math.round(update.loaded / update.total * 100)}%`;
-    };
-    xhr.onload = async () => {
-      progress.hidden = true;
-      event.target.value = "";
-      let data = {};
-      try { data = JSON.parse(xhr.responseText); } catch (_) {}
-      if (xhr.status >= 400) toast(data.error || "Upload failed", "error");
-      else if (data.errors?.length) toast(data.errors.join(" / "), "error");
-      await refreshMedia();
-    };
-    xhr.onerror = () => {
-      progress.hidden = true;
-      toast("Upload failed", "error");
-    };
+    const form = new FormData(); files.forEach(file => form.append("files", file));
+    const progress = q("[data-media-progress]"); const bar = progress.querySelector("i"); progress.hidden = false; bar.style.width = "0";
+    const xhr = new XMLHttpRequest(); xhr.open("POST", root.dataset.mediaUrl); xhr.setRequestHeader("X-CSRFToken", csrfToken());
+    xhr.upload.onprogress = update => { if (update.lengthComputable) bar.style.width = `${Math.round(update.loaded / update.total * 100)}%`; };
+    xhr.onload = async () => { progress.hidden = true; input.value = ""; let data = {}; try { data = JSON.parse(xhr.responseText); } catch (_) {} if (xhr.status >= 400) toast(data.error || "Upload failed", "error"); else if (data.errors?.length) toast(data.errors.join(" / "), "error"); await refreshMedia(); };
+    xhr.onerror = () => { progress.hidden = true; toast("Upload failed", "error"); };
     xhr.send(form);
   });
 
-  root.querySelectorAll("[data-add-track]").forEach(button => button.addEventListener("click", () => addTrack(button.dataset.addTrack)));
-  root.querySelector("[data-auto-cut]").addEventListener("click", () => {
-    if (!canEdit) return;
+  qa("[data-add-track]").forEach(button => button.onclick = () => addTrack(button.dataset.addTrack));
+  q("[data-auto-cut]").onclick = () => {
     let track = timeline.tracks.find(item => item.kind === "VIDEO" && !item.locked);
     if (!track) track = addTrack("VIDEO");
-    let cursor = 0;
-    track.clips = assets.filter(asset => asset.status === "READY" && asset.kind === "VIDEO").map(asset => {
-      const duration = Math.max(200, asset.durationMs || 8000);
-      const clip = {id: uid(), assetId: asset.id, name: asset.name, start: cursor, sourceStart: 0, duration, volume: 1};
-      cursor += duration;
-      return clip;
+    const target = track;
+    mutate(() => {
+      let cursor = 0;
+      target.clips = assets.filter(asset => asset.status === "READY" && asset.kind === "VIDEO").map(asset => { const duration = Math.max(200, asset.durationMs || 8000); const clip = {id: uid(), assetId: asset.id, name: asset.name, start: cursor, sourceStart: 0, duration, volume: 1}; cursor += duration; return clip; });
     });
-    markDirty();
     renderTimeline();
-  });
-  root.querySelector("[data-preview-play]").addEventListener("click", togglePlayback);
-  root.querySelector("[data-preview-stop]").addEventListener("click", () => stopPlayback(true));
-  root.querySelector("[data-timeline-split]").addEventListener("click", splitSelected);
-  root.querySelector("[data-timeline-snap]").addEventListener("click", event => {
-    snapping = !snapping;
-    event.currentTarget.classList.toggle("active", snapping);
-    toast(snapping ? "Snapping enabled" : "Snapping disabled");
-  });
-  ruler.addEventListener("pointerdown", event => {
+  };
+  q("[data-preview-play]").onclick = togglePlayback;
+  q("[data-preview-stop]").onclick = () => stopPlayback(true);
+  qa("[data-preview-step]").forEach(button => button.onclick = () => { stopPlayback(); setPlayhead(playheadMs + Number(button.dataset.previewStep) * frameMs()); });
+  previewScrub.oninput = event => { stopPlayback(); setPlayhead(Number(event.target.value)); };
+  preview.addEventListener("waiting", () => { previewStatus.textContent = "Buffering"; });
+  preview.addEventListener("playing", () => { previewStatus.textContent = "Playing"; });
+  preview.addEventListener("error", () => { previewStatus.textContent = preview.error?.message || "Preview failed"; });
+  q("[data-timeline-split]").onclick = splitSelected;
+  qa("[data-clip-nudge]").forEach(button => button.onclick = () => nudgeSelected(Number(button.dataset.clipNudge)));
+  q("[data-timeline-snap]").onclick = event => { snapping = !snapping; event.currentTarget.classList.toggle("active", snapping); toast(snapping ? "Snapping enabled" : "Snapping disabled"); };
+  ruler.onpointerdown = event => {
     stopPlayback();
     const update = next => setPlayhead((next.clientX - ruler.getBoundingClientRect().left) / zoom * 1000);
-    update(event);
-    ruler.setPointerCapture(event.pointerId);
-    ruler.onpointermove = update;
-    ruler.onpointerup = () => { ruler.onpointermove = null; ruler.onpointerup = null; };
-  });
-  timelineScroll.addEventListener("scroll", () => {
-    headsNode.style.transform = `translateY(-${timelineScroll.scrollTop}px)`;
-  }, {passive: true});
-  zoomInput.addEventListener("input", event => changeZoom(Number(event.target.value)));
-  root.querySelector("[data-zoom-out]").addEventListener("click", () => changeZoom(zoom - 4));
-  root.querySelector("[data-zoom-in]").addEventListener("click", () => changeZoom(zoom + 4));
-  root.querySelector("[data-export-timeline]").addEventListener("click", () => {
-    const blob = new Blob([JSON.stringify(timeline, null, 2)], {type: "application/json"});
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
-    link.download = `${root.querySelector("[data-movie-title]").value || "draft"}-timeline.json`;
-    link.click();
-    URL.revokeObjectURL(link.href);
-  });
-  root.querySelector("[data-movie-history-toggle]").addEventListener("click", async () => {
-    historyPanel.hidden = !historyPanel.hidden;
-    if (!historyPanel.hidden) await loadHistory();
-  });
-  root.querySelector("[data-movie-history-close]").addEventListener("click", () => { historyPanel.hidden = true; });
-  root.querySelector("[data-render-toggle]")?.addEventListener("click", () => {
-    renderPanel.hidden = !renderPanel.hidden;
-    if (!renderPanel.hidden) refreshRenders();
-  });
-  root.querySelector("[data-render-close]")?.addEventListener("click", () => { renderPanel.hidden = true; });
-  root.querySelector("[data-render-start]")?.addEventListener("click", queueRender);
-  root.querySelector("[data-save-movie]")?.addEventListener("click", async () => {
-    stateNode.textContent = "Saving";
-    const response = await fetch(root.dataset.saveUrl, {
-      method: "POST",
-      headers: {"Content-Type": "application/json", "X-CSRFToken": csrfToken()},
-      body: JSON.stringify({
-        title: root.querySelector("[data-movie-title]").value,
-        aspectRatio: root.querySelector("[data-movie-ratio]").value,
-        resolution: root.querySelector("[data-movie-resolution]").value,
-        fps: root.querySelector("[data-movie-fps]").value,
-        timeline,
-      }),
+    update(event); ruler.setPointerCapture(event.pointerId); ruler.onpointermove = update; ruler.onpointerup = () => { ruler.onpointermove = null; ruler.onpointerup = null; };
+  };
+  timelineScroll.addEventListener("scroll", () => { headsNode.style.transform = `translateY(-${timelineScroll.scrollTop}px)`; }, {passive: true});
+  timelineScroll.addEventListener("wheel", event => { if (Math.abs(event.deltaY) < Math.abs(event.deltaX)) return; event.preventDefault(); changeZoom(zoom + (event.deltaY < 0 ? 4 : -4), event.clientX); }, {passive: false});
+  zoomInput.oninput = event => changeZoom(Number(event.target.value));
+  q("[data-zoom-out]").onclick = () => changeZoom(zoom - 4);
+  q("[data-zoom-in]").onclick = () => changeZoom(zoom + 4);
+  q("[data-editor-undo]").onclick = undo;
+  q("[data-editor-redo]").onclick = redo;
+  q("[data-export-timeline]").onclick = () => { const blob = new Blob([JSON.stringify(timeline, null, 2)], {type: "application/json"}); const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = `${q("[data-movie-title]").value || "draft"}-timeline.json`; link.click(); URL.revokeObjectURL(link.href); };
+  q("[data-movie-history-toggle]").onclick = async () => { historyPanel.hidden = !historyPanel.hidden; if (!historyPanel.hidden) await loadHistory(); };
+  q("[data-movie-history-close]").onclick = () => { historyPanel.hidden = true; };
+  q("[data-render-toggle]")?.addEventListener("click", () => { renderPanel.hidden = !renderPanel.hidden; if (!renderPanel.hidden) refreshRenders(); });
+  q("[data-render-close]")?.addEventListener("click", () => { renderPanel.hidden = true; });
+  q("[data-render-start]")?.addEventListener("click", queueRender);
+  q("[data-save-movie]")?.addEventListener("click", () => saveTimeline());
+  qa("[data-movie-title],[data-movie-ratio],[data-movie-resolution],[data-movie-fps]").forEach(control => {
+    const capture = () => settingSnapshots.set(control, currentState());
+    control.addEventListener("focus", capture);
+    control.addEventListener("pointerdown", capture);
+    control.addEventListener("change", () => {
+      const previous = settingSnapshots.get(control);
+      if (previous && signature(previous) !== signature()) {
+        historyUndo.push(previous);
+        if (historyUndo.length > 100) historyUndo.shift();
+        historyRedo = [];
+      }
+      if (control.matches("[data-movie-ratio]")) applyCanvas();
+      if (control.matches("[data-movie-fps]")) renderTimeline();
+      updateDirty(); updateHistoryButtons();
     });
-    const data = await response.json();
-    if (!response.ok) {
-      stateNode.textContent = data.error || "Save failed";
-      return toast(stateNode.textContent, "error");
-    }
-    dirty = false;
-    stateNode.textContent = "Saved";
-    toast("Timeline saved");
-    if (!historyPanel.hidden) await loadHistory();
   });
-  root.querySelectorAll("[data-movie-title],[data-movie-ratio],[data-movie-resolution],[data-movie-fps]").forEach(control => control.addEventListener("change", markDirty));
 
   document.addEventListener("keydown", event => {
-    if (event.target.matches("input,textarea,select") || event.target.isContentEditable) return;
-    if (event.code === "Space") {
-      event.preventDefault();
-      togglePlayback();
-    } else if (event.key.toLowerCase() === "s" && !event.ctrlKey && !event.metaKey) {
-      event.preventDefault();
-      splitSelected();
-    } else if ((event.key === "Delete" || event.key === "Backspace") && selectedId) {
-      event.preventDefault();
-      deleteSelected();
-    } else if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-      event.preventDefault();
-      const direction = event.key === "ArrowLeft" ? -1 : 1;
-      setPlayhead(playheadMs + direction * (event.shiftKey ? 1000 : frameMs()));
-    } else if ((event.ctrlKey || event.metaKey) && ["+", "=", "-"].includes(event.key)) {
-      event.preventDefault();
-      changeZoom(zoom + (event.key === "-" ? -4 : 4));
-    }
+    const editing = event.target.matches("input,textarea,select") || event.target.isContentEditable;
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") { event.preventDefault(); event.shiftKey ? redo() : undo(); return; }
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "y") { event.preventDefault(); redo(); return; }
+    if (editing) return;
+    if (event.code === "Space") { event.preventDefault(); togglePlayback(); }
+    else if (event.key.toLowerCase() === "s" && !event.ctrlKey && !event.metaKey) { event.preventDefault(); splitSelected(); }
+    else if ((event.key === "Delete" || event.key === "Backspace") && selectedId) { event.preventDefault(); deleteSelected(); }
+    else if (event.key === "ArrowLeft" || event.key === "ArrowRight") { event.preventDefault(); const direction = event.key === "ArrowLeft" ? -1 : 1; if (selectedId && !event.ctrlKey && !event.metaKey) nudgeSelected(direction); else setPlayhead(playheadMs + direction * (event.shiftKey ? 1000 : frameMs())); }
+    else if ((event.ctrlKey || event.metaKey) && ["+", "=", "-"].includes(event.key)) { event.preventDefault(); changeZoom(zoom + (event.key === "-" ? -4 : 4)); }
   });
-  addEventListener("beforeunload", event => {
-    if (dirty) {
-      event.preventDefault();
-      event.returnValue = "";
-    }
-  });
+  addEventListener("beforeunload", event => { if (dirty) { event.preventDefault(); event.returnValue = ""; } });
   let resizeTimer;
-  addEventListener("resize", () => {
-    clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(renderTimeline, 120);
-  });
+  addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(renderTimeline, 120); });
 
-  root.querySelector("[data-movie-ratio]").value = root.dataset.aspectRatio || "16:9";
-  root.querySelector("[data-movie-resolution]").value = root.dataset.resolution || "1920x1080";
-  root.querySelector("[data-movie-fps]").value = root.dataset.fps || "25";
-  normalizeTimeline();
-  renderBin();
-  renderTimeline();
-  renderInspector();
-  renderRenderJobs();
-  scheduleRenderPoll();
-  setPlayhead(0, false);
-  refreshMedia();
+  q("[data-movie-ratio]").value = root.dataset.aspectRatio || "16:9";
+  q("[data-movie-resolution]").value = root.dataset.resolution || "1920x1080";
+  q("[data-movie-fps]").value = root.dataset.fps || "25";
+  normalizeTimeline(); applyCanvas(); renderBin(); renderTimeline(); renderInspector(); renderRenderJobs(); renderLibrary(); scheduleRenderPoll(); setPlayhead(0, false);
+  savedSignature = signature(); updateDirty(); updateHistoryButtons(); refreshMedia();
 })();
