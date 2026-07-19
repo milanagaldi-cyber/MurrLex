@@ -112,7 +112,7 @@ def build_render_command(job, assets, output_path):
             continue
         for clip_index, clip in enumerate(track.get("clips", [])):
             asset = assets[str(clip["assetId"])]
-            input_index = len(inputs)
+            input_index = len(clips)
             inputs.extend(["-i", str(_source_path(asset))])
             clips.append((track_index, clip_index, track, clip, asset, input_index))
 

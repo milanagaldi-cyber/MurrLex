@@ -4111,7 +4111,16 @@ class StudioProductionPilotFeaturesTests(TestCase):
             }, {"assetId": "music", "start": 0, "sourceStart": 0, "duration": 6000, "volume": 1}]},
         ]}
         job = SimpleNamespace(snapshot=snapshot, duration_ms=4000, width=1280, height=720, fps=25)
-        command = " ".join(build_render_command(job, {"lower": lower, "upper": upper, "music": audio}, "/tmp/visible.mp4"))
+        render_command = build_render_command(
+            job, {"lower": lower, "upper": upper, "music": audio}, "/tmp/visible.mp4",
+        )
+        command = " ".join(render_command)
+        filter_graph = render_command[render_command.index("-filter_complex") + 1]
+        self.assertEqual(render_command.count("-i"), 3)
+        self.assertIn("[0:v]", filter_graph)
+        self.assertIn("[1:v]", filter_graph)
+        self.assertIn("[2:a]", filter_graph)
+        self.assertNotIn("[4:v]", filter_graph)
         self.assertIn("atrim=start=0.000:duration=1.000", command)
         self.assertIn("atrim=start=3.000:duration=1.000", command)
         self.assertEqual(timeline_duration_ms(snapshot, {"lower": lower, "upper": upper, "music": audio}), 4000)
