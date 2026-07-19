@@ -46,7 +46,13 @@ Before a changed timeline is saved, the server records the previous state in `Mo
 
 ## Next implementation phase
 
-1. Probe uploaded video and audio with FFprobe.
-2. Generate 540p/720p proxies, thumbnails and waveforms in background jobs.
-3. Show processing status in the media bin.
-4. Keep original assets immutable and use proxies only for browser preview.
+Media ingest is handled asynchronously by `murrlex-media-worker.service`:
+
+1. FFprobe records duration, codecs, frame rate, dimensions and audio properties.
+2. FFmpeg creates a 720p H.264/AAC browser proxy for video or an AAC proxy for audio.
+3. Video receives a JPEG thumbnail; media with audio receives a PNG waveform.
+4. The editor polls queued/processing assets and enables dragging only after the proxy is ready.
+5. A failed job keeps the original and can be retried from the Media Bin.
+
+The next implementation phase expands timeline editing operations and uses the
+waveform/proxy metadata for precise trimming and synchronized playback.

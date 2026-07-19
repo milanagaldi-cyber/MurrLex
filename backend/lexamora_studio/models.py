@@ -565,6 +565,15 @@ def studio_thumbnail_path(instance, filename):
     return f"studio/{instance.workspace_id}/{instance.id}/thumbnail.jpg"
 
 
+def studio_proxy_path(instance, filename):
+    suffix = filename.rsplit(".", 1)[-1].lower() if "." in filename else "bin"
+    return f"studio/{instance.workspace_id}/{instance.id}/proxy.{suffix}"
+
+
+def studio_waveform_path(instance, filename):
+    return f"studio/{instance.workspace_id}/{instance.id}/waveform.png"
+
+
 class Asset(SoftDeleteModel):
     class Kind(models.TextChoices):
         CHARACTER_REFERENCE = "CHARACTER_REFERENCE", "Character reference"
@@ -575,6 +584,13 @@ class Asset(SoftDeleteModel):
         EXPORT = "EXPORT", "Export"
         OTHER = "OTHER", "Other"
 
+    class ProcessingStatus(models.TextChoices):
+        NOT_REQUIRED = "NOT_REQUIRED", "Not required"
+        QUEUED = "QUEUED", "Queued"
+        PROCESSING = "PROCESSING", "Processing"
+        READY = "READY", "Ready"
+        FAILED = "FAILED", "Failed"
+
     workspace = models.ForeignKey(Workspace, on_delete=models.PROTECT, related_name="assets")
     project = models.ForeignKey(Project, on_delete=models.PROTECT, related_name="assets", null=True, blank=True)
     projects = models.ManyToManyField(Project, related_name="media_assets", blank=True)
@@ -584,12 +600,23 @@ class Asset(SoftDeleteModel):
     kind = models.CharField(max_length=32, choices=Kind.choices)
     file = models.FileField(storage=private_storage, upload_to=studio_asset_path, max_length=500)
     thumbnail = models.FileField(storage=private_storage, upload_to=studio_thumbnail_path, max_length=500, blank=True)
+    proxy_file = models.FileField(storage=private_storage, upload_to=studio_proxy_path, max_length=500, blank=True)
+    waveform_file = models.FileField(storage=private_storage, upload_to=studio_waveform_path, max_length=500, blank=True)
     original_filename = models.CharField(max_length=255)
     content_type = models.CharField(max_length=120)
     size_bytes = models.PositiveBigIntegerField()
     checksum_sha256 = models.CharField(max_length=64)
     width = models.PositiveIntegerField(null=True, blank=True)
     height = models.PositiveIntegerField(null=True, blank=True)
+    duration_ms = models.PositiveBigIntegerField(null=True, blank=True)
+    media_metadata = models.JSONField(default=dict, blank=True)
+    processing_status = models.CharField(
+        max_length=20, choices=ProcessingStatus.choices, default=ProcessingStatus.NOT_REQUIRED,
+    )
+    processing_error = models.TextField(blank=True)
+    processing_attempts = models.PositiveSmallIntegerField(default=0)
+    processing_started_at = models.DateTimeField(null=True, blank=True)
+    processing_finished_at = models.DateTimeField(null=True, blank=True)
     ai_metadata = models.JSONField(default=dict, blank=True)
     is_starred = models.BooleanField(default=False)
     purged_at = models.DateTimeField(null=True, blank=True)
@@ -603,6 +630,7 @@ class Asset(SoftDeleteModel):
 
     class Meta:
         ordering = ["-created_at", "id"]
+        indexes = [models.Index(fields=["processing_status", "created_at"], name="studio_media_queue")]
 
 
 class AdditionalGeneration(SoftDeleteModel):

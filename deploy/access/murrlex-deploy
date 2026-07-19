@@ -42,6 +42,11 @@ if [[ -f backend/db.sqlite3 ]]; then
 fi
 
 cd backend
+if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
+  log "installing FFmpeg media tools"
+  apt-get update
+  DEBIAN_FRONTEND=noninteractive apt-get install -y ffmpeg
+fi
 ./.venv/bin/python -m pip install -r requirements.txt
 ./.venv/bin/python manage.py migrate --noinput
 ./.venv/bin/python manage.py bootstrap_roles
@@ -51,13 +56,21 @@ DEBUG=true GOOGLE_OAUTH_ENABLED=false GOOGLE_OAUTH_CLIENT_ID= GOOGLE_OAUTH_CLIEN
 
 install -o root -g root -m 0644 "${APP_DIR}/deploy/systemd/murrlex-credit-refill.service" /etc/systemd/system/murrlex-credit-refill.service
 install -o root -g root -m 0644 "${APP_DIR}/deploy/systemd/murrlex-credit-refill.timer" /etc/systemd/system/murrlex-credit-refill.timer
+install -o root -g root -m 0644 "${APP_DIR}/deploy/systemd/murrlex-media-worker.service" /etc/systemd/system/murrlex-media-worker.service
 systemctl daemon-reload
 systemctl enable --now murrlex-credit-refill.timer
+systemctl enable murrlex-media-worker.service
+
+install -o root -g root -m 0644 "${APP_DIR}/deploy/nginx/ml-staging-api.lexaailabs.com" /etc/nginx/sites-available/ml-staging-api.lexaailabs.com
+nginx -t
+systemctl reload nginx
 
 systemctl restart murrlex-backend.service
 systemctl is-active --quiet murrlex-backend.service
 systemctl restart murrlex-image-worker.service
 systemctl is-active --quiet murrlex-image-worker.service
+systemctl restart murrlex-media-worker.service
+systemctl is-active --quiet murrlex-media-worker.service
 for attempt in {1..30}; do
   if curl --fail --silent --max-time 3 http://127.0.0.1:8001/api/health >/dev/null; then
     backend_ready=1

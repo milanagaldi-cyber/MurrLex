@@ -21,6 +21,16 @@ ALLOWED_UPLOADS = {
     ".pdf": {"application/pdf"},
     ".docx": {"application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
     ".mp4": {"video/mp4"},
+    ".m4v": {"video/mp4", "video/x-m4v"},
+    ".mov": {"video/quicktime"},
+    ".webm": {"video/webm"},
+    ".mkv": {"video/x-matroska", "application/octet-stream"},
+    ".mp3": {"audio/mpeg", "audio/mp3"},
+    ".wav": {"audio/wav", "audio/x-wav"},
+    ".m4a": {"audio/mp4", "audio/x-m4a"},
+    ".aac": {"audio/aac"},
+    ".ogg": {"audio/ogg", "application/ogg"},
+    ".flac": {"audio/flac", "audio/x-flac"},
     ".txt": {"text/plain"},
     ".md": {"text/markdown", "text/plain"},
     ".json": {"application/json", "text/plain"},
@@ -61,8 +71,13 @@ def validate_upload(uploaded):
     content_type = (getattr(uploaded, "content_type", "") or "").lower()
     if suffix not in ALLOWED_UPLOADS or content_type not in ALLOWED_UPLOADS[suffix]:
         raise ValidationError("Unsupported file type.")
-    if uploaded.size <= 0 or uploaded.size > settings.STUDIO_MAX_UPLOAD_BYTES:
-        raise ValidationError(f"File size must be between 1 and {settings.STUDIO_MAX_UPLOAD_BYTES} bytes.")
+    maximum = (
+        settings.STUDIO_MEDIA_MAX_UPLOAD_BYTES
+        if content_type.startswith(("video/", "audio/"))
+        else settings.STUDIO_MAX_UPLOAD_BYTES
+    )
+    if uploaded.size <= 0 or uploaded.size > maximum:
+        raise ValidationError(f"File size must be between 1 and {maximum} bytes.")
     image_data = _validated_image(uploaded) if content_type in IMAGE_TYPES else None
     return filename, content_type, image_data
 
@@ -104,6 +119,11 @@ def create_asset(*, user, workspace, uploaded, kind, project=None, scene=None, c
         checksum_sha256=checksum,
         created_by=user,
         updated_by=user,
+        processing_status=(
+            Asset.ProcessingStatus.QUEUED
+            if content_type.startswith(("video/", "audio/"))
+            else Asset.ProcessingStatus.NOT_REQUIRED
+        ),
     )
     asset.file.save(filename, uploaded, save=False)
     if image_data is not None:
@@ -202,21 +222,33 @@ def purge_asset(*, asset, user):
     if locked.purged_at is not None:
         return locked
     storage = locked.file.storage
-    file_names = [name for name in (locked.file.name, locked.thumbnail.name) if name]
+    file_names = [
+        name for name in (
+            locked.file.name, locked.thumbnail.name, locked.proxy_file.name, locked.waveform_file.name,
+        ) if name
+    ]
     locked.deleted_at = locked.deleted_at or timezone.now()
     locked.deleted_by = locked.deleted_by or user
     locked.purged_at = timezone.now()
     locked.purged_by = user
     locked.file.name = ""
     locked.thumbnail.name = ""
+    locked.proxy_file.name = ""
+    locked.waveform_file.name = ""
     locked.size_bytes = 0
     locked.checksum_sha256 = ""
     locked.width = None
     locked.height = None
+    locked.duration_ms = None
+    locked.media_metadata = {}
+    locked.processing_status = Asset.ProcessingStatus.NOT_REQUIRED
+    locked.processing_error = ""
     locked.updated_by = user
     locked.save(update_fields=[
         "deleted_at", "deleted_by", "purged_at", "purged_by", "file", "thumbnail",
-        "size_bytes", "checksum_sha256", "width", "height", "updated_by", "updated_at",
+        "proxy_file", "waveform_file", "size_bytes", "checksum_sha256", "width", "height",
+        "duration_ms", "media_metadata", "processing_status", "processing_error",
+        "updated_by", "updated_at",
     ])
     audit(workspace=locked.workspace, actor=user, action="ASSET_PURGED", instance=locked)
 

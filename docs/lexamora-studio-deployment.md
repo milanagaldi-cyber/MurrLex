@@ -10,6 +10,10 @@ Add only non-secret examples to `.env.example`:
 ```text
 STUDIO_PRIVATE_MEDIA_ROOT=/opt/MurrLex/private-media
 STUDIO_MAX_UPLOAD_BYTES=52428800
+STUDIO_MEDIA_MAX_UPLOAD_BYTES=536870912
+STUDIO_FFMPEG_BINARY=ffmpeg
+STUDIO_FFPROBE_BINARY=ffprobe
+STUDIO_MEDIA_PROCESS_TIMEOUT_SECONDS=1800
 STUDIO_AI_RATE_PER_MINUTE=10
 STUDIO_EXPORT_RATE_PER_HOUR=10
 STUDIO_STORAGE_BACKEND=filesystem
@@ -40,6 +44,11 @@ Image generation itself is queued in the database and processed by the tracked
 `murrlex-image-worker.service`. Its five worker threads are independent of browser
 connections and authenticated page sessions. Deployments must migrate the database,
 install/enable this unit and restart it after the Django web service.
+
+Uploaded video and audio are processed by `murrlex-media-worker.service`. The worker
+uses FFprobe for metadata and FFmpeg for immutable browser proxies, video thumbnails
+and audio waveforms. The deploy command installs FFmpeg when it is missing, enables
+the worker and aligns the Nginx request limit with `STUDIO_MEDIA_MAX_UPLOAD_BYTES`.
 
 ## Rollback
 

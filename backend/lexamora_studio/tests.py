@@ -3798,6 +3798,111 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("not supported", response.json()["error"])
 
+    def test_movie_editor_upload_queues_media_and_reports_status(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from .models import Asset
+
+        self.client.force_login(self.owner)
+        response = self.client.post(
+            f"/studio/projects/{self.project.id}/movie-editor/media/",
+            {"files": SimpleUploadedFile("rough-cut.mp4", b"test-video", content_type="video/mp4")},
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        asset = Asset.objects.get(id=response.json()["items"][0]["id"])
+        self.assertEqual(asset.processing_status, Asset.ProcessingStatus.QUEUED)
+        self.assertTrue(asset.projects.filter(id=self.project.id).exists())
+
+        status = self.client.get(f"/studio/projects/{self.project.id}/movie-editor/media/")
+        self.assertEqual(status.status_code, 200)
+        self.assertEqual(status.json()["items"][0]["status"], "QUEUED")
+        self.assertEqual(status.json()["items"][0]["kind"], "VIDEO")
+
+    def test_movie_editor_can_retry_failed_media(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from .models import Asset
+        from .storage import create_asset
+
+        asset = create_asset(
+            user=self.owner, workspace=self.workspace,
+            uploaded=SimpleUploadedFile("retry.mp3", b"test-audio", content_type="audio/mpeg"),
+            kind=Asset.Kind.OTHER, project=self.project,
+        )
+        Asset.objects.filter(id=asset.id).update(
+            processing_status=Asset.ProcessingStatus.FAILED, processing_error="Broken source",
+        )
+        self.client.force_login(self.owner)
+        response = self.client.post(
+            f"/studio/projects/{self.project.id}/movie-editor/media/{asset.id}/retry/",
+        )
+        self.assertEqual(response.status_code, 202, response.content)
+        asset.refresh_from_db()
+        self.assertEqual(asset.processing_status, Asset.ProcessingStatus.QUEUED)
+        self.assertEqual(asset.processing_error, "")
+
+    def test_media_metadata_extracts_video_audio_and_duration(self):
+        from .media_processing import _metadata
+
+        metadata, duration_ms, video, audio = _metadata({
+            "format": {"format_name": "mov,mp4", "duration": "12.345", "bit_rate": "900000"},
+            "streams": [
+                {"codec_type": "video", "codec_name": "h264", "width": 1080, "height": 1920, "avg_frame_rate": "25/1", "pix_fmt": "yuv420p"},
+                {"codec_type": "audio", "codec_name": "aac", "channels": 2, "sample_rate": "48000"},
+            ],
+        })
+        self.assertEqual(duration_ms, 12345)
+        self.assertEqual(metadata["video"]["frameRate"], 25.0)
+        self.assertEqual(metadata["audio"]["sampleRate"], 48000)
+        self.assertIsNotNone(video)
+        self.assertIsNotNone(audio)
+
+    def test_media_processor_persists_proxy_thumbnail_and_waveform(self):
+        from pathlib import Path
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from .media_processing import process_media_asset
+        from .models import Asset
+        from .storage import create_asset
+
+        asset = create_asset(
+            user=self.owner, workspace=self.workspace,
+            uploaded=SimpleUploadedFile("processable.mp4", b"fake-source", content_type="video/mp4"),
+            kind=Asset.Kind.OTHER, project=self.project,
+        )
+        probe = {
+            "format": {"format_name": "mov,mp4", "duration": "3.2", "bit_rate": "700000"},
+            "streams": [
+                {"codec_type": "video", "codec_name": "h264", "width": 720, "height": 1280, "avg_frame_rate": "25/1"},
+                {"codec_type": "audio", "codec_name": "aac", "channels": 2, "sample_rate": "48000"},
+            ],
+        }
+
+        def write_artifact(_source, target, *_args):
+            Path(target).write_bytes(b"generated-artifact")
+
+        try:
+            with patch("lexamora_studio.media_processing._probe", return_value=probe), \
+                    patch("lexamora_studio.media_processing._create_video_proxy", side_effect=write_artifact), \
+                    patch("lexamora_studio.media_processing._create_thumbnail", side_effect=write_artifact), \
+                    patch("lexamora_studio.media_processing._create_waveform", side_effect=write_artifact):
+                process_media_asset(asset.id)
+            asset.refresh_from_db()
+            self.assertEqual(asset.processing_status, Asset.ProcessingStatus.READY)
+            self.assertEqual(asset.duration_ms, 3200)
+            self.assertTrue(asset.proxy_file.name)
+            self.assertTrue(asset.thumbnail.name)
+            self.assertTrue(asset.waveform_file.name)
+
+            self.client.force_login(self.owner)
+            for endpoint in ("proxy", "waveform"):
+                response = self.client.get(f"/api/v1/studio/assets/{asset.id}/{endpoint}")
+                self.assertEqual(response.status_code, 200)
+                list(response.streaming_content)
+                response.close()
+        finally:
+            asset.refresh_from_db()
+            for field in (asset.file, asset.proxy_file, asset.thumbnail, asset.waveform_file):
+                if field.name and field.storage.exists(field.name):
+                    field.storage.delete(field.name)
+
     def test_movie_editor_2_is_available_to_project_users(self):
         self.client.force_login(self.owner)
         response = self.client.get(f"/studio/projects/{self.project.id}/movie-editor-2/")

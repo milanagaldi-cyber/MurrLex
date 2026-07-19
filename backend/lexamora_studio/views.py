@@ -4407,6 +4407,43 @@ def _movie_timeline_json(timeline):
     }
 
 
+def _movie_media_payload(asset, project):
+    ready = asset.processing_status == Asset.ProcessingStatus.READY
+    metadata = asset.media_metadata if isinstance(asset.media_metadata, dict) else {}
+    return {
+        "id": str(asset.id),
+        "name": asset.original_filename,
+        "kind": "VIDEO" if asset.content_type.startswith("video/") else "AUDIO",
+        "contentType": asset.content_type,
+        "size": asset.size_bytes,
+        "durationMs": asset.duration_ms,
+        "width": asset.width,
+        "height": asset.height,
+        "metadata": metadata,
+        "status": asset.processing_status,
+        "error": asset.processing_error,
+        "createdAt": asset.created_at.isoformat(),
+        "originalUrl": reverse("studio_api:asset_view", kwargs={"asset_id": asset.id}),
+        "downloadUrl": reverse("studio_api:asset_download", kwargs={"asset_id": asset.id}),
+        "proxyUrl": reverse("studio_api:asset_proxy", kwargs={"asset_id": asset.id}) if ready and asset.proxy_file else "",
+        "thumbnailUrl": reverse("studio_api:asset_thumbnail", kwargs={"asset_id": asset.id}) if asset.thumbnail else "",
+        "waveformUrl": reverse("studio_api:asset_waveform", kwargs={"asset_id": asset.id}) if asset.waveform_file else "",
+        "retryUrl": reverse("studio:project_movie_media_retry", kwargs={
+            "project_id": project.id, "asset_id": asset.id,
+        }),
+    }
+
+
+def _project_movie_media(user, project):
+    return (
+        accessible_assets(user).filter(
+            workspace=project.workspace, deleted_at__isnull=True,
+        ).filter(
+            Q(content_type__startswith="video/") | Q(content_type__startswith="audio/"),
+        ).filter(Q(project=project) | Q(projects=project)).distinct().order_by("created_at", "id")
+    )
+
+
 @login_required
 def project_movie_editor(request, project_id):
     project = get_object_or_404(
@@ -4473,27 +4510,81 @@ def project_movie_editor(request, project_id):
             "schemaVersion": timeline.schema_version,
             "revisionCount": timeline.revisions.count(),
         })
-    video_assets = (
-        accessible_assets(request.user).filter(
-            workspace=project.workspace, content_type__startswith="video/", deleted_at__isnull=True,
-        ).filter(Q(project=project) | Q(projects=project)).distinct().order_by("created_at", "id")
-    )
-    asset_data = [{
-        "id": str(asset.id),
-        "name": asset.original_filename,
-        "url": reverse("studio_api:asset_view", kwargs={"asset_id": asset.id}),
-        "downloadUrl": reverse("studio_api:asset_download", kwargs={"asset_id": asset.id}),
-        "size": asset.size_bytes,
-        "createdAt": asset.created_at.isoformat(),
-    } for asset in video_assets]
+    asset_data = [_movie_media_payload(asset, project) for asset in _project_movie_media(request.user, project)]
     return render(request, "studio/project_movie_editor.html", {
         "project": project,
         "movie_timeline": timeline,
         "movie_timeline_data": normalize_movie_timeline(timeline.timeline or default_movie_timeline()),
         "movie_assets": asset_data,
+        "movie_media_url": reverse("studio:project_movie_media", kwargs={"project_id": project.id}),
         "can_edit": can_edit,
         **_project_header_context(request.user, project),
     })
+
+
+@login_required
+def project_movie_media(request, project_id):
+    project = get_object_or_404(
+        accessible_projects(request.user).select_related("workspace"), id=project_id,
+    )
+    if request.method == "GET":
+        return JsonResponse({
+            "items": [_movie_media_payload(asset, project) for asset in _project_movie_media(request.user, project)],
+            "canEdit": has_project_capability(request.user, project, "edit"),
+        })
+    if request.method != "POST":
+        return JsonResponse({"error": "GET or POST is required."}, status=405)
+    if not has_project_capability(request.user, project, "edit"):
+        return JsonResponse({"error": "Edit permission is required."}, status=403)
+    uploads = request.FILES.getlist("files")
+    if not uploads or len(uploads) > 10:
+        return JsonResponse({"error": "Choose between 1 and 10 media files."}, status=400)
+    created = []
+    errors = []
+    for uploaded in uploads:
+        content_type = (getattr(uploaded, "content_type", "") or "").lower()
+        if not content_type.startswith(("video/", "audio/")):
+            errors.append(f"{uploaded.name}: choose a video or audio file")
+            continue
+        try:
+            asset = create_asset(
+                user=request.user, workspace=project.workspace, uploaded=uploaded,
+                kind=Asset.Kind.OTHER, project=project, prevent_duplicate=True,
+            )
+        except ValidationError as exc:
+            errors.append(f"{uploaded.name}: {'; '.join(exc.messages)}")
+            continue
+        created.append(_movie_media_payload(asset, project))
+    status = 201 if created else 400
+    return JsonResponse({"items": created, "errors": errors}, status=status)
+
+
+@login_required
+def project_movie_media_retry(request, project_id, asset_id):
+    if request.method != "POST":
+        return JsonResponse({"error": "POST is required."}, status=405)
+    project = get_object_or_404(accessible_projects(request.user), id=project_id)
+    if not has_project_capability(request.user, project, "edit"):
+        return JsonResponse({"error": "Edit permission is required."}, status=403)
+    asset = get_object_or_404(_project_movie_media(request.user, project), id=asset_id)
+    if asset.processing_status not in {
+        Asset.ProcessingStatus.FAILED, Asset.ProcessingStatus.NOT_REQUIRED,
+    }:
+        return JsonResponse({"error": "This media file is already queued or ready."}, status=409)
+    asset.processing_status = Asset.ProcessingStatus.QUEUED
+    asset.processing_error = ""
+    asset.processing_started_at = None
+    asset.processing_finished_at = None
+    asset.updated_by = request.user
+    asset.save(update_fields=[
+        "processing_status", "processing_error", "processing_started_at",
+        "processing_finished_at", "updated_by", "updated_at",
+    ])
+    audit(
+        workspace=project.workspace, actor=request.user, action="ASSET_MEDIA_RETRY",
+        instance=asset, metadata={"projectId": str(project.id)},
+    )
+    return JsonResponse(_movie_media_payload(asset, project), status=202)
 
 
 @login_required

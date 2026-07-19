@@ -37,7 +37,18 @@ admin.site.register(PromptTemplate)
 admin.site.register(DialogueLine)
 admin.site.register(Prompt)
 admin.site.register(PromptBlock)
-admin.site.register(Asset)
+@admin.register(Asset)
+class AssetAdmin(admin.ModelAdmin):
+    list_display = (
+        "original_filename", "workspace", "content_type", "processing_status",
+        "duration_ms", "size_bytes", "created_at",
+    )
+    list_filter = ("processing_status", "content_type", "workspace")
+    search_fields = ("original_filename", "checksum_sha256")
+    readonly_fields = (
+        "checksum_sha256", "media_metadata", "processing_error", "processing_attempts",
+        "processing_started_at", "processing_finished_at",
+    )
 admin.site.register(AdditionalGeneration)
 admin.site.register(GenerationOutput)
 admin.site.register(RecommendedTrack)

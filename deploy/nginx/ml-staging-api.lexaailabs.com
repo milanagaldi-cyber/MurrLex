@@ -1,6 +1,6 @@
 server {
     server_name ml-staging-api.lexaailabs.com;
-    client_max_body_size 60m;
+    client_max_body_size 512m;
 
     add_header X-Robots-Tag "noindex, nofollow, noarchive" always;
 

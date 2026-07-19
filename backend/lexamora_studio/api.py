@@ -40,18 +40,22 @@ def require_user(request):
     return request.user if request.user.is_authenticated else None
 
 
-def _asset_file_response(request, item):
+def _asset_file_response(request, item, *, field=None, content_type=None, filename=None):
+    field = field or item.file
+    content_type = content_type or item.content_type
+    filename = filename or item.original_filename
     range_header = request.headers.get("Range", "")
-    if not item.content_type.startswith("video/") or not range_header.startswith("bytes="):
+    supports_ranges = content_type.startswith(("video/", "audio/"))
+    if not supports_ranges or not range_header.startswith("bytes="):
         response = FileResponse(
-            item.file.open("rb"), as_attachment=False,
-            filename=item.original_filename, content_type=item.content_type,
+            field.open("rb"), as_attachment=False,
+            filename=filename, content_type=content_type,
         )
-        if item.content_type.startswith("video/"):
+        if supports_ranges:
             response["Accept-Ranges"] = "bytes"
         return response
 
-    file_size = item.file.size
+    file_size = field.size
     byte_range = range_header[6:].split(",", 1)[0]
     try:
         start_text, end_text = byte_range.split("-", 1)
@@ -68,7 +72,7 @@ def _asset_file_response(request, item):
         response["Content-Range"] = f"bytes */{file_size}"
         return response
 
-    source = item.file.open("rb")
+    source = field.open("rb")
     source.seek(start)
     remaining = end - start + 1
 
@@ -84,11 +88,11 @@ def _asset_file_response(request, item):
         finally:
             source.close()
 
-    response = StreamingHttpResponse(stream(), status=206, content_type=item.content_type)
+    response = StreamingHttpResponse(stream(), status=206, content_type=content_type)
     response["Content-Length"] = str(end - start + 1)
     response["Content-Range"] = f"bytes {start}-{end}/{file_size}"
     response["Accept-Ranges"] = "bytes"
-    response["Content-Disposition"] = content_disposition_header(False, item.original_filename)
+    response["Content-Disposition"] = content_disposition_header(False, filename)
     return response
 
 
@@ -474,6 +478,9 @@ def asset_json(item):
         "filename": item.original_filename, "contentType": item.content_type,
         "sizeBytes": item.size_bytes, "checksumSha256": item.checksum_sha256,
         "width": item.width, "height": item.height, "hasThumbnail": bool(item.thumbnail),
+        "durationMs": item.duration_ms, "processingStatus": item.processing_status,
+        "processingError": item.processing_error, "mediaMetadata": item.media_metadata,
+        "hasProxy": bool(item.proxy_file), "hasWaveform": bool(item.waveform_file),
         "promptId": str(item.prompt_id) if item.prompt_id else None,
     }
 
@@ -565,6 +572,32 @@ def asset_thumbnail(request, asset_id):
     if not item.thumbnail:
         return error("thumbnail_unavailable", "This asset has no thumbnail.", 404)
     return FileResponse(item.thumbnail.open("rb"), content_type="image/jpeg")
+
+
+@require_http_methods(["GET"])
+def asset_proxy(request, asset_id):
+    user = require_user(request)
+    if user is None:
+        return error("authentication_required", "Login is required.", 401)
+    item = _accessible_asset(user, asset_id)
+    if item.processing_status != Asset.ProcessingStatus.READY or not item.proxy_file:
+        return error("proxy_unavailable", "This media proxy is not ready.", 404)
+    content_type = "video/mp4" if item.content_type.startswith("video/") else "audio/mp4"
+    filename = f"{item.id}-proxy.{'mp4' if content_type == 'video/mp4' else 'm4a'}"
+    return _asset_file_response(
+        request, item, field=item.proxy_file, content_type=content_type, filename=filename,
+    )
+
+
+@require_http_methods(["GET"])
+def asset_waveform(request, asset_id):
+    user = require_user(request)
+    if user is None:
+        return error("authentication_required", "Login is required.", 401)
+    item = _accessible_asset(user, asset_id)
+    if not item.waveform_file:
+        return error("waveform_unavailable", "This media has no waveform.", 404)
+    return FileResponse(item.waveform_file.open("rb"), content_type="image/png")
 
 
 @require_http_methods(["GET", "POST"])

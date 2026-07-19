@@ -242,6 +242,15 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 STUDIO_PRIVATE_MEDIA_ROOT = Path(os.environ.get("STUDIO_PRIVATE_MEDIA_ROOT", BASE_DIR / "private-media"))
 STUDIO_MAX_UPLOAD_BYTES = max(1024 * 1024, int(os.environ.get("STUDIO_MAX_UPLOAD_BYTES", str(50 * 1024 * 1024))))
+STUDIO_MEDIA_MAX_UPLOAD_BYTES = max(
+    STUDIO_MAX_UPLOAD_BYTES,
+    int(os.environ.get("STUDIO_MEDIA_MAX_UPLOAD_BYTES", str(512 * 1024 * 1024))),
+)
+STUDIO_FFMPEG_BINARY = os.environ.get("STUDIO_FFMPEG_BINARY", "ffmpeg")
+STUDIO_FFPROBE_BINARY = os.environ.get("STUDIO_FFPROBE_BINARY", "ffprobe")
+STUDIO_MEDIA_PROCESS_TIMEOUT_SECONDS = max(
+    60, int(os.environ.get("STUDIO_MEDIA_PROCESS_TIMEOUT_SECONDS", "1800")),
+)
 STUDIO_AI_RATE_PER_MINUTE = max(1, int(os.environ.get("STUDIO_AI_RATE_PER_MINUTE", "10")))
 STUDIO_EXPORT_RATE_PER_HOUR = max(1, int(os.environ.get("STUDIO_EXPORT_RATE_PER_HOUR", "10")))
 STUDIO_PDF_FONT_PATH = os.environ.get("STUDIO_PDF_FONT_PATH", "")
