@@ -3735,12 +3735,14 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertNotIn("first_frame_asset_id", options)
 
     def test_movie_editor_saves_project_timeline(self):
-        from .models import MovieTimeline
+        from .models import MovieTimeline, MovieTimelineRevision
 
         self.client.force_login(self.owner)
         page = self.client.get(f"/studio/projects/{self.project.id}/movie-editor/")
         self.assertEqual(page.status_code, 200)
         self.assertContains(page, "Auto rough cut")
+        self.assertContains(page, "Draft Editor")
+        self.assertNotContains(page, "Movie Editor 2")
         response = self.client.post(
             f"/studio/projects/{self.project.id}/movie-editor/",
             data=json.dumps({
@@ -3757,6 +3759,44 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertEqual(timeline.title, "Episode draft")
         self.assertEqual(timeline.aspect_ratio, "9:16")
         self.assertEqual(len(timeline.timeline["tracks"]), 1)
+        self.assertEqual(timeline.timeline["schemaVersion"], 1)
+        self.assertEqual(MovieTimelineRevision.objects.filter(timeline=timeline).count(), 1)
+
+        response = self.client.post(
+            f"/studio/projects/{self.project.id}/movie-editor/",
+            data=json.dumps({
+                "title": "Second draft",
+                "aspectRatio": "16:9",
+                "resolution": "1920x1080",
+                "fps": 25,
+                "timeline": {"schemaVersion": 1, "tracks": []},
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        timeline.refresh_from_db()
+        revision = timeline.revisions.first()
+        self.assertEqual(revision.title, "Episode draft")
+
+        history = self.client.get(f"/studio/projects/{self.project.id}/movie-editor/revisions/")
+        self.assertEqual(history.status_code, 200)
+        self.assertGreaterEqual(len(history.json()["items"]), 2)
+        restored = self.client.post(
+            f"/studio/projects/{self.project.id}/movie-editor/revisions/{revision.id}/restore/",
+        )
+        self.assertEqual(restored.status_code, 200, restored.content)
+        self.assertEqual(restored.json()["title"], "Episode draft")
+        self.assertEqual(len(restored.json()["timeline"]["tracks"]), 1)
+
+    def test_movie_editor_rejects_unknown_timeline_schema(self):
+        self.client.force_login(self.owner)
+        response = self.client.post(
+            f"/studio/projects/{self.project.id}/movie-editor/",
+            data=json.dumps({"timeline": {"schemaVersion": 99, "tracks": []}}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("not supported", response.json()["error"])
 
     def test_movie_editor_2_is_available_to_project_users(self):
         self.client.force_login(self.owner)

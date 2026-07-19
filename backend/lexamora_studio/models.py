@@ -5,6 +5,7 @@ from django.db import models
 
 
 from .storage_backend import PrivateStudioStorage
+from .movie_timeline import MOVIE_TIMELINE_SCHEMA_VERSION, default_movie_timeline
 
 private_storage = PrivateStudioStorage()
 
@@ -862,7 +863,8 @@ class MovieTimeline(models.Model):
     aspect_ratio = models.CharField(max_length=12, default="16:9")
     resolution = models.CharField(max_length=20, default="1920x1080")
     fps = models.PositiveSmallIntegerField(default=25)
-    timeline = models.JSONField(default=dict, blank=True)
+    schema_version = models.PositiveSmallIntegerField(default=MOVIE_TIMELINE_SCHEMA_VERSION)
+    timeline = models.JSONField(default=default_movie_timeline, blank=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="created_movie_timelines",
     )
@@ -874,6 +876,30 @@ class MovieTimeline(models.Model):
 
     class Meta:
         ordering = ["project_id"]
+
+
+class MovieTimelineRevision(models.Model):
+    class Reason(models.TextChoices):
+        SAVE = "SAVE", "Save"
+        RESTORE = "RESTORE", "Restore"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    timeline = models.ForeignKey(MovieTimeline, on_delete=models.CASCADE, related_name="revisions")
+    title = models.CharField(max_length=200)
+    aspect_ratio = models.CharField(max_length=12)
+    resolution = models.CharField(max_length=20)
+    fps = models.PositiveSmallIntegerField()
+    schema_version = models.PositiveSmallIntegerField(default=MOVIE_TIMELINE_SCHEMA_VERSION)
+    snapshot = models.JSONField(default=dict)
+    reason = models.CharField(max_length=16, choices=Reason.choices, default=Reason.SAVE)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="movie_timeline_revisions",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        indexes = [models.Index(fields=["timeline", "-created_at"], name="studio_movie_rev_time")]
 
 
 class SubtitleTrack(SoftDeleteModel):

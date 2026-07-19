@@ -34,7 +34,8 @@ from .docx_imports import accept_docx_import, parse_docx
 from .docx_exports import generate_docx_export
 from .docx_roundtrip import compare_docx_export
 from .forms import AdditionalGenerationForm, AiModelProfileForm, AssetEditForm, CharacterCreateForm, CharacterForm, DialogueLineForm, DocxImportUploadForm, EpisodeForm, GenerationOutputUploadForm, ImageUploadForm, MultipleImageUploadForm, ProjectBulkMembershipForm, ProjectForm, ProjectMembershipForm, ProjectSettingsForm, ProjectUserSelectionForm, PromptBlockForm, PromptForm, RecommendedTrackForm, SceneForm, StudioTextModelForm, WorkspaceForm, WorkspaceMembershipForm, WorkspaceUserSelectionForm
-from .models import AdditionalGeneration, AiModelProfile, AiSuggestion, AiUsageLog, Asset, Character, DialogueLine, DocxImport, EmailDeliveryLog, Episode, EpisodeComic, EpisodeConsistencyReview, EpisodeCover, ExportJob, GenerationOutput, ImageGenerationJob, MovieTimeline, Project, ProjectAccessExclusion, ProjectAssistantContext, ProjectMembership, Prompt, PromptBlock, RecommendedTrack, Scene, StudioTextModel, StudioUserPreference, SubtitleTrack, TranslationUnit, Workspace, WorkspaceMembership
+from .models import AdditionalGeneration, AiModelProfile, AiSuggestion, AiUsageLog, Asset, Character, DialogueLine, DocxImport, EmailDeliveryLog, Episode, EpisodeComic, EpisodeConsistencyReview, EpisodeCover, ExportJob, GenerationOutput, ImageGenerationJob, MovieTimeline, MovieTimelineRevision, Project, ProjectAccessExclusion, ProjectAssistantContext, ProjectMembership, Prompt, PromptBlock, RecommendedTrack, Scene, StudioTextModel, StudioUserPreference, SubtitleTrack, TranslationUnit, Workspace, WorkspaceMembership
+from .movie_timeline import MOVIE_TIMELINE_SCHEMA_VERSION, MovieTimelineValidationError, default_movie_timeline, movie_timeline_asset_ids, normalize_movie_timeline
 from .notifications import notify_access_granted
 from .permissions import accessible_assets, accessible_projects, accessible_suggestions, accessible_workspaces, has_capability, has_object_capability, has_project_capability, is_workspace_owner_or_admin
 from .revisions import audit, record_revision
@@ -4356,6 +4357,56 @@ def project_image_generation(request, project_id):
     })
 
 
+MOVIE_TIMELINE_REVISION_LIMIT = 50
+
+
+def _movie_timeline_snapshot(timeline, user, reason=MovieTimelineRevision.Reason.SAVE):
+    revision = MovieTimelineRevision.objects.create(
+        timeline=timeline,
+        title=timeline.title,
+        aspect_ratio=timeline.aspect_ratio,
+        resolution=timeline.resolution,
+        fps=timeline.fps,
+        schema_version=timeline.schema_version,
+        snapshot=normalize_movie_timeline(timeline.timeline or default_movie_timeline()),
+        reason=reason,
+        created_by=user,
+    )
+    stale_ids = list(
+        timeline.revisions.order_by("-created_at", "-id")
+        .values_list("id", flat=True)[MOVIE_TIMELINE_REVISION_LIMIT:]
+    )
+    if stale_ids:
+        MovieTimelineRevision.objects.filter(id__in=stale_ids).delete()
+    return revision
+
+
+def _movie_timeline_assets_are_accessible(user, project, timeline_data):
+    asset_ids = movie_timeline_asset_ids(timeline_data)
+    if not asset_ids:
+        return True
+    allowed_ids = {
+        str(value) for value in accessible_assets(user).filter(
+            workspace=project.workspace, id__in=asset_ids,
+        ).filter(
+            Q(content_type__startswith="video/") | Q(content_type__startswith="audio/"),
+        ).filter(Q(project=project) | Q(projects=project)).values_list("id", flat=True)
+    }
+    return asset_ids == allowed_ids
+
+
+def _movie_timeline_json(timeline):
+    return {
+        "timeline": normalize_movie_timeline(timeline.timeline or default_movie_timeline()),
+        "title": timeline.title,
+        "aspectRatio": timeline.aspect_ratio,
+        "resolution": timeline.resolution,
+        "fps": timeline.fps,
+        "schemaVersion": timeline.schema_version,
+        "updatedAt": timeline.updated_at.isoformat(),
+    }
+
+
 @login_required
 def project_movie_editor(request, project_id):
     project = get_object_or_404(
@@ -4365,7 +4416,12 @@ def project_movie_editor(request, project_id):
     can_edit = has_project_capability(request.user, project, "edit")
     timeline, _ = MovieTimeline.objects.get_or_create(
         project=project,
-        defaults={"created_by": request.user, "updated_by": request.user},
+        defaults={
+            "created_by": request.user,
+            "updated_by": request.user,
+            "timeline": default_movie_timeline(),
+            "schema_version": MOVIE_TIMELINE_SCHEMA_VERSION,
+        },
     )
     if request.method == "POST":
         if not can_edit:
@@ -4374,33 +4430,49 @@ def project_movie_editor(request, project_id):
             payload = json.loads(request.body or b"{}")
         except (TypeError, ValueError):
             return JsonResponse({"error": "The timeline is not valid JSON."}, status=400)
-        timeline_data = payload.get("timeline")
-        if not isinstance(timeline_data, dict) or len(json.dumps(timeline_data)) > 1_000_000:
-            return JsonResponse({"error": "The timeline is invalid or too large."}, status=400)
-        asset_ids = {
-            str(clip.get("assetId"))
-            for track in timeline_data.get("tracks", []) if isinstance(track, dict)
-            for clip in track.get("clips", []) if isinstance(clip, dict) and clip.get("assetId")
-        }
-        allowed_ids = {
-            str(value) for value in accessible_assets(request.user).filter(
-                workspace=project.workspace, id__in=asset_ids, content_type__startswith="video/",
-            ).filter(Q(project=project) | Q(projects=project)).values_list("id", flat=True)
-        }
-        if asset_ids != allowed_ids:
+        try:
+            timeline_data = normalize_movie_timeline(payload.get("timeline"))
+        except MovieTimelineValidationError as exc:
+            return JsonResponse({"error": str(exc)}, status=400)
+        if not _movie_timeline_assets_are_accessible(request.user, project, timeline_data):
             return JsonResponse({"error": "One or more timeline videos are not accessible."}, status=400)
-        timeline.title = str(payload.get("title") or timeline.title).strip()[:200] or "Main edit"
-        timeline.aspect_ratio = str(payload.get("aspectRatio") or "16:9")[:12]
-        timeline.resolution = str(payload.get("resolution") or "1920x1080")[:20]
-        timeline.fps = max(1, min(int(payload.get("fps") or 25), 120))
-        timeline.timeline = timeline_data
-        timeline.updated_by = request.user
-        timeline.save()
+        with transaction.atomic():
+            timeline = MovieTimeline.objects.select_for_update().get(id=timeline.id)
+            next_title = str(payload.get("title") or timeline.title).strip()[:200] or "Main edit"
+            next_ratio = str(payload.get("aspectRatio") or "16:9")[:12]
+            next_resolution = str(payload.get("resolution") or "1920x1080")[:20]
+            next_fps = max(1, min(int(payload.get("fps") or 25), 120))
+            current_data = normalize_movie_timeline(timeline.timeline or default_movie_timeline())
+            changed = (
+                current_data != timeline_data
+                or timeline.title != next_title
+                or timeline.aspect_ratio != next_ratio
+                or timeline.resolution != next_resolution
+                or timeline.fps != next_fps
+            )
+            if changed:
+                _movie_timeline_snapshot(timeline, request.user)
+                timeline.title = next_title
+                timeline.aspect_ratio = next_ratio
+                timeline.resolution = next_resolution
+                timeline.fps = next_fps
+                timeline.schema_version = MOVIE_TIMELINE_SCHEMA_VERSION
+                timeline.timeline = timeline_data
+                timeline.updated_by = request.user
+                timeline.save()
         audit(
             workspace=project.workspace, actor=request.user, action="MOVIE_TIMELINE_SAVE",
-            instance=project, metadata={"timelineId": str(timeline.id), "trackCount": len(timeline_data.get("tracks", []))},
+            instance=project, metadata={
+                "timelineId": str(timeline.id), "trackCount": len(timeline_data.get("tracks", [])),
+                "schemaVersion": MOVIE_TIMELINE_SCHEMA_VERSION, "changed": changed,
+            },
         )
-        return JsonResponse({"ok": True, "updatedAt": timeline.updated_at.isoformat()})
+        return JsonResponse({
+            "ok": True,
+            "updatedAt": timeline.updated_at.isoformat(),
+            "schemaVersion": timeline.schema_version,
+            "revisionCount": timeline.revisions.count(),
+        })
     video_assets = (
         accessible_assets(request.user).filter(
             workspace=project.workspace, content_type__startswith="video/", deleted_at__isnull=True,
@@ -4417,10 +4489,61 @@ def project_movie_editor(request, project_id):
     return render(request, "studio/project_movie_editor.html", {
         "project": project,
         "movie_timeline": timeline,
+        "movie_timeline_data": normalize_movie_timeline(timeline.timeline or default_movie_timeline()),
         "movie_assets": asset_data,
         "can_edit": can_edit,
         **_project_header_context(request.user, project),
     })
+
+
+@login_required
+def project_movie_editor_revisions(request, project_id):
+    project = get_object_or_404(accessible_projects(request.user), id=project_id)
+    timeline = get_object_or_404(MovieTimeline, project=project)
+    items = [{
+        "id": str(revision.id),
+        "title": revision.title,
+        "reason": revision.get_reason_display(),
+        "createdAt": revision.created_at.isoformat(),
+        "createdBy": revision.created_by.get_full_name() or revision.created_by.get_username(),
+        "restoreUrl": reverse("studio:project_movie_editor_revision_restore", kwargs={
+            "project_id": project.id, "revision_id": revision.id,
+        }),
+    } for revision in timeline.revisions.select_related("created_by")[:20]]
+    return JsonResponse({"items": items, "canRestore": has_project_capability(request.user, project, "edit")})
+
+
+@login_required
+def project_movie_editor_revision_restore(request, project_id, revision_id):
+    if request.method != "POST":
+        return JsonResponse({"error": "POST is required."}, status=405)
+    project = get_object_or_404(accessible_projects(request.user), id=project_id)
+    if not has_project_capability(request.user, project, "edit"):
+        return JsonResponse({"error": "Edit permission is required."}, status=403)
+    timeline = get_object_or_404(MovieTimeline, project=project)
+    revision = get_object_or_404(MovieTimelineRevision, id=revision_id, timeline=timeline)
+    try:
+        restored_data = normalize_movie_timeline(revision.snapshot)
+    except MovieTimelineValidationError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    if not _movie_timeline_assets_are_accessible(request.user, project, restored_data):
+        return JsonResponse({"error": "This revision uses media that is no longer accessible."}, status=400)
+    with transaction.atomic():
+        timeline = MovieTimeline.objects.select_for_update().get(id=timeline.id)
+        _movie_timeline_snapshot(timeline, request.user, MovieTimelineRevision.Reason.RESTORE)
+        timeline.title = revision.title
+        timeline.aspect_ratio = revision.aspect_ratio
+        timeline.resolution = revision.resolution
+        timeline.fps = revision.fps
+        timeline.schema_version = MOVIE_TIMELINE_SCHEMA_VERSION
+        timeline.timeline = restored_data
+        timeline.updated_by = request.user
+        timeline.save()
+    audit(
+        workspace=project.workspace, actor=request.user, action="MOVIE_TIMELINE_RESTORE",
+        instance=project, metadata={"timelineId": str(timeline.id), "revisionId": str(revision.id)},
+    )
+    return JsonResponse({"ok": True, **_movie_timeline_json(timeline)})
 
 
 @login_required
