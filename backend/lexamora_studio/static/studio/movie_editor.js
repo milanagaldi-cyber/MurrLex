@@ -52,6 +52,7 @@
   const previewTime = q("[data-preview-time]");
   const playheadNode = q("[data-playhead]");
   const snapGuide = q("[data-snap-guide]");
+  const marquee = q("[data-marquee]");
   const timelineScroll = q("[data-timeline-scroll]");
   const timelineCanvas = q("[data-timeline-canvas]");
   const ruler = q("[data-movie-ruler]");
@@ -426,10 +427,10 @@
     finally { button.disabled = false; button.textContent = "Save and render MP4"; }
   }
 
-  function timelineCandidates(excludeId) {
+  function timelineCandidates(excluded = new Set()) {
     const values = [0, playheadMs];
     timeline.tracks.forEach(track => track.clips.forEach(clip => {
-      if (clip.id !== excludeId) values.push(clip.start, clip.start + clip.duration);
+      if (!excluded.has(clip.id)) values.push(clip.start, clip.start + clip.duration);
     }));
     return values;
   }
@@ -441,7 +442,7 @@
     const threshold = Math.max(PRECISION_MS, 10 / zoom * 1000);
     let closest = null;
     let distance = threshold + 1;
-    timelineCandidates(excludeId).forEach(candidate => {
+    timelineCandidates(new Set(excludeId ? [excludeId] : [])).forEach(candidate => {
       const nextDistance = Math.abs(candidate - precise);
       if (nextDistance < distance) { closest = candidate; distance = nextDistance; }
     });
@@ -449,6 +450,29 @@
     snapGuide.style.left = `${closest / 1000 * zoom}px`;
     snapGuide.hidden = false;
     return quantize(closest);
+  }
+
+  function snapGroupDelta(rawDelta, items) {
+    const precise = quantize(rawDelta);
+    snapGuide.hidden = true;
+    const minimumStart = Math.min(...items.map(item => item.original.start));
+    const maximumEnd = Math.max(...items.map(item => item.original.start + item.original.duration));
+    const bounded = Math.max(-minimumStart, precise);
+    if (!snapping) return bounded;
+    const excluded = new Set(items.map(item => item.clip.id));
+    const threshold = Math.max(PRECISION_MS, 10 / zoom * 1000);
+    let best = null;
+    timelineCandidates(excluded).forEach(candidate => {
+      [minimumStart + bounded, maximumEnd + bounded].forEach(edge => {
+        const correction = candidate - edge;
+        const distance = Math.abs(correction);
+        if (distance <= threshold && (!best || distance < best.distance)) best = {candidate, correction, distance};
+      });
+    });
+    if (!best) return bounded;
+    snapGuide.style.left = `${best.candidate / 1000 * zoom}px`;
+    snapGuide.hidden = false;
+    return Math.max(-minimumStart, quantize(bounded + best.correction));
   }
 
   function setPlayhead(value, sync = true) {
@@ -520,12 +544,18 @@
       if (shouldPlay) preview.play().catch(error => { previewStatus.textContent = error.message; });
       return;
     }
-    setPlayer(preview, activeClip("VIDEO", playheadMs), shouldPlay, force);
+    const visibleVideo = activeClip("VIDEO", playheadMs);
+    setPlayer(preview, visibleVideo, shouldPlay, force);
     const activeAudio = [];
     timeline.tracks.forEach(track => {
       if (track.muted) return;
       track.clips.forEach(clip => {
-        if (clipKind(clip) === "AUDIO" && playheadMs >= clip.start && playheadMs < clip.start + clip.duration) activeAudio.push({clip, track});
+        const asset = assetMap.get(clip.assetId);
+        const hasAudio = asset?.hasAudio || Boolean(asset?.waveformUrl) || clipKind(clip) === "AUDIO";
+        const isPreviewAudio = visibleVideo?.clip.id === clip.id;
+        if (hasAudio && !isPreviewAudio && playheadMs >= clip.start && playheadMs < clip.start + clip.duration) {
+          activeAudio.push({clip, track});
+        }
       });
     });
     activeAudio.forEach(active => {
@@ -608,9 +638,31 @@
     return input;
   }
   const field = (text, input) => { const label = document.createElement("label"); label.append(text, input); return label; };
+  const inspectorButton = (text, title, action) => {
+    const button = document.createElement("button");
+    button.type = "button"; button.className = "icon-button secondary"; button.textContent = text;
+    button.title = title; button.setAttribute("aria-label", title); button.onclick = action;
+    return button;
+  };
 
   function renderInspector() {
     inspector.replaceChildren();
+    if (selectedIds.size > 1) {
+      const summary = document.createElement("strong");
+      const actions = document.createElement("div");
+      summary.className = "movie-selection-summary";
+      summary.textContent = `${selectedIds.size} clips selected`;
+      actions.className = "movie-inspector-actions";
+      actions.append(
+        inspectorButton("↑", "Move selection up", () => moveSelectedToAdjacentTrack(-1)),
+        inspectorButton("↓", "Move selection down", () => moveSelectedToAdjacentTrack(1)),
+        inspectorButton("⧉", "Copy selection", copySelected),
+        inspectorButton("J", "Join two selected clips", joinSelected),
+        inspectorButton("×", "Delete selection", deleteSelected),
+      );
+      inspector.append(summary, actions);
+      return;
+    }
     const found = findClip(selectedId);
     if (!found) {
       inspector.innerHTML = '<p class="muted">Select a timeline clip</p>';
@@ -639,7 +691,16 @@
     const readout = document.createElement("div");
     readout.className = "movie-inspector-readout";
     readout.textContent = `${track.name} / ${track.kind} / ${clock(clip.start)} - ${clock(clip.start + clip.duration)} / 10 ms grid`;
-    inspector.append(readout);
+    const actions = document.createElement("div");
+    actions.className = "movie-inspector-actions";
+    actions.append(
+      inspectorButton("S", "Split at playhead", splitSelected),
+      inspectorButton("⧉", "Copy clip", copySelected),
+      inspectorButton("↑", "Move clip up", () => moveSelectedToAdjacentTrack(-1)),
+      inspectorButton("↓", "Move clip down", () => moveSelectedToAdjacentTrack(1)),
+      inspectorButton("×", "Delete clip", deleteSelected),
+    );
+    inspector.append(readout, actions);
   }
 
   function selectClip(id, movePlayhead = false, additive = false) {
@@ -738,14 +799,17 @@
   }
 
   function moveSelectedToAdjacentTrack(direction) {
-    const found = findClip(selectedId);
-    if (!found || found.track.locked) return;
-    const available = timeline.tracks.filter(track => !track.locked);
-    const target = available[available.indexOf(found.track) + direction];
-    if (!target) return toast("No track in that direction");
+    const found = [...selectedIds].map(findClip).filter(Boolean);
+    if (!found.length || found.some(item => item.track.locked)) return;
+    const moves = found.map(item => {
+      const index = timeline.tracks.indexOf(item.track);
+      return {item, target: timeline.tracks[index + direction]};
+    });
+    if (moves.some(move => !move.target || move.target.locked)) return toast("No free track in that direction");
     mutate(() => {
-      found.track.clips = found.track.clips.filter(item => item.id !== found.clip.id);
-      target.clips.push(found.clip);
+      const ids = new Set(found.map(item => item.clip.id));
+      timeline.tracks.forEach(track => { track.clips = track.clips.filter(item => !ids.has(item.id)); });
+      moves.forEach(move => move.target.clips.push(move.item.clip));
     });
     renderTimeline(); renderInspector();
   }
@@ -832,22 +896,6 @@
     return candidates[0] || null;
   }
 
-  function insertionPoint(candidate, clientX, draggedId, duration) {
-    if (!candidate) return null;
-    const hovered = [...candidate.lane.querySelectorAll(".movie-clip")].find(node => {
-      if (node.dataset.clipId === draggedId) return false;
-      const rect = node.getBoundingClientRect();
-      return clientX >= rect.left && clientX <= rect.right;
-    });
-    if (!hovered) return null;
-    const found = findClip(hovered.dataset.clipId);
-    if (!found) return null;
-    const rect = hovered.getBoundingClientRect();
-    const before = clientX < rect.left + rect.width / 2;
-    const edge = before ? found.clip.start : found.clip.start + found.clip.duration;
-    return {start: Math.max(0, quantize(before ? edge - duration : edge)), edge, side: before ? "left" : "right"};
-  }
-
   function beginClipGesture(event, clip, track, mode, node) {
     if (!canEdit || track.locked || event.button !== 0) return;
     event.preventDefault(); event.stopPropagation();
@@ -860,11 +908,26 @@
     remember();
     const originX = event.clientX;
     const originScroll = timelineScroll.scrollLeft;
-    const originLaneTop = node.closest(".movie-track-lane")?.getBoundingClientRect().top || 0;
-    const original = {start: clip.start, sourceStart: clip.sourceStart, duration: clip.duration};
-    let targetTrack = track;
+    const anchorTrackIndex = timeline.tracks.indexOf(track);
+    const movingIds = mode === "move" ? new Set(selectedIds) : new Set([clip.id]);
+    const items = [...movingIds].map(id => {
+      const found = findClip(id);
+      const clipNode = q(`.movie-clip[data-clip-id="${CSS.escape(id)}"]`);
+      if (!found || found.track.locked || !clipNode) return null;
+      return {
+        clip: found.clip,
+        track: found.track,
+        node: clipNode,
+        trackIndex: timeline.tracks.indexOf(found.track),
+        laneTop: clipNode.closest(".movie-track-lane")?.getBoundingClientRect().top || 0,
+        original: {start: found.clip.start, sourceStart: found.clip.sourceStart, duration: found.clip.duration},
+        targetTrack: found.track,
+      };
+    }).filter(Boolean);
+    const anchor = items.find(item => item.clip.id === clip.id);
+    if (!anchor) { historyUndo.pop(); return; }
     let changed = false;
-    node.classList.add("dragging");
+    items.forEach(item => item.node.classList.add("dragging"));
     node.setPointerCapture(event.pointerId);
     const move = next => {
       const bounds = timelineScroll.getBoundingClientRect();
@@ -872,54 +935,105 @@
       else if (next.clientX < bounds.left + 36) timelineScroll.scrollLeft = Math.max(0, timelineScroll.scrollLeft - 22);
       const delta = (next.clientX - originX + timelineScroll.scrollLeft - originScroll) / zoom * 1000;
       if (mode === "move") {
-        clip.start = snapTime(original.start + delta, clip.id);
+        const snappedDelta = snapGroupDelta(delta, items);
         const candidate = closestTrack(next.clientY);
+        let trackDelta = 0;
         if (candidate) {
-          targetTrack = candidate.track;
-          node.style.transform = `translateY(${candidate.lane.getBoundingClientRect().top - originLaneTop}px)`;
-          const insertion = insertionPoint(candidate, next.clientX, clip.id, clip.duration);
-          if (insertion) {
-            clip.start = insertion.start;
-            snapGuide.style.left = `${insertion.edge / 1000 * zoom}px`;
-            snapGuide.dataset.side = insertion.side;
-            snapGuide.hidden = false;
-          }
+          trackDelta = timeline.tracks.indexOf(candidate.track) - anchorTrackIndex;
+          const valid = items.every(item => {
+            const target = timeline.tracks[item.trackIndex + trackDelta];
+            return target && !target.locked;
+          });
+          if (!valid) trackDelta = 0;
         }
-        qa(".movie-track-lane").forEach(lane => lane.classList.toggle("drop-target", lane.dataset.trackId === targetTrack.id));
+        items.forEach(item => {
+          item.clip.start = Math.max(0, quantize(item.original.start + snappedDelta));
+          item.targetTrack = timeline.tracks[item.trackIndex + trackDelta] || item.track;
+          const targetLane = q(`.movie-track-lane[data-track-id="${CSS.escape(item.targetTrack.id)}"]`);
+          const targetTop = targetLane?.getBoundingClientRect().top ?? item.laneTop;
+          item.node.style.left = `${item.clip.start / 1000 * zoom}px`;
+          item.node.style.transform = `translateY(${targetTop - item.laneTop}px)`;
+        });
+        const targetIds = new Set(items.map(item => item.targetTrack.id));
+        qa(".movie-track-lane").forEach(lane => lane.classList.toggle("drop-target", targetIds.has(lane.dataset.trackId)));
       } else if (mode === "left") {
-        let shift = snapTime(original.start + delta, clip.id) - original.start;
-        shift = clamp(quantize(shift), -original.sourceStart, original.duration - 200);
-        clip.start = original.start + shift; clip.sourceStart = original.sourceStart + shift; clip.duration = original.duration - shift;
+        let shift = snapTime(anchor.original.start + delta, clip.id) - anchor.original.start;
+        shift = clamp(quantize(shift), -anchor.original.sourceStart, anchor.original.duration - 200);
+        clip.start = anchor.original.start + shift; clip.sourceStart = anchor.original.sourceStart + shift; clip.duration = anchor.original.duration - shift;
       } else {
-        const nextEnd = snapTime(original.start + original.duration + delta, clip.id);
-        clip.duration = clamp(quantize(nextEnd - original.start), 200, assetDuration(clip) - original.sourceStart);
+        const nextEnd = snapTime(anchor.original.start + anchor.original.duration + delta, clip.id);
+        clip.duration = clamp(quantize(nextEnd - anchor.original.start), 200, assetDuration(clip) - anchor.original.sourceStart);
       }
-      changed = true;
-      node.style.left = `${clip.start / 1000 * zoom}px`;
-      node.style.width = `${Math.max(8, clip.duration / 1000 * zoom)}px`;
-      node.querySelector("small").textContent = `${clock(clip.sourceStart)} / ${clock(clip.duration)}`;
+      changed = changed || Math.abs(next.clientX - originX) > 2 || Math.abs(next.clientY - event.clientY) > 2;
+      if (mode !== "move") {
+        node.style.left = `${clip.start / 1000 * zoom}px`;
+        node.style.width = `${Math.max(8, clip.duration / 1000 * zoom)}px`;
+        node.querySelector("small").textContent = `${clock(clip.sourceStart)} / ${clock(clip.duration)}`;
+      }
     };
     const cleanup = () => {
       window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", finish); window.removeEventListener("pointercancel", cancel);
-      node.classList.remove("dragging"); node.style.transform = ""; qa(".movie-track-lane").forEach(lane => lane.classList.remove("drop-target")); snapGuide.hidden = true;
+      items.forEach(item => { item.node.classList.remove("dragging"); item.node.style.transform = ""; });
+      qa(".movie-track-lane").forEach(lane => lane.classList.remove("drop-target")); snapGuide.hidden = true;
     };
     const finish = () => {
       cleanup();
       if (!changed) historyUndo.pop();
       else {
-        node.dataset.suppressClick = "true";
+        items.forEach(item => { item.node.dataset.suppressClick = "true"; });
         if (mode === "move") {
-          if (targetTrack !== track) {
-            track.clips = track.clips.filter(item => item.id !== clip.id);
-            targetTrack.clips.push(clip);
-          }
+          const movedIds = new Set(items.map(item => item.clip.id));
+          timeline.tracks.forEach(item => { item.clips = item.clips.filter(existing => !movedIds.has(existing.id)); });
+          items.forEach(item => item.targetTrack.clips.push(item.clip));
         }
         historyRedo = []; updateDirty(); updateHistoryButtons();
       }
       renderTimeline(); renderInspector();
     };
-    const cancel = () => { Object.assign(clip, original); changed = false; finish(); };
+    const cancel = () => {
+      items.forEach(item => Object.assign(item.clip, item.original));
+      changed = false;
+      finish();
+    };
     window.addEventListener("pointermove", move); window.addEventListener("pointerup", finish); window.addEventListener("pointercancel", cancel);
+  }
+
+  function beginMarquee(event, lane) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const startX = event.clientX;
+    const startY = event.clientY;
+    let active = false;
+    const move = next => {
+      if (!active && Math.hypot(next.clientX - startX, next.clientY - startY) < 4) return;
+      active = true;
+      const canvasRect = timelineCanvas.getBoundingClientRect();
+      const left = Math.min(startX, next.clientX);
+      const top = Math.min(startY, next.clientY);
+      const right = Math.max(startX, next.clientX);
+      const bottom = Math.max(startY, next.clientY);
+      marquee.hidden = false;
+      marquee.style.left = `${left - canvasRect.left}px`;
+      marquee.style.top = `${top - canvasRect.top}px`;
+      marquee.style.width = `${right - left}px`;
+      marquee.style.height = `${bottom - top}px`;
+      selectedIds = new Set(qa(".movie-clip").filter(item => {
+        const rect = item.getBoundingClientRect();
+        return rect.right >= left && rect.left <= right && rect.bottom >= top && rect.top <= bottom;
+      }).map(item => item.dataset.clipId));
+      selectedId = [...selectedIds].at(-1) || null;
+      qa(".movie-clip").forEach(item => item.classList.toggle("selected", selectedIds.has(item.dataset.clipId)));
+    };
+    const finish = next => {
+      window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", finish);
+      marquee.hidden = true;
+      if (!active) {
+        selectClip(null);
+        setPlayhead((next.clientX - lane.getBoundingClientRect().left) / zoom * 1000);
+      } else renderInspector();
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", finish);
   }
 
   function makeClipNode(clip, track) {
@@ -997,7 +1111,7 @@
     timeline.tracks.forEach(track => {
       headsNode.append(makeTrackHead(track));
       const lane = document.createElement("div"); lane.className = "movie-track-lane"; lane.dataset.trackId = track.id;
-      lane.onpointerdown = event => { if (event.target === lane) setPlayhead((event.clientX - lane.getBoundingClientRect().left) / zoom * 1000); };
+      lane.onpointerdown = event => { if (event.target === lane) beginMarquee(event, lane); };
       lane.ondragover = event => { if (!track.locked && canEdit) { event.preventDefault(); lane.classList.add("drop-target"); } };
       lane.ondragleave = () => lane.classList.remove("drop-target");
       lane.ondrop = event => { event.preventDefault(); lane.classList.remove("drop-target"); addClip(track, event.dataTransfer.getData("text/asset-id"), (event.clientX - lane.getBoundingClientRect().left) / zoom * 1000); };
@@ -1142,11 +1256,6 @@
     if (event.ctrlKey && Math.abs(event.deltaY) >= Math.abs(event.deltaX)) {
       event.preventDefault();
       changeZoom(zoom + (event.deltaY < 0 ? 4 : -4), event.clientX);
-      return;
-    }
-    if (!event.ctrlKey && Math.abs(event.deltaY) >= Math.abs(event.deltaX)) {
-      event.preventDefault();
-      window.scrollBy({top: event.deltaY, behavior: "auto"});
     }
   }, {passive: false});
   zoomInput.oninput = event => changeZoom(Number(event.target.value));
@@ -1210,7 +1319,7 @@
   const trackWidth = q("[data-track-width]");
   const timelineShell = q("[data-timeline-shell]");
   if (trackWidth && timelineShell) {
-    trackWidth.value = localStorage.getItem("studio-movie-track-width") || "190";
+    trackWidth.value = localStorage.getItem("studio-movie-track-width") || "150";
     const applyTrackWidth = () => timelineShell.style.setProperty("--track-sidebar-width", `${trackWidth.value}px`);
     trackWidth.oninput = () => { applyTrackWidth(); localStorage.setItem("studio-movie-track-width", trackWidth.value); };
     applyTrackWidth();

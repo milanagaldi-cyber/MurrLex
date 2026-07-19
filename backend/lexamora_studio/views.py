@@ -4499,6 +4499,7 @@ def _movie_media_payload(asset, project):
         "proxyUrl": reverse("studio_api:asset_proxy", kwargs={"asset_id": asset.id}) if ready and asset.proxy_file else "",
         "thumbnailUrl": reverse("studio_api:asset_thumbnail", kwargs={"asset_id": asset.id}) if asset.thumbnail else "",
         "waveformUrl": reverse("studio_api:asset_waveform", kwargs={"asset_id": asset.id}) if asset.waveform_file else "",
+        "hasAudio": bool(metadata.get("audio")),
         "filmstripUrl": reverse("studio_api:asset_filmstrip", kwargs={"asset_id": asset.id}) if asset.filmstrip_file else "",
         "filmstripIntervalMs": 2000,
         "filmstripFrameCount": max(1, min(120, (int(asset.duration_ms or 0) + 1999) // 2000)),

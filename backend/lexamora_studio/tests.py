@@ -3746,6 +3746,7 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertContains(page, "data-timeline-split")
         self.assertContains(page, "data-timeline-zoom")
         self.assertContains(page, "data-playhead")
+        self.assertContains(page, "data-marquee")
         self.assertContains(page, "data-render-start")
         self.assertContains(page, "Rough-cut exports")
         self.assertContains(page, "data-editor-undo")
@@ -4083,7 +4084,7 @@ class StudioProductionPilotFeaturesTests(TestCase):
         )
         self.assertEqual(queued.status_code, 202, queued.content)
 
-    def test_movie_render_uses_only_visible_video_audio_during_overlap(self):
+    def test_movie_render_mixes_audio_from_all_overlapping_media(self):
         from types import SimpleNamespace
         from .movie_rendering import build_render_command, timeline_duration_ms
 
@@ -4121,8 +4122,9 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertIn("[1:v]", filter_graph)
         self.assertIn("[2:a]", filter_graph)
         self.assertNotIn("[4:v]", filter_graph)
-        self.assertIn("atrim=start=0.000:duration=1.000", command)
-        self.assertIn("atrim=start=3.000:duration=1.000", command)
+        self.assertIn("atrim=start=0.000:duration=4.000", command)
+        self.assertIn("atrim=start=0.000:duration=2.000", command)
+        self.assertIn("amix=inputs=3", filter_graph)
         self.assertEqual(timeline_duration_ms(snapshot, {"lower": lower, "upper": upper, "music": audio}), 4000)
 
     def test_movie_render_worker_persists_completed_mp4_asset(self):

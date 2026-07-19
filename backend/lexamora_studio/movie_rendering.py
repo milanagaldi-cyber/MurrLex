@@ -68,22 +68,6 @@ def timeline_duration_ms(snapshot, assets=None):
     )
 
 
-def _subtract_intervals(interval, blockers):
-    remaining = [interval]
-    for blocker_start, blocker_end in blockers:
-        next_remaining = []
-        for start, end in remaining:
-            if blocker_end <= start or blocker_start >= end:
-                next_remaining.append((start, end))
-                continue
-            if blocker_start > start:
-                next_remaining.append((start, min(end, blocker_start)))
-            if blocker_end < end:
-                next_remaining.append((max(start, blocker_end), end))
-        remaining = next_remaining
-    return [(start, end) for start, end in remaining if end - start >= 0.01]
-
-
 def profile_dimensions(aspect_ratio, profile):
     long_edge = 1920 if profile == MovieRenderJob.Profile.REVIEW_1080 else 1280
     short_edge = 1080 if profile == MovieRenderJob.Profile.REVIEW_1080 else 720
@@ -148,31 +132,15 @@ def build_render_command(job, assets, output_path):
         volume = float(clip.get("volume", 1))
         has_audio = bool((asset.media_metadata or {}).get("audio"))
         if has_audio:
-            visible_intervals = [(timeline_start, timeline_start + clip_duration)]
-            if _asset_kind(asset) == "VIDEO":
-                blockers = []
-                for other_track_index, other_clip_index, _, other_clip, other_asset, _ in video_clips:
-                    is_above = other_track_index < track_index or (
-                        other_track_index == track_index and other_clip_index > clip_index
-                    )
-                    if not is_above or _asset_kind(other_asset) != "VIDEO":
-                        continue
-                    other_start = int(other_clip.get("start", 0)) / 1000
-                    other_end = other_start + int(other_clip.get("duration", 0)) / 1000
-                    blockers.append((other_start, other_end))
-                visible_intervals = _subtract_intervals(visible_intervals[0], blockers)
-            for segment_start, segment_end in visible_intervals:
-                segment_source = source_start + segment_start - timeline_start
-                segment_duration = segment_end - segment_start
-                audio_label = f"a{len(audio_labels)}"
-                delay_ms = round(segment_start * 1000)
-                cleanup = _clip_audio_cleanup(job)
-                filters.append(
-                    f"[{input_index}:a]atrim=start={segment_source:.3f}:duration={segment_duration:.3f},"
-                    f"asetpts=PTS-STARTPTS,volume={volume:.4f},{cleanup}"
-                    f"adelay={delay_ms}|{delay_ms}[{audio_label}]"
-                )
-                audio_labels.append(audio_label)
+            audio_label = f"a{len(audio_labels)}"
+            delay_ms = round(timeline_start * 1000)
+            cleanup = _clip_audio_cleanup(job)
+            filters.append(
+                f"[{input_index}:a]atrim=start={source_start:.3f}:duration={clip_duration:.3f},"
+                f"asetpts=PTS-STARTPTS,volume={volume:.4f},{cleanup}"
+                f"adelay={delay_ms}|{delay_ms}[{audio_label}]"
+            )
+            audio_labels.append(audio_label)
 
     if audio_labels:
         joined = "".join(f"[{label}]" for label in audio_labels)
