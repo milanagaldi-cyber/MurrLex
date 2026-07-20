@@ -86,6 +86,8 @@ def _asset_kind(asset):
         return "AUDIO"
     if content_type.startswith("video/"):
         return "VIDEO"
+    if content_type.startswith("image/"):
+        return "IMAGE"
     metadata = getattr(asset, "media_metadata", {}) or {}
     if metadata.get("video"):
         return "VIDEO"
@@ -94,13 +96,15 @@ def _asset_kind(asset):
     )
     if Path(str(source)).suffix.lower() in {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi"}:
         return "VIDEO"
+    if Path(str(source)).suffix.lower() in {".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif"}:
+        return "IMAGE"
     return "AUDIO"
 
 
 def timeline_duration_ms(snapshot, assets=None):
     clips = [
         clip for track in snapshot.get("tracks", []) for clip in track.get("clips", [])
-        if not assets or _asset_kind(assets.get(str(clip.get("assetId")))) == "VIDEO"
+        if not assets or _asset_kind(assets.get(str(clip.get("assetId")))) in {"VIDEO", "IMAGE"}
     ]
     return max(
         (int(clip.get("start", 0)) + int(clip.get("duration", 0)) for clip in clips),
@@ -137,14 +141,17 @@ def build_render_command(job, assets, output_path):
         for clip_index, clip in enumerate(track.get("clips", [])):
             asset = assets[str(clip["assetId"])]
             input_index = len(clips)
-            inputs.extend(["-i", str(_source_path(asset))])
+            if _asset_kind(asset) == "IMAGE":
+                inputs.extend(["-loop", "1", "-i", str(_source_path(asset))])
+            else:
+                inputs.extend(["-i", str(_source_path(asset))])
             clips.append((track_index, clip_index, track, clip, asset, input_index))
 
     filters = [f"color=c=black:s={job.width}x{job.height}:r={job.fps}:d={duration_seconds:.3f}[base]"]
     video_label = "base"
     video_number = 0
     audio_labels = []
-    video_clips = [item for item in clips if _asset_kind(item[4]) == "VIDEO"]
+    video_clips = [item for item in clips if _asset_kind(item[4]) in {"VIDEO", "IMAGE"}]
     visual_order = sorted(video_clips, key=lambda item: (-item[0], item[1]))
     for track_index, clip_index, track, clip, asset, input_index in visual_order:
         source_start = int(clip.get("sourceStart", 0)) / 1000
@@ -153,8 +160,8 @@ def build_render_command(job, assets, output_path):
         source_duration = clip_duration * speed
         timeline_start = int(clip.get("start", 0)) / 1000
         scale = min(8, max(0.05, float(clip.get("scale", 1))))
-        position_x = min(500, max(-500, float(clip.get("positionX", 0))))
-        position_y = min(500, max(-500, float(clip.get("positionY", 0))))
+        position_x = min(7680, max(-7680, float(clip.get("positionX", 0))))
+        position_y = min(7680, max(-7680, float(clip.get("positionY", 0))))
         prepared = f"v{video_number}"
         composed = f"vc{video_number}"
         interpolation = ""
@@ -162,17 +169,33 @@ def build_render_command(job, assets, output_path):
             interpolation = f"minterpolate=fps={job.fps}:mi_mode=blend,"
         elif clip.get("speedMethod") == "OPTICAL_FLOW":
             interpolation = f"minterpolate=fps={job.fps}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir,"
+        source_trim = (
+            f"trim=duration={source_duration:.3f}," if _asset_kind(asset) == "IMAGE"
+            else f"trim=start={source_start:.3f}:duration={source_duration:.3f},"
+        )
+        opacity = min(1, max(0, float(clip.get("opacity", 1))))
+        blur = min(40, max(0, float(clip.get("blur", 0))))
+        sharpen = min(5, max(0, float(clip.get("sharpen", 0))))
+        brightness = min(1, max(-1, float(clip.get("brightness", 0))))
+        contrast = min(3, max(0, float(clip.get("contrast", 1))))
+        saturation = min(3, max(0, float(clip.get("saturation", 1))))
+        gamma = min(3, max(.1, float(clip.get("gamma", 1))))
+        visual_filters = f"eq=brightness={brightness:.4f}:contrast={contrast:.4f}:saturation={saturation:.4f}:gamma={gamma:.4f},"
+        if blur > 0:
+            visual_filters += f"gblur=sigma={blur:.3f},"
+        if sharpen > 0:
+            visual_filters += f"unsharp=5:5:{sharpen:.3f}:5:5:0,"
         filters.append(
-            f"[{input_index}:v]trim=start={source_start:.3f}:duration={source_duration:.3f},"
+            f"[{input_index}:v]{source_trim}"
             f"setpts=(PTS-STARTPTS)/{speed:.6f},{interpolation}setpts=PTS+{timeline_start:.3f}/TB,"
             f"scale=w='if(gte(a,{job.width}/{job.height}),ceil({job.height}*a*{scale:.4f}/2)*2,ceil({job.width}*{scale:.4f}/2)*2)':"
             f"h='if(gte(a,{job.width}/{job.height}),ceil({job.height}*{scale:.4f}/2)*2,ceil({job.width}/a*{scale:.4f}/2)*2)',"
-            f"setsar=1,format=yuv420p[{prepared}]"
+            f"setsar=1,{visual_filters}format=rgba,colorchannelmixer=aa={opacity:.4f}[{prepared}]"
         )
         filters.append(
             f"[{video_label}][{prepared}]overlay=eof_action=pass:repeatlast=0:shortest=0:"
-            f"x='(W-w)/2+W*{position_x / 100:.6f}':"
-            f"y='(H-h)/2+H*{position_y / 100:.6f}':"
+            f"x='(W-w)/2{position_x:+.3f}':"
+            f"y='(H-h)/2{-position_y:+.3f}':"
             f"enable='between(t,{timeline_start:.3f},{timeline_start + clip_duration:.3f})'[{composed}]"
         )
         video_label = composed
@@ -191,6 +214,11 @@ def build_render_command(job, assets, output_path):
             audio_label = f"a{len(audio_labels)}"
             delay_ms = round(timeline_start * 1000)
             cleanup = _clip_audio_cleanup(job)
+            clip_cleanup = str(clip.get("audioCleanup") or "NONE").upper()
+            if clip_cleanup == "VOICE":
+                cleanup += "highpass=f=90,lowpass=f=13000,acompressor=threshold=0.16:ratio=2.5:attack=15:release=220:makeup=1.3,"
+            elif clip_cleanup == "DENOISE":
+                cleanup += "highpass=f=70,afftdn=nf=-25:tn=1,"
             fade_in = min(2, max(0, float(clip.get("fadeIn", 0)) / 1000))
             fade_out = min(2, max(0, float(clip.get("fadeOut", 0)) / 1000))
             fades = ""

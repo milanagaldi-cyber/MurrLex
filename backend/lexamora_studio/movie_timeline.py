@@ -81,6 +81,10 @@ def normalize_movie_timeline(value):
 
     normalized = dict(value)
     normalized["schemaVersion"] = MOVIE_TIMELINE_SCHEMA_VERSION
+    media_asset_ids = value.get("mediaAssetIds", [])
+    if not isinstance(media_asset_ids, list) or len(media_asset_ids) > 2_000:
+        raise MovieTimelineValidationError("Timeline media library must be a list with at most 2000 items.")
+    normalized["mediaAssetIds"] = list(dict.fromkeys(str(item)[:100] for item in media_asset_ids if item))
     normalized_tracks = []
     track_ids = set()
     clip_ids = set()
@@ -149,11 +153,12 @@ def normalize_movie_timeline(value):
                 clip.get("scale", 1), field="Clip scale", minimum=0.05, maximum=8,
             )
             normalized_clip["positionX"] = _float_number(
-                clip.get("positionX", 0), field="Clip horizontal position", minimum=-500, maximum=500,
+                clip.get("positionX", 0), field="Clip horizontal position", minimum=-7680, maximum=7680,
             )
             normalized_clip["positionY"] = _float_number(
-                clip.get("positionY", 0), field="Clip vertical position", minimum=-500, maximum=500,
+                clip.get("positionY", 0), field="Clip vertical position", minimum=-7680, maximum=7680,
             )
+            normalized_clip["positionUnit"] = "PIXELS"
             normalized_clip["speed"] = _float_number(
                 clip.get("speed", 1), field="Clip speed", minimum=0.1, maximum=8,
             )
@@ -167,6 +172,17 @@ def normalize_movie_timeline(value):
             normalized_clip["fadeOut"] = _number(
                 clip.get("fadeOut", 0), field="Clip fade out", minimum=0, maximum=2_000,
             )
+            normalized_clip["audioCleanup"] = str(clip.get("audioCleanup") or "NONE").upper() \
+                if str(clip.get("audioCleanup") or "NONE").upper() in {"NONE", "VOICE", "DENOISE"} else "NONE"
+            for field_name, default, minimum, maximum in (
+                ("opacity", 1, 0, 1), ("blur", 0, 0, 40), ("sharpen", 0, 0, 5),
+                ("brightness", 0, -1, 1), ("contrast", 1, 0, 3),
+                ("saturation", 1, 0, 3), ("gamma", 1, 0.1, 3),
+            ):
+                normalized_clip[field_name] = _float_number(
+                    clip.get(field_name, default), field=f"Clip {field_name}",
+                    minimum=minimum, maximum=maximum,
+                )
             keyframes = clip.get("volumeKeyframes", [])
             if not isinstance(keyframes, list) or len(keyframes) > 100:
                 raise MovieTimelineValidationError("Clip volume keyframes must be a list with at most 100 points.")

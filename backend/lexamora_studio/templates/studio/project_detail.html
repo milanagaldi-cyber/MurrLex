@@ -14,7 +14,6 @@
 {% include "studio/_media_gallery.html" with gallery_title="Images" gallery_id="images" gallery_view_key="project-images" gallery_picker_id="project-image-picker" gallery_upload_url=image_upload_url gallery_default_scope="project" gallery_mode="project" gallery_current_project=project.id gallery_attach_scope="project" gallery_owner_id=project.id %}
 {% endif %}
 {% if "generated_videos" not in project.hidden_sections %}{% include "studio/_video_gallery.html" with video_gallery_title="Videos" video_gallery_id="videos" video_gallery_mode="project" %}{% endif %}
-{% include "studio/_montage_gallery.html" with montage_gallery_key="project" %}
 {% if "characters" not in project.hidden_sections %}<details class="project-section" data-project-section="characters" open><summary><span>Characters</span>{% if can_edit %}<a class="button section-summary-action" href="{% url 'studio:character_create' project.id %}" onclick="event.stopPropagation()">New character</a>{% endif %}</summary><div class="project-section-body">
 <div class="character-table">
 {% for character in project.characters.all %}

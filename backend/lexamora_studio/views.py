@@ -1,4 +1,6 @@
 import json
+import tempfile
+import zipfile
 import re
 from datetime import timedelta
 from pathlib import Path
@@ -4597,19 +4599,24 @@ def _movie_render_payload(job):
 
 
 def _movie_media_payload(asset, project):
-    ready = asset.processing_status == Asset.ProcessingStatus.READY
+    ready = asset.processing_status in {
+        Asset.ProcessingStatus.READY, Asset.ProcessingStatus.NOT_REQUIRED,
+    }
     metadata = asset.media_metadata if isinstance(asset.media_metadata, dict) else {}
+    kind = "VIDEO" if asset.content_type.startswith("video/") else (
+        "IMAGE" if asset.content_type.startswith("image/") else "AUDIO"
+    )
     return {
         "id": str(asset.id),
         "name": asset.original_filename,
-        "kind": "VIDEO" if asset.content_type.startswith("video/") else "AUDIO",
+        "kind": kind,
         "contentType": asset.content_type,
         "size": asset.size_bytes,
         "durationMs": asset.duration_ms,
         "width": asset.width,
         "height": asset.height,
         "metadata": metadata,
-        "status": asset.processing_status,
+        "status": Asset.ProcessingStatus.READY if ready else asset.processing_status,
         "error": asset.processing_error,
         "createdAt": asset.created_at.isoformat(),
         "originalUrl": reverse("studio_api:asset_view", kwargs={"asset_id": asset.id}),
@@ -4637,7 +4644,8 @@ def _workspace_movie_media(user, project):
         accessible_assets(user).filter(
             workspace=project.workspace, deleted_at__isnull=True,
         ).filter(
-            Q(content_type__startswith="video/") | Q(content_type__startswith="audio/"),
+            Q(content_type__startswith="video/") | Q(content_type__startswith="audio/")
+            | Q(content_type__startswith="image/"),
         ).prefetch_related(Prefetch("projects", to_attr="_movie_projects"))
         .distinct().order_by("-created_at", "id")
     )
@@ -4738,6 +4746,11 @@ def project_movie_editor(request, project_id):
             _movie_edit_payload(item, project)
             for item in _workspace_movie_timelines(request.user, project.workspace).select_related("created_by")
         ],
+        "montage_projects": _movie_timeline_gallery_items(
+            request.user, project.workspace,
+            _workspace_movie_timelines(request.user, project.workspace).select_related("created_by"),
+            current_project=project,
+        ),
         "movie_edits_url": reverse("studio:project_movie_edits", kwargs={"project_id": project.id}),
         "can_edit": can_edit,
         "can_export": has_project_capability(request.user, project, "export"),
@@ -4834,6 +4847,32 @@ def project_movie_edit_export(request, project_id, timeline_id):
         "version": 1,
         **_movie_timeline_json(timeline),
     }
+    if request.GET.get("bundle") == "media":
+        archive = tempfile.TemporaryFile()
+        with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_STORED) as bundle:
+            bundle.writestr("montage.json", json.dumps(payload, ensure_ascii=False, indent=2))
+            timeline_data = normalize_movie_timeline(timeline.timeline or default_movie_timeline())
+            asset_ids = movie_timeline_asset_ids(timeline_data) | set(timeline_data.get("mediaAssetIds", []))
+            used_names = set()
+            for asset in accessible_assets(request.user).filter(workspace=project.workspace, id__in=asset_ids):
+                try:
+                    source_path = asset.file.path
+                except (AttributeError, NotImplementedError):
+                    continue
+                filename = Path(asset.original_filename or source_path).name
+                candidate = filename
+                suffix = 2
+                while candidate.lower() in used_names:
+                    stem, extension = Path(filename).stem, Path(filename).suffix
+                    candidate = f"{stem}-{suffix}{extension}"
+                    suffix += 1
+                used_names.add(candidate.lower())
+                bundle.write(source_path, f"media/{candidate}")
+        archive.seek(0)
+        return FileResponse(
+            archive, as_attachment=True,
+            filename=f'{slugify(timeline.title) or "montage"}-with-media.zip',
+        )
     response = JsonResponse(payload, json_dumps_params={"indent": 2})
     response["Content-Disposition"] = f'attachment; filename="{slugify(timeline.title) or "montage"}.json"'
     return response
@@ -4865,7 +4904,7 @@ def project_movie_media(request, project_id):
             return JsonResponse({"error": "The media request is not valid JSON."}, status=400)
         asset = get_object_or_404(_workspace_movie_media(request.user, project), id=payload.get("assetId"))
         asset.projects.add(project)
-        if asset.processing_status == Asset.ProcessingStatus.NOT_REQUIRED:
+        if asset.processing_status == Asset.ProcessingStatus.NOT_REQUIRED and not asset.content_type.startswith("image/"):
             asset.processing_status = Asset.ProcessingStatus.QUEUED
             asset.processing_error = ""
             asset.save(update_fields=["processing_status", "processing_error", "updated_at"])
@@ -4882,8 +4921,8 @@ def project_movie_media(request, project_id):
     errors = []
     for uploaded in uploads:
         content_type = (getattr(uploaded, "content_type", "") or "").lower()
-        if not content_type.startswith(("video/", "audio/")):
-            errors.append(f"{uploaded.name}: choose a video or audio file")
+        if not content_type.startswith(("video/", "audio/", "image/")):
+            errors.append(f"{uploaded.name}: choose a video, audio or image file")
             continue
         try:
             asset = create_asset(

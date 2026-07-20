@@ -40,6 +40,9 @@
   let previewZoom = Math.max(.25, Math.min(2, Number(localStorage.getItem("studio-movie-preview-zoom")) || 1));
   let inspectorTab = "VIDEO";
   let previewGeometry = null;
+  let autosaveTimer = null;
+  let savePromise = null;
+  let saveAgain = false;
   const settingSnapshots = new WeakMap();
   const PRECISION_MS = 10;
 
@@ -50,6 +53,7 @@
   const headsNode = q("[data-track-heads]");
   const preview = q("[data-movie-preview]");
   const previewStage = q("[data-preview-stage]");
+  const previewLayers = q("[data-preview-layers]");
   const previewOutline = q("[data-preview-outline]");
   const previewEmpty = q("[data-preview-empty]");
   const previewStatus = q("[data-preview-status]");
@@ -75,6 +79,7 @@
   const libraryGrid = q("[data-media-library-grid]");
   const assetMap = new Map();
   const audioPlayers = new Map();
+  const visualPlayers = new Map();
 
   const toast = (message, type) => window.studioToast ? window.studioToast(String(message).replace(/\.$/, ""), type) : console.info(message);
   const csrfToken = () => document.cookie.match(/csrftoken=([^;]+)/)?.[1] || "";
@@ -101,7 +106,7 @@
   };
   const clipKind = clip => assetMap.get(clip.assetId)?.kind || "VIDEO";
   const timelineEnd = () => Math.max(0, ...timeline.tracks.flatMap(track =>
-    track.clips.filter(clip => clipKind(clip) === "VIDEO").map(clip => clip.start + clip.duration)
+    track.clips.filter(clip => ["VIDEO", "IMAGE"].includes(clipKind(clip))).map(clip => clip.start + clip.duration)
   ));
   const visibleDuration = () => Math.max(60000, timelineEnd() + 15000);
   const assetDuration = clip => Math.max(200, assetMap.get(clip.assetId)?.durationMs || clip.sourceStart + clip.duration);
@@ -120,6 +125,16 @@
     }
     return null;
   };
+  const activeVisualClips = at => {
+    const active = [];
+    timeline.tracks.forEach((track, trackIndex) => {
+      track.clips.forEach((clip, clipIndex) => {
+        if (!["VIDEO", "IMAGE"].includes(clipKind(clip))) return;
+        if (at >= clip.start && at < clip.start + clip.duration) active.push({clip, track, trackIndex, clipIndex});
+      });
+    });
+    return active.sort((left, right) => right.trackIndex - left.trackIndex || left.clipIndex - right.clipIndex);
+  };
   const currentState = () => ({
     timeline: structuredClone(timeline),
     title: q("[data-movie-title]").value,
@@ -128,7 +143,10 @@
     fps: q("[data-movie-fps]").value,
     selectedId,
   });
-  const signature = state => JSON.stringify(state || currentState());
+  const signature = state => {
+    const value = state || currentState();
+    return JSON.stringify({ ...value, selectedId: null });
+  };
   const updateHistoryButtons = () => {
     const undo = q("[data-editor-undo]");
     const redo = q("[data-editor-redo]");
@@ -162,6 +180,7 @@
     renderInspector();
     updateDirty();
     updateHistoryButtons();
+    scheduleAutosave();
   };
   const undo = () => {
     if (!historyUndo.length) return;
@@ -179,11 +198,21 @@
     callback();
     normalizeTimeline();
     updateDirty();
+    scheduleAutosave();
+  };
+
+  const scheduleAutosave = (delay = 700) => {
+    if (!canEdit) return;
+    clearTimeout(autosaveTimer);
+    autosaveTimer = setTimeout(() => { if (dirty) saveTimeline(true); }, delay);
   };
 
   function normalizeTimeline() {
     timeline.schemaVersion = 1;
     timeline.tracks = Array.isArray(timeline.tracks) ? timeline.tracks : [];
+    const usedMedia = timeline.tracks.flatMap(track => (track.clips || []).map(clip => clip.assetId));
+    timeline.mediaAssetIds = Array.isArray(timeline.mediaAssetIds) ? timeline.mediaAssetIds : [...new Set(usedMedia)];
+    usedMedia.forEach(id => { if (id && !timeline.mediaAssetIds.includes(id)) timeline.mediaAssetIds.push(id); });
     timeline.tracks.forEach((track, trackIndex) => {
       track.id ||= uid();
       track.kind = ["VIDEO", "AUDIO", "TEXT"].includes(track.kind) ? track.kind : "VIDEO";
@@ -202,12 +231,21 @@
         clip.duration = clamp(quantize(clip.duration || 200), 200, available);
         clip.volume = clamp(Number(clip.volume ?? 1), 0, 2);
         clip.scale = clamp(Number(clip.scale ?? 1), .05, 8);
-        clip.positionX = clamp(Number(clip.positionX ?? 0), -500, 500);
-        clip.positionY = clamp(Number(clip.positionY ?? 0), -500, 500);
+        clip.positionX = clamp(Number(clip.positionX ?? 0), -7680, 7680);
+        clip.positionY = clamp(Number(clip.positionY ?? 0), -7680, 7680);
+        clip.positionUnit = "PIXELS";
         clip.sourceAssetId ||= clip.assetId;
         clip.speedMethod = ["FRAME_SAMPLE", "FRAME_BLEND", "OPTICAL_FLOW"].includes(clip.speedMethod) ? clip.speedMethod : "FRAME_SAMPLE";
         clip.fadeIn = clamp(Number(clip.fadeIn || 0), 0, 2000);
         clip.fadeOut = clamp(Number(clip.fadeOut || 0), 0, 2000);
+        clip.audioCleanup = ["NONE", "VOICE", "DENOISE"].includes(clip.audioCleanup) ? clip.audioCleanup : "NONE";
+        clip.opacity = clamp(Number(clip.opacity ?? 1), 0, 1);
+        clip.blur = clamp(Number(clip.blur || 0), 0, 40);
+        clip.sharpen = clamp(Number(clip.sharpen || 0), 0, 5);
+        clip.brightness = clamp(Number(clip.brightness || 0), -1, 1);
+        clip.contrast = clamp(Number(clip.contrast ?? 1), 0, 3);
+        clip.saturation = clamp(Number(clip.saturation ?? 1), 0, 3);
+        clip.gamma = clamp(Number(clip.gamma ?? 1), .1, 3);
         clip.volumeKeyframes = Array.isArray(clip.volumeKeyframes) ? clip.volumeKeyframes.map(point => ({
           time: clamp(Number(point.time || 0), 0, clip.duration),
           value: clamp(Number(point.value ?? 1), 0, 2),
@@ -242,33 +280,61 @@
 
   function previewClipData() {
     if (standalonePreviewAssetId) return {asset: assetMap.get(standalonePreviewAssetId), clip: null, track: null};
-    const active = activeClip("VIDEO", playheadMs);
+    const selected = findClip(selectedId);
+    const active = selected && ["VIDEO", "IMAGE"].includes(clipKind(selected.clip))
+      ? selected : activeVisualClips(playheadMs).at(-1);
     return active ? {...active, asset: assetMap.get(active.clip.assetId)} : {asset: null, clip: null, track: null};
+  }
+
+  const outputDimensions = () => {
+    const value = q("[data-movie-resolution]").value || "1920x1080";
+    const [width, height] = value.split("x").map(Number);
+    return {width: width || 1920, height: height || 1080};
+  };
+
+  function clipGeometry(asset, clip) {
+    const output = outputDimensions();
+    const canvasRatio = output.width / output.height;
+    const sourceWidth = asset?.width || 0;
+    const sourceHeight = asset?.height || 0;
+    const sourceRatio = sourceWidth && sourceHeight ? sourceWidth / sourceHeight : canvasRatio;
+    const scale = clamp(Number(clip?.scale ?? 1), .05, 8);
+    const widthPx = (sourceRatio >= canvasRatio ? output.height * sourceRatio : output.width) * scale;
+    const heightPx = (sourceRatio >= canvasRatio ? output.height : output.width / sourceRatio) * scale;
+    const x = Number(clip?.positionX || 0);
+    const y = Number(clip?.positionY || 0);
+    return {
+      output, sourceRatio, widthPx, heightPx,
+      width: widthPx / output.width * 100,
+      height: heightPx / output.height * 100,
+      left: 50 + x / output.width * 100,
+      top: 50 - y / output.height * 100,
+    };
+  }
+
+  function applyGeometry(node, asset, clip) {
+    const geometry = clipGeometry(asset, clip);
+    node.style.width = `${geometry.width}%`;
+    node.style.height = `${geometry.height}%`;
+    node.style.left = `${geometry.left}%`;
+    node.style.top = `${geometry.top}%`;
+    node.style.transform = "translate(-50%,-50%)";
+    node.style.opacity = String(clamp(Number(clip?.opacity ?? 1), 0, 1));
+    node.style.filter = `brightness(${Math.max(0, 1 + Number(clip?.brightness || 0))}) contrast(${Number(clip?.contrast ?? 1)}) saturate(${Number(clip?.saturation ?? 1)}) blur(${Number(clip?.blur || 0) / 4}px)`;
+    return geometry;
   }
 
   function updatePreviewGeometry() {
     const {asset, clip} = previewClipData();
-    const [canvasWidth, canvasHeight] = (q("[data-movie-ratio]").value || "16:9").split(":").map(Number);
-    const canvasRatio = canvasWidth / canvasHeight;
-    const sourceWidth = asset?.width || preview.videoWidth;
-    const sourceHeight = asset?.height || preview.videoHeight;
-    const sourceRatio = sourceWidth && sourceHeight ? sourceWidth / sourceHeight : canvasRatio;
-    const scale = clamp(Number(clip?.scale ?? 1), .05, 8);
-    const width = (sourceRatio >= canvasRatio ? sourceRatio / canvasRatio * 100 : 100) * scale;
-    const height = (sourceRatio >= canvasRatio ? 100 : canvasRatio / sourceRatio * 100) * scale;
-    const left = 50 + Number(clip?.positionX || 0);
-    const top = 50 + Number(clip?.positionY || 0);
-    [preview, previewOutline].forEach(node => {
-      if (!node) return;
-      node.style.width = `${width}%`;
-      node.style.height = `${height}%`;
-      node.style.left = `${left}%`;
-      node.style.top = `${top}%`;
-      node.style.transform = "translate(-50%,-50%)";
+    const geometry = asset ? applyGeometry(previewOutline, asset, clip) : null;
+    if (standalonePreviewAssetId && asset) applyGeometry(preview, asset, null);
+    visualPlayers.forEach((node, clipId) => {
+      const found = findClip(clipId);
+      const media = found ? assetMap.get(found.clip.assetId) : null;
+      if (found && media) applyGeometry(node, media, found.clip);
     });
     if (previewOutline) previewOutline.hidden = !asset;
-    previewStage.classList.toggle("source-mismatch", Math.abs(sourceRatio - canvasRatio) > .01);
-    previewGeometry = {clip, width, height};
+    previewGeometry = geometry ? {clip, ...geometry} : null;
   }
 
   function beginPreviewPan(event) {
@@ -281,22 +347,30 @@
     const startY = event.clientY;
     const originalX = Number(clip.positionX || 0);
     const originalY = Number(clip.positionY || 0);
+    const output = outputDimensions();
     let changed = false;
     const move = next => {
       const dx = next.clientX - startX;
       const dy = next.clientY - startY;
-      let nextX = clamp(originalX + dx / Math.max(1, previewStage.clientWidth) * 100, -500, 500);
-      let nextY = clamp(originalY + dy / Math.max(1, previewStage.clientHeight) * 100, -500, 500);
+      let nextX = originalX + dx / Math.max(1, previewStage.clientWidth) * output.width;
+      let nextY = originalY - dy / Math.max(1, previewStage.clientHeight) * output.height;
+      const geometry = clipGeometry(assetMap.get(clip.assetId), clip);
+      const minimumX = 1 - output.width / 2 - geometry.widthPx / 2;
+      const maximumX = output.width / 2 + geometry.widthPx / 2 - 1;
+      const minimumY = 1 - output.height / 2 - geometry.heightPx / 2;
+      const maximumY = output.height / 2 + geometry.heightPx / 2 - 1;
+      nextX = clamp(nextX, minimumX, maximumX);
+      nextY = clamp(nextY, minimumY, maximumY);
       if (snapping && previewGeometry) {
-        const edgeTolerance = 2;
-        const left = 50 + nextX - previewGeometry.width / 2;
-        const right = 50 + nextX + previewGeometry.width / 2;
-        const top = 50 + nextY - previewGeometry.height / 2;
-        const bottom = 50 + nextY + previewGeometry.height / 2;
-        if (Math.abs(left) <= edgeTolerance) nextX = previewGeometry.width / 2 - 50;
-        else if (Math.abs(right - 100) <= edgeTolerance) nextX = 50 - previewGeometry.width / 2;
-        if (Math.abs(top) <= edgeTolerance) nextY = previewGeometry.height / 2 - 50;
-        else if (Math.abs(bottom - 100) <= edgeTolerance) nextY = 50 - previewGeometry.height / 2;
+        const edgeTolerance = 8;
+        const left = output.width / 2 + nextX - geometry.widthPx / 2;
+        const right = output.width / 2 + nextX + geometry.widthPx / 2;
+        const top = output.height / 2 - nextY - geometry.heightPx / 2;
+        const bottom = output.height / 2 - nextY + geometry.heightPx / 2;
+        if (Math.abs(left) <= edgeTolerance) nextX = geometry.widthPx / 2 - output.width / 2;
+        else if (Math.abs(right - output.width) <= edgeTolerance) nextX = output.width / 2 - geometry.widthPx / 2;
+        if (Math.abs(top) <= edgeTolerance) nextY = output.height / 2 - geometry.heightPx / 2;
+        else if (Math.abs(bottom - output.height) <= edgeTolerance) nextY = geometry.heightPx / 2 - output.height / 2;
       }
       clip.positionX = nextX;
       clip.positionY = nextY;
@@ -308,7 +382,7 @@
       window.removeEventListener("pointerup", finish);
       previewStage.classList.remove("dragging");
       if (!changed) historyUndo.pop();
-      else { historyRedo = []; updateDirty(); updateHistoryButtons(); }
+      else { historyRedo = []; updateDirty(); updateHistoryButtons(); scheduleAutosave(); }
       renderInspector();
     };
     previewStage.classList.add("dragging");
@@ -329,13 +403,15 @@
     bin.replaceChildren();
     bin.dataset.view = mediaView;
     qa("[data-media-view]").forEach(button => button.classList.toggle("active", button.dataset.mediaView === mediaView));
-    assets.forEach(asset => {
+    const montageMedia = assets.filter(asset => timeline.mediaAssetIds.includes(asset.id));
+    montageMedia.forEach(asset => {
       const item = document.createElement("div");
       const visual = document.createElement("div");
       const copy = document.createElement("div");
       const name = document.createElement("strong");
       const status = document.createElement("span");
       item.className = "movie-bin-item";
+      item.classList.toggle("project-attached", Boolean(asset.attached));
       item.draggable = canEdit && asset.status === "READY";
       item.dataset.assetId = asset.id;
       visual.className = "movie-bin-visual";
@@ -377,13 +453,14 @@
       item.addEventListener("click", () => previewAsset(asset));
       item.addEventListener("dblclick", () => {
         if (!canEdit || asset.status !== "READY") return;
-        let track = timeline.tracks.find(value => value.kind === asset.kind && !value.locked);
-        if (!track) track = addTrack(asset.kind);
+        const trackKind = asset.kind === "AUDIO" ? "AUDIO" : "VIDEO";
+        let track = timeline.tracks.find(value => value.kind === trackKind && !value.locked);
+        if (!track) track = addTrack(trackKind);
         addClip(track, asset.id, timelineEnd());
       });
       bin.append(item);
     });
-    if (!assets.length) bin.innerHTML = '<p class="empty">Open + to choose Project or Workspace media</p>';
+    if (!montageMedia.length) bin.innerHTML = '<p class="empty">Open + to add Project or Workspace media</p>';
   }
 
   async function refreshMedia() {
@@ -491,24 +568,29 @@
 
   async function saveTimeline(silent = false) {
     if (!canEdit) return true;
+    if (savePromise) { saveAgain = true; return savePromise; }
+    clearTimeout(autosaveTimer);
     normalizeTimeline();
     stateNode.textContent = "Saving";
     stateNode.classList.remove("error");
-    try {
+    const requestedSignature = signature();
+    const scrollState = {left: timelineScroll.scrollLeft, top: timelineScroll.scrollTop};
+    savePromise = (async () => { try {
       const data = await requestJson(root.dataset.saveUrl, {
         method: "POST",
         headers: {"Content-Type": "application/json", "X-CSRFToken": csrfToken()},
         body: JSON.stringify({timelineId, title: q("[data-movie-title]").value, aspectRatio: q("[data-movie-ratio]").value, resolution: q("[data-movie-resolution]").value, fps: Number(q("[data-movie-fps]").value), timeline}),
       });
-      if (data.timeline) timeline = data.timeline;
-      normalizeTimeline();
-      renderTimeline();
-      renderInspector();
-      savedSignature = signature();
-      dirty = false;
-      stateNode.textContent = "Saved";
-      historyUndo = [];
-      historyRedo = [];
+      if (data.repaired && data.timeline) {
+        timeline = data.timeline;
+        normalizeTimeline();
+        renderTimeline();
+        renderInspector();
+        requestAnimationFrame(() => { timelineScroll.scrollLeft = scrollState.left; timelineScroll.scrollTop = scrollState.top; });
+      }
+      savedSignature = requestedSignature;
+      dirty = signature() !== requestedSignature;
+      stateNode.textContent = dirty ? "Unsaved changes" : "Saved";
       updateHistoryButtons();
       if (!silent) toast("Timeline saved");
       if (data.repaired) toast("Clip lengths were adjusted to their source files");
@@ -519,7 +601,11 @@
       stateNode.classList.add("error");
       toast(stateNode.textContent, "error");
       return false;
-    }
+    } })();
+    const result = await savePromise;
+    savePromise = null;
+    if (saveAgain) { saveAgain = false; scheduleAutosave(100); }
+    return result;
   }
 
   async function queueRender() {
@@ -631,7 +717,7 @@
     if (autoSelect) {
       const current = findClip(selectedId);
       const currentIsActive = current && playheadMs >= current.clip.start && playheadMs < current.clip.start + current.clip.duration;
-      const top = currentIsActive ? selectedId : activeClip("VIDEO", playheadMs)?.clip.id || null;
+      const top = currentIsActive ? selectedId : activeVisualClips(playheadMs).at(-1)?.clip.id || null;
       if (top !== selectedId && selectedIds.size <= 1) {
         selectedId = top;
         selectedIds = new Set(top ? [top] : []);
@@ -741,21 +827,73 @@
     } else seek();
   }
 
+  function syncVisualLayers(shouldPlay, force = false) {
+    if (!previewLayers || standalonePreviewAssetId) return;
+    preview.hidden = true;
+    let active = activeVisualClips(playheadMs);
+    const selected = findClip(selectedId);
+    if (selected && ["VIDEO", "IMAGE"].includes(clipKind(selected.clip)) && !active.some(item => item.clip.id === selected.clip.id)) {
+      const trackIndex = timeline.tracks.indexOf(selected.track);
+      active.push({...selected, trackIndex, clipIndex: selected.track.clips.indexOf(selected.clip), selectedOutside: true});
+    }
+    const activeIds = new Set(active.map(item => item.clip.id));
+    active.forEach((item, index) => {
+      const asset = assetMap.get(item.clip.assetId);
+      if (!asset) return;
+      let node = visualPlayers.get(item.clip.id);
+      const expectedTag = asset.kind === "IMAGE" ? "IMG" : "VIDEO";
+      if (node && node.tagName !== expectedTag) { node.remove(); visualPlayers.delete(item.clip.id); node = null; }
+      if (!node) {
+        node = document.createElement(asset.kind === "IMAGE" ? "img" : "video");
+        node.className = "movie-preview-layer";
+        node.dataset.clipId = item.clip.id;
+        if (node.tagName === "VIDEO") { node.playsInline = true; node.preload = "auto"; node.muted = true; }
+        previewLayers.append(node);
+        visualPlayers.set(item.clip.id, node);
+      }
+      const source = asset.proxyUrl || asset.originalUrl;
+      if (node.dataset.assetId !== asset.id) {
+        node.dataset.assetId = asset.id;
+        node.src = source;
+        if (node.tagName === "VIDEO") node.load();
+      }
+      node.style.zIndex = String(item.clip.id === selectedId ? active.length + 2 : index + 1);
+      node.classList.toggle("selected-layer", item.clip.id === selectedId);
+      applyGeometry(node, asset, item.clip);
+      if (node.tagName === "VIDEO") {
+        const at = item.selectedOutside ? item.clip.start : playheadMs;
+        const target = Math.max(0, (item.clip.sourceStart + (at - item.clip.start) * Number(item.clip.speed || 1)) / 1000);
+        const seek = () => {
+          const maximum = Number.isFinite(node.duration) ? Math.max(0, node.duration - .01) : target;
+          if (force || Math.abs((node.currentTime || 0) - target) > (shouldPlay ? .65 : .04)) node.currentTime = clamp(target, 0, maximum);
+          node.playbackRate = clamp(Number(item.clip.speed || 1), .1, 8);
+          if (shouldPlay && !item.selectedOutside && node.paused) node.play().catch(error => { previewStatus.textContent = error.message; });
+          else if (!shouldPlay || item.selectedOutside) node.pause();
+        };
+        if (node.readyState < 1) node.addEventListener("loadedmetadata", seek, {once: true}); else seek();
+      }
+    });
+    [...visualPlayers.entries()].forEach(([clipId, node]) => {
+      if (!activeIds.has(clipId)) { if (node.pause) node.pause(); node.remove(); visualPlayers.delete(clipId); }
+    });
+    previewEmpty.hidden = active.length > 0;
+    previewOutline.hidden = !selected || !activeIds.has(selected.clip.id);
+    updatePreviewGeometry();
+  }
+
   function syncPlayers(shouldPlay, force = false) {
     if (standalonePreviewAssetId) {
       if (shouldPlay) preview.play().catch(error => { previewStatus.textContent = error.message; });
       return;
     }
-    const visibleVideo = activeClip("VIDEO", playheadMs);
-    setPlayer(preview, visibleVideo, shouldPlay, force);
+    syncVisualLayers(shouldPlay, force);
     const activeAudio = [];
     timeline.tracks.forEach(track => {
       if (track.muted) return;
       track.clips.forEach(clip => {
         const asset = assetMap.get(clip.assetId);
         const hasAudio = asset?.hasAudio || Boolean(asset?.waveformUrl) || clipKind(clip) === "AUDIO";
-        const isPreviewAudio = visibleVideo?.clip.id === clip.id;
-        if (hasAudio && !isPreviewAudio && playheadMs >= clip.start && playheadMs < clip.start + clip.duration) {
+        if (hasAudio && playheadMs >= clip.start && playheadMs < clip.start + clip.duration) {
           activeAudio.push({clip, track});
         }
       });
@@ -778,6 +916,7 @@
     playing = false;
     cancelAnimationFrame(playbackFrame);
     preview.pause();
+    visualPlayers.forEach(player => { if (player.pause) player.pause(); });
     audioPlayers.forEach(player => player.pause());
     q("[data-preview-play]").innerHTML = "&#9654;";
     previewStatus.textContent = "Ready";
@@ -851,6 +990,14 @@
     label.append(caption, input);
     return label;
   };
+  const inspectorGroup = (title, ...children) => {
+    const group = document.createElement("section");
+    const heading = document.createElement("strong");
+    group.className = "movie-inspector-group";
+    heading.textContent = title;
+    group.append(heading, ...children);
+    return group;
+  };
   const inspectorButton = (text, title, action) => {
     const button = document.createElement("button");
     button.type = "button"; button.className = "icon-button secondary"; button.textContent = text;
@@ -897,13 +1044,6 @@
     }
     const found = findClip(selectedId);
     actionSet(!found);
-    if (["EFFECTS", "COLOR"].includes(inspectorTab)) {
-      const empty = document.createElement("p");
-      empty.className = "movie-inspector-empty";
-      empty.textContent = found ? `${inspectorTab === "EFFECTS" ? "Effects" : "Color"} controls are ready for the next editing module` : "Select a timeline clip";
-      inspector.append(empty);
-      return;
-    }
     const clip = found?.clip;
     const track = found?.track;
     const asset = clip ? assetMap.get(clip.assetId) : null;
@@ -912,9 +1052,9 @@
     const start = numberInput(((clip?.start || 0) / 1000).toFixed(3), timeStep, "0");
     const end = numberInput((((clip?.start || 0) + (clip?.duration || 0)) / 1000).toFixed(3), timeStep, "0");
     const marker = numberInput((playheadMs / 1000).toFixed(3), timeStep, "0");
-    const positionX = numberInput(Number(clip?.positionX || 0).toFixed(2), ".25", "-500");
-    const positionY = numberInput(Number(clip?.positionY || 0).toFixed(2), ".25", "-500");
-    positionX.max = "500"; positionY.max = "500";
+    const positionX = numberInput(Math.round(Number(clip?.positionX || 0)), "1", "-7680");
+    const positionY = numberInput(Math.round(Number(clip?.positionY || 0)), "1", "-7680");
+    positionX.max = "7680"; positionY.max = "7680";
     const clipScale = document.createElement("input");
     clipScale.type = "range"; clipScale.min = ".05"; clipScale.max = "8"; clipScale.step = ".01";
     clipScale.value = Number(clip?.scale || 1).toFixed(2);
@@ -933,7 +1073,23 @@
     [name, start, end, positionX, positionY, clipScale, speed, speedMethod, fadeIn, fadeOut, volume].forEach(control => control.disabled = !found || !canEdit || track?.locked);
     marker.disabled = !timelineEnd();
     if (!found) {
-      inspector.append(field("Name", name), field("Start", start), field("End", end), field("Playhead", marker));
+      inspector.append(inspectorGroup("Selection", field("Name", name), field("Start", start), field("End", end), field("Playhead", marker)));
+      return;
+    }
+    if (["EFFECTS", "COLOR"].includes(inspectorTab)) {
+      const controls = inspectorTab === "EFFECTS" ? [
+        ["Opacity", "opacity", 0, 1, .05], ["Blur", "blur", 0, 40, .5], ["Sharpen", "sharpen", 0, 5, .1],
+      ] : [
+        ["Brightness", "brightness", -1, 1, .05], ["Contrast", "contrast", 0, 3, .05],
+        ["Saturation", "saturation", 0, 3, .05], ["Gamma", "gamma", .1, 3, .05],
+      ];
+      const fields = controls.map(([label, key, minimum, maximum, step]) => {
+        const input = document.createElement("input"); input.type = "range"; input.min = minimum; input.max = maximum; input.step = step; input.value = clip[key];
+        input.disabled = !canEdit || track.locked;
+        input.onchange = () => mutate(() => { clip[key] = clamp(Number(input.value), minimum, maximum); syncPlayers(false, true); });
+        return field(label, input);
+      });
+      inspector.append(inspectorGroup(inspectorTab === "EFFECTS" ? "Visual effects" : "Color correction", ...fields));
       return;
     }
     name.onchange = event => mutate(() => { clip.name = event.target.value; renderTimeline(); });
@@ -955,8 +1111,8 @@
     });
     marker.onchange = event => { stopPlayback(); setPlayhead(quantizeFrame(Number(event.target.value) * 1000)); };
     const updatePosition = () => mutate(() => {
-      clip.positionX = clamp(Number(positionX.value), -500, 500);
-      clip.positionY = clamp(Number(positionY.value), -500, 500);
+      clip.positionX = clamp(Number(positionX.value), -7680, 7680);
+      clip.positionY = clamp(Number(positionY.value), -7680, 7680);
       updatePreviewGeometry();
     });
     positionX.onchange = updatePosition; positionY.onchange = updatePosition;
@@ -970,7 +1126,7 @@
     };
     clipScale.onchange = () => {
       clip.scale = clamp(Number(clipScale.value), .05, 8);
-      historyRedo = []; updateDirty(); updateHistoryButtons(); scaleRemembered = false;
+      historyRedo = []; updateDirty(); updateHistoryButtons(); scaleRemembered = false; scheduleAutosave();
       updateScaleValue(); updatePreviewGeometry();
     };
     updateScaleValue();
@@ -986,6 +1142,10 @@
     fadeIn.onchange = () => mutate(() => { clip.fadeIn = clamp(Math.round(Number(fadeIn.value) * 1000), 0, 2000); });
     fadeOut.onchange = () => mutate(() => { clip.fadeOut = clamp(Math.round(Number(fadeOut.value) * 1000), 0, 2000); });
     if (inspectorTab === "AUDIO") {
+      const cleanup = document.createElement("select");
+      [["NONE", "Original"], ["VOICE", "Voice clarity"], ["DENOISE", "Noise reduction"]].forEach(([value, label]) => { const option = document.createElement("option"); option.value = value; option.textContent = label; cleanup.append(option); });
+      cleanup.value = clip.audioCleanup || "NONE"; cleanup.disabled = !canEdit || track.locked;
+      cleanup.onchange = () => mutate(() => { clip.audioCleanup = cleanup.value; });
       const automation = document.createElement("div"); automation.className = "movie-volume-automation";
       const pointArea = document.createElement("div"); pointArea.className = "movie-volume-points"; pointArea.title = "Volume automation key points";
       (clip.volumeKeyframes || []).forEach((point, index) => {
@@ -1014,7 +1174,11 @@
       automationActions.append(addPoint, removePoint, jCut, lCut);
       automation.append(pointArea, automationActions);
       const source = document.createElement("div"); source.className = "movie-source-readout"; source.textContent = `Source: ${asset?.name || clip.sourceAssetId}`;
-      inspector.append(field("Volume", volume), field("Fade in (s)", fadeIn), field("Fade out (s)", fadeOut), field("Start", start), field("End", end), field("Playhead", marker), automation, source);
+      inspector.append(
+        inspectorGroup("Sound", field("Cleanup", cleanup), field("Volume", volume), field("Fade in (s)", fadeIn), field("Fade out (s)", fadeOut)),
+        inspectorGroup("Timing", field("Start", start), field("End", end), field("Playhead", marker)),
+        inspectorGroup("Automation", automation), source,
+      );
       return;
     }
     const scaleWrap = document.createElement("label");
@@ -1038,10 +1202,10 @@
     const pad = document.createElement("div");
     pad.className = "movie-position-pad"; pad.title = "Move rendered video inside the output frame";
     const nudgePosition = (dx, dy) => {
-      mutate(() => { clip.positionX = clamp(Number(clip.positionX || 0) + dx, -500, 500); clip.positionY = clamp(Number(clip.positionY || 0) + dy, -500, 500); updatePreviewGeometry(); });
+      mutate(() => { clip.positionX = clamp(Number(clip.positionX || 0) + dx, -7680, 7680); clip.positionY = clamp(Number(clip.positionY || 0) + dy, -7680, 7680); updatePreviewGeometry(); });
       renderInspector();
     };
-    [["&#8593;", 0, -1, "Move video up"], ["&#8592;", -1, 0, "Move video left"], ["&#9679;", 0, 0, "Center video"], ["&#8594;", 1, 0, "Move video right"], ["&#8595;", 0, 1, "Move video down"]].forEach(([symbol, dx, dy, title]) => {
+    [["&#8593;", 0, 1, "Move video up one pixel"], ["&#8592;", -1, 0, "Move video left one pixel"], ["&#9679;", 0, 0, "Center video"], ["&#8594;", 1, 0, "Move video right one pixel"], ["&#8595;", 0, -1, "Move video down one pixel"]].forEach(([symbol, dx, dy, title]) => {
       const button = document.createElement("button"); button.type = "button"; button.className = "icon-button secondary"; button.innerHTML = symbol; button.title = title;
       button.disabled = !canEdit || track.locked;
       if (dx) button.dataset.positionX = dx; if (dy) button.dataset.positionY = dy;
@@ -1058,7 +1222,7 @@
     });
     const source = document.createElement("div"); source.className = "movie-source-readout"; source.textContent = `Source media: ${asset?.name || clip.sourceAssetId} / ${clip.sourceAssetId}`;
     const coordinates = document.createElement("div"); coordinates.className = "movie-position-coordinates";
-    coordinates.append(field("X", positionX), field("Y", positionY));
+    coordinates.append(field("X (px)", positionX), field("Y (px)", positionY));
     const timelinePad = document.createElement("div"); timelinePad.className = "movie-position-pad movie-timeline-position-pad"; timelinePad.title = "Move the clip on the timeline";
     const alignToPlayhead = () => {
       const selected = [...selectedIds].map(findClip).filter(item => item && !item.track.locked);
@@ -1078,7 +1242,13 @@
       button.innerHTML = symbol; button.title = title; button.disabled = !canEdit || track.locked;
       bindHold(button, action); timelinePad.append(button);
     });
-    inspector.append(field("Name", name), scaleWrap, field("Start", start), field("End", end), field("Playhead", marker), field("Speed", speed), field("Interpolation", speedMethod), coordinates, pad, timelinePad, source);
+    inspector.append(
+      inspectorGroup("Clip", field("Name", name), scaleWrap),
+      inspectorGroup("Timeline", field("Start", start), field("End", end), field("Playhead", marker), timelinePad),
+      inspectorGroup("Transform", coordinates, pad),
+      inspectorGroup("Playback", field("Speed", speed), field("Interpolation", speedMethod)),
+      source,
+    );
   }
 
   function selectClip(id, movePlayhead = false, additive = false) {
@@ -1096,6 +1266,7 @@
     }
     qa(".movie-clip").forEach(node => node.classList.toggle("selected", selectedIds.has(node.dataset.clipId)));
     renderInspector();
+    if (!playing) syncPlayers(false, true);
   }
 
   function deleteSelected() {
@@ -1224,7 +1395,7 @@
     if (!asset || asset.status !== "READY" || track.locked) return;
     let clip;
     mutate(() => {
-      clip = {id: uid(), assetId, sourceAssetId: assetId, name: asset.name, start: snapTime(start, null), sourceStart: 0, duration: Math.max(200, asset.durationMs || 8000), volume: 1, speed: 1, speedMethod: "FRAME_SAMPLE", fadeIn: 0, fadeOut: 0, volumeKeyframes: []};
+      clip = {id: uid(), assetId, sourceAssetId: assetId, name: asset.name, start: snapTime(start, null), sourceStart: 0, duration: Math.max(200, asset.durationMs || 8000), volume: 1, scale: 1, positionX: 0, positionY: 0, positionUnit: "PIXELS", speed: 1, speedMethod: "FRAME_SAMPLE", fadeIn: 0, fadeOut: 0, audioCleanup: "NONE", opacity: 1, blur: 0, sharpen: 0, brightness: 0, contrast: 1, saturation: 1, gamma: 1, volumeKeyframes: []};
       track.clips.push(clip);
       selectedId = clip.id;
       selectedIds = new Set([clip.id]);
@@ -1288,7 +1459,7 @@
     };
     height.onchange = () => {
       track.height = clamp(Number(height.value), 56, 200);
-      historyRedo = []; updateDirty(); updateHistoryButtons(); heightRemembered = false;
+      historyRedo = []; updateDirty(); updateHistoryButtons(); heightRemembered = false; scheduleAutosave();
       localStorage.setItem("studio-movie-track-height", String(track.height));
       renderTimeline();
     };
@@ -1402,7 +1573,7 @@
           timeline.tracks.forEach(item => { item.clips = item.clips.filter(existing => !movedIds.has(existing.id)); });
           items.forEach(item => { item.targetTrack.clips.push(item.clip); placedTrackIds.add(item.targetTrack.id); });
         }
-        historyRedo = []; updateDirty(); updateHistoryButtons();
+        historyRedo = []; updateDirty(); updateHistoryButtons(); scheduleAutosave();
       }
       renderTimeline(); renderInspector();
       placedTrackIds.forEach(id => {
@@ -1533,6 +1704,10 @@
     if (!menu) return;
     menu.querySelector("[data-clip-context-current]").textContent = clip.name || "Untitled clip";
     menu.querySelector("[data-clip-context-source]").textContent = asset?.name || clip.sourceAssetId || "Unknown source";
+    const download = menu.querySelector("[data-clip-source-download]");
+    if (download) download.href = asset?.downloadUrl || asset?.originalUrl || "#";
+    const render = menu.querySelector("[data-clip-render-project]");
+    if (render) render.onclick = () => { menu.hidden = true; queueClipAsset(); };
     menu.hidden = false;
     const width = 300;
     menu.style.left = `${clamp(event.clientX, 8, innerWidth - width - 8)}px`;
@@ -1592,7 +1767,10 @@
       if (!selectedIds.has(clip.id)) selectClip(clip.id, false);
       showClipContext(event, clip);
     };
-    body.onpointerdown = event => beginClipGesture(event, clip, track, "move", node);
+    node.onpointerdown = event => {
+      if (event.target === left || event.target === right) return;
+      beginClipGesture(event, clip, track, "move", node);
+    };
     left.onpointerdown = event => beginClipGesture(event, clip, track, "left", node);
     right.onpointerdown = event => beginClipGesture(event, clip, track, "right", node);
     return node;
@@ -1609,6 +1787,7 @@
   }
 
   function renderTimeline() {
+    const scrollState = {left: timelineScroll.scrollLeft, top: timelineScroll.scrollTop};
     normalizeTimeline();
     const duration = visibleDuration();
     timelineCanvas.style.width = `${Math.max(timelineScroll.clientWidth || 600, duration / 1000 * zoom)}px`;
@@ -1645,9 +1824,10 @@
       if (!track.clips.length) lane.innerHTML = '<span class="movie-empty">Drop a clip anywhere across this track</span>';
       tracksNode.append(lane);
     });
-    setPlayhead(playheadMs, false, true);
+    setPlayhead(playheadMs, false, false);
     q("[data-zoom-label]").textContent = `${zoom} px/s`;
     zoomInput.value = zoom;
+    requestAnimationFrame(() => { timelineScroll.scrollLeft = scrollState.left; timelineScroll.scrollTop = scrollState.top; });
   }
 
   function changeZoom(next, anchorClientX = null) {
@@ -1690,9 +1870,12 @@
       copy.innerHTML = `<strong>${asset.name}</strong><small>${asset.kind} / ${mediaStatus(asset)}</small><small>${asset.attached ? "Attached to project" : "Workspace media"}</small>`;
       button.append(visual, copy);
       button.onclick = async () => {
-        if (asset.attached) { libraryDialog.close(); bin.querySelector(`[data-asset-id="${asset.id}"]`)?.scrollIntoView({block: "nearest"}); return; }
+        if (asset.attached) {
+          mutate(() => { if (!timeline.mediaAssetIds.includes(asset.id)) timeline.mediaAssetIds.push(asset.id); });
+          libraryDialog.close(); renderBin(); bin.querySelector(`[data-asset-id="${asset.id}"]`)?.scrollIntoView({block: "nearest"}); return;
+        }
         button.disabled = true;
-        try { await requestJson(root.dataset.mediaUrl, {method: "POST", headers: {"Content-Type": "application/json", "X-CSRFToken": csrfToken()}, body: JSON.stringify({assetId: asset.id})}); await refreshMedia(); }
+        try { await requestJson(root.dataset.mediaUrl, {method: "POST", headers: {"Content-Type": "application/json", "X-CSRFToken": csrfToken()}, body: JSON.stringify({assetId: asset.id})}); mutate(() => { if (!timeline.mediaAssetIds.includes(asset.id)) timeline.mediaAssetIds.push(asset.id); }); await refreshMedia(); libraryDialog.close(); }
         catch (error) { toast(error.message, "error"); }
         button.disabled = false;
       };
@@ -1762,15 +1945,45 @@
     try { const item = await montageAction("copy", {title: `${q("[data-movie-title]").value} copy`}); location.assign(item.openUrl); }
     catch (error) { toast(error.message, "error"); }
   });
+  const importDialog = q("[data-import-dialog]");
+  let pendingImport = null;
   q("[data-edit-import]")?.addEventListener("click", () => q("[data-edit-import-file]")?.click());
   q("[data-edit-import-file]")?.addEventListener("change", async event => {
     const file = event.target.files?.[0]; if (!file) return;
-    const form = new FormData(); form.append("file", file);
+    try {
+      const parsed = JSON.parse(await file.text());
+      const importedTimeline = parsed.timeline || parsed;
+      if (!Array.isArray(importedTimeline.tracks)) throw new Error("The montage file has no tracks");
+      pendingImport = {file, parsed, timeline: importedTimeline};
+      q("[data-import-file-name]").textContent = file.name;
+      const trackSelect = q("[data-import-track]"); trackSelect.replaceChildren();
+      importedTimeline.tracks.forEach((track, index) => { const option = document.createElement("option"); option.value = index; option.textContent = `${track.name || track.kind || "Track"} (${track.clips?.length || 0} clips)`; trackSelect.append(option); });
+      q("[data-import-mode]").value = "project"; q("[data-import-track-field]").hidden = true;
+      importDialog.showModal();
+    } catch (error) { toast(error.message || "The montage file is invalid", "error"); }
+    event.target.value = "";
+  });
+  q("[data-import-mode]")?.addEventListener("change", event => { q("[data-import-track-field]").hidden = event.target.value !== "track"; });
+  const closeImport = () => { pendingImport = null; importDialog?.close(); };
+  q("[data-import-close]")?.addEventListener("click", closeImport); q("[data-import-cancel]")?.addEventListener("click", closeImport);
+  q("[data-import-apply]")?.addEventListener("click", async () => {
+    if (!pendingImport) return;
+    if (q("[data-import-mode]").value === "track") {
+      const source = pendingImport.timeline.tracks[Number(q("[data-import-track]").value)];
+      if (!source) return;
+      mutate(() => {
+        const track = structuredClone(source); track.id = uid(); track.name = `${track.name || track.kind || "Track"} imported`;
+        track.clips = (track.clips || []).map(clip => ({...clip, id: uid(), groupId: clip.groupId ? uid() : undefined}));
+        timeline.tracks.push(track);
+      });
+      closeImport(); renderTimeline(); renderInspector(); toast("Track imported");
+      return;
+    }
+    const form = new FormData(); form.append("file", pendingImport.file);
     try {
       const item = await requestJson(root.dataset.editsUrl, {method: "POST", headers: {"X-CSRFToken": csrfToken()}, body: form});
       location.assign(item.openUrl);
     } catch (error) { toast(error.message, "error"); }
-    event.target.value = "";
   });
   q("[data-edit-detach]")?.addEventListener("click", async () => {
     try { await montageAction("detach"); location.assign(root.dataset.saveUrl); }
@@ -1801,7 +2014,7 @@
     const progress = q("[data-media-progress]"); const bar = progress.querySelector("i"); progress.hidden = false; bar.style.width = "0";
     const xhr = new XMLHttpRequest(); xhr.open("POST", root.dataset.mediaUrl); xhr.setRequestHeader("X-CSRFToken", csrfToken());
     xhr.upload.onprogress = update => { if (update.lengthComputable) bar.style.width = `${Math.round(update.loaded / update.total * 100)}%`; };
-    xhr.onload = async () => { progress.hidden = true; input.value = ""; let data = {}; try { data = JSON.parse(xhr.responseText); } catch (_) {} if (xhr.status >= 400) toast(data.error || "Upload failed", "error"); else if (data.errors?.length) toast(data.errors.join(" / "), "error"); await refreshMedia(); };
+    xhr.onload = async () => { progress.hidden = true; input.value = ""; let data = {}; try { data = JSON.parse(xhr.responseText); } catch (_) {} if (xhr.status >= 400) toast(data.error || "Upload failed", "error"); else { mutate(() => (data.items || []).forEach(item => { if (!timeline.mediaAssetIds.includes(item.id)) timeline.mediaAssetIds.push(item.id); })); if (data.errors?.length) toast(data.errors.join(" / "), "error"); } await refreshMedia(); };
     xhr.onerror = () => { progress.hidden = true; toast("Upload failed", "error"); };
     xhr.send(form);
   });
@@ -1833,11 +2046,7 @@
   preview.addEventListener("loadedmetadata", () => updatePreviewGeometry());
   preview.addEventListener("error", () => { previewStatus.textContent = preview.error?.message || "Preview failed"; });
   previewStage.addEventListener("pointerdown", beginPreviewPan);
-  previewStage.addEventListener("wheel", event => {
-    if (event.ctrlKey || event.metaKey) return;
-    event.preventDefault();
-    window.scrollBy({left: event.deltaX, top: event.deltaY, behavior: "auto"});
-  }, {passive: false});
+  previewStage.addEventListener("wheel", () => {}, {passive: true});
   playheadNode.addEventListener("pointerdown", beginPlayheadGesture);
   previewZoomInput?.addEventListener("input", event => {
     previewZoom = clamp(Number(event.target.value), .25, 2);
@@ -1872,12 +2081,22 @@
   q("[data-zoom-in]").onclick = () => changeZoom(zoom + 4);
   q("[data-editor-undo]").onclick = undo;
   q("[data-editor-redo]").onclick = redo;
-  q("[data-export-timeline]").onclick = () => {
+  const saveAsDialog = q("[data-save-as-dialog]");
+  const downloadMontageJson = () => {
     const item = movieEdits.find(edit => edit.id === timelineId);
     if (item?.exportUrl && !dirty) { location.assign(item.exportUrl); return; }
     const payload = {format: "lexamora-montage-project", version: 1, title: q("[data-movie-title]").value, aspectRatio: q("[data-movie-ratio]").value, resolution: q("[data-movie-resolution]").value, fps: Number(q("[data-movie-fps]").value), timeline};
     const blob = new Blob([JSON.stringify(payload, null, 2)], {type: "application/json"}); const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = `${q("[data-movie-title]").value || "draft"}-montage.json`; link.click(); URL.revokeObjectURL(link.href);
   };
+  q("[data-export-timeline]").onclick = () => saveAsDialog?.showModal();
+  q("[data-save-as-close]")?.addEventListener("click", () => saveAsDialog.close());
+  q("[data-save-as-json]")?.addEventListener("click", () => { saveAsDialog.close(); downloadMontageJson(); });
+  q("[data-save-as-bundle]")?.addEventListener("click", async () => {
+    const item = movieEdits.find(edit => edit.id === timelineId);
+    if (!item?.exportUrl) return;
+    if (dirty && !await saveTimeline(true)) return;
+    saveAsDialog.close(); location.assign(`${item.exportUrl}?bundle=media`);
+  });
   q("[data-movie-history-toggle]").onclick = async () => { historyPanel.hidden = !historyPanel.hidden; if (!historyPanel.hidden) await loadHistory(); };
   q("[data-movie-history-close]").onclick = () => { historyPanel.hidden = true; };
   q("[data-render-toggle]")?.addEventListener("click", () => { renderPanel.hidden = !renderPanel.hidden; if (!renderPanel.hidden) refreshRenders(); });
@@ -1901,7 +2120,7 @@
         applyCanvas();
       }
       if (control.matches("[data-movie-fps]")) renderTimeline();
-      updateDirty(); updateHistoryButtons();
+      updateDirty(); updateHistoryButtons(); scheduleAutosave();
     });
   });
 
@@ -1928,6 +2147,9 @@
       if (!event.target.closest("summary") || !details.contains(event.target)) details.removeAttribute("open");
     });
   });
+  root.addEventListener("pointerdown", event => {
+    if (playing && !event.target.closest("[data-preview-play],[data-preview-step],[data-preview-stop]")) stopPlayback();
+  }, {capture: true});
   let resizeTimer;
   addEventListener("resize", () => {
     clearTimeout(resizeTimer);
