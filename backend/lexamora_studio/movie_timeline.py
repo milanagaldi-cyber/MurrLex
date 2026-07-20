@@ -106,6 +106,11 @@ def normalize_movie_timeline(value):
             "muted": bool(track.get("muted", False)),
             "locked": bool(track.get("locked", False)),
             "height": _number(track.get("height", 84), field="Track height", minimum=56, maximum=200),
+            "displayMode": str(track.get("displayMode") or "CLIPS").upper()
+            if str(track.get("displayMode") or "CLIPS").upper() in {"CLIPS", "WAVEFORM"} else "CLIPS",
+            "loudnessGuide": _float_number(
+                track.get("loudnessGuide", 1), field="Track loudness guide", minimum=0, maximum=2,
+            ),
         })
         normalized_clips = []
         for clip in clips:
@@ -123,6 +128,7 @@ def normalize_movie_timeline(value):
             normalized_clip.update({
                 "id": clip_id,
                 "assetId": asset_id,
+                "sourceAssetId": str(clip.get("sourceAssetId") or asset_id)[:100],
                 "name": str(clip.get("name") or "Clip")[:200],
                 "start": _number(clip.get("start", 0), field="Clip start"),
                 "sourceStart": _number(clip.get("sourceStart", 0), field="Clip source start"),
@@ -148,6 +154,36 @@ def normalize_movie_timeline(value):
             normalized_clip["positionY"] = _float_number(
                 clip.get("positionY", 0), field="Clip vertical position", minimum=-500, maximum=500,
             )
+            normalized_clip["speed"] = _float_number(
+                clip.get("speed", 1), field="Clip speed", minimum=0.1, maximum=8,
+            )
+            speed_method = str(clip.get("speedMethod") or "FRAME_SAMPLE").upper()
+            normalized_clip["speedMethod"] = speed_method if speed_method in {
+                "FRAME_SAMPLE", "FRAME_BLEND", "OPTICAL_FLOW",
+            } else "FRAME_SAMPLE"
+            normalized_clip["fadeIn"] = _number(
+                clip.get("fadeIn", 0), field="Clip fade in", minimum=0, maximum=2_000,
+            )
+            normalized_clip["fadeOut"] = _number(
+                clip.get("fadeOut", 0), field="Clip fade out", minimum=0, maximum=2_000,
+            )
+            keyframes = clip.get("volumeKeyframes", [])
+            if not isinstance(keyframes, list) or len(keyframes) > 100:
+                raise MovieTimelineValidationError("Clip volume keyframes must be a list with at most 100 points.")
+            normalized_keyframes = []
+            for point in keyframes:
+                if not isinstance(point, dict):
+                    raise MovieTimelineValidationError("Clip volume keyframe is invalid.")
+                normalized_keyframes.append({
+                    "time": _number(
+                        point.get("time", 0), field="Volume keyframe time", minimum=0,
+                        maximum=normalized_clip["duration"],
+                    ),
+                    "value": _float_number(
+                        point.get("value", 1), field="Volume keyframe value", minimum=0, maximum=2,
+                    ),
+                })
+            normalized_clip["volumeKeyframes"] = sorted(normalized_keyframes, key=lambda point: point["time"])
             normalized_clips.append(normalized_clip)
         normalized_track["clips"] = normalized_clips
         normalized_tracks.append(normalized_track)

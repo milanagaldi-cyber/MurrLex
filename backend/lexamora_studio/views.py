@@ -1,6 +1,7 @@
 import json
 import re
 from datetime import timedelta
+from pathlib import Path
 
 from django.conf import settings
 from django.contrib import messages
@@ -4404,7 +4405,9 @@ def _movie_timeline_media_error(user, project, timeline_data):
                 continue
             if asset.processing_status != Asset.ProcessingStatus.READY:
                 return f"Media {asset.original_filename} is not ready for timeline editing."
-            source_end = int(clip.get("sourceStart", 0)) + int(clip.get("duration", 0))
+            source_end = int(clip.get("sourceStart", 0)) + round(
+                int(clip.get("duration", 0)) * float(clip.get("speed", 1))
+            )
             if asset.duration_ms and source_end > asset.duration_ms + 50:
                 return f"Clip {clip.get('name') or clip.get('id')} extends beyond its source media."
     return ""
@@ -4425,7 +4428,7 @@ def _clamp_movie_timeline_to_sources(user, project, timeline_data):
             if not asset or not asset.duration_ms:
                 continue
             source_start = int(clip.get("sourceStart", 0))
-            available = int(asset.duration_ms) - source_start
+            available = round((int(asset.duration_ms) - source_start) / max(.1, float(clip.get("speed", 1))))
             if available >= 200 and int(clip.get("duration", 0)) > available:
                 clip["duration"] = available
                 repaired = True
@@ -4438,6 +4441,7 @@ def _movie_timeline_assets_are_accessible(user, project, timeline_data):
 
 def _movie_timeline_json(timeline):
     return {
+        "id": str(timeline.id),
         "timeline": normalize_movie_timeline(timeline.timeline or default_movie_timeline()),
         "title": timeline.title,
         "aspectRatio": timeline.aspect_ratio,
@@ -4445,6 +4449,73 @@ def _movie_timeline_json(timeline):
         "fps": timeline.fps,
         "schemaVersion": timeline.schema_version,
         "updatedAt": timeline.updated_at.isoformat(),
+    }
+
+
+def _workspace_movie_timelines(user, workspace):
+    project_ids = accessible_projects(user).filter(workspace=workspace).values_list("id", flat=True)
+    return MovieTimeline.objects.filter(workspace=workspace, is_archived=False).filter(
+        Q(project_id__in=project_ids) | Q(projects__id__in=project_ids)
+    ).distinct()
+
+
+def _project_movie_timelines(user, project):
+    # `project` records the montage's original owner. The many-to-many relation
+    # is the actual attachment, so detaching must not be undone by the owner FK.
+    return _workspace_movie_timelines(user, project.workspace).filter(projects=project).distinct()
+
+
+def _selected_movie_clip_snapshot(snapshot, clip_ids):
+    selected = {str(value) for value in clip_ids if value}
+    if not selected:
+        return snapshot
+    result = {**snapshot, "tracks": []}
+    starts = []
+    for track in snapshot.get("tracks", []):
+        clips = [dict(clip) for clip in track.get("clips", []) if str(clip.get("id")) in selected]
+        if clips:
+            starts.extend(int(clip.get("start", 0)) for clip in clips)
+            result["tracks"].append({**track, "clips": clips})
+    if not starts:
+        raise MovieTimelineValidationError("Choose at least one timeline clip.")
+    origin = min(starts)
+    for track in result["tracks"]:
+        for clip in track["clips"]:
+            clip["start"] = max(0, int(clip.get("start", 0)) - origin)
+    return normalize_movie_timeline(result)
+
+
+def _select_movie_timeline(user, project, timeline_id=None, create=False):
+    timeline = None
+    if timeline_id:
+        timeline = _project_movie_timelines(user, project).filter(id=timeline_id).first()
+    if not timeline:
+        timeline = _project_movie_timelines(user, project).order_by("created_at", "id").first()
+    if not timeline and create:
+        timeline = MovieTimeline.objects.create(
+            workspace=project.workspace,
+            project=project,
+            created_by=user,
+            updated_by=user,
+            timeline=default_movie_timeline(),
+            schema_version=MOVIE_TIMELINE_SCHEMA_VERSION,
+        )
+        timeline.projects.add(project)
+    return timeline
+
+
+def _movie_edit_payload(timeline, project):
+    return {
+        "id": str(timeline.id),
+        "title": timeline.title,
+        "attached": timeline.projects.filter(id=project.id).exists(),
+        "createdAt": timeline.created_at.isoformat(),
+        "updatedAt": timeline.updated_at.isoformat(),
+        "createdBy": timeline.created_by.get_full_name() or timeline.created_by.get_username(),
+        "openUrl": f'{reverse("studio:project_movie_editor", kwargs={"project_id": project.id})}?edit={timeline.id}',
+        "exportUrl": reverse("studio:project_movie_edit_export", kwargs={
+            "project_id": project.id, "timeline_id": timeline.id,
+        }),
     }
 
 
@@ -4536,15 +4607,8 @@ def project_movie_editor(request, project_id):
         id=project_id,
     )
     can_edit = has_project_capability(request.user, project, "edit")
-    timeline, _ = MovieTimeline.objects.get_or_create(
-        project=project,
-        defaults={
-            "created_by": request.user,
-            "updated_by": request.user,
-            "timeline": default_movie_timeline(),
-            "schema_version": MOVIE_TIMELINE_SCHEMA_VERSION,
-        },
-    )
+    requested_timeline_id = request.GET.get("edit")
+    payload = None
     if request.method == "POST":
         if not can_edit:
             return JsonResponse({"error": "Edit permission is required."}, status=403)
@@ -4552,6 +4616,13 @@ def project_movie_editor(request, project_id):
             payload = json.loads(request.body or b"{}")
         except (TypeError, ValueError):
             return JsonResponse({"error": "The timeline is not valid JSON."}, status=400)
+        requested_timeline_id = payload.get("timelineId")
+    timeline = _select_movie_timeline(
+        request.user, project, requested_timeline_id, create=request.method == "GET" or can_edit,
+    )
+    if not timeline:
+        return JsonResponse({"error": "The montage project is not accessible."}, status=404)
+    if request.method == "POST":
         try:
             timeline_data = normalize_movie_timeline(payload.get("timeline"))
         except MovieTimelineValidationError as exc:
@@ -4593,6 +4664,7 @@ def project_movie_editor(request, project_id):
         )
         return JsonResponse({
             "ok": True,
+            "timelineId": str(timeline.id),
             "timeline": timeline_data,
             "repaired": repaired,
             "updatedAt": timeline.updated_at.isoformat(),
@@ -4615,10 +4687,109 @@ def project_movie_editor(request, project_id):
         "movie_render_jobs": [
             _movie_render_payload(job) for job in timeline.render_jobs.select_related("requested_by", "output_asset")[:20]
         ],
+        "movie_edits": [
+            _movie_edit_payload(item, project)
+            for item in _workspace_movie_timelines(request.user, project.workspace).select_related("created_by")
+        ],
+        "movie_edits_url": reverse("studio:project_movie_edits", kwargs={"project_id": project.id}),
         "can_edit": can_edit,
         "can_export": has_project_capability(request.user, project, "export"),
         **_project_header_context(request.user, project),
     })
+
+
+@login_required
+def project_movie_edits(request, project_id):
+    project = get_object_or_404(
+        accessible_projects(request.user).select_related("workspace"), id=project_id,
+    )
+    timelines = _workspace_movie_timelines(request.user, project.workspace).select_related("created_by")
+    if request.method == "GET":
+        return JsonResponse({"items": [_movie_edit_payload(item, project) for item in timelines]})
+    if request.method != "POST":
+        return JsonResponse({"error": "GET or POST is required."}, status=405)
+    if not has_project_capability(request.user, project, "edit"):
+        return JsonResponse({"error": "Edit permission is required."}, status=403)
+    if request.content_type and request.content_type.startswith("multipart/form-data"):
+        action = "import"
+        uploaded = request.FILES.get("file")
+        if not uploaded or uploaded.size > 2_000_000:
+            return JsonResponse({"error": "Choose a montage JSON file up to 2 MB."}, status=400)
+        try:
+            imported = json.loads(uploaded.read().decode("utf-8"))
+            timeline_data = normalize_movie_timeline(imported.get("timeline", imported))
+        except (UnicodeDecodeError, ValueError, MovieTimelineValidationError) as exc:
+            return JsonResponse({"error": f"The montage file is invalid: {exc}"}, status=400)
+        media_error = _movie_timeline_media_error(request.user, project, timeline_data)
+        if media_error:
+            return JsonResponse({"error": media_error}, status=400)
+        title = str(imported.get("title") or Path(uploaded.name).stem or "Imported edit")[:200]
+        timeline = MovieTimeline.objects.create(
+            workspace=project.workspace, project=project, title=title,
+            aspect_ratio=str(imported.get("aspectRatio") or "16:9")[:12],
+            resolution=str(imported.get("resolution") or "1920x1080")[:20],
+            fps=max(1, min(int(imported.get("fps") or 25), 120)),
+            timeline=timeline_data, created_by=request.user, updated_by=request.user,
+        )
+        timeline.projects.add(project)
+    else:
+        try:
+            payload = json.loads(request.body or b"{}")
+        except (TypeError, ValueError):
+            return JsonResponse({"error": "The montage request is not valid JSON."}, status=400)
+        action = str(payload.get("action") or "create").lower()
+        source = timelines.filter(id=payload.get("timelineId")).first() if payload.get("timelineId") else None
+        if action == "create":
+            timeline = MovieTimeline.objects.create(
+                workspace=project.workspace, project=project,
+                title=str(payload.get("title") or "Untitled edit")[:200],
+                created_by=request.user, updated_by=request.user,
+            )
+            timeline.projects.add(project)
+        elif action == "copy" and source:
+            timeline = MovieTimeline.objects.create(
+                workspace=project.workspace, project=project,
+                title=str(payload.get("title") or f"{source.title} copy")[:200],
+                aspect_ratio=source.aspect_ratio, resolution=source.resolution, fps=source.fps,
+                schema_version=source.schema_version, timeline=normalize_movie_timeline(source.timeline),
+                created_by=request.user, updated_by=request.user,
+            )
+            timeline.projects.add(project)
+        elif action == "attach" and source:
+            source.projects.add(project)
+            source_asset_ids = movie_timeline_asset_ids(normalize_movie_timeline(source.timeline or default_movie_timeline()))
+            for asset in accessible_assets(request.user).filter(workspace=project.workspace, id__in=source_asset_ids):
+                asset.projects.add(project)
+            timeline = source
+        elif action == "detach" and source:
+            source.projects.remove(project)
+            return JsonResponse({"ok": True, "detached": True})
+        elif action == "archive" and source:
+            source.is_archived = True
+            source.updated_by = request.user
+            source.save(update_fields=["is_archived", "updated_by", "updated_at"])
+            return JsonResponse({"ok": True, "archived": True})
+        else:
+            return JsonResponse({"error": "Choose create, copy, attach, detach or archive."}, status=400)
+    audit(
+        workspace=project.workspace, actor=request.user, action=f"MOVIE_EDIT_{action.upper()}",
+        instance=project, metadata={"timelineId": str(timeline.id)},
+    )
+    return JsonResponse(_movie_edit_payload(timeline, project), status=201)
+
+
+@login_required
+def project_movie_edit_export(request, project_id, timeline_id):
+    project = get_object_or_404(accessible_projects(request.user), id=project_id)
+    timeline = get_object_or_404(_workspace_movie_timelines(request.user, project.workspace), id=timeline_id)
+    payload = {
+        "format": "lexamora-montage-project",
+        "version": 1,
+        **_movie_timeline_json(timeline),
+    }
+    response = JsonResponse(payload, json_dumps_params={"indent": 2})
+    response["Content-Disposition"] = f'attachment; filename="{slugify(timeline.title) or "montage"}.json"'
+    return response
 
 
 @login_required
@@ -4713,9 +4884,11 @@ def project_movie_renders(request, project_id):
     project = get_object_or_404(
         accessible_projects(request.user).select_related("workspace"), id=project_id,
     )
-    timeline = get_object_or_404(MovieTimeline, project=project)
-    jobs = timeline.render_jobs.select_related("requested_by", "output_asset")
     if request.method == "GET":
+        timeline = _select_movie_timeline(request.user, project, request.GET.get("timelineId"))
+        if not timeline:
+            return JsonResponse({"items": [], "canExport": has_project_capability(request.user, project, "export")})
+        jobs = timeline.render_jobs.select_related("requested_by", "output_asset")
         return JsonResponse({
             "items": [_movie_render_payload(job) for job in jobs[:50]],
             "canExport": has_project_capability(request.user, project, "export"),
@@ -4740,7 +4913,14 @@ def project_movie_renders(request, project_id):
         return JsonResponse({"error": "Target loudness must be a valid LUFS value."}, status=400)
     if target_lufs not in {-14, -16, -18, -23}:
         return JsonResponse({"error": "Choose -14, -16, -18 or -23 LUFS."}, status=400)
+    timeline = _select_movie_timeline(request.user, project, payload.get("timelineId"))
+    if not timeline:
+        return JsonResponse({"error": "The montage project is not accessible."}, status=404)
     snapshot = normalize_movie_timeline(timeline.timeline or default_movie_timeline())
+    try:
+        snapshot = _selected_movie_clip_snapshot(snapshot, payload.get("clipIds") or [])
+    except MovieTimelineValidationError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
     media_error = _movie_timeline_media_error(request.user, project, snapshot)
     if media_error:
         return JsonResponse({"error": media_error}, status=400)
@@ -4831,7 +5011,9 @@ def project_movie_render_job(request, project_id, job_id):
 @login_required
 def project_movie_editor_revisions(request, project_id):
     project = get_object_or_404(accessible_projects(request.user), id=project_id)
-    timeline = get_object_or_404(MovieTimeline, project=project)
+    timeline = _select_movie_timeline(request.user, project, request.GET.get("timelineId"))
+    if not timeline:
+        return JsonResponse({"items": [], "canRestore": False})
     items = [{
         "id": str(revision.id),
         "title": revision.title,
@@ -4852,8 +5034,10 @@ def project_movie_editor_revision_restore(request, project_id, revision_id):
     project = get_object_or_404(accessible_projects(request.user), id=project_id)
     if not has_project_capability(request.user, project, "edit"):
         return JsonResponse({"error": "Edit permission is required."}, status=403)
-    timeline = get_object_or_404(MovieTimeline, project=project)
-    revision = get_object_or_404(MovieTimelineRevision, id=revision_id, timeline=timeline)
+    revision = get_object_or_404(MovieTimelineRevision.objects.select_related("timeline"), id=revision_id)
+    timeline = revision.timeline
+    if not _project_movie_timelines(request.user, project).filter(id=timeline.id).exists():
+        return JsonResponse({"error": "The montage project is not accessible."}, status=404)
     try:
         restored_data = normalize_movie_timeline(revision.snapshot)
     except MovieTimelineValidationError as exc:

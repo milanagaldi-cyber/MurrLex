@@ -147,7 +147,7 @@ def _create_filmstrip(source, target, duration_ms):
 def _create_waveform(source, target):
     _run([
         settings.STUDIO_FFMPEG_BINARY, "-y", "-i", str(source),
-        "-filter_complex", "aformat=channel_layouts=mono,showwavespic=s=1200x160:colors=38d99b",
+        "-filter_complex", "aformat=channel_layouts=mono,showwavespic=s=1200x160:colors=38d99b:draw=full",
         "-frames:v", "1", str(target),
     ])
 

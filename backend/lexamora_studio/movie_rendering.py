@@ -40,6 +40,46 @@ def _clip_audio_cleanup(job):
     return ""
 
 
+def _atempo_chain(speed):
+    factors = []
+    remaining = max(0.1, min(8.0, float(speed)))
+    while remaining > 2:
+        factors.append(2.0)
+        remaining /= 2
+    while remaining < 0.5:
+        factors.append(0.5)
+        remaining /= 0.5
+    factors.append(remaining)
+    return ",".join(f"atempo={factor:.6f}" for factor in factors)
+
+
+def _volume_automation(clip, duration_seconds):
+    base = max(0, min(2, float(clip.get("volume", 1))))
+    points = [{"time": 0.0, "value": base}]
+    for point in clip.get("volumeKeyframes", []):
+        points.append({
+            "time": max(0, min(duration_seconds, float(point.get("time", 0)) / 1000)),
+            "value": max(0, min(2, float(point.get("value", base)))),
+        })
+    points.append({"time": duration_seconds, "value": base})
+    points.sort(key=lambda item: item["time"])
+    compact = []
+    for point in points:
+        if compact and abs(point["time"] - compact[-1]["time"]) < 0.0001:
+            compact[-1] = point
+        else:
+            compact.append(point)
+    expression = f"{compact[-1]['value']:.6f}"
+    for left, right in reversed(list(zip(compact, compact[1:]))):
+        span = max(0.001, right["time"] - left["time"])
+        ramp = (
+            f"{left['value']:.6f}+({right['value'] - left['value']:.6f})"
+            f"*(t-{left['time']:.6f})/{span:.6f}"
+        )
+        expression = f"if(lt(t,{right['time']:.6f}),{ramp},{expression})"
+    return f"volume='{expression}':eval=frame"
+
+
 def _asset_kind(asset):
     content_type = str(getattr(asset, "content_type", "") or "")
     if content_type.startswith("audio/"):
@@ -109,15 +149,22 @@ def build_render_command(job, assets, output_path):
     for track_index, clip_index, track, clip, asset, input_index in visual_order:
         source_start = int(clip.get("sourceStart", 0)) / 1000
         clip_duration = int(clip.get("duration", 0)) / 1000
+        speed = max(0.1, min(8, float(clip.get("speed", 1))))
+        source_duration = clip_duration * speed
         timeline_start = int(clip.get("start", 0)) / 1000
         scale = min(8, max(0.05, float(clip.get("scale", 1))))
         position_x = min(500, max(-500, float(clip.get("positionX", 0))))
         position_y = min(500, max(-500, float(clip.get("positionY", 0))))
         prepared = f"v{video_number}"
         composed = f"vc{video_number}"
+        interpolation = ""
+        if clip.get("speedMethod") == "FRAME_BLEND":
+            interpolation = f"minterpolate=fps={job.fps}:mi_mode=blend,"
+        elif clip.get("speedMethod") == "OPTICAL_FLOW":
+            interpolation = f"minterpolate=fps={job.fps}:mi_mode=mci:mc_mode=aobmc:me_mode=bidir,"
         filters.append(
-            f"[{input_index}:v]trim=start={source_start:.3f}:duration={clip_duration:.3f},"
-            f"setpts=PTS-STARTPTS+{timeline_start:.3f}/TB,"
+            f"[{input_index}:v]trim=start={source_start:.3f}:duration={source_duration:.3f},"
+            f"setpts=(PTS-STARTPTS)/{speed:.6f},{interpolation}setpts=PTS+{timeline_start:.3f}/TB,"
             f"scale=w='if(gte(a,{job.width}/{job.height}),ceil({job.height}*a*{scale:.4f}/2)*2,ceil({job.width}*{scale:.4f}/2)*2)':"
             f"h='if(gte(a,{job.width}/{job.height}),ceil({job.height}*{scale:.4f}/2)*2,ceil({job.width}/a*{scale:.4f}/2)*2)',"
             f"setsar=1,format=yuv420p[{prepared}]"
@@ -136,16 +183,25 @@ def build_render_command(job, assets, output_path):
             continue
         source_start = int(clip.get("sourceStart", 0)) / 1000
         clip_duration = int(clip.get("duration", 0)) / 1000
+        speed = max(0.1, min(8, float(clip.get("speed", 1))))
+        source_duration = clip_duration * speed
         timeline_start = int(clip.get("start", 0)) / 1000
-        volume = float(clip.get("volume", 1))
         has_audio = bool((asset.media_metadata or {}).get("audio"))
         if has_audio:
             audio_label = f"a{len(audio_labels)}"
             delay_ms = round(timeline_start * 1000)
             cleanup = _clip_audio_cleanup(job)
+            fade_in = min(2, max(0, float(clip.get("fadeIn", 0)) / 1000))
+            fade_out = min(2, max(0, float(clip.get("fadeOut", 0)) / 1000))
+            fades = ""
+            if fade_in:
+                fades += f"afade=t=in:st=0:d={min(fade_in, clip_duration):.3f},"
+            if fade_out:
+                fades += f"afade=t=out:st={max(0, clip_duration - fade_out):.3f}:d={min(fade_out, clip_duration):.3f},"
             filters.append(
-                f"[{input_index}:a]atrim=start={source_start:.3f}:duration={clip_duration:.3f},"
-                f"asetpts=PTS-STARTPTS,volume={volume:.4f},{cleanup}"
+                f"[{input_index}:a]atrim=start={source_start:.3f}:duration={source_duration:.3f},"
+                f"asetpts=PTS-STARTPTS,{_atempo_chain(speed)},{_volume_automation(clip, clip_duration)},"
+                f"{fades}{cleanup}"
                 f"adelay={delay_ms}|{delay_ms}[{audio_label}]"
             )
             audio_labels.append(audio_label)

@@ -3825,6 +3825,57 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("not supported", response.json()["error"])
 
+    def test_movie_editor_manages_workspace_montage_projects(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from .models import MovieTimeline
+
+        self.client.force_login(self.owner)
+        self.client.get(f"/studio/projects/{self.project.id}/movie-editor/")
+        original = MovieTimeline.objects.get(project=self.project)
+        self.assertTrue(original.projects.filter(id=self.project.id).exists())
+
+        created = self.client.post(
+            f"/studio/projects/{self.project.id}/movie-editor/edits/",
+            data=json.dumps({"action": "create", "title": "Second montage"}),
+            content_type="application/json",
+        )
+        self.assertEqual(created.status_code, 201, created.content)
+        second = MovieTimeline.objects.get(id=created.json()["id"])
+        self.assertEqual(second.workspace, self.workspace)
+        self.assertTrue(second.projects.filter(id=self.project.id).exists())
+
+        copied = self.client.post(
+            f"/studio/projects/{self.project.id}/movie-editor/edits/",
+            data=json.dumps({"action": "copy", "timelineId": str(second.id)}),
+            content_type="application/json",
+        )
+        self.assertEqual(copied.status_code, 201, copied.content)
+        copy = MovieTimeline.objects.get(id=copied.json()["id"])
+        detached = self.client.post(
+            f"/studio/projects/{self.project.id}/movie-editor/edits/",
+            data=json.dumps({"action": "detach", "timelineId": str(copy.id)}),
+            content_type="application/json",
+        )
+        self.assertEqual(detached.status_code, 200, detached.content)
+        self.assertFalse(copy.projects.filter(id=self.project.id).exists())
+
+        exported = self.client.get(
+            f"/studio/projects/{self.project.id}/movie-editor/edits/{second.id}/export/",
+        )
+        self.assertEqual(exported.status_code, 200)
+        self.assertEqual(exported.json()["format"], "lexamora-montage-project")
+
+        imported = self.client.post(
+            f"/studio/projects/{self.project.id}/movie-editor/edits/",
+            {"file": SimpleUploadedFile(
+                "imported-montage.json",
+                json.dumps({"title": "Imported", "timeline": second.timeline}).encode("utf-8"),
+                content_type="application/json",
+            )},
+        )
+        self.assertEqual(imported.status_code, 201, imported.content)
+        self.assertTrue(MovieTimeline.objects.get(id=imported.json()["id"]).projects.filter(id=self.project.id).exists())
+
     def test_movie_editor_accepts_media_on_any_organizational_track(self):
         from django.core.files.uploadedfile import SimpleUploadedFile
         from .models import Asset
@@ -4021,6 +4072,18 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertEqual(response.json()["audioProfileLabel"], "Balanced")
         self.assertEqual(job.snapshot, MovieTimeline.objects.get(project=self.project).timeline)
 
+        clip_render = self.client.post(
+            f"/studio/projects/{self.project.id}/movie-editor/renders/",
+            data=json.dumps({
+                "timelineId": str(job.timeline_id), "clipIds": ["clip-1"],
+                "title": "Opening media", "profile": "DRAFT_720",
+            }), content_type="application/json",
+        )
+        self.assertEqual(clip_render.status_code, 202, clip_render.content)
+        clip_job = MovieRenderJob.objects.get(id=clip_render.json()["id"])
+        self.assertEqual(clip_job.duration_ms, 4000)
+        self.assertEqual(clip_job.snapshot["tracks"][0]["clips"][0]["start"], 0)
+
         cancelled = self.client.post(
             f"/studio/projects/{self.project.id}/movie-editor/renders/{job.id}/",
             data=json.dumps({"action": "cancel"}), content_type="application/json",
@@ -4061,13 +4124,26 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertIn("*1.3500", joined)
         self.assertIn("(W-w)/2+W*0.600000", joined)
         self.assertIn("(H-h)/2+H*-0.250000", joined)
-        self.assertIn("volume=0.7500", joined)
+        self.assertIn("volume='if(lt(t,3.000000),0.750000", joined)
         self.assertIn("highpass=f=80", joined)
         self.assertIn("afftdn=nf=-25:tn=1", joined)
         self.assertIn("acompressor=threshold=0.125", joined)
         self.assertIn("amix=inputs=1", joined)
         self.assertIn("loudnorm=I=-16:TP=-1.5:LRA=11", joined)
         self.assertIn("libx264", command)
+
+        job.snapshot["tracks"][0]["clips"][0].update({
+            "speed": 2, "speedMethod": "FRAME_BLEND", "fadeIn": 400, "fadeOut": 600,
+            "volumeKeyframes": [{"time": 1500, "value": 0.25}],
+        })
+        adjusted = " ".join(build_render_command(job, {"asset-1": video}, "/tmp/adjusted.mp4"))
+        self.assertIn("trim=start=0.500:duration=6.000", adjusted)
+        self.assertIn("setpts=(PTS-STARTPTS)/2.000000", adjusted)
+        self.assertIn("minterpolate=fps=25:mi_mode=blend", adjusted)
+        self.assertIn("atempo=2.000000", adjusted)
+        self.assertIn("afade=t=in:st=0:d=0.400", adjusted)
+        self.assertIn("afade=t=out:st=2.400:d=0.600", adjusted)
+        self.assertIn("0.250000", adjusted)
 
         job.audio_profile = "ORIGINAL"
         original = " ".join(build_render_command(job, {"asset-1": video}, "/tmp/original-output.mp4"))
