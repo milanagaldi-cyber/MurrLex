@@ -103,7 +103,7 @@ def _asset_kind(asset):
 
 def timeline_duration_ms(snapshot, assets=None):
     clips = [
-        clip for track in snapshot.get("tracks", []) for clip in track.get("clips", [])
+        clip for track in snapshot.get("tracks", []) if not track.get("hidden") for clip in track.get("clips", [])
         if not assets or _asset_kind(assets.get(str(clip.get("assetId")))) in {"VIDEO", "IMAGE"}
     ]
     return max(
@@ -136,7 +136,7 @@ def build_render_command(job, assets, output_path):
     inputs = []
     clips = []
     for track_index, track in enumerate(snapshot.get("tracks", [])):
-        if track.get("kind") not in {"VIDEO", "AUDIO"}:
+        if track.get("hidden") or track.get("kind") not in {"VIDEO", "AUDIO"}:
             continue
         for clip_index, clip in enumerate(track.get("clips", [])):
             asset = assets[str(clip["assetId"])]
@@ -266,7 +266,7 @@ def _store_result(job, output_path):
     filename = f"{slugify(job.title) or 'rough-cut'}-{str(job.id)[:8]}.mp4"
     asset = Asset(
         workspace=job.project.workspace,
-        project=job.project,
+        project=None,
         kind=Asset.Kind.EXPORT,
         original_filename=filename,
         content_type="video/mp4",
@@ -292,7 +292,6 @@ def _store_result(job, output_path):
         asset.file.save(filename, File(source), save=False)
     asset.full_clean()
     asset.save()
-    asset.projects.add(job.project)
     return asset
 
 

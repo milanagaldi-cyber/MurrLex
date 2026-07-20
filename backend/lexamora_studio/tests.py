@@ -3756,7 +3756,7 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertContains(page, "data-stage-resizer")
         self.assertContains(page, 'data-inspector-tab="VIDEO"')
         self.assertContains(page, "data-media-library-dialog")
-        self.assertContains(page, "Save As")
+        self.assertContains(page, "Export As")
         self.assertContains(page, "data-delete-track")
         self.assertContains(page, "data-clip-context")
         self.assertContains(page, "movie-timeline-position-pad")
@@ -3864,14 +3864,14 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertFalse(copy.projects.filter(id=self.project.id).exists())
 
         project_page = self.client.get(f"/studio/projects/{self.project.id}/")
-        self.assertNotContains(project_page, "Montage projects")
+        self.assertNotContains(project_page, "Edit projects")
         editor_page = self.client.get(f"/studio/projects/{self.project.id}/movie-editor/")
-        self.assertContains(editor_page, "Montage projects")
+        self.assertContains(editor_page, "Edit projects")
         self.assertContains(editor_page, "Second montage")
         self.assertContains(editor_page, str(second.id))
         self.assertContains(editor_page, str(copy.id))
         workspace_page = self.client.get(f"/studio/workspaces/{self.workspace.id}/")
-        self.assertContains(workspace_page, "Montage projects")
+        self.assertContains(workspace_page, "Edit projects")
         self.assertContains(workspace_page, str(copy.id))
 
         exported = self.client.get(
@@ -3890,6 +3890,59 @@ class StudioProductionPilotFeaturesTests(TestCase):
         )
         self.assertEqual(imported.status_code, 201, imported.content)
         self.assertTrue(MovieTimeline.objects.get(id=imported.json()["id"]).projects.filter(id=self.project.id).exists())
+
+    def test_movie_editor_round_trips_zip_bundle_with_workspace_media(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from .models import Asset, MovieTimeline
+        from .storage import create_asset
+
+        asset = create_asset(
+            user=self.owner,
+            workspace=self.workspace,
+            project=None,
+            uploaded=SimpleUploadedFile("editor-source.mp4", b"video-data", content_type="video/mp4"),
+            kind=Asset.Kind.OTHER,
+            prevent_duplicate=False,
+        )
+        Asset.objects.filter(id=asset.id).update(
+            duration_ms=5000,
+            processing_status=Asset.ProcessingStatus.READY,
+        )
+        self.client.force_login(self.owner)
+        self.client.get(f"/studio/projects/{self.project.id}/movie-editor/")
+        timeline = MovieTimeline.objects.get(project=self.project)
+        timeline.timeline = {
+            "schemaVersion": 1,
+            "mediaAssetIds": [str(asset.id)],
+            "tracks": [{
+                "id": "video-1", "kind": "VIDEO", "muted": False,
+                "locked": False, "hidden": False, "height": 84,
+                "clips": [{
+                    "id": "clip-1", "assetId": str(asset.id),
+                    "sourceAssetId": str(asset.id), "start": 0,
+                    "sourceStart": 0, "duration": 5000,
+                }],
+            }],
+        }
+        timeline.save(update_fields=["timeline", "updated_at"])
+
+        exported = self.client.get(
+            f"/studio/projects/{self.project.id}/movie-editor/edits/{timeline.id}/export/?bundle=media",
+        )
+        self.assertEqual(exported.status_code, 200)
+        archive_bytes = b"".join(exported.streaming_content)
+        imported = self.client.post(
+            f"/studio/projects/{self.project.id}/movie-editor/edits/",
+            {"file": SimpleUploadedFile("edit-with-media.zip", archive_bytes, content_type="application/zip")},
+        )
+        self.assertEqual(imported.status_code, 201, imported.content)
+        imported_timeline = MovieTimeline.objects.get(id=imported.json()["id"])
+        imported_asset_id = imported_timeline.timeline["tracks"][0]["clips"][0]["assetId"]
+        self.assertNotEqual(imported_asset_id, str(asset.id))
+        imported_asset = Asset.objects.get(id=imported_asset_id)
+        self.assertEqual(imported_asset.workspace, self.workspace)
+        self.assertFalse(imported_asset.projects.exists())
+        self.assertEqual(imported_timeline.timeline["mediaAssetIds"], [imported_asset_id])
 
     def test_movie_editor_accepts_media_on_any_organizational_track(self):
         from django.core.files.uploadedfile import SimpleUploadedFile
@@ -3984,12 +4037,14 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertEqual(response.status_code, 201, response.content)
         asset = Asset.objects.get(id=response.json()["items"][0]["id"])
         self.assertEqual(asset.processing_status, Asset.ProcessingStatus.QUEUED)
-        self.assertTrue(asset.projects.filter(id=self.project.id).exists())
+        self.assertFalse(asset.projects.filter(id=self.project.id).exists())
 
         status = self.client.get(f"/studio/projects/{self.project.id}/movie-editor/media/")
         self.assertEqual(status.status_code, 200)
-        self.assertEqual(status.json()["items"][0]["status"], "QUEUED")
-        self.assertEqual(status.json()["items"][0]["kind"], "VIDEO")
+        self.assertEqual(status.json()["items"], [])
+        uploaded = next(item for item in status.json()["libraryItems"] if item["id"] == str(asset.id))
+        self.assertEqual(uploaded["status"], "QUEUED")
+        self.assertEqual(uploaded["kind"], "VIDEO")
 
     def test_movie_editor_can_attach_accessible_workspace_media(self):
         from django.core.files.uploadedfile import SimpleUploadedFile
@@ -4239,6 +4294,14 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertIn("amix=inputs=3", filter_graph)
         self.assertEqual(timeline_duration_ms(snapshot, {"lower": lower, "upper": upper, "music": audio}), 4000)
 
+        snapshot["tracks"][0]["hidden"] = True
+        hidden_command = build_render_command(
+            job, {"lower": lower, "upper": upper, "music": audio}, "/tmp/hidden.mp4",
+        )
+        hidden_graph = hidden_command[hidden_command.index("-filter_complex") + 1]
+        self.assertEqual(hidden_command.count("-i"), 2)
+        self.assertIn("amix=inputs=2", hidden_graph)
+
     def test_movie_render_worker_persists_completed_mp4_asset(self):
         import io
         from pathlib import Path
@@ -4298,6 +4361,15 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertEqual(job.output_asset.content_type, "video/mp4")
         self.assertEqual(job.output_asset.media_metadata["audio"]["cleanupProfile"], "CLEAN_SPEECH")
         self.assertEqual(job.output_asset.media_metadata["audio"]["targetLufs"], -16)
+        self.assertFalse(job.output_asset.projects.filter(id=self.project.id).exists())
+        self.client.force_login(self.owner)
+        attached = self.client.post(
+            f"/studio/projects/{self.project.id}/movie-editor/renders/{job.id}/",
+            data=json.dumps({"action": "attach"}), content_type="application/json",
+        )
+        self.assertEqual(attached.status_code, 202, attached.content)
+        self.assertTrue(attached.json()["attachedToProject"])
+        self.assertTrue(job.output_asset.projects.filter(id=self.project.id).exists())
         if job.output_asset.file.storage.exists(job.output_asset.file.name):
             job.output_asset.file.storage.delete(job.output_asset.file.name)
 

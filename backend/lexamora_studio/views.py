@@ -1,4 +1,5 @@
 import json
+import mimetypes
 import tempfile
 import zipfile
 import re
@@ -4406,8 +4407,9 @@ def _movie_timeline_media_error(user, project, timeline_data):
         str(asset.id): asset for asset in accessible_assets(user).filter(
             workspace=project.workspace, id__in=asset_ids,
         ).filter(
-            Q(content_type__startswith="video/") | Q(content_type__startswith="audio/"),
-        ).filter(Q(project=project) | Q(projects=project)).distinct()
+            Q(content_type__startswith="video/") | Q(content_type__startswith="audio/")
+            | Q(content_type__startswith="image/"),
+        ).distinct()
     }
     if asset_ids != set(assets):
         return "One or more timeline media files are not accessible."
@@ -4434,7 +4436,7 @@ def _clamp_movie_timeline_to_sources(user, project, timeline_data):
     assets = {
         str(asset.id): asset for asset in accessible_assets(user).filter(
             workspace=project.workspace, id__in=asset_ids,
-        ).filter(Q(project=project) | Q(projects=project)).distinct()
+        ).distinct()
     }
     repaired = False
     for track in timeline_data.get("tracks", []):
@@ -4595,6 +4597,9 @@ def _movie_render_payload(job):
         "actionUrl": reverse("studio:project_movie_render_job", kwargs={"project_id": job.project_id, "job_id": job.id}),
         "canCancel": active,
         "canRetry": job.status in {MovieRenderJob.Status.FAILED, MovieRenderJob.Status.CANCELLED},
+        "attachedToProject": bool(
+            job.output_asset_id and job.output_asset.projects.filter(id=job.project_id).exists()
+        ),
     }
 
 
@@ -4676,7 +4681,7 @@ def project_movie_editor(request, project_id):
         request.user, project, requested_timeline_id, create=request.method == "GET" or can_edit,
     )
     if not timeline:
-        return JsonResponse({"error": "The montage project is not accessible."}, status=404)
+        return JsonResponse({"error": "The edit project is not accessible."}, status=404)
     if request.method == "POST":
         try:
             timeline_data = normalize_movie_timeline(payload.get("timeline"))
@@ -4773,13 +4778,62 @@ def project_movie_edits(request, project_id):
     if request.content_type and request.content_type.startswith("multipart/form-data"):
         action = "import"
         uploaded = request.FILES.get("file")
-        if not uploaded or uploaded.size > 2_000_000:
-            return JsonResponse({"error": "Choose a montage JSON file up to 2 MB."}, status=400)
+        if not uploaded or uploaded.size > 2_000_000_000:
+            return JsonResponse({"error": "Choose an edit JSON or ZIP bundle up to 2 GB."}, status=400)
         try:
-            imported = json.loads(uploaded.read().decode("utf-8"))
-            timeline_data = normalize_movie_timeline(imported.get("timeline", imported))
-        except (UnicodeDecodeError, ValueError, MovieTimelineValidationError) as exc:
-            return JsonResponse({"error": f"The montage file is invalid: {exc}"}, status=400)
+            asset_id_map = {}
+            if zipfile.is_zipfile(uploaded):
+                uploaded.seek(0)
+                with zipfile.ZipFile(uploaded) as bundle:
+                    infos = bundle.infolist()
+                    if len(infos) > 1001 or sum(item.file_size for item in infos) > 2_000_000_000:
+                        raise ValueError("The bundle is too large")
+                    if any(Path(item.filename).is_absolute() or ".." in Path(item.filename).parts for item in infos):
+                        raise ValueError("The bundle contains an unsafe path")
+                    imported = json.loads(bundle.read("edit-project.json" if "edit-project.json" in bundle.namelist() else "montage.json").decode("utf-8"))
+                    for media in imported.get("mediaManifest", []):
+                        path = str(media.get("path") or "")
+                        if not path or path not in bundle.namelist():
+                            continue
+                        filename = Path(str(media.get("name") or path)).name
+                        content_type = str(media.get("contentType") or mimetypes.guess_type(filename)[0] or "application/octet-stream")
+                        file_upload = SimpleUploadedFile(filename, bundle.read(path), content_type=content_type)
+                        asset = create_asset(
+                            user=request.user, workspace=project.workspace, uploaded=file_upload,
+                            kind=Asset.Kind.OTHER, project=None, prevent_duplicate=False,
+                        )
+                        if media.get("status") in {
+                            Asset.ProcessingStatus.READY,
+                            Asset.ProcessingStatus.NOT_REQUIRED,
+                        }:
+                            asset.processing_status = Asset.ProcessingStatus.READY
+                            asset.processing_error = ""
+                            asset.duration_ms = max(0, int(media.get("durationMs") or 0))
+                            asset.width = max(0, int(media.get("width") or 0)) or None
+                            asset.height = max(0, int(media.get("height") or 0)) or None
+                            asset.media_metadata = media.get("metadata") if isinstance(media.get("metadata"), dict) else {}
+                            asset.processing_finished_at = timezone.now()
+                            asset.save(update_fields=[
+                                "processing_status", "processing_error", "duration_ms", "width", "height",
+                                "media_metadata", "processing_finished_at", "updated_at",
+                            ])
+                        asset_id_map[str(media.get("id") or "")] = str(asset.id)
+            else:
+                uploaded.seek(0)
+                imported = json.loads(uploaded.read().decode("utf-8"))
+            raw_timeline = imported.get("timeline", imported)
+            if asset_id_map:
+                raw_timeline = json.loads(json.dumps(raw_timeline))
+                raw_timeline["mediaAssetIds"] = [asset_id_map.get(str(item), str(item)) for item in raw_timeline.get("mediaAssetIds", [])]
+                for track in raw_timeline.get("tracks", []):
+                    for clip in track.get("clips", []):
+                        original_asset_id = str(clip.get("assetId") or "")
+                        original_source_id = str(clip.get("sourceAssetId") or original_asset_id)
+                        clip["assetId"] = asset_id_map.get(original_asset_id, original_asset_id)
+                        clip["sourceAssetId"] = asset_id_map.get(original_source_id, clip["assetId"])
+            timeline_data = normalize_movie_timeline(raw_timeline)
+        except (KeyError, UnicodeDecodeError, ValueError, zipfile.BadZipFile, MovieTimelineValidationError) as exc:
+            return JsonResponse({"error": f"The edit project file is invalid: {exc}"}, status=400)
         media_error = _movie_timeline_media_error(request.user, project, timeline_data)
         if media_error:
             return JsonResponse({"error": media_error}, status=400)
@@ -4796,7 +4850,7 @@ def project_movie_edits(request, project_id):
         try:
             payload = json.loads(request.body or b"{}")
         except (TypeError, ValueError):
-            return JsonResponse({"error": "The montage request is not valid JSON."}, status=400)
+            return JsonResponse({"error": "The edit project request is not valid JSON."}, status=400)
         action = str(payload.get("action") or "create").lower()
         source = timelines.filter(id=payload.get("timelineId")).first() if payload.get("timelineId") else None
         if action == "create":
@@ -4829,8 +4883,17 @@ def project_movie_edits(request, project_id):
             source.updated_by = request.user
             source.save(update_fields=["is_archived", "updated_by", "updated_at"])
             return JsonResponse({"ok": True, "archived": True})
+        elif action == "delete" and source:
+            source.projects.remove(project)
+            if not source.projects.exists():
+                source.delete()
+            audit(
+                workspace=project.workspace, actor=request.user, action="MOVIE_EDIT_DELETE",
+                instance=project, metadata={"timelineId": str(payload.get("timelineId") or "")},
+            )
+            return JsonResponse({"ok": True, "deleted": True})
         else:
-            return JsonResponse({"error": "Choose create, copy, attach, detach or archive."}, status=400)
+            return JsonResponse({"error": "Choose create, copy, attach, detach, archive or delete."}, status=400)
     audit(
         workspace=project.workspace, actor=request.user, action=f"MOVIE_EDIT_{action.upper()}",
         instance=project, metadata={"timelineId": str(timeline.id)},
@@ -4850,10 +4913,10 @@ def project_movie_edit_export(request, project_id, timeline_id):
     if request.GET.get("bundle") == "media":
         archive = tempfile.TemporaryFile()
         with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_STORED) as bundle:
-            bundle.writestr("montage.json", json.dumps(payload, ensure_ascii=False, indent=2))
             timeline_data = normalize_movie_timeline(timeline.timeline or default_movie_timeline())
             asset_ids = movie_timeline_asset_ids(timeline_data) | set(timeline_data.get("mediaAssetIds", []))
             used_names = set()
+            media_manifest = []
             for asset in accessible_assets(request.user).filter(workspace=project.workspace, id__in=asset_ids):
                 try:
                     source_path = asset.file.path
@@ -4867,14 +4930,23 @@ def project_movie_edit_export(request, project_id, timeline_id):
                     candidate = f"{stem}-{suffix}{extension}"
                     suffix += 1
                 used_names.add(candidate.lower())
-                bundle.write(source_path, f"media/{candidate}")
+                archive_path = f"media/{candidate}"
+                bundle.write(source_path, archive_path)
+                media_manifest.append({
+                    "id": str(asset.id), "path": archive_path, "name": filename,
+                    "contentType": asset.content_type, "status": asset.processing_status,
+                    "durationMs": asset.duration_ms, "width": asset.width, "height": asset.height,
+                    "metadata": asset.media_metadata if isinstance(asset.media_metadata, dict) else {},
+                })
+            payload["mediaManifest"] = media_manifest
+            bundle.writestr("edit-project.json", json.dumps(payload, ensure_ascii=False, indent=2))
         archive.seek(0)
         return FileResponse(
             archive, as_attachment=True,
-            filename=f'{slugify(timeline.title) or "montage"}-with-media.zip',
+            filename=f'{slugify(timeline.title) or "edit-project"}-with-media.zip',
         )
     response = JsonResponse(payload, json_dumps_params={"indent": 2})
-    response["Content-Disposition"] = f'attachment; filename="{slugify(timeline.title) or "montage"}.json"'
+    response["Content-Disposition"] = f'attachment; filename="{slugify(timeline.title) or "edit-project"}.json"'
     return response
 
 
@@ -4927,7 +4999,7 @@ def project_movie_media(request, project_id):
         try:
             asset = create_asset(
                 user=request.user, workspace=project.workspace, uploaded=uploaded,
-                kind=Asset.Kind.OTHER, project=project, prevent_duplicate=True,
+                kind=Asset.Kind.OTHER, project=None, prevent_duplicate=True,
             )
         except ValidationError as exc:
             errors.append(f"{uploaded.name}: {'; '.join(exc.messages)}")
@@ -4944,7 +5016,7 @@ def project_movie_media_retry(request, project_id, asset_id):
     project = get_object_or_404(accessible_projects(request.user), id=project_id)
     if not has_project_capability(request.user, project, "edit"):
         return JsonResponse({"error": "Edit permission is required."}, status=403)
-    asset = get_object_or_404(_project_movie_media(request.user, project), id=asset_id)
+    asset = get_object_or_404(_workspace_movie_media(request.user, project), id=asset_id)
     if asset.processing_status not in {
         Asset.ProcessingStatus.FAILED, Asset.ProcessingStatus.NOT_REQUIRED,
     }:
@@ -5001,7 +5073,7 @@ def project_movie_renders(request, project_id):
         return JsonResponse({"error": "Choose -14, -16, -18 or -23 LUFS."}, status=400)
     timeline = _select_movie_timeline(request.user, project, payload.get("timelineId"))
     if not timeline:
-        return JsonResponse({"error": "The montage project is not accessible."}, status=404)
+        return JsonResponse({"error": "The edit project is not accessible."}, status=404)
     snapshot = normalize_movie_timeline(timeline.timeline or default_movie_timeline())
     try:
         snapshot = _selected_movie_clip_snapshot(snapshot, payload.get("clipIds") or [])
@@ -5085,8 +5157,12 @@ def project_movie_render_job(request, project_id, job_id):
             "status", "progress", "cancel_requested", "error_message", "started_at",
             "completed_at", "output_asset", "updated_at",
         ])
+    elif action == "attach" and job.output_asset_id:
+        job.output_asset.projects.add(project)
+    elif action == "detach" and job.output_asset_id:
+        job.output_asset.projects.remove(project)
     else:
-        return JsonResponse({"error": "Choose cancel or retry."}, status=400)
+        return JsonResponse({"error": "Choose cancel, retry, attach or detach."}, status=400)
     audit(
         workspace=project.workspace, actor=request.user, action=f"MOVIE_RENDER_{action.upper()}",
         instance=project, metadata={"renderId": str(job.id)},
@@ -5123,7 +5199,7 @@ def project_movie_editor_revision_restore(request, project_id, revision_id):
     revision = get_object_or_404(MovieTimelineRevision.objects.select_related("timeline"), id=revision_id)
     timeline = revision.timeline
     if not _project_movie_timelines(request.user, project).filter(id=timeline.id).exists():
-        return JsonResponse({"error": "The montage project is not accessible."}, status=404)
+        return JsonResponse({"error": "The edit project is not accessible."}, status=404)
     try:
         restored_data = normalize_movie_timeline(revision.snapshot)
     except MovieTimelineValidationError as exc:
