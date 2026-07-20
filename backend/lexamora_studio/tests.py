@@ -3751,6 +3751,9 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertContains(page, "Rough-cut exports")
         self.assertContains(page, "data-editor-undo")
         self.assertContains(page, "data-preview-scrub")
+        self.assertContains(page, "data-preview-scale")
+        self.assertContains(page, "data-stage-resizer")
+        self.assertContains(page, 'data-inspector-tab="VIDEO"')
         self.assertContains(page, "data-media-library-dialog")
         self.assertContains(page, "studio/movie_editor.js")
         response = self.client.post(
@@ -3771,6 +3774,18 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertEqual(len(timeline.timeline["tracks"]), 1)
         self.assertEqual(timeline.timeline["schemaVersion"], 1)
         self.assertEqual(MovieTimelineRevision.objects.filter(timeline=timeline).count(), 1)
+
+        from .movie_timeline import normalize_movie_timeline
+        framed = normalize_movie_timeline({"schemaVersion": 1, "tracks": [{
+            "id": "framed-video", "kind": "VIDEO", "clips": [{
+                "id": "framed-clip", "assetId": "asset-1", "duration": 1000,
+                "scale": 1.75, "positionX": 40, "positionY": -30,
+            }],
+        }]})
+        framed_clip = framed["tracks"][0]["clips"][0]
+        self.assertEqual(framed_clip["scale"], 1.75)
+        self.assertEqual(framed_clip["positionX"], 40)
+        self.assertEqual(framed_clip["positionY"], -30)
 
         response = self.client.post(
             f"/studio/projects/{self.project.id}/movie-editor/",
@@ -4033,6 +4048,7 @@ class StudioProductionPilotFeaturesTests(TestCase):
             snapshot={"tracks": [{"kind": "VIDEO", "muted": False, "clips": [{
                 "assetId": "asset-1", "start": 1200, "sourceStart": 500,
                 "duration": 3000, "volume": 0.75,
+                "scale": 1.35, "positionX": 60, "positionY": -25,
             }]}]},
             duration_ms=4200, width=1280, height=720, fps=25,
         )
@@ -4040,6 +4056,9 @@ class StudioProductionPilotFeaturesTests(TestCase):
         joined = " ".join(command)
         self.assertIn("trim=start=0.500:duration=3.000", joined)
         self.assertIn("overlay=eof_action=pass", joined)
+        self.assertIn("*1.3500", joined)
+        self.assertIn("(W-w)/2*0.4000", joined)
+        self.assertIn("(H-h)/2*1.2500", joined)
         self.assertIn("volume=0.7500", joined)
         self.assertIn("highpass=f=80", joined)
         self.assertIn("afftdn=nf=-25:tn=1", joined)

@@ -33,7 +33,8 @@
   let libraryScope = "project";
   let standalonePreviewAssetId = null;
   let trackHeight = Number(localStorage.getItem("studio-movie-track-height")) || 84;
-  let previewZoom = Number(localStorage.getItem("studio-movie-preview-zoom")) || 1;
+  let inspectorTab = "VIDEO";
+  let previewGeometry = null;
   const settingSnapshots = new WeakMap();
   const PRECISION_MS = 10;
 
@@ -49,6 +50,8 @@
   const previewStatus = q("[data-preview-status]");
   const previewScrub = q("[data-preview-scrub]");
   const inspector = q("[data-clip-inspector]");
+  const inspectorActions = q("[data-inspector-actions]");
+  const previewScale = q("[data-preview-scale]");
   const stateNode = q("[data-movie-state]");
   const playheadLabel = q("[data-playhead-label]");
   const previewTime = q("[data-preview-time]");
@@ -72,7 +75,6 @@
   const csrfToken = () => document.cookie.match(/csrftoken=([^;]+)/)?.[1] || "";
   const uid = () => crypto.randomUUID ? crypto.randomUUID() : `clip-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const clamp = (value, minimum, maximum) => Math.max(minimum, Math.min(maximum, value));
-  previewZoom = clamp(previewZoom, .5, 2);
   trackHeight = clamp(trackHeight, 56, 160);
   const quantize = value => Math.round(Number(value || 0) / PRECISION_MS) * PRECISION_MS;
   const frameMs = () => 1000 / Math.max(1, Number(q("[data-movie-fps]").value) || 25);
@@ -190,6 +192,9 @@
         const available = Math.max(200, assetDuration(clip) - clip.sourceStart);
         clip.duration = clamp(quantize(clip.duration || 200), 200, available);
         clip.volume = clamp(Number(clip.volume ?? 1), 0, 2);
+        clip.scale = clamp(Number(clip.scale ?? 1), .5, 4);
+        clip.positionX = clamp(Number(clip.positionX ?? 0), -100, 100);
+        clip.positionY = clamp(Number(clip.positionY ?? 0), -100, 100);
       });
     });
   }
@@ -205,37 +210,76 @@
     updatePreviewGeometry();
   }
 
-  function previewAssetData() {
-    const active = standalonePreviewAssetId ? {clip: {assetId: standalonePreviewAssetId}} : activeClip("VIDEO", playheadMs);
-    return active ? assetMap.get(active.clip.assetId) : null;
+  function previewClipData() {
+    if (standalonePreviewAssetId) return {asset: assetMap.get(standalonePreviewAssetId), clip: null, track: null};
+    const active = activeClip("VIDEO", playheadMs);
+    return active ? {...active, asset: assetMap.get(active.clip.assetId)} : {asset: null, clip: null, track: null};
   }
 
-  function updatePreviewGeometry(asset = previewAssetData()) {
+  function updatePreviewGeometry() {
+    const {asset, clip} = previewClipData();
     const [canvasWidth, canvasHeight] = (q("[data-movie-ratio]").value || "16:9").split(":").map(Number);
     const canvasRatio = canvasWidth / canvasHeight;
     const sourceWidth = asset?.width || preview.videoWidth;
     const sourceHeight = asset?.height || preview.videoHeight;
     const sourceRatio = sourceWidth && sourceHeight ? sourceWidth / sourceHeight : canvasRatio;
-    let width = sourceRatio >= canvasRatio ? sourceRatio / canvasRatio * 100 : 100;
-    let height = sourceRatio >= canvasRatio ? 100 : canvasRatio / sourceRatio * 100;
-    const fit = Math.min(1, 160 / Math.max(width, height));
-    width *= fit; height *= fit;
+    const scale = clamp(Number(clip?.scale ?? 1), .5, 4);
+    const width = (sourceRatio >= canvasRatio ? sourceRatio / canvasRatio * 100 : 100) * scale;
+    const height = (sourceRatio >= canvasRatio ? 100 : canvasRatio / sourceRatio * 100) * scale;
+    const overflowX = Math.max(0, width - 100);
+    const overflowY = Math.max(0, height - 100);
+    const left = 50 + Number(clip?.positionX || 0) * overflowX / 200;
+    const top = 50 + Number(clip?.positionY || 0) * overflowY / 200;
     [preview, previewOutline].forEach(node => {
       if (!node) return;
       node.style.width = `${width}%`;
       node.style.height = `${height}%`;
-      node.style.transform = `translate(-50%,-50%) scale(${previewZoom})`;
+      node.style.left = `${left}%`;
+      node.style.top = `${top}%`;
+      node.style.transform = "translate(-50%,-50%)";
     });
     if (previewOutline) previewOutline.hidden = !asset;
     previewStage.classList.toggle("source-mismatch", Math.abs(sourceRatio - canvasRatio) > .01);
-    const label = q("[data-preview-zoom-label]");
-    if (label) label.textContent = `${Math.round(previewZoom * 100)}%`;
+    previewGeometry = {clip, width, height, overflowX, overflowY};
+    if (previewScale) {
+      previewScale.value = scale;
+      previewScale.disabled = !canEdit || !clip;
+      q("[data-preview-scale-value]").textContent = `${Math.round(scale * 100)}%`;
+    }
   }
 
-  function changePreviewZoom(delta) {
-    previewZoom = clamp(Math.round((previewZoom + delta) * 10) / 10, .5, 2);
-    localStorage.setItem("studio-movie-preview-zoom", String(previewZoom));
-    updatePreviewGeometry();
+  function beginPreviewPan(event) {
+    const {clip, track} = previewClipData();
+    if (!clip || !canEdit || track?.locked || event.button !== 0) return;
+    event.preventDefault();
+    if (!selectedIds.has(clip.id)) selectClip(clip.id);
+    remember();
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const originalX = Number(clip.positionX || 0);
+    const originalY = Number(clip.positionY || 0);
+    const overflowXPx = previewStage.clientWidth * (previewGeometry?.overflowX || 0) / 100;
+    const overflowYPx = previewStage.clientHeight * (previewGeometry?.overflowY || 0) / 100;
+    let changed = false;
+    const move = next => {
+      const dx = next.clientX - startX;
+      const dy = next.clientY - startY;
+      clip.positionX = overflowXPx ? clamp(originalX + dx * 200 / overflowXPx, -100, 100) : 0;
+      clip.positionY = overflowYPx ? clamp(originalY + dy * 200 / overflowYPx, -100, 100) : 0;
+      changed = changed || Math.abs(dx) > 1 || Math.abs(dy) > 1;
+      updatePreviewGeometry();
+    };
+    const finish = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", finish);
+      previewStage.classList.remove("dragging");
+      if (!changed) historyUndo.pop();
+      else { historyRedo = []; updateDirty(); updateHistoryButtons(); }
+      renderInspector();
+    };
+    previewStage.classList.add("dragging");
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", finish);
   }
 
   function mediaStatus(asset) {
@@ -520,6 +564,8 @@
     previewTime.textContent = `${clock(playheadMs)} / ${clock(timelineEnd())}`;
     previewScrub.max = Math.max(PRECISION_MS, timelineEnd());
     previewScrub.value = Math.min(playheadMs, Number(previewScrub.max));
+    const inspectorPlayhead = q("[data-inspector-playhead]");
+    if (inspectorPlayhead) inspectorPlayhead.value = (playheadMs / 1000).toFixed(3);
     if (sync && !playing) syncPlayers(false, true);
   }
 
@@ -699,7 +745,16 @@
     input.min = minimum;
     return input;
   }
-  const field = (text, input) => { const label = document.createElement("label"); label.append(text, input); return label; };
+  const field = (text, input) => {
+    const label = document.createElement("label");
+    label.className = "movie-inspector-field";
+    label.title = text;
+    input.title = text;
+    input.setAttribute("aria-label", text);
+    input.placeholder = text;
+    label.append(input);
+    return label;
+  };
   const inspectorButton = (text, title, action) => {
     const button = document.createElement("button");
     button.type = "button"; button.className = "icon-button secondary"; button.textContent = text;
@@ -709,39 +764,59 @@
 
   function renderInspector() {
     inspector.replaceChildren();
+    inspectorActions.replaceChildren();
+    qa("[data-inspector-tab]").forEach(button => button.classList.toggle("active", button.dataset.inspectorTab === inspectorTab));
+    const actionSet = disabled => {
+      const actions = [
+        inspectorButton("S", "Split at playhead", splitSelected),
+        inspectorButton("C", "Copy selected clips", copySelected),
+        inspectorButton("^", "Move selection up", () => moveSelectedToAdjacentTrack(-1)),
+        inspectorButton("v", "Move selection down", () => moveSelectedToAdjacentTrack(1)),
+        inspectorButton("x", "Delete selection", deleteSelected),
+      ];
+      actions.forEach(button => { button.disabled = disabled; });
+      inspectorActions.append(...actions);
+    };
     if (selectedIds.size > 1) {
       const summary = document.createElement("strong");
-      const actions = document.createElement("div");
       summary.className = "movie-selection-summary";
       summary.textContent = `${selectedIds.size} clips selected`;
-      actions.className = "movie-inspector-actions";
-      actions.append(
-        inspectorButton("↑", "Move selection up", () => moveSelectedToAdjacentTrack(-1)),
-        inspectorButton("↓", "Move selection down", () => moveSelectedToAdjacentTrack(1)),
-        inspectorButton("⧉", "Copy selection", copySelected),
-        inspectorButton("J", "Join two selected clips", joinSelected),
-        inspectorButton("×", "Delete selection", deleteSelected),
-      );
-      inspector.append(summary, actions);
+      actionSet(false);
+      inspector.append(summary);
       return;
     }
     const found = findClip(selectedId);
-    if (!found) {
-      inspector.innerHTML = '<p class="muted">Select a timeline clip</p>';
+    actionSet(!found);
+    if (["EFFECTS", "COLOR"].includes(inspectorTab)) {
+      const empty = document.createElement("p");
+      empty.className = "movie-inspector-empty";
+      empty.textContent = found ? `${inspectorTab === "EFFECTS" ? "Effects" : "Color"} controls are ready for the next editing module` : "Select a timeline clip";
+      inspector.append(empty);
       return;
     }
-    const {clip, track} = found;
-    const asset = assetMap.get(clip.assetId);
+    const clip = found?.clip;
+    const track = found?.track;
+    const asset = clip ? assetMap.get(clip.assetId) : null;
     const name = document.createElement("input");
-    const start = numberInput((clip.start / 1000).toFixed(3), ".01", "0");
-    const sourceStart = numberInput((clip.sourceStart / 1000).toFixed(3), ".01", "0");
-    const duration = numberInput((clip.duration / 1000).toFixed(3), ".01", ".2");
+    const start = numberInput(((clip?.start || 0) / 1000).toFixed(3), ".01", "0");
+    const end = numberInput((((clip?.start || 0) + (clip?.duration || 0)) / 1000).toFixed(3), ".01", "0");
+    const sourceStart = numberInput(((clip?.sourceStart || 0) / 1000).toFixed(3), ".01", "0");
+    const duration = numberInput(((clip?.duration || 0) / 1000).toFixed(3), ".01", ".2");
+    const marker = numberInput((playheadMs / 1000).toFixed(3), ".01", "0");
     const volume = document.createElement("input");
-    name.value = clip.name || asset?.name || "Clip";
-    volume.type = "range"; volume.min = "0"; volume.max = "2"; volume.step = ".05"; volume.value = clip.volume ?? 1;
-    [name, start, sourceStart, duration, volume].forEach(control => control.disabled = !canEdit || track.locked);
+    name.value = clip?.name || asset?.name || "";
+    marker.readOnly = true;
+    marker.dataset.inspectorPlayhead = "";
+    volume.type = "range"; volume.min = "0"; volume.max = "2"; volume.step = ".05"; volume.value = clip?.volume ?? 0;
+    [name, start, end, sourceStart, duration, volume].forEach(control => control.disabled = !found || !canEdit || track?.locked);
+    marker.disabled = !found;
+    if (!found) {
+      inspector.append(field("Name", name), field("Timeline start", start), field("Timeline end", end), field("Source in", sourceStart), field("Duration", duration), field("Playhead", marker));
+      return;
+    }
     name.onchange = event => mutate(() => { clip.name = event.target.value; renderTimeline(); });
     start.onchange = event => mutate(() => { clip.start = Math.max(0, quantize(Number(event.target.value) * 1000)); renderTimeline(); });
+    end.onchange = event => mutate(() => { clip.duration = clamp(quantize(Number(event.target.value) * 1000 - clip.start), 200, assetDuration(clip) - clip.sourceStart); renderTimeline(); });
     sourceStart.onchange = event => mutate(() => {
       clip.sourceStart = clamp(quantize(Number(event.target.value) * 1000), 0, assetDuration(clip) - 200);
       clip.duration = Math.min(clip.duration, assetDuration(clip) - clip.sourceStart);
@@ -749,20 +824,8 @@
     });
     duration.onchange = event => mutate(() => { clip.duration = clamp(quantize(Number(event.target.value) * 1000), 200, assetDuration(clip) - clip.sourceStart); renderTimeline(); });
     volume.onchange = event => mutate(() => { clip.volume = Number(event.target.value); syncPlayers(false, true); });
-    inspector.append(field("Name", name), field("Timeline start (s)", start), field("Source in (s)", sourceStart), field("Duration (s)", duration), field("Volume", volume));
-    const readout = document.createElement("div");
-    readout.className = "movie-inspector-readout";
-    readout.textContent = `${track.name} / ${track.kind} / ${clock(clip.start)} - ${clock(clip.start + clip.duration)} / 10 ms grid`;
-    const actions = document.createElement("div");
-    actions.className = "movie-inspector-actions";
-    actions.append(
-      inspectorButton("S", "Split at playhead", splitSelected),
-      inspectorButton("⧉", "Copy clip", copySelected),
-      inspectorButton("↑", "Move clip up", () => moveSelectedToAdjacentTrack(-1)),
-      inspectorButton("↓", "Move clip down", () => moveSelectedToAdjacentTrack(1)),
-      inspectorButton("×", "Delete clip", deleteSelected),
-    );
-    inspector.append(readout, actions);
+    if (inspectorTab === "AUDIO") inspector.append(field("Volume", volume), field("Timeline start", start), field("Timeline end", end), field("Playhead", marker));
+    else inspector.append(field("Name", name), field("Timeline start", start), field("Timeline end", end), field("Source in", sourceStart), field("Duration", duration), field("Playhead", marker));
   }
 
   function selectClip(id, movePlayhead = false, additive = false) {
@@ -1102,6 +1165,31 @@
     window.addEventListener("pointerup", finish);
   }
 
+  function beginTimelinePan(event, lane) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const startX = event.clientX;
+    const startScroll = timelineScroll.scrollLeft;
+    let moved = false;
+    const move = next => {
+      const delta = next.clientX - startX;
+      moved = moved || Math.abs(delta) > 3;
+      timelineScroll.scrollLeft = Math.max(0, startScroll - delta);
+    };
+    const finish = next => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", finish);
+      timelineScroll.classList.remove("panning");
+      if (!moved) {
+        selectClip(null);
+        setPlayhead((next.clientX - lane.getBoundingClientRect().left) / zoom * 1000);
+      }
+    };
+    timelineScroll.classList.add("panning");
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", finish);
+  }
+
   function makeClipNode(clip, track) {
     const node = document.createElement("div");
     const strip = document.createElement("i");
@@ -1177,7 +1265,11 @@
     timeline.tracks.forEach(track => {
       headsNode.append(makeTrackHead(track));
       const lane = document.createElement("div"); lane.className = "movie-track-lane"; lane.dataset.trackId = track.id;
-      lane.onpointerdown = event => { if (event.target === lane) beginMarquee(event, lane); };
+      lane.onpointerdown = event => {
+        if (event.target !== lane) return;
+        if (event.ctrlKey || event.metaKey || event.shiftKey) beginMarquee(event, lane);
+        else beginTimelinePan(event, lane);
+      };
       lane.ondragover = event => { if (!track.locked && canEdit) event.preventDefault(); };
       lane.ondrop = event => {
         event.preventDefault();
@@ -1311,10 +1403,27 @@
   preview.addEventListener("play", () => { if (!playing && !standalonePreviewAssetId) togglePlayback(); });
   preview.addEventListener("loadedmetadata", () => updatePreviewGeometry());
   preview.addEventListener("error", () => { previewStatus.textContent = preview.error?.message || "Preview failed"; });
+  previewStage.addEventListener("pointerdown", beginPreviewPan);
   playheadNode.addEventListener("pointerdown", beginPlayheadGesture);
-  q("[data-preview-zoom-out]")?.addEventListener("click", () => changePreviewZoom(-.1));
-  q("[data-preview-zoom-in]")?.addEventListener("click", () => changePreviewZoom(.1));
-  q("[data-preview-zoom-reset]")?.addEventListener("click", () => { previewZoom = 1; localStorage.setItem("studio-movie-preview-zoom", "1"); updatePreviewGeometry(); });
+  let scaleSnapshotTaken = false;
+  const beginScaleEdit = () => {
+    const {clip, track} = previewClipData();
+    if (!clip || track?.locked || scaleSnapshotTaken) return;
+    remember();
+    scaleSnapshotTaken = true;
+  };
+  previewScale?.addEventListener("pointerdown", beginScaleEdit);
+  previewScale?.addEventListener("keydown", beginScaleEdit);
+  previewScale?.addEventListener("input", event => {
+    const {clip, track} = previewClipData();
+    if (!clip || track?.locked) return;
+    if (!scaleSnapshotTaken) beginScaleEdit();
+    clip.scale = clamp(Number(event.target.value), .5, 4);
+    updatePreviewGeometry();
+    updateDirty();
+  });
+  previewScale?.addEventListener("change", () => { scaleSnapshotTaken = false; historyRedo = []; updateDirty(); updateHistoryButtons(); renderInspector(); });
+  qa("[data-inspector-tab]").forEach(button => button.addEventListener("click", () => { inspectorTab = button.dataset.inspectorTab; renderInspector(); }));
   q("[data-timeline-split]").onclick = splitSelected;
   q("[data-clip-copy]")?.addEventListener("click", copySelected);
   q("[data-clip-paste]")?.addEventListener("click", pasteSelected);
@@ -1359,7 +1468,11 @@
         if (historyUndo.length > 100) historyUndo.shift();
         historyRedo = [];
       }
-      if (control.matches("[data-movie-ratio]")) applyCanvas();
+      if (control.matches("[data-movie-ratio]")) {
+        const defaults = {"16:9": "1920x1080", "9:16": "1080x1920", "1:1": "1080x1080"};
+        q("[data-movie-resolution]").value = defaults[control.value] || "1920x1080";
+        applyCanvas();
+      }
       if (control.matches("[data-movie-fps]")) renderTimeline();
       updateDirty(); updateHistoryButtons();
     });
@@ -1381,6 +1494,11 @@
     else if ((event.ctrlKey || event.metaKey) && ["+", "=", "-"].includes(event.key)) { event.preventDefault(); changeZoom(zoom + (event.key === "-" ? -4 : 4)); }
   });
   addEventListener("beforeunload", event => { if (dirty) { event.preventDefault(); event.returnValue = ""; } });
+  document.addEventListener("click", event => {
+    qa("details[open]").forEach(details => {
+      if (!event.target.closest("summary") || !details.contains(event.target)) details.removeAttribute("open");
+    });
+  });
   let resizeTimer;
   addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(renderTimeline, 120); });
 
@@ -1410,6 +1528,32 @@
       trackHeight = clamp(Number(heightInput.value), 56, 160);
       localStorage.setItem("studio-movie-track-height", String(trackHeight));
       renderTimeline();
+    };
+  }
+  const stageColumn = q(".movie-stage-column");
+  const stageResizer = q("[data-stage-resizer]");
+  if (stageColumn && stageResizer) {
+    const storedWidth = clamp(Number(localStorage.getItem("studio-movie-media-width")) || 250, 180, 620);
+    stageColumn.style.setProperty("--movie-media-width", `${storedWidth}px`);
+    stageResizer.onpointerdown = event => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      const startX = event.clientX;
+      const startWidth = q("[data-panel-key=media]").getBoundingClientRect().width;
+      const move = next => {
+        const width = clamp(startWidth - (next.clientX - startX), 180, Math.min(620, stageColumn.clientWidth - 360));
+        stageColumn.style.setProperty("--movie-media-width", `${width}px`);
+        localStorage.setItem("studio-movie-media-width", String(Math.round(width)));
+      };
+      const finish = () => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", finish);
+        stageResizer.classList.remove("dragging");
+        updatePreviewGeometry();
+      };
+      stageResizer.classList.add("dragging");
+      window.addEventListener("pointermove", move);
+      window.addEventListener("pointerup", finish);
     };
   }
 

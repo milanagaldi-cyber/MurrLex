@@ -55,6 +55,18 @@ def _number(value, *, field, minimum=0, maximum=None):
     return int(round(number))
 
 
+def _float_number(value, *, field, minimum, maximum):
+    if isinstance(value, bool):
+        raise MovieTimelineValidationError(f"{field} must be a number.")
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise MovieTimelineValidationError(f"{field} must be a number.") from None
+    if number < minimum or number > maximum:
+        raise MovieTimelineValidationError(f"{field} is outside the supported range.")
+    return number
+
+
 def normalize_movie_timeline(value):
     if not isinstance(value, dict):
         raise MovieTimelineValidationError("Timeline must be a JSON object.")
@@ -124,6 +136,15 @@ def normalize_movie_timeline(value):
             if not 0 <= volume <= 2:
                 raise MovieTimelineValidationError("Clip volume must be between 0 and 2.")
             normalized_clip["volume"] = volume
+            normalized_clip["scale"] = _float_number(
+                clip.get("scale", 1), field="Clip scale", minimum=0.5, maximum=4,
+            )
+            normalized_clip["positionX"] = _float_number(
+                clip.get("positionX", 0), field="Clip horizontal position", minimum=-100, maximum=100,
+            )
+            normalized_clip["positionY"] = _float_number(
+                clip.get("positionY", 0), field="Clip vertical position", minimum=-100, maximum=100,
+            )
             normalized_clips.append(normalized_clip)
         normalized_track["clips"] = normalized_clips
         normalized_tracks.append(normalized_track)

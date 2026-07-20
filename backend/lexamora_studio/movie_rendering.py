@@ -110,16 +110,24 @@ def build_render_command(job, assets, output_path):
         source_start = int(clip.get("sourceStart", 0)) / 1000
         clip_duration = int(clip.get("duration", 0)) / 1000
         timeline_start = int(clip.get("start", 0)) / 1000
+        scale = min(4, max(0.5, float(clip.get("scale", 1))))
+        position_x = min(100, max(-100, float(clip.get("positionX", 0))))
+        position_y = min(100, max(-100, float(clip.get("positionY", 0))))
+        horizontal_factor = 1 - position_x / 100
+        vertical_factor = 1 - position_y / 100
         prepared = f"v{video_number}"
         composed = f"vc{video_number}"
         filters.append(
             f"[{input_index}:v]trim=start={source_start:.3f}:duration={clip_duration:.3f},"
             f"setpts=PTS-STARTPTS+{timeline_start:.3f}/TB,"
-            f"scale={job.width}:{job.height}:force_original_aspect_ratio=decrease,"
-            f"pad={job.width}:{job.height}:(ow-iw)/2:(oh-ih)/2:black,setsar=1,format=yuv420p[{prepared}]"
+            f"scale=w='if(gte(a,{job.width}/{job.height}),ceil({job.height}*a*{scale:.4f}/2)*2,ceil({job.width}*{scale:.4f}/2)*2)':"
+            f"h='if(gte(a,{job.width}/{job.height}),ceil({job.height}*{scale:.4f}/2)*2,ceil({job.width}/a*{scale:.4f}/2)*2)',"
+            f"setsar=1,format=yuv420p[{prepared}]"
         )
         filters.append(
             f"[{video_label}][{prepared}]overlay=eof_action=pass:repeatlast=0:shortest=0:"
+            f"x='if(gte(w,W),(W-w)/2*{horizontal_factor:.4f},(W-w)/2)':"
+            f"y='if(gte(h,H),(H-h)/2*{vertical_factor:.4f},(H-h)/2)':"
             f"enable='between(t,{timeline_start:.3f},{timeline_start + clip_duration:.3f})'[{composed}]"
         )
         video_label = composed
