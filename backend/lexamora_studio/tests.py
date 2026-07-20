@@ -3756,6 +3756,10 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertContains(page, "data-stage-resizer")
         self.assertContains(page, 'data-inspector-tab="VIDEO"')
         self.assertContains(page, "data-media-library-dialog")
+        self.assertContains(page, "Save As")
+        self.assertContains(page, "data-delete-track")
+        self.assertContains(page, "data-clip-context")
+        self.assertContains(page, "movie-timeline-position-pad")
         self.assertContains(page, "studio/movie_editor.js")
         response = self.client.post(
             f"/studio/projects/{self.project.id}/movie-editor/",
@@ -3858,6 +3862,15 @@ class StudioProductionPilotFeaturesTests(TestCase):
         )
         self.assertEqual(detached.status_code, 200, detached.content)
         self.assertFalse(copy.projects.filter(id=self.project.id).exists())
+
+        project_page = self.client.get(f"/studio/projects/{self.project.id}/")
+        self.assertContains(project_page, "Montage projects")
+        self.assertContains(project_page, "Second montage")
+        self.assertContains(project_page, str(second.id))
+        self.assertNotContains(project_page, str(copy.id))
+        workspace_page = self.client.get(f"/studio/workspaces/{self.workspace.id}/")
+        self.assertContains(workspace_page, "Montage projects")
+        self.assertContains(workspace_page, str(copy.id))
 
         exported = self.client.get(
             f"/studio/projects/{self.project.id}/movie-editor/edits/{second.id}/export/",

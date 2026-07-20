@@ -18,6 +18,7 @@
   let selectedId = null;
   let selectedIds = new Set();
   let clipClipboard = [];
+  let pasteTargetTrackId = null;
   let playheadMs = 0;
   let dirty = false;
   let snapping = true;
@@ -914,8 +915,9 @@
     const positionX = numberInput(Number(clip?.positionX || 0).toFixed(2), ".25", "-500");
     const positionY = numberInput(Number(clip?.positionY || 0).toFixed(2), ".25", "-500");
     positionX.max = "500"; positionY.max = "500";
-    const clipScale = numberInput(Number(clip?.scale || 1).toFixed(2), ".01", ".05");
-    clipScale.max = "8";
+    const clipScale = document.createElement("input");
+    clipScale.type = "range"; clipScale.min = ".05"; clipScale.max = "8"; clipScale.step = ".01";
+    clipScale.value = Number(clip?.scale || 1).toFixed(2);
     const speed = numberInput(Number(clip?.speed || 1).toFixed(2), ".05", ".1"); speed.max = "8"; speed.className = "movie-clip-speed";
     const speedMethod = document.createElement("select");
     [["FRAME_SAMPLE", "Frame sampling"], ["FRAME_BLEND", "Frame blending"], ["OPTICAL_FLOW", "Optical flow"]].forEach(([value, label]) => {
@@ -958,7 +960,20 @@
       updatePreviewGeometry();
     });
     positionX.onchange = updatePosition; positionY.onchange = updatePosition;
-    clipScale.onchange = () => mutate(() => { clip.scale = clamp(Number(clipScale.value), .05, 8); updatePreviewGeometry(); });
+    let scaleRemembered = false;
+    const scaleValue = document.createElement("output");
+    const updateScaleValue = () => { scaleValue.textContent = `${Math.round(Number(clipScale.value) * 100)}%`; };
+    clipScale.onpointerdown = () => { if (!scaleRemembered) { remember(); scaleRemembered = true; } };
+    clipScale.oninput = () => {
+      clip.scale = clamp(Number(clipScale.value), .05, 8);
+      updateScaleValue(); updatePreviewGeometry();
+    };
+    clipScale.onchange = () => {
+      clip.scale = clamp(Number(clipScale.value), .05, 8);
+      historyRedo = []; updateDirty(); updateHistoryButtons(); scaleRemembered = false;
+      updateScaleValue(); updatePreviewGeometry();
+    };
+    updateScaleValue();
     volume.onchange = event => mutate(() => { clip.volume = Number(event.target.value); syncPlayers(false, true); });
     speed.onchange = () => mutate(() => {
       const previous = Number(clip.speed || 1); const next = clamp(Number(speed.value), .1, 8);
@@ -1008,16 +1023,18 @@
     const scaleDown = inspectorButton("-", "Reduce clip scale by 1%", () => {
       if (!found || track.locked) return;
       mutate(() => { clip.scale = clamp(Number(clip.scale || 1) - .01, .05, 8); updatePreviewGeometry(); });
+      clipScale.value = String(clip.scale); updateScaleValue();
       renderInspector();
     });
     const scaleUp = inspectorButton("+", "Increase clip scale by 1%", () => {
       if (!found || track.locked) return;
       mutate(() => { clip.scale = clamp(Number(clip.scale || 1) + .01, .05, 8); updatePreviewGeometry(); });
+      clipScale.value = String(clip.scale); updateScaleValue();
       renderInspector();
     });
     scaleDown.disabled = scaleUp.disabled = !canEdit || track.locked;
     scaleWrap.className = "movie-inspector-field"; scaleCaption.className = "movie-inspector-label"; scaleCaption.textContent = "Scale";
-    scaleControls.className = "movie-scale-stepper"; scaleControls.append(scaleDown, clipScale, scaleUp); scaleWrap.append(scaleCaption, scaleControls);
+    scaleControls.className = "movie-scale-stepper"; scaleControls.append(scaleDown, clipScale, scaleValue, scaleUp); scaleWrap.append(scaleCaption, scaleControls);
     const pad = document.createElement("div");
     pad.className = "movie-position-pad"; pad.title = "Move rendered video inside the output frame";
     const nudgePosition = (dx, dy) => {
@@ -1040,7 +1057,28 @@
       pad.append(button);
     });
     const source = document.createElement("div"); source.className = "movie-source-readout"; source.textContent = `Source media: ${asset?.name || clip.sourceAssetId} / ${clip.sourceAssetId}`;
-    inspector.append(field("Name", name), scaleWrap, field("Start", start), field("End", end), field("Playhead", marker), field("Speed", speed), field("Interpolation", speedMethod), field("X", positionX), field("Y", positionY), pad, source);
+    const coordinates = document.createElement("div"); coordinates.className = "movie-position-coordinates";
+    coordinates.append(field("X", positionX), field("Y", positionY));
+    const timelinePad = document.createElement("div"); timelinePad.className = "movie-position-pad movie-timeline-position-pad"; timelinePad.title = "Move the clip on the timeline";
+    const alignToPlayhead = () => {
+      const selected = [...selectedIds].map(findClip).filter(item => item && !item.track.locked);
+      if (!selected.length) return;
+      const first = Math.min(...selected.map(item => item.clip.start));
+      mutate(() => selected.forEach(item => { item.clip.start = Math.max(0, quantize(item.clip.start + playheadMs - first)); }));
+      renderTimeline(); renderInspector();
+    };
+    [
+      ["&#8593;", () => moveSelectedToAdjacentTrack(-1), "Move clip to the track above", "up"],
+      ["&#8592;", () => nudgeSelected(-1, false), "Move clip left one frame", "left"],
+      ["&#9679;", alignToPlayhead, "Align selection start to playhead", "home"],
+      ["&#8594;", () => nudgeSelected(1, false), "Move clip right one frame", "right"],
+      ["&#8595;", () => moveSelectedToAdjacentTrack(1), "Move clip to the track below", "down"],
+    ].forEach(([symbol, action, title, direction]) => {
+      const button = document.createElement("button"); button.type = "button"; button.className = `icon-button secondary movie-pad-${direction}`;
+      button.innerHTML = symbol; button.title = title; button.disabled = !canEdit || track.locked;
+      bindHold(button, action); timelinePad.append(button);
+    });
+    inspector.append(field("Name", name), scaleWrap, field("Start", start), field("End", end), field("Playhead", marker), field("Speed", speed), field("Interpolation", speedMethod), coordinates, pad, timelinePad, source);
   }
 
   function selectClip(id, movePlayhead = false, additive = false) {
@@ -1073,11 +1111,12 @@
   function copySelected() {
     const items = [...selectedIds].map(id => {
       const found = findClip(id);
-      return found ? {clip: structuredClone(found.clip), trackId: found.track.id} : null;
+      return found ? {clip: structuredClone(found.clip), trackId: found.track.id, trackIndex: timeline.tracks.indexOf(found.track)} : null;
     }).filter(Boolean);
     if (!items.length) return toast("Select one or more clips first");
     const origin = Math.min(...items.map(item => item.clip.start));
-    clipClipboard = items.map(item => ({...item, offset: item.clip.start - origin}));
+    const anchorIndex = items.find(item => item.clip.id === selectedId)?.trackIndex ?? items[0].trackIndex;
+    clipClipboard = items.map(item => ({...item, offset: item.clip.start - origin, trackOffset: item.trackIndex - anchorIndex}));
     toast(`${clipClipboard.length} clip${clipClipboard.length === 1 ? "" : "s"} copied`);
   }
 
@@ -1085,9 +1124,12 @@
     if (!clipClipboard.length) return toast("Copy clips first");
     const pasted = [];
     mutate(() => {
+      const indicated = timeline.tracks.find(track => track.id === pasteTargetTrackId && !track.locked);
+      const indicatedIndex = indicated ? timeline.tracks.indexOf(indicated) : -1;
       clipClipboard.forEach(item => {
+        const offsetTarget = indicatedIndex >= 0 ? timeline.tracks[indicatedIndex + Number(item.trackOffset || 0)] : null;
         const originalTrack = timeline.tracks.find(track => track.id === item.trackId && !track.locked);
-        const target = originalTrack || timeline.tracks.find(track => !track.locked);
+        const target = offsetTarget && !offsetTarget.locked ? offsetTarget : indicated || originalTrack || timeline.tracks.find(track => !track.locked);
         if (!target) return;
         const clip = {...structuredClone(item.clip), id: uid(), start: quantize(playheadMs + item.offset)};
         target.clips.push(clip); pasted.push(clip.id);
@@ -1130,12 +1172,13 @@
     renderTimeline(); renderInspector();
   }
 
-  function nudgeSelected(direction) {
+  function nudgeSelected(direction, movePlayhead = true) {
     const found = [...selectedIds].map(findClip).filter(item => item && !item.track.locked);
     if (!found.length) return;
     const delta = direction * frameMs();
     mutate(() => { found.forEach(item => { item.clip.start = Math.max(0, quantize(item.clip.start + delta)); }); });
-    renderTimeline(); renderInspector(); setPlayhead(Math.min(...found.map(item => item.clip.start)), false);
+    renderTimeline(); renderInspector();
+    if (movePlayhead) setPlayhead(Math.min(...found.map(item => item.clip.start)), false);
   }
 
   function moveSelectedToAdjacentTrack(direction) {
@@ -1274,9 +1317,11 @@
     event.preventDefault(); event.stopPropagation();
     const additive = event.ctrlKey || event.metaKey || event.shiftKey;
     if (!selectedIds.has(clip.id)) selectClip(clip.id, false, additive);
+    pasteTargetTrackId = track.id;
     const boundsAtPress = node.getBoundingClientRect();
     const clickedAt = clip.start + clamp(event.clientX - boundsAtPress.left, 0, boundsAtPress.width) / zoom * 1000;
-    setPlayhead(clickedAt, true, false);
+    const playheadInsideClip = playheadMs >= clip.start && playheadMs <= clip.start + clip.duration;
+    if (!playheadInsideClip) setPlayhead(clickedAt, true, false);
     remember();
     const originX = event.clientX;
     const originScroll = timelineScroll.scrollLeft;
@@ -1437,6 +1482,63 @@
     window.addEventListener("pointerup", finish);
   }
 
+  function beginLaneGesture(event, lane) {
+    if (event.button !== 0) return;
+    pasteTargetTrackId = lane.dataset.trackId;
+    event.preventDefault();
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const startScroll = timelineScroll.scrollLeft;
+    let mode = event.shiftKey ? "marquee" : null;
+    const move = next => {
+      const dx = next.clientX - startX;
+      const dy = next.clientY - startY;
+      if (!mode && Math.hypot(dx, dy) >= 4) mode = Math.abs(dx) >= Math.abs(dy) * 1.5 ? "pan" : "marquee";
+      if (mode === "pan") {
+        timelineScroll.classList.add("panning");
+        timelineScroll.scrollLeft = Math.max(0, startScroll - dx);
+        return;
+      }
+      if (mode !== "marquee") return;
+      const canvasRect = timelineCanvas.getBoundingClientRect();
+      const left = Math.min(startX, next.clientX);
+      const top = Math.min(startY, next.clientY);
+      const right = Math.max(startX, next.clientX);
+      const bottom = Math.max(startY, next.clientY);
+      marquee.hidden = false;
+      marquee.style.left = `${left - canvasRect.left}px`;
+      marquee.style.top = `${top - canvasRect.top}px`;
+      marquee.style.width = `${right - left}px`;
+      marquee.style.height = `${bottom - top}px`;
+      selectedIds = new Set(qa(".movie-clip").filter(item => {
+        const rect = item.getBoundingClientRect();
+        return rect.right >= left && rect.left <= right && rect.bottom >= top && rect.top <= bottom;
+      }).map(item => item.dataset.clipId));
+      selectedId = [...selectedIds].at(-1) || null;
+      qa(".movie-clip").forEach(item => item.classList.toggle("selected", selectedIds.has(item.dataset.clipId)));
+    };
+    const finish = next => {
+      window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", finish);
+      timelineScroll.classList.remove("panning"); marquee.hidden = true;
+      if (!mode) { selectClip(null); setPlayhead((next.clientX - lane.getBoundingClientRect().left) / zoom * 1000); }
+      else if (mode === "marquee") renderInspector();
+    };
+    window.addEventListener("pointermove", move); window.addEventListener("pointerup", finish);
+  }
+
+  function showClipContext(event, clip) {
+    event.preventDefault(); event.stopPropagation();
+    const asset = assetMap.get(clip.sourceAssetId || clip.assetId);
+    const menu = q("[data-clip-context]");
+    if (!menu) return;
+    menu.querySelector("[data-clip-context-current]").textContent = clip.name || "Untitled clip";
+    menu.querySelector("[data-clip-context-source]").textContent = asset?.name || clip.sourceAssetId || "Unknown source";
+    menu.hidden = false;
+    const width = 300;
+    menu.style.left = `${clamp(event.clientX, 8, innerWidth - width - 8)}px`;
+    menu.style.top = `${clamp(event.clientY, 8, innerHeight - 130)}px`;
+  }
+
   function makeClipNode(clip, track) {
     const node = document.createElement("div");
     const strip = document.createElement("i");
@@ -1485,6 +1587,11 @@
       if (!selectedIds.has(clip.id)) selectClip(clip.id, false, event.ctrlKey || event.metaKey || event.shiftKey);
     };
     node.ondblclick = event => { event.stopPropagation(); selectClip(clip.id, false); togglePlayback(); };
+    node.oncontextmenu = event => {
+      pasteTargetTrackId = track.id;
+      if (!selectedIds.has(clip.id)) selectClip(clip.id, false);
+      showClipContext(event, clip);
+    };
     body.onpointerdown = event => beginClipGesture(event, clip, track, "move", node);
     left.onpointerdown = event => beginClipGesture(event, clip, track, "left", node);
     right.onpointerdown = event => beginClipGesture(event, clip, track, "right", node);
@@ -1512,10 +1619,11 @@
       headsNode.append(makeTrackHead(track));
       const lane = document.createElement("div"); lane.className = `movie-track-lane${track.locked ? " locked" : ""}${track.displayMode === "WAVEFORM" ? " waveform-mode" : ""}`; lane.dataset.trackId = track.id;
       lane.style.height = `${track.height}px`;
+      lane.onpointerenter = () => { pasteTargetTrackId = track.id; };
+      lane.onpointermove = () => { pasteTargetTrackId = track.id; };
       lane.onpointerdown = event => {
         if (event.target !== lane) return;
-        if (event.ctrlKey || event.metaKey) beginTimelinePan(event, lane);
-        else beginMarquee(event, lane);
+        beginLaneGesture(event, lane);
       };
       lane.ondragover = event => { if (!track.locked && canEdit) event.preventDefault(); };
       lane.ondrop = event => {
@@ -1551,6 +1659,16 @@
     localStorage.setItem("studio-movie-zoom", String(zoom));
     renderTimeline();
     requestAnimationFrame(() => { timelineScroll.scrollLeft = Math.max(0, anchorMs / 1000 * zoom - anchor); });
+  }
+
+  function removeTargetTrack() {
+    const selectedTrack = findClip(selectedId)?.track;
+    const track = selectedTrack || timeline.tracks.find(item => item.id === pasteTargetTrackId);
+    if (!track) return toast("Point to a track or select one of its clips first");
+    if (track.clips.length) return toast("Remove clips before deleting this track");
+    mutate(() => { timeline.tracks = timeline.tracks.filter(item => item.id !== track.id); });
+    pasteTargetTrackId = null;
+    renderTimeline();
   }
 
   function renderLibrary() {
@@ -1689,6 +1807,7 @@
   });
 
   qa("[data-add-track]").forEach(button => button.onclick = () => addTrack(button.dataset.addTrack));
+  q("[data-delete-track]")?.addEventListener("click", removeTargetTrack);
   q("[data-auto-cut]").onclick = () => {
     let track = timeline.tracks.find(item => item.kind === "VIDEO" && !item.locked);
     if (!track) track = addTrack("VIDEO");
@@ -1714,6 +1833,11 @@
   preview.addEventListener("loadedmetadata", () => updatePreviewGeometry());
   preview.addEventListener("error", () => { previewStatus.textContent = preview.error?.message || "Preview failed"; });
   previewStage.addEventListener("pointerdown", beginPreviewPan);
+  previewStage.addEventListener("wheel", event => {
+    if (event.ctrlKey || event.metaKey) return;
+    event.preventDefault();
+    window.scrollBy({left: event.deltaX, top: event.deltaY, behavior: "auto"});
+  }, {passive: false});
   playheadNode.addEventListener("pointerdown", beginPlayheadGesture);
   previewZoomInput?.addEventListener("input", event => {
     previewZoom = clamp(Number(event.target.value), .25, 2);
@@ -1798,6 +1922,8 @@
   });
   addEventListener("beforeunload", event => { if (dirty) { event.preventDefault(); event.returnValue = ""; } });
   document.addEventListener("click", event => {
+    const clipContext = q("[data-clip-context]");
+    if (clipContext && !event.target.closest("[data-clip-context]")) clipContext.hidden = true;
     qa("details[open]").forEach(details => {
       if (!event.target.closest("summary") || !details.contains(event.target)) details.removeAttribute("open");
     });

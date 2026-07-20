@@ -1,0 +1,21 @@
+{% load studio_extras %}
+<style>
+.montage-gallery{margin-top:18px}.montage-gallery>summary{display:flex;align-items:center;gap:7px;font-size:18px;font-weight:800;cursor:pointer}.montage-gallery-body{margin-top:10px}.montage-gallery-toolbar{display:flex;justify-content:flex-end;gap:8px;margin-bottom:10px}.montage-gallery-toolbar select{width:auto}.montage-gallery-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px}.montage-card{display:grid;grid-template-columns:54px minmax(0,1fr) auto;gap:10px;align-items:center;padding:11px;border:1px solid var(--line);border-radius:6px;background:var(--panel)}.montage-card-mark{display:grid;place-items:center;width:54px;height:54px;border-radius:5px;background:color-mix(in srgb,var(--accent) 13%,var(--panel-2));color:var(--accent);font-size:12px;font-weight:850}.montage-card-copy{display:grid;gap:3px;min-width:0}.montage-card-copy strong,.montage-card-copy small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.montage-card-copy small{color:var(--muted)}.montage-gallery-grid.small{grid-template-columns:repeat(auto-fill,minmax(180px,1fr))}.montage-gallery-grid.list{display:grid;grid-template-columns:1fr}.montage-gallery-grid.list .montage-card-mark{width:38px;height:38px}.montage-gallery-grid.list .montage-card{grid-template-columns:38px minmax(0,1fr) auto;padding:7px 9px}
+</style>
+<details class="project-section montage-gallery" data-montage-gallery data-gallery-key="{{ montage_gallery_key }}" open>
+  <summary><span>Montage projects</span><span class="media-count">{{ montage_projects|length }}</span></summary>
+  <div class="montage-gallery-body">
+    <div class="montage-gallery-toolbar">
+      <select data-montage-sort aria-label="Sort montage projects"><option value="updated">Recently updated</option><option value="created">Recently created</option><option value="title">Title</option></select>
+      <div class="view-switch"><button type="button" class="icon-button" data-montage-view="large" title="Large cards">&#x25A6;</button><button type="button" class="icon-button" data-montage-view="small" title="Small cards">&#x25A5;</button><button type="button" class="icon-button" data-montage-view="list" title="List">&#x2630;</button></div>
+    </div>
+    <div class="montage-gallery-grid" data-montage-grid>
+      {% for montage in montage_projects %}<article class="montage-card" data-title="{{ montage.title|lower }}" data-created="{{ montage.created_at|date:'c' }}" data-updated="{{ montage.updated_at|date:'c' }}">
+        <a class="montage-card-mark" href="{{ montage.open_url }}" title="Open in Draft Editor">EDIT</a>
+        <a class="montage-card-copy" href="{{ montage.open_url }}"><strong>{{ montage.title }}</strong><small>{{ montage.project_names }}</small><small>Updated {{ montage.updated_at|date:"Y-m-d H:i" }} by {{ montage.updated_by|display_name }}</small></a>
+        <a class="icon-button secondary" href="{{ montage.export_url }}" title="Save As" aria-label="Save montage project to disk">&#8595;</a>
+      </article>{% empty %}<p class="empty">No montage projects yet</p>{% endfor %}
+    </div>
+  </div>
+</details>
+<script>(()=>{const gallery=document.currentScript.previousElementSibling;if(!gallery?.matches('[data-montage-gallery]'))return;const grid=gallery.querySelector('[data-montage-grid]'),sort=gallery.querySelector('[data-montage-sort]'),key=`studio-montage-view-${gallery.dataset.galleryKey||'gallery'}`;const cards=()=>[...grid.querySelectorAll('.montage-card')];const applySort=()=>{const mode=sort.value;cards().sort((a,b)=>mode==='title'?a.dataset.title.localeCompare(b.dataset.title):String(b.dataset[mode]).localeCompare(String(a.dataset[mode]))).forEach(card=>grid.append(card))};sort.addEventListener('change',applySort);gallery.querySelectorAll('[data-montage-view]').forEach(button=>button.addEventListener('click',()=>{grid.className=`montage-gallery-grid ${button.dataset.montageView==='large'?'':button.dataset.montageView}`;localStorage.setItem(key,button.dataset.montageView)}));const view=localStorage.getItem(key)||'large';gallery.querySelector(`[data-montage-view="${view}"]`)?.click();})();</script>

@@ -260,6 +260,11 @@ def workspace_detail(request, workspace_id):
         deduplicate=True,
     )
     workspace_videos = _video_gallery_assets(request.user, workspace)
+    montage_projects = _movie_timeline_gallery_items(
+        request.user,
+        workspace,
+        _workspace_movie_timelines(request.user, workspace),
+    )
     return render(request, "studio/workspace_detail.html", {
         "workspace": workspace,
         "projects": projects,
@@ -280,6 +285,7 @@ def workspace_detail(request, workspace_id):
         "project_assets": [],
         "workspace_assets": workspace_assets,
         "gallery_videos": workspace_videos,
+        "montage_projects": montage_projects,
         "copy_target_workspaces": _project_copy_targets(request.user),
     })
 
@@ -1970,6 +1976,12 @@ def project_detail(request, project_id):
     recent_project_ids = {asset.id for asset in project_assets[:10]}
     gallery_assets = workspace_assets
     gallery_videos = _video_gallery_assets(request.user, project.workspace, project)
+    montage_projects = _movie_timeline_gallery_items(
+        request.user,
+        project.workspace,
+        _project_movie_timelines(request.user, project),
+        current_project=project,
+    )
     for asset in gallery_assets:
         asset.is_recent_project = asset.id in recent_project_ids
         asset.is_current_project = str(project.id) in asset.gallery_project_ids.split(",")
@@ -1983,6 +1995,7 @@ def project_detail(request, project_id):
         "gallery_assets": gallery_assets,
         "gallery_videos": gallery_videos,
         "gallery_projects": [project],
+        "montage_projects": montage_projects,
     })
 
 
@@ -4517,6 +4530,40 @@ def _movie_edit_payload(timeline, project):
             "project_id": project.id, "timeline_id": timeline.id,
         }),
     }
+
+
+def _movie_timeline_gallery_items(user, workspace, timelines, current_project=None):
+    accessible = {
+        project.id: project
+        for project in accessible_projects(user).filter(workspace=workspace).only("id", "title")
+    }
+    queryset = timelines.select_related("project", "created_by", "updated_by").prefetch_related("projects")
+    items = []
+    for timeline in queryset.order_by("-updated_at", "title"):
+        attached = [project for project in timeline.projects.all() if project.id in accessible]
+        if current_project and any(project.id == current_project.id for project in attached):
+            open_project = current_project
+        elif attached:
+            open_project = sorted(attached, key=lambda project: project.title.lower())[0]
+        else:
+            open_project = accessible.get(timeline.project_id)
+        if open_project is None:
+            continue
+        items.append({
+            "id": timeline.id,
+            "title": timeline.title,
+            "created_at": timeline.created_at,
+            "updated_at": timeline.updated_at,
+            "created_by": timeline.created_by,
+            "updated_by": timeline.updated_by,
+            "project_names": ", ".join(project.title for project in attached) or open_project.title,
+            "open_url": f'{reverse("studio:project_movie_editor", kwargs={"project_id": open_project.id})}?edit={timeline.id}',
+            "export_url": reverse("studio:project_movie_edit_export", kwargs={
+                "project_id": open_project.id,
+                "timeline_id": timeline.id,
+            }),
+        })
+    return items
 
 
 def _movie_render_payload(job):
