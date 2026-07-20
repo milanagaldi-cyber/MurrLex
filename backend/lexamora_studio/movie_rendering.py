@@ -92,7 +92,7 @@ def build_render_command(job, assets, output_path):
     inputs = []
     clips = []
     for track_index, track in enumerate(snapshot.get("tracks", [])):
-        if track.get("kind") not in {"VIDEO", "AUDIO"} or track.get("muted"):
+        if track.get("kind") not in {"VIDEO", "AUDIO"}:
             continue
         for clip_index, clip in enumerate(track.get("clips", [])):
             asset = assets[str(clip["assetId"])]
@@ -110,11 +110,9 @@ def build_render_command(job, assets, output_path):
         source_start = int(clip.get("sourceStart", 0)) / 1000
         clip_duration = int(clip.get("duration", 0)) / 1000
         timeline_start = int(clip.get("start", 0)) / 1000
-        scale = min(4, max(0.5, float(clip.get("scale", 1))))
-        position_x = min(100, max(-100, float(clip.get("positionX", 0))))
-        position_y = min(100, max(-100, float(clip.get("positionY", 0))))
-        horizontal_factor = 1 - position_x / 100
-        vertical_factor = 1 - position_y / 100
+        scale = min(8, max(0.05, float(clip.get("scale", 1))))
+        position_x = min(500, max(-500, float(clip.get("positionX", 0))))
+        position_y = min(500, max(-500, float(clip.get("positionY", 0))))
         prepared = f"v{video_number}"
         composed = f"vc{video_number}"
         filters.append(
@@ -126,14 +124,16 @@ def build_render_command(job, assets, output_path):
         )
         filters.append(
             f"[{video_label}][{prepared}]overlay=eof_action=pass:repeatlast=0:shortest=0:"
-            f"x='if(gte(w,W),(W-w)/2*{horizontal_factor:.4f},(W-w)/2)':"
-            f"y='if(gte(h,H),(H-h)/2*{vertical_factor:.4f},(H-h)/2)':"
+            f"x='(W-w)/2+W*{position_x / 100:.6f}':"
+            f"y='(H-h)/2+H*{position_y / 100:.6f}':"
             f"enable='between(t,{timeline_start:.3f},{timeline_start + clip_duration:.3f})'[{composed}]"
         )
         video_label = composed
         video_number += 1
 
     for track_index, clip_index, track, clip, asset, input_index in clips:
+        if track.get("muted"):
+            continue
         source_start = int(clip.get("sourceStart", 0)) / 1000
         clip_duration = int(clip.get("duration", 0)) / 1000
         timeline_start = int(clip.get("start", 0)) / 1000

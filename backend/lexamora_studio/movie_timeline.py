@@ -22,6 +22,7 @@ def default_movie_timeline():
                 "kind": "VIDEO",
                 "muted": False,
                 "locked": False,
+                "height": 84,
                 "clips": [],
             },
             {
@@ -30,6 +31,7 @@ def default_movie_timeline():
                 "kind": "AUDIO",
                 "muted": False,
                 "locked": False,
+                "height": 84,
                 "clips": [],
             },
         ],
@@ -103,6 +105,7 @@ def normalize_movie_timeline(value):
             "kind": kind,
             "muted": bool(track.get("muted", False)),
             "locked": bool(track.get("locked", False)),
+            "height": _number(track.get("height", 84), field="Track height", minimum=56, maximum=200),
         })
         normalized_clips = []
         for clip in clips:
@@ -137,13 +140,13 @@ def normalize_movie_timeline(value):
                 raise MovieTimelineValidationError("Clip volume must be between 0 and 2.")
             normalized_clip["volume"] = volume
             normalized_clip["scale"] = _float_number(
-                clip.get("scale", 1), field="Clip scale", minimum=0.5, maximum=4,
+                clip.get("scale", 1), field="Clip scale", minimum=0.05, maximum=8,
             )
             normalized_clip["positionX"] = _float_number(
-                clip.get("positionX", 0), field="Clip horizontal position", minimum=-100, maximum=100,
+                clip.get("positionX", 0), field="Clip horizontal position", minimum=-500, maximum=500,
             )
             normalized_clip["positionY"] = _float_number(
-                clip.get("positionY", 0), field="Clip vertical position", minimum=-100, maximum=100,
+                clip.get("positionY", 0), field="Clip vertical position", minimum=-500, maximum=500,
             )
             normalized_clips.append(normalized_clip)
         normalized_track["clips"] = normalized_clips
