@@ -2132,6 +2132,8 @@ class StudioInlineEditingWorkflowTests(TestCase):
         self.assertContains(page, "data-scene-list")
         self.assertContains(page, "drag-handle")
         self.assertContains(page, "data-theme-toggle")
+        self.assertContains(page, 'data-theme="business"', html=False)
+        self.assertContains(page, 'themeOrder=["dark","light","business"]', html=False)
         self.assertContains(page, "timeline-track")
         self.assertContains(page, "scene-editor-deck")
         self.assertContains(page, "data-scroll-direction")

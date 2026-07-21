@@ -21,6 +21,14 @@ This repository is the MurrLex monorepo. Use this file as the first stop for any
 - Be careful with text encoding. Past UI/data corruption showed mojibake such as `Ã...` in some legacy strings.
 - Commit only after explicit user approval.
 
+## Frontend Design System
+
+- Use open-source UI5 Web Components and SAP Fiori Horizon principles for new enterprise UI; invoke `$fiori-app-designer` for admin panels, forms, tables, dashboards, object pages, and workflows.
+- Choose and state the Fiori floorplan before implementation, then preserve the MurrLex/Lexamora brand rather than copying SAP screens.
+- Do not use SAP logos or proprietary assets, imply SAP endorsement, or add a competing design system without a concrete technical need.
+- Build responsive and accessible states, including keyboard focus, loading, empty, no-results, error, success, and permission handling.
+- Run available lint, typecheck, tests, build, and desktop/tablet/mobile visual review for frontend changes.
+
 ## Useful Commands
 
 ```powershell

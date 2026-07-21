@@ -1,0 +1,4 @@
+interface:
+  display_name: "Fiori App Designer"
+  short_description: "Design accessible UI5 enterprise interfaces"
+  default_prompt: "Use $fiori-app-designer to design an accessible enterprise screen with the right Fiori floorplan."
