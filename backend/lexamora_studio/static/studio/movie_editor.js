@@ -315,6 +315,18 @@
     const sourceWidth = asset?.width || 0;
     const sourceHeight = asset?.height || 0;
     const sourceRatio = sourceWidth && sourceHeight ? sourceWidth / sourceHeight : output.width / output.height;
+    if (!clip) {
+      const outputRatio = output.width / output.height;
+      const widthPx = sourceRatio >= outputRatio ? output.width : output.height * sourceRatio;
+      const heightPx = sourceRatio >= outputRatio ? output.width / sourceRatio : output.height;
+      return {
+        output, sourceRatio, widthPx, heightPx,
+        width: widthPx / output.width * 100,
+        height: heightPx / output.height * 100,
+        left: 50,
+        top: 50,
+      };
+    }
     const scale = clamp(Number(clip?.scale ?? 1), .05, 8);
     // Clip scale is based on the source's native pixels. This makes the selected
     // output resolution a real canvas instead of silently stretching every clip
@@ -800,6 +812,11 @@
   function previewAsset(asset) {
     if (!asset || asset.kind !== "VIDEO" || asset.status !== "READY") return;
     stopPlayback();
+    visualPlayers.forEach(player => { if (player.pause) player.pause(); player.remove(); });
+    visualPlayers.clear();
+    audioPlayers.forEach(player => player.pause());
+    audioPlayers.clear();
+    previewLayers?.replaceChildren();
     selectedId = null;
     selectedIds.clear();
     standalonePreviewAssetId = asset.id;
@@ -890,13 +907,14 @@
       let node = visualPlayers.get(item.clip.id);
       const expectedTag = asset.kind === "IMAGE" ? "IMG" : "VIDEO";
       if (node && node.tagName !== expectedTag) { node.remove(); visualPlayers.delete(item.clip.id); node = null; }
+      let isNew = false;
       if (!node) {
         node = document.createElement(asset.kind === "IMAGE" ? "img" : "video");
         node.className = "movie-preview-layer";
         node.dataset.clipId = item.clip.id;
         if (node.tagName === "VIDEO") { node.playsInline = true; node.preload = "auto"; node.muted = true; }
-        previewLayers.append(node);
         visualPlayers.set(item.clip.id, node);
+        isNew = true;
       }
       const source = asset.proxyUrl || asset.originalUrl;
       if (node.dataset.assetId !== asset.id) {
@@ -908,6 +926,7 @@
       node.style.zIndex = String(index + 1);
       node.classList.toggle("selected-layer", item.clip.id === selectedId);
       applyGeometry(node, asset, item.clip);
+      if (isNew) previewLayers.append(node);
       if (node.tagName === "VIDEO") {
         const at = item.selectedOutside ? item.clip.start : playheadMs;
         const target = Math.max(0, (item.clip.sourceStart + (at - item.clip.start) * Number(item.clip.speed || 1)) / 1000);
@@ -931,6 +950,8 @@
 
   function syncPlayers(shouldPlay, force = false) {
     if (standalonePreviewAssetId) {
+      visualPlayers.forEach(player => { if (player.pause) player.pause(); });
+      audioPlayers.forEach(player => player.pause());
       if (shouldPlay) preview.play().catch(error => { previewStatus.textContent = error.message; });
       return;
     }
