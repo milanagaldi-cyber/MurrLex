@@ -360,10 +360,35 @@
     return geometry;
   }
 
+  function applyStandalonePreviewGeometry() {
+    preview.style.setProperty("width", "100%", "important");
+    preview.style.setProperty("height", "100%", "important");
+    preview.style.setProperty("left", "0", "important");
+    preview.style.setProperty("top", "0", "important");
+    preview.style.setProperty("transform", "none", "important");
+    preview.style.setProperty("object-fit", "contain", "important");
+  }
+
+  function renderMediaPreviewSelection() {
+    qa(".movie-bin-item").forEach(item => {
+      const selected = item.dataset.assetId === standalonePreviewAssetId;
+      item.classList.toggle("previewing", selected);
+      item.setAttribute("aria-selected", selected ? "true" : "false");
+    });
+  }
+
+  function leaveStandalonePreview() {
+    if (!standalonePreviewAssetId) return;
+    standalonePreviewAssetId = null;
+    preview.pause();
+    preview.hidden = true;
+    renderMediaPreviewSelection();
+  }
+
   function updatePreviewGeometry() {
     const {asset, clip} = previewClipData();
     const geometry = asset ? applyGeometry(previewOutline, asset, clip) : null;
-    if (standalonePreviewAssetId && asset) applyGeometry(preview, asset, null);
+    if (standalonePreviewAssetId && asset) applyStandalonePreviewGeometry();
     visualPlayers.forEach((node, clipId) => {
       const found = findClip(clipId);
       const media = found ? assetMap.get(found.clip.assetId) : null;
@@ -374,6 +399,11 @@
   }
 
   function beginPreviewPan(event) {
+    if (standalonePreviewAssetId) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     const {clip, track} = previewClipData();
     if (!clip || !canEdit || track?.locked || event.button !== 0) return;
     event.preventDefault();
@@ -455,6 +485,8 @@
       item.className = "movie-bin-item";
       item.draggable = canEdit && asset.status === "READY";
       item.dataset.assetId = asset.id;
+      item.classList.toggle("previewing", standalonePreviewAssetId === asset.id);
+      item.setAttribute("aria-selected", standalonePreviewAssetId === asset.id ? "true" : "false");
       visual.className = "movie-bin-visual";
       copy.className = "movie-bin-copy";
       name.textContent = asset.name;
@@ -766,7 +798,6 @@
   }
 
   function setPlayhead(value, sync = true, autoSelect = true) {
-    standalonePreviewAssetId = null;
     playheadMs = clamp(quantize(value), 0, Math.max(0, visibleDuration()));
     playheadNode.style.left = `${playheadMs / 1000 * zoom}px`;
     playheadLabel.textContent = clock(playheadMs);
@@ -791,6 +822,7 @@
 
   function beginPlayheadGesture(event) {
     if (event.button !== 0) return;
+    leaveStandalonePreview();
     event.preventDefault(); event.stopPropagation(); stopPlayback();
     const update = next => {
       const bounds = timelineScroll.getBoundingClientRect();
@@ -820,6 +852,7 @@
     selectedId = null;
     selectedIds.clear();
     standalonePreviewAssetId = asset.id;
+    renderMediaPreviewSelection();
     renderTimeline();
     renderInspector();
     preview.hidden = false;
@@ -1362,10 +1395,7 @@
   }
 
   function selectClip(id, movePlayhead = false, additive = false) {
-    if (id) {
-      standalonePreviewAssetId = null;
-      preview.pause();
-    }
+    leaveStandalonePreview();
     if (movePlayhead) {
       const found = findClip(id);
       if (found) setPlayhead(found.clip.start, true, false);
@@ -2220,9 +2250,9 @@
     stopPlayback(); setPlayhead(target);
   });
   q("[data-preview-play]").onclick = togglePlayback;
-  q("[data-preview-stop]").onclick = () => stopPlayback(true);
-  qa("[data-preview-step]").forEach(button => bindHold(button, () => { stopPlayback(); setPlayhead(playheadMs + Number(button.dataset.previewStep) * frameMs()); }));
-  previewScrub.oninput = event => { stopPlayback(); setPlayhead(Number(event.target.value)); };
+  q("[data-preview-stop]").onclick = () => { if (standalonePreviewAssetId) { preview.pause(); preview.currentTime = 0; previewStatus.textContent = "Ready"; q("[data-preview-play]").innerHTML = "&#9654;"; return; } stopPlayback(true); };
+  qa("[data-preview-step]").forEach(button => bindHold(button, () => { leaveStandalonePreview(); stopPlayback(); setPlayhead(playheadMs + Number(button.dataset.previewStep) * frameMs()); }));
+  previewScrub.oninput = event => { leaveStandalonePreview(); stopPlayback(); setPlayhead(Number(event.target.value)); };
   preview.addEventListener("waiting", () => { previewStatus.textContent = "Buffering"; });
   preview.addEventListener("playing", () => { previewStatus.textContent = "Playing"; });
   preview.addEventListener("ended", () => {
@@ -2253,6 +2283,7 @@
   qa("[data-clip-nudge]").forEach(button => bindHold(button, () => nudgeSelected(Number(button.dataset.clipNudge))));
   q("[data-timeline-snap]").onclick = event => { snapping = !snapping; event.currentTarget.classList.toggle("active", snapping); toast(snapping ? "Snapping enabled" : "Snapping disabled"); };
   ruler.onpointerdown = event => {
+    leaveStandalonePreview();
     stopPlayback();
     const update = next => setPlayhead((next.clientX - ruler.getBoundingClientRect().left) / zoom * 1000);
     update(event); ruler.setPointerCapture(event.pointerId); ruler.onpointermove = update; ruler.onpointerup = () => { ruler.onpointermove = null; ruler.onpointerup = null; };
