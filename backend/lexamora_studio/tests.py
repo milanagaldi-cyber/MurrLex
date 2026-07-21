@@ -2134,6 +2134,8 @@ class StudioInlineEditingWorkflowTests(TestCase):
         self.assertContains(page, "data-theme-toggle")
         self.assertContains(page, 'data-theme="business"', html=False)
         self.assertContains(page, 'themeOrder=["dark","light","business"]', html=False)
+        self.assertContains(page, "studio/business_icons.css", html=False)
+        self.assertContains(page, "studio/business_icons.js", html=False)
         self.assertContains(page, "timeline-track")
         self.assertContains(page, "scene-editor-deck")
         self.assertContains(page, "data-scroll-direction")
