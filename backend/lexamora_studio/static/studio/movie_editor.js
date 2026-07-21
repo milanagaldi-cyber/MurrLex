@@ -314,13 +314,14 @@
     const output = outputDimensions();
     const sourceWidth = asset?.width || 0;
     const sourceHeight = asset?.height || 0;
+    const exactCanvas = sourceWidth === output.width && sourceHeight === output.height;
     const sourceRatio = sourceWidth && sourceHeight ? sourceWidth / sourceHeight : output.width / output.height;
     if (!clip) {
       const outputRatio = output.width / output.height;
       const widthPx = sourceRatio >= outputRatio ? output.width : output.height * sourceRatio;
       const heightPx = sourceRatio >= outputRatio ? output.width / sourceRatio : output.height;
       return {
-        output, sourceRatio, widthPx, heightPx,
+        output, sourceRatio, widthPx, heightPx, exactCanvas,
         width: widthPx / output.width * 100,
         height: heightPx / output.height * 100,
         left: 50,
@@ -336,7 +337,7 @@
     const x = Number(clip?.positionX || 0);
     const y = Number(clip?.positionY || 0);
     return {
-      output, sourceRatio, widthPx, heightPx,
+      output, sourceRatio, widthPx, heightPx, exactCanvas,
       width: widthPx / output.width * 100,
       height: heightPx / output.height * 100,
       left: 50 + x / output.width * 100,
@@ -348,8 +349,13 @@
     const geometry = clipGeometry(asset, clip);
     const stageWidth = Math.max(1, previewStage.clientWidth);
     const stageHeight = Math.max(1, previewStage.clientHeight);
-    node.style.width = `${geometry.width / 100 * stageWidth}px`;
-    node.style.height = `${geometry.height / 100 * stageHeight}px`;
+    // Matching source/output canvases must remain edge-to-edge at every UI zoom.
+    // A symmetric one-pixel display overscan prevents fractional CSS rounding
+    // from exposing the stage background without changing render geometry.
+    const seamGuard = geometry.exactCanvas && Number(clip?.scale ?? 1) === 1
+      && Number(clip?.positionX || 0) === 0 && Number(clip?.positionY || 0) === 0 ? 1 : 0;
+    node.style.width = `${geometry.width / 100 * stageWidth + seamGuard * 2}px`;
+    node.style.height = `${geometry.height / 100 * stageHeight + seamGuard * 2}px`;
     // X/Y are persisted correctly, so make them authoritative over legacy
     // preview layout rules as well as over the base video defaults.
     node.style.setProperty("left", `${geometry.left / 100 * stageWidth}px`, "important");
@@ -360,13 +366,18 @@
     return geometry;
   }
 
-  function applyStandalonePreviewGeometry() {
-    preview.style.setProperty("width", "100%", "important");
-    preview.style.setProperty("height", "100%", "important");
-    preview.style.setProperty("left", "0", "important");
-    preview.style.setProperty("top", "0", "important");
+  function applyStandalonePreviewGeometry(asset = assetMap.get(standalonePreviewAssetId)) {
+    const output = outputDimensions();
+    const sourceWidth = Number(asset?.width || preview.videoWidth || 0);
+    const sourceHeight = Number(asset?.height || preview.videoHeight || 0);
+    const exactCanvas = sourceWidth === output.width && sourceHeight === output.height;
+    const guard = exactCanvas ? 1 : 0;
+    preview.style.setProperty("width", `calc(100% + ${guard * 2}px)`, "important");
+    preview.style.setProperty("height", `calc(100% + ${guard * 2}px)`, "important");
+    preview.style.setProperty("left", `${-guard}px`, "important");
+    preview.style.setProperty("top", `${-guard}px`, "important");
     preview.style.setProperty("transform", "none", "important");
-    preview.style.setProperty("object-fit", "contain", "important");
+    preview.style.setProperty("object-fit", exactCanvas ? "fill" : "contain", "important");
   }
 
   function renderMediaPreviewSelection() {
@@ -388,7 +399,7 @@
   function updatePreviewGeometry() {
     const {asset, clip} = previewClipData();
     const geometry = asset ? applyGeometry(previewOutline, asset, clip) : null;
-    if (standalonePreviewAssetId && asset) applyStandalonePreviewGeometry();
+    if (standalonePreviewAssetId && asset) applyStandalonePreviewGeometry(asset);
     visualPlayers.forEach((node, clipId) => {
       const found = findClip(clipId);
       const media = found ? assetMap.get(found.clip.assetId) : null;
