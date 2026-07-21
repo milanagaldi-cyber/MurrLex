@@ -257,13 +257,18 @@
   function applyPreviewZoom() {
     const body = q(".movie-preview-body");
     if (!body || !previewStage) return;
-    const ratio = q("[data-movie-ratio]").value || "16:9";
-    const available = Math.max(180, body.clientWidth - 36);
-    const natural = ratio === "9:16" ? Math.min(available, 300) : ratio === "1:1" ? Math.min(available, 460) : Math.min(available, 818);
-    previewStage.style.width = `${Math.max(90, natural * previewZoom)}px`;
+    const output = outputDimensions();
+    const ratio = output.width / output.height;
+    const availableWidth = Math.max(180, body.clientWidth - 36);
+    const availableHeight = Math.max(240, Math.min(640, window.innerHeight * .68));
+    const naturalWidth = Math.min(availableWidth, availableHeight * ratio);
+    const naturalHeight = naturalWidth / ratio;
+    previewStage.style.width = `${Math.max(90, naturalWidth * previewZoom)}px`;
+    previewStage.style.height = `${Math.max(90, naturalHeight * previewZoom)}px`;
+    previewStage.style.aspectRatio = `${output.width} / ${output.height}`;
     if (previewZoomInput) previewZoomInput.value = previewZoom;
-    const output = q("[data-preview-zoom-value]");
-    if (output) output.textContent = `${Math.round(previewZoom * 100)}%`;
+    const zoomValue = q("[data-preview-zoom-value]");
+    if (zoomValue) zoomValue.textContent = `${Math.round(previewZoom * 100)}%`;
   }
 
   function applyCanvas() {
@@ -282,17 +287,20 @@
       return option;
     }));
     resolution.value = choices[ratio].includes(previous) ? previous : choices[ratio][Math.min(3, choices[ratio].length - 1)];
-    previewStage.style.aspectRatio = ratio.replace(":", "/");
+    const output = outputDimensions();
+    previewStage.style.aspectRatio = `${output.width} / ${output.height}`;
     previewStage.dataset.ratio = ratio;
     applyPreviewZoom();
     updatePreviewGeometry();
   }
 
   function previewClipData() {
-    if (standalonePreviewAssetId) return {asset: assetMap.get(standalonePreviewAssetId), clip: null, track: null};
     const selected = findClip(selectedId);
-    const active = selected && ["VIDEO", "IMAGE"].includes(clipKind(selected.clip))
-      ? selected : activeVisualClips(playheadMs).at(-1);
+    if (selected && ["VIDEO", "IMAGE"].includes(clipKind(selected.clip))) {
+      return {...selected, asset: assetMap.get(selected.clip.assetId)};
+    }
+    if (standalonePreviewAssetId) return {asset: assetMap.get(standalonePreviewAssetId), clip: null, track: null};
+    const active = activeVisualClips(playheadMs).at(-1);
     return active ? {...active, asset: assetMap.get(active.clip.assetId)} : {asset: null, clip: null, track: null};
   }
 
@@ -304,13 +312,15 @@
 
   function clipGeometry(asset, clip) {
     const output = outputDimensions();
-    const canvasRatio = output.width / output.height;
     const sourceWidth = asset?.width || 0;
     const sourceHeight = asset?.height || 0;
-    const sourceRatio = sourceWidth && sourceHeight ? sourceWidth / sourceHeight : canvasRatio;
+    const sourceRatio = sourceWidth && sourceHeight ? sourceWidth / sourceHeight : output.width / output.height;
     const scale = clamp(Number(clip?.scale ?? 1), .05, 8);
-    const widthPx = (sourceRatio >= canvasRatio ? output.height * sourceRatio : output.width) * scale;
-    const heightPx = (sourceRatio >= canvasRatio ? output.height : output.width / sourceRatio) * scale;
+    // Clip scale is based on the source's native pixels. This makes the selected
+    // output resolution a real canvas instead of silently stretching every clip
+    // to cover it at 100%.
+    const widthPx = (sourceWidth || output.width) * scale;
+    const heightPx = (sourceHeight || output.height) * scale;
     const x = Number(clip?.positionX || 0);
     const y = Number(clip?.positionY || 0);
     return {
@@ -1324,6 +1334,10 @@
   }
 
   function selectClip(id, movePlayhead = false, additive = false) {
+    if (id) {
+      standalonePreviewAssetId = null;
+      preview.pause();
+    }
     if (movePlayhead) {
       const found = findClip(id);
       if (found) setPlayhead(found.clip.start, true, false);
@@ -2264,7 +2278,13 @@
       if (control.matches("[data-movie-ratio]")) {
         applyCanvas();
       }
-      if (control.matches("[data-movie-resolution]")) updatePreviewGeometry();
+      if (control.matches("[data-movie-resolution]")) {
+        applyPreviewZoom();
+        requestAnimationFrame(() => {
+          updatePreviewGeometry();
+          syncPlayers(false, true);
+        });
+      }
       if (control.matches("[data-movie-fps]")) renderTimeline();
       updateDirty(); updateHistoryButtons(); scheduleAutosave();
     });

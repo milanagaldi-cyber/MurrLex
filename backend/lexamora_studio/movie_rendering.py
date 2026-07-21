@@ -188,8 +188,7 @@ def build_render_command(job, assets, output_path):
         filters.append(
             f"[{input_index}:v]{source_trim}"
             f"setpts=(PTS-STARTPTS)/{speed:.6f},{interpolation}setpts=PTS+{timeline_start:.3f}/TB,"
-            f"scale=w='if(gte(a,{job.width}/{job.height}),ceil({job.height}*a*{scale:.4f}/2)*2,ceil({job.width}*{scale:.4f}/2)*2)':"
-            f"h='if(gte(a,{job.width}/{job.height}),ceil({job.height}*{scale:.4f}/2)*2,ceil({job.width}/a*{scale:.4f}/2)*2)',"
+            f"scale=w='ceil(iw*{scale:.4f}/2)*2':h='ceil(ih*{scale:.4f}/2)*2',"
             f"setsar=1,{visual_filters}format=rgba,colorchannelmixer=aa={opacity:.4f}[{prepared}]"
         )
         filters.append(
