@@ -2,10 +2,11 @@
 .business-command-icon svg{display:block;width:100%;height:100%;overflow:visible;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:square;stroke-linejoin:miter}
 html[data-theme="business"] [data-business-icon]{gap:7px}
 html[data-theme="business"] [data-business-icon]>.business-command-icon{display:inline-flex}
-html[data-theme="business"] .icon-button[data-business-icon]{font-size:0}
-html[data-theme="business"] .icon-button[data-business-icon]>*:not(.business-command-icon){display:none!important}
-html[data-theme="business"] .icon-button[data-business-icon]>.business-command-icon{width:17px;height:17px}
-html[data-theme="business"] [data-business-icon="delete"],html[data-theme="business"] [data-business-icon="remove"]{--business-icon-color:var(--danger)}
-html[data-theme="business"] [data-business-icon="delete"]>.business-command-icon,html[data-theme="business"] [data-business-icon="remove"]>.business-command-icon{color:var(--business-icon-color)}
+html[data-theme="business"] .business-icon-only[data-business-icon]{font-size:0}
+html[data-theme="business"] .business-icon-only[data-business-icon]>*:not(.business-command-icon){display:none!important}
+html[data-theme="business"] .business-icon-only[data-business-icon]>.business-command-icon{width:17px;height:17px}
+html[data-theme="business"] [data-business-icon="delete"]>.business-command-icon{color:var(--danger)}
+html[data-theme="business"] [data-business-icon="favorite"]>.business-command-icon{color:#b56b00}
+html[data-theme="business"] [data-business-icon="save"]>.business-command-icon{color:#18864b}
 html[data-theme="business"] button[data-business-icon]:focus-visible,html[data-theme="business"] a[data-business-icon]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 @media (forced-colors:active){html[data-theme="business"] .business-command-icon{forced-color-adjust:auto}}
