@@ -426,6 +426,7 @@
     const originalY = Number(clip.positionY || 0);
     const output = outputDimensions();
     let changed = false;
+    const clearCanvasSnapEdges = () => previewStage.classList.remove("snap-top", "snap-right", "snap-bottom", "snap-left");
     const move = next => {
       const dx = next.clientX - startX;
       const dy = next.clientY - startY;
@@ -438,16 +439,17 @@
       const maximumY = output.height / 2 + geometry.heightPx / 2 - 1;
       nextX = clamp(nextX, minimumX, maximumX);
       nextY = clamp(nextY, minimumY, maximumY);
+      clearCanvasSnapEdges();
       if (snapping && previewGeometry) {
         const edgeTolerance = 8;
         const left = output.width / 2 + nextX - geometry.widthPx / 2;
         const right = output.width / 2 + nextX + geometry.widthPx / 2;
         const top = output.height / 2 - nextY - geometry.heightPx / 2;
         const bottom = output.height / 2 - nextY + geometry.heightPx / 2;
-        if (Math.abs(left) <= edgeTolerance) nextX = geometry.widthPx / 2 - output.width / 2;
-        else if (Math.abs(right - output.width) <= edgeTolerance) nextX = output.width / 2 - geometry.widthPx / 2;
-        if (Math.abs(top) <= edgeTolerance) nextY = output.height / 2 - geometry.heightPx / 2;
-        else if (Math.abs(bottom - output.height) <= edgeTolerance) nextY = geometry.heightPx / 2 - output.height / 2;
+        if (Math.abs(left) <= edgeTolerance) { nextX = geometry.widthPx / 2 - output.width / 2; previewStage.classList.add("snap-left"); }
+        if (Math.abs(right - output.width) <= edgeTolerance) { nextX = output.width / 2 - geometry.widthPx / 2; previewStage.classList.add("snap-right"); }
+        if (Math.abs(top) <= edgeTolerance) { nextY = output.height / 2 - geometry.heightPx / 2; previewStage.classList.add("snap-top"); }
+        if (Math.abs(bottom - output.height) <= edgeTolerance) { nextY = geometry.heightPx / 2 - output.height / 2; previewStage.classList.add("snap-bottom"); }
       }
       clip.positionX = nextX;
       clip.positionY = nextY;
@@ -457,7 +459,9 @@
     const finish = () => {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", finish);
+      window.removeEventListener("pointercancel", finish);
       previewStage.classList.remove("dragging");
+      clearCanvasSnapEdges();
       if (!changed) historyUndo.pop();
       else { historyRedo = []; updateDirty(); updateHistoryButtons(); scheduleAutosave(); }
       renderInspector();
@@ -465,12 +469,50 @@
     previewStage.classList.add("dragging");
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", finish);
+    window.addEventListener("pointercancel", finish);
   }
 
   function mediaStatus(asset) {
     if (asset.status === "READY") return `${clock(asset.durationMs || 0)} / Ready`;
     if (asset.status === "FAILED") return "Processing failed";
     return asset.status === "PROCESSING" ? "Creating proxy" : "Queued";
+  }
+
+  function mediaSize(bytes) {
+    const value = Number(bytes || 0);
+    if (!value) return "0 B";
+    const units = ["B", "KB", "MB", "GB"];
+    const index = Math.min(units.length - 1, Math.floor(Math.log(value) / Math.log(1024)));
+    return `${(value / (1024 ** index)).toFixed(index ? 1 : 0)} ${units[index]}`;
+  }
+
+  function openMediaProperties(asset) {
+    const dialog = q("[data-movie-media-properties]");
+    const content = dialog?.querySelector("[data-movie-media-properties-content]");
+    if (!dialog || !content) return;
+    const rows = [
+      ["Name", asset.name],
+      ["Type", asset.contentType || asset.kind],
+      ["Size", mediaSize(asset.size)],
+      ["Resolution", asset.width && asset.height ? `${asset.width} x ${asset.height}` : "Not available yet"],
+      ["Duration", asset.durationMs ? clock(asset.durationMs) : "Not available"],
+      ["Status", mediaStatus(asset)],
+      ["Workspace", asset.workspaceName || ""],
+      ["Projects", asset.projectNames?.join(", ") || "Workspace library"],
+      ["Added", asset.createdAt ? new Date(asset.createdAt).toLocaleString() : ""],
+      ["Added by", asset.createdBy || ""],
+      ["Asset ID", asset.id],
+    ];
+    content.replaceChildren(...rows.map(([label, value]) => {
+      const row = document.createElement("div");
+      const term = document.createElement("strong");
+      const detail = document.createElement("span");
+      term.textContent = label;
+      detail.textContent = value;
+      row.append(term, detail);
+      return row;
+    }));
+    dialog.showModal();
   }
 
   function renderBin() {
@@ -498,6 +540,12 @@
       item.dataset.assetId = asset.id;
       item.classList.toggle("previewing", standalonePreviewAssetId === asset.id);
       item.setAttribute("aria-selected", standalonePreviewAssetId === asset.id ? "true" : "false");
+      item.title = [
+        asset.width && asset.height ? `${asset.width} x ${asset.height}` : "Processing metadata",
+        mediaSize(asset.size),
+        asset.workspaceName || "",
+        asset.projectNames?.join(", ") || "Workspace library",
+      ].filter(Boolean).join(" / ");
       visual.className = "movie-bin-visual";
       copy.className = "movie-bin-copy";
       name.textContent = asset.name;
@@ -510,6 +558,12 @@
         image.alt = "";
         visual.append(image);
       } else visual.textContent = asset.kind;
+      if (asset.status === "QUEUED" || asset.status === "PROCESSING") {
+        const processing = document.createElement("i");
+        processing.className = "movie-media-processing";
+        processing.title = "Media is being processed";
+        visual.append(processing);
+      }
       copy.append(name, status);
       if (asset.error) {
         const detail = document.createElement("span");
@@ -544,6 +598,11 @@
         if (item.draggable) event.dataTransfer.setData("text/asset-id", asset.id);
       });
       item.addEventListener("click", () => previewAsset(asset));
+      item.addEventListener("contextmenu", event => {
+        event.preventDefault();
+        event.stopPropagation();
+        openMediaProperties(asset);
+      });
       item.addEventListener("dblclick", () => {
         if (!canEdit || asset.status !== "READY") return;
         const trackKind = asset.kind === "AUDIO" ? "AUDIO" : "VIDEO";
@@ -2223,10 +2282,9 @@
   qa("[data-media-scope]").forEach(button => button.onclick = () => { libraryScope = button.dataset.mediaScope; qa("[data-media-scope]").forEach(item => item.classList.toggle("active", item === button)); renderLibrary(); });
   q("[data-media-kind]")?.addEventListener("change", renderLibrary);
   q("[data-media-sort]")?.addEventListener("change", renderLibrary);
-  q("[data-media-upload-form]")?.addEventListener("submit", event => {
-    event.preventDefault();
+  const uploadMediaFiles = filesToUpload => {
     const input = q("[data-media-files]");
-    const files = [...input.files].slice(0, 10);
+    const files = [...filesToUpload].slice(0, 10);
     if (!files.length) return;
     const form = new FormData(); files.forEach(file => form.append("files", file));
     const progress = q("[data-media-progress]"); const bar = progress.querySelector("i"); progress.hidden = false; bar.style.width = "0";
@@ -2235,7 +2293,19 @@
     xhr.onload = async () => { progress.hidden = true; input.value = ""; let data = {}; try { data = JSON.parse(xhr.responseText); } catch (_) {} if (xhr.status >= 400) toast(data.error || "Upload failed", "error"); else { mutate(() => (data.items || []).forEach(item => { if (!timeline.mediaAssetIds.includes(item.id)) timeline.mediaAssetIds.push(item.id); })); if (data.errors?.length) toast(data.errors.join(" / "), "error"); } await refreshMedia(); };
     xhr.onerror = () => { progress.hidden = true; toast("Upload failed", "error"); };
     xhr.send(form);
+  };
+  q("[data-media-upload-form]")?.addEventListener("submit", event => {
+    event.preventDefault();
+    uploadMediaFiles(q("[data-media-files]").files);
   });
+  let mediaDragDepth = 0;
+  [q(".movie-bin")].filter(Boolean).forEach(target => {
+    target.addEventListener("dragenter", event => { if (![...event.dataTransfer.types].includes("Files")) return; event.preventDefault(); mediaDragDepth += 1; target.classList.add("file-drop-active"); });
+    target.addEventListener("dragover", event => { if (![...event.dataTransfer.types].includes("Files")) return; event.preventDefault(); event.dataTransfer.dropEffect = "copy"; });
+    target.addEventListener("dragleave", () => { mediaDragDepth = Math.max(0, mediaDragDepth - 1); if (!mediaDragDepth) target.classList.remove("file-drop-active"); });
+    target.addEventListener("drop", event => { if (!event.dataTransfer.files.length) return; event.preventDefault(); event.stopPropagation(); mediaDragDepth = 0; target.classList.remove("file-drop-active"); uploadMediaFiles(event.dataTransfer.files); });
+  });
+  q("[data-movie-media-properties-close]")?.addEventListener("click", () => q("[data-movie-media-properties]")?.close());
 
   qa("[data-add-track]").forEach(button => button.onclick = () => addTrack(button.dataset.addTrack));
   q("[data-delete-track]")?.addEventListener("click", removeTargetTrack);

@@ -1,5 +1,5 @@
 {% extends "studio/base.html" %}{% load studio_extras %}{% block extra_head %}<style>.character-media{display:grid;align-self:stretch;gap:8px}.character-row-actions{display:flex;align-items:center;justify-content:flex-end;gap:5px}.character-row-actions form{margin:0}</style>{% endblock %}{% block content %}
-{% include "studio/_project_navigation.html" %}
+<span data-page-media-drop data-media-upload-url="{{ direct_media_upload_url }}" data-media-drop-target="project" hidden></span>{% include "studio/_project_navigation.html" %}
 <h2>Description</h2><p>{{ project.description|default:"No description yet."|linebreaksbr }}</p>
 <h2>Concept</h2><p>{{ project.concept|default:"No concept yet."|linebreaksbr }}</p>
 {% if "service" not in project.hidden_sections %}<details class="project-section project-service-section" data-project-section="service" open><summary><span>Project information</span></summary><section class="panel project-meta">

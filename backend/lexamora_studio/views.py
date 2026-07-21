@@ -290,6 +290,7 @@ def workspace_detail(request, workspace_id):
         "gallery_videos": workspace_videos,
         "montage_projects": montage_projects,
         "copy_target_workspaces": _project_copy_targets(request.user),
+        "direct_media_upload_url": reverse("studio:workspace_media_upload", kwargs={"workspace_id": workspace.id}),
     })
 
 
@@ -1041,16 +1042,81 @@ def _accessible_workspace_videos(user, workspace):
         content_type__startswith="video/",
     ).filter(
         Q(projects__in=projects) | Q(projects__isnull=True),
-    ).select_related("created_by", "updated_by").prefetch_related("projects").distinct().order_by("-created_at")
+    ).select_related("workspace", "project", "created_by", "updated_by").prefetch_related(
+        "projects",
+        Prefetch("referenced_by_scenes", queryset=Scene.objects.select_related("episode")),
+        Prefetch("referenced_by_characters", queryset=Character.objects.select_related("project")),
+        Prefetch("referenced_by_prompts", queryset=Prompt.objects.select_related("scene__episode")),
+        "project_cover_for",
+        Prefetch("character_avatar_for", queryset=Character.objects.select_related("project")),
+        Prefetch("cover_for_episodes", queryset=Episode.objects.select_related("project")),
+        Prefetch("episode_avatar_for", queryset=Episode.objects.select_related("project")),
+    ).distinct().order_by("-created_at")
 
 
 def _video_gallery_assets(user, workspace, project=None):
-    videos = list(_accessible_workspace_videos(user, workspace))
+    videos = _decorate_gallery_assets(user, list(_accessible_workspace_videos(user, workspace)))
     project_id = str(project.id) if project else ""
     for asset in videos:
-        asset.gallery_project_ids = ",".join(str(item.id) for item in asset.projects.all())
         asset.is_current_project = bool(project_id and project_id in asset.gallery_project_ids.split(","))
+        asset.gallery_project_names = ", ".join(item.title for item in asset.projects.all()) or "Workspace library"
     return videos
+
+
+def _direct_media_upload(request, *, workspace, project=None):
+    uploads = request.FILES.getlist("files")
+    if request.method != "POST" or not uploads or len(uploads) > 10:
+        return JsonResponse({"error": "Choose between 1 and 10 image or video files."}, status=400)
+    permitted = has_project_capability(request.user, project, "edit") if project else has_capability(request.user, workspace, "edit")
+    if not permitted:
+        return JsonResponse({"error": "Edit permission is required."}, status=403)
+    created, errors = [], []
+    for uploaded in uploads:
+        content_type = (getattr(uploaded, "content_type", "") or "").lower()
+        if not content_type.startswith(("image/", "video/")):
+            errors.append(f"{uploaded.name}: choose an image or video file")
+            continue
+        existing = Asset.objects.filter(
+            workspace=workspace, deleted_at__isnull=True,
+            original_filename=Path(uploaded.name).name,
+            size_bytes=uploaded.size, content_type=content_type,
+        ).first()
+        if existing:
+            if project:
+                existing.projects.add(project)
+            created.append({
+                "id": str(existing.id), "name": existing.original_filename,
+                "contentType": existing.content_type, "status": existing.processing_status,
+                "width": existing.width, "height": existing.height, "size": existing.size_bytes,
+                "existing": True,
+            })
+            continue
+        try:
+            asset = create_asset(
+                user=request.user, workspace=workspace, uploaded=uploaded,
+                kind=Asset.Kind.OTHER, project=project, prevent_duplicate=True,
+            )
+        except ValidationError as exc:
+            errors.append(f"{uploaded.name}: {'; '.join(exc.messages)}")
+            continue
+        created.append({
+            "id": str(asset.id), "name": asset.original_filename,
+            "contentType": asset.content_type, "status": asset.processing_status,
+            "width": asset.width, "height": asset.height, "size": asset.size_bytes,
+        })
+    return JsonResponse({"items": created, "errors": errors}, status=201 if created else 400)
+
+
+@login_required
+def workspace_media_upload(request, workspace_id):
+    workspace = get_object_or_404(accessible_workspaces(request.user), id=workspace_id)
+    return _direct_media_upload(request, workspace=workspace)
+
+
+@login_required
+def project_media_upload(request, project_id):
+    project = get_object_or_404(accessible_projects(request.user).select_related("workspace"), id=project_id)
+    return _direct_media_upload(request, workspace=project.workspace, project=project)
 
 
 def _picker_assets(user, project):
@@ -1999,6 +2065,7 @@ def project_detail(request, project_id):
         "gallery_videos": gallery_videos,
         "gallery_projects": [project],
         "montage_projects": montage_projects,
+        "direct_media_upload_url": reverse("studio:project_media_upload", kwargs={"project_id": project.id}),
     })
 
 
@@ -2915,7 +2982,10 @@ def _decorate_gallery_assets(user, assets, *, deduplicate=False):
         asset.gallery_project_ids = ",".join(str(value) for value in sorted(usage_project_ids, key=str))
         asset.usage_count = _asset_usage_count(asset)
         asset.requires_usage_confirmation = asset.usage_count > 1
-        asset.can_trash_from_workspace = usage_project_ids.issubset(accessible_ids)
+        asset.can_trash_from_workspace = (
+            has_capability(user, asset.workspace, "edit")
+            and usage_project_ids.issubset(accessible_ids)
+        )
     if not deduplicate:
         return assets
 
@@ -2945,9 +3015,9 @@ def asset_trash(request, asset_id):
     usage_project_ids = _asset_usage_project_ids(asset)
     accessible_ids = set(accessible_projects(request.user).filter(id__in=usage_project_ids).values_list("id", flat=True))
     if accessible_ids != usage_project_ids:
-        return HttpResponseForbidden("This image is used by a project you cannot access and cannot be deleted.")
+        return HttpResponseForbidden("This file is used by a project you cannot access and cannot be deleted.")
     if _asset_usage_count(asset) > 1 and request.POST.get("confirm_usage") != "1":
-        messages.warning(request, "This image is used multiple times or by several projects. Confirm deletion to continue.")
+        messages.warning(request, "This file is used multiple times or by several projects. Confirm deletion to continue.")
         return _asset_action_redirect(request, asset)
     try:
         trash_asset(asset=asset, user=request.user)
@@ -4624,6 +4694,9 @@ def _movie_media_payload(asset, project):
         "status": Asset.ProcessingStatus.READY if ready else asset.processing_status,
         "error": asset.processing_error,
         "createdAt": asset.created_at.isoformat(),
+        "createdBy": asset.created_by.get_full_name() or asset.created_by.get_username(),
+        "workspaceName": asset.workspace.name,
+        "projectNames": [item.title for item in getattr(asset, "_movie_projects", [])],
         "originalUrl": reverse("studio_api:asset_view", kwargs={"asset_id": asset.id}),
         "downloadUrl": reverse("studio_api:asset_download", kwargs={"asset_id": asset.id}),
         "proxyUrl": reverse("studio_api:asset_proxy", kwargs={"asset_id": asset.id}) if ready and asset.proxy_file else "",
@@ -4651,7 +4724,9 @@ def _workspace_movie_media(user, project):
         ).filter(
             Q(content_type__startswith="video/") | Q(content_type__startswith="audio/")
             | Q(content_type__startswith="image/"),
-        ).prefetch_related(Prefetch("projects", to_attr="_movie_projects"))
+        ).select_related("workspace", "created_by").prefetch_related(
+            Prefetch("projects", to_attr="_movie_projects"),
+        )
         .distinct().order_by("-created_at", "id")
     )
 
@@ -5004,6 +5079,8 @@ def project_movie_media(request, project_id):
         except ValidationError as exc:
             errors.append(f"{uploaded.name}: {'; '.join(exc.messages)}")
             continue
+        asset.projects.add(project)
+        asset = _workspace_movie_media(request.user, project).get(id=asset.id)
         created.append(_movie_media_payload(asset, project))
     status = 201 if created else 400
     return JsonResponse({"items": created, "errors": errors}, status=status)

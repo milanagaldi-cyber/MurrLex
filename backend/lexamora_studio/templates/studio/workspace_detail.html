@@ -1,5 +1,5 @@
 {% extends "studio/base.html" %}{% load studio_extras %}{% block content %}
-<section class="workspace-overview">
+<section class="workspace-overview" data-page-media-drop data-media-upload-url="{{ direct_media_upload_url }}" data-media-drop-target="workspace">
   {% if can_manage %}<button id="workspace-avatar-display" class="workspace-avatar-link" type="button" data-dialog-open="workspace-avatar-picker" title="Change Workspace avatar" aria-label="Change Workspace avatar">{% endif %}
     {% if workspace.avatar_asset.thumbnail %}
       <img class="workspace-avatar-large" src="{% url 'studio_api:asset_thumbnail' workspace.avatar_asset.id %}" alt="{{ workspace.name }}">

@@ -4037,14 +4037,62 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertEqual(response.status_code, 201, response.content)
         asset = Asset.objects.get(id=response.json()["items"][0]["id"])
         self.assertEqual(asset.processing_status, Asset.ProcessingStatus.QUEUED)
-        self.assertFalse(asset.projects.filter(id=self.project.id).exists())
+        self.assertTrue(asset.projects.filter(id=self.project.id).exists())
 
         status = self.client.get(f"/studio/projects/{self.project.id}/movie-editor/media/")
         self.assertEqual(status.status_code, 200)
-        self.assertEqual(status.json()["items"], [])
+        self.assertEqual(len(status.json()["items"]), 1)
         uploaded = next(item for item in status.json()["libraryItems"] if item["id"] == str(asset.id))
         self.assertEqual(uploaded["status"], "QUEUED")
         self.assertEqual(uploaded["kind"], "VIDEO")
+
+    def test_direct_project_media_upload_attaches_video(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from .models import Asset
+
+        self.client.force_login(self.owner)
+        response = self.client.post(
+            f"/studio/projects/{self.project.id}/media/direct/",
+            {"files": SimpleUploadedFile("direct-video.mp4", b"direct-video", content_type="video/mp4")},
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        asset = Asset.objects.get(id=response.json()["items"][0]["id"])
+        self.assertEqual(asset.workspace, self.workspace)
+        self.assertTrue(asset.projects.filter(id=self.project.id).exists())
+        self.assertEqual(asset.processing_status, Asset.ProcessingStatus.QUEUED)
+
+    def test_workspace_and_project_pages_expose_direct_media_upload(self):
+        self.client.force_login(self.owner)
+        workspace_response = self.client.get(f"/studio/workspaces/{self.workspace.id}/")
+        project_response = self.client.get(f"/studio/projects/{self.project.id}/")
+
+        self.assertEqual(workspace_response.status_code, 200)
+        self.assertEqual(project_response.status_code, 200)
+        self.assertContains(workspace_response, f"/studio/workspaces/{self.workspace.id}/media/direct/")
+        self.assertContains(project_response, f"/studio/projects/{self.project.id}/media/direct/")
+        self.assertContains(workspace_response, "Add Video")
+        self.assertContains(project_response, "Add Video")
+
+    def test_direct_project_upload_reuses_matching_workspace_media(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from .models import Asset
+
+        self.client.force_login(self.owner)
+        workspace_response = self.client.post(
+            f"/studio/workspaces/{self.workspace.id}/media/direct/",
+            {"files": self.image_file("shared-photo.png")},
+        )
+        self.assertEqual(workspace_response.status_code, 201, workspace_response.content)
+        asset_id = workspace_response.json()["items"][0]["id"]
+        before = Asset.objects.filter(workspace=self.workspace).count()
+        project_response = self.client.post(
+            f"/studio/projects/{self.project.id}/media/direct/",
+            {"files": self.image_file("shared-photo.png")},
+        )
+        self.assertEqual(project_response.status_code, 201, project_response.content)
+        self.assertEqual(project_response.json()["items"][0]["id"], asset_id)
+        self.assertEqual(Asset.objects.filter(workspace=self.workspace).count(), before)
+        self.assertTrue(Asset.objects.get(id=asset_id).projects.filter(id=self.project.id).exists())
 
     def test_movie_editor_can_attach_accessible_workspace_media(self):
         from django.core.files.uploadedfile import SimpleUploadedFile
