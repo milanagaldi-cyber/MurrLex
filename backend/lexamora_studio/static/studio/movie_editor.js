@@ -338,8 +338,10 @@
     const stageHeight = Math.max(1, previewStage.clientHeight);
     node.style.width = `${geometry.width / 100 * stageWidth}px`;
     node.style.height = `${geometry.height / 100 * stageHeight}px`;
-    node.style.left = `${geometry.left / 100 * stageWidth}px`;
-    node.style.top = `${geometry.top / 100 * stageHeight}px`;
+    // X/Y are persisted correctly, so make them authoritative over legacy
+    // preview layout rules as well as over the base video defaults.
+    node.style.setProperty("left", `${geometry.left / 100 * stageWidth}px`, "important");
+    node.style.setProperty("top", `${geometry.top / 100 * stageHeight}px`, "important");
     node.style.transform = "translate(-50%,-50%)";
     node.style.opacity = String(clamp(Number(clip?.opacity ?? 1), 0, 1));
     node.style.filter = `brightness(${Math.max(0, 1 + Number(clip?.brightness || 0))}) contrast(${Number(clip?.contrast ?? 1)}) saturate(${Number(clip?.saturation ?? 1)}) blur(${Number(clip?.blur || 0) / 4}px)`;
@@ -972,7 +974,7 @@
   function playbackTick(now) {
     if (!playing) return;
     const end = timelineEnd();
-    setPlayhead(playbackOrigin + now - playbackStartedAt, false);
+    setPlayhead(playbackOrigin + now - playbackStartedAt, false, false);
     if (playheadMs >= end) {
       stopPlayback();
       setPlayhead(end, false);
@@ -1005,6 +1007,11 @@
     }
     if (playing) return stopPlayback();
     if (!timelineEnd()) return toast("Add clips to the timeline first");
+    const selected = findClip(selectedId);
+    if (selected && ["VIDEO", "IMAGE"].includes(clipKind(selected.clip))) {
+      const outside = playheadMs < selected.clip.start || playheadMs >= selected.clip.start + selected.clip.duration;
+      if (outside) setPlayhead(selected.clip.start, false, false);
+    }
     if (playheadMs >= timelineEnd()) setPlayhead(0, false);
     playing = true;
     playbackOrigin = playheadMs;
