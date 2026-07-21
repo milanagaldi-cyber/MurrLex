@@ -149,10 +149,8 @@
     return JSON.stringify({ ...value, selectedId: null });
   };
   const updateHistoryButtons = () => {
-    const undo = q("[data-editor-undo]");
-    const redo = q("[data-editor-redo]");
-    if (undo) undo.disabled = !canEdit || !historyUndo.length;
-    if (redo) redo.disabled = !canEdit || !historyRedo.length;
+    qa("[data-editor-undo]").forEach(button => { button.disabled = !canEdit || !historyUndo.length; });
+    qa("[data-editor-redo]").forEach(button => { button.disabled = !canEdit || !historyRedo.length; });
   };
   const updateDirty = () => {
     dirty = canEdit && signature() !== savedSignature;
@@ -326,10 +324,12 @@
 
   function applyGeometry(node, asset, clip) {
     const geometry = clipGeometry(asset, clip);
-    node.style.width = `${geometry.width}%`;
-    node.style.height = `${geometry.height}%`;
-    node.style.left = `${geometry.left}%`;
-    node.style.top = `${geometry.top}%`;
+    const stageWidth = Math.max(1, previewStage.clientWidth);
+    const stageHeight = Math.max(1, previewStage.clientHeight);
+    node.style.width = `${geometry.width / 100 * stageWidth}px`;
+    node.style.height = `${geometry.height / 100 * stageHeight}px`;
+    node.style.left = `${geometry.left / 100 * stageWidth}px`;
+    node.style.top = `${geometry.top / 100 * stageHeight}px`;
     node.style.transform = "translate(-50%,-50%)";
     node.style.opacity = String(clamp(Number(clip?.opacity ?? 1), 0, 1));
     node.style.filter = `brightness(${Math.max(0, 1 + Number(clip?.brightness || 0))}) contrast(${Number(clip?.contrast ?? 1)}) saturate(${Number(clip?.saturation ?? 1)}) blur(${Number(clip?.blur || 0) / 4}px)`;
@@ -1030,6 +1030,15 @@
     const group = document.createElement("section");
     const heading = document.createElement("strong");
     group.className = "movie-inspector-group";
+    group.dataset.group = title.toLowerCase().replaceAll(" ", "-");
+    group.title = ({
+      Clip: "Clip name and rendered size",
+      Move: "Move the clip in time or to another track",
+      Transform: "Trim the source without moving the clip",
+      Frame: "Position the picture inside the output canvas",
+      Playhead: "Current timeline cursor position",
+      Playback: "Playback speed and frame interpolation",
+    })[title] || title;
     heading.textContent = title;
     group.append(heading, ...children);
     return group;
@@ -1083,6 +1092,13 @@
     const clip = found?.clip;
     const track = found?.track;
     const asset = clip ? assetMap.get(clip.assetId) : null;
+    if (found) {
+      const sourceSummary = document.createElement("span");
+      sourceSummary.className = "movie-source-summary";
+      sourceSummary.textContent = `Source: ${asset?.name || clip.sourceAssetId || "Unknown"}`;
+      sourceSummary.title = `${asset?.name || "Source media"} / ${clip.sourceAssetId || clip.assetId}`;
+      inspectorActions.prepend(sourceSummary);
+    }
     const name = document.createElement("input");
     const timeStep = (frameMs() / 1000).toFixed(4);
     const start = numberInput(((clip?.start || 0) / 1000).toFixed(3), timeStep, "0");
@@ -1167,10 +1183,9 @@
       clip.positionY = clamp(Number(positionY.value), -7680, 7680);
       updatePreviewGeometry();
     });
-    positionX.onchange = updatePosition; positionY.onchange = updatePosition;
+    positionX.oninput = updatePosition; positionY.oninput = updatePosition;
     let scaleRemembered = false;
-    const scaleValue = document.createElement("output");
-    const updateScaleValue = () => { scaleValue.textContent = `${Math.round(Number(clipScale.value) * 100)}%`; };
+    const updateScaleValue = () => { clipScaleNumber.value = String(Math.round(Number(clipScale.value) * 100)); };
     clipScale.onpointerdown = () => { if (!scaleRemembered) { remember(); scaleRemembered = true; } };
     clipScale.oninput = () => {
       clip.scale = clamp(Number(clipScale.value), .05, 8);
@@ -1254,7 +1269,8 @@
     });
     scaleDown.disabled = scaleUp.disabled = !canEdit || track.locked;
     scaleWrap.className = "movie-inspector-field"; scaleCaption.className = "movie-inspector-label"; scaleCaption.textContent = "Scale";
-    scaleControls.className = "movie-scale-stepper"; scaleControls.append(scaleDown, clipScale, clipScaleNumber, scaleValue, scaleUp); scaleWrap.append(scaleCaption, scaleControls);
+    clipScaleNumber.title = "Clip scale in percent";
+    scaleControls.className = "movie-scale-stepper"; scaleControls.append(scaleDown, clipScale, clipScaleNumber, scaleUp); scaleWrap.append(scaleCaption, scaleControls);
     const pad = document.createElement("div");
     pad.className = "movie-position-pad"; pad.title = "Move rendered video inside the output frame";
     const nudgePosition = (dx, dy) => {
@@ -1276,7 +1292,6 @@
       bindHold(button, moveAction);
       pad.append(button);
     });
-    const source = document.createElement("div"); source.className = "movie-source-readout"; source.textContent = `Source media: ${asset?.name || clip.sourceAssetId} / ${clip.sourceAssetId}`;
     const coordinates = document.createElement("div"); coordinates.className = "movie-position-coordinates";
     coordinates.append(field("X (px)", positionX), field("Y (px)", positionY));
     const timelinePad = document.createElement("div"); timelinePad.className = "movie-position-pad movie-timeline-position-pad"; timelinePad.title = "Move the clip on the timeline";
@@ -1305,7 +1320,6 @@
       inspectorGroup("Frame", coordinates, pad),
       inspectorGroup("Playhead", field("Position", marker)),
       inspectorGroup("Playback", field("Speed", speed), field("Interpolation", speedMethod)),
-      source,
     );
   }
 
@@ -1468,6 +1482,7 @@
     const nameWrap = document.createElement("div");
     const title = document.createElement("strong");
     const kind = document.createElement("small");
+    const code = document.createElement("b");
     const controls = document.createElement("div");
     const up = document.createElement("button");
     const down = document.createElement("button");
@@ -1481,11 +1496,14 @@
     const remove = document.createElement("button");
     head.className = `movie-track-head${track.locked ? " locked" : ""}${track.hidden ? " hidden-track" : ""}`;
     nameWrap.className = "movie-track-name";
+    code.className = "movie-track-code";
+    const sameKind = timeline.tracks.filter(item => item.kind === track.kind);
+    code.textContent = `${track.kind === "AUDIO" ? "A" : "V"}${sameKind.indexOf(track) + 1}`;
     controls.className = "movie-track-controls";
     head.style.height = `${track.height}px`;
     title.textContent = track.name;
     kind.textContent = `${track.kind} / ${track.clips.length} clip${track.clips.length === 1 ? "" : "s"}`;
-    nameWrap.append(title, kind);
+    nameWrap.append(code, title, kind);
     [up, down, mute, visibility, lock, display, remove].forEach(button => { button.type = "button"; button.className = "icon-button secondary movie-track-control"; });
     up.innerHTML = "&#8593;"; up.title = "Move track up"; up.onclick = () => moveTrack(track, -1);
     down.innerHTML = "&#8595;"; down.title = "Move track down"; down.onclick = () => moveTrack(track, 1);
@@ -1731,11 +1749,10 @@
     const startX = event.clientX;
     const startY = event.clientY;
     const startScroll = timelineScroll.scrollLeft;
-    let mode = event.altKey || event.button === 1 ? "pan" : null;
+    let mode = event.ctrlKey || event.metaKey ? "marquee" : "pan";
     const move = next => {
       const dx = next.clientX - startX;
       const dy = next.clientY - startY;
-      if (!mode && Math.hypot(dx, dy) >= 4) mode = "marquee";
       if (mode === "pan") {
         timelineScroll.classList.add("panning");
         timelineScroll.scrollLeft = Math.max(0, startScroll - dx);
@@ -1762,10 +1779,18 @@
     const finish = next => {
       window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", finish);
       timelineScroll.classList.remove("panning"); marquee.hidden = true;
-      if (!mode) { selectClip(null); setPlayhead((next.clientX - lane.getBoundingClientRect().left) / zoom * 1000); }
-      else if (mode === "marquee") renderInspector();
+      if (mode === "pan" && Math.abs(next.clientX - startX) < 4) {
+        selectClip(null);
+        setPlayhead((next.clientX - lane.getBoundingClientRect().left) / zoom * 1000);
+      } else if (mode === "marquee") renderInspector();
     };
     window.addEventListener("pointermove", move); window.addEventListener("pointerup", finish);
+  }
+
+  function beginCanvasGesture(event) {
+    if (event.defaultPrevented || event.button !== 0 || event.target.closest(".movie-clip,.movie-ruler,.movie-playhead,button,input,select")) return;
+    const lane = event.target.closest(".movie-track-lane") || tracksNode;
+    beginLaneGesture(event, lane);
   }
 
   function showClipContext(event, clip) {
@@ -2200,8 +2225,9 @@
   zoomInput.oninput = event => changeZoom(Number(event.target.value));
   q("[data-zoom-out]").onclick = () => changeZoom(zoom - 4);
   q("[data-zoom-in]").onclick = () => changeZoom(zoom + 4);
-  q("[data-editor-undo]").onclick = undo;
-  q("[data-editor-redo]").onclick = redo;
+  qa("[data-editor-undo]").forEach(button => { button.onclick = undo; });
+  qa("[data-editor-redo]").forEach(button => { button.onclick = redo; });
+  timelineCanvas.addEventListener("pointerdown", beginCanvasGesture);
   const saveAsDialog = q("[data-save-as-dialog]");
   const downloadMontageJson = () => {
     const item = movieEdits.find(edit => edit.id === timelineId);
