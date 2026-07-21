@@ -20,6 +20,9 @@
   let selectedId = null;
   let selectedIds = new Set();
   let clipClipboard = [];
+  let selectedMediaIds = new Set();
+  let mediaClipboardIds = [];
+  let mediaSelectionActive = false;
   let pasteTargetTrackId = null;
   let playheadMs = 0;
   let dirty = false;
@@ -553,12 +556,17 @@
   }
 
   function moveAssetToFolder(assetId, folderId) {
+    moveAssetsToFolder([assetId], folderId);
+  }
+
+  function moveAssetsToFolder(assetIds, folderId) {
+    const moving = new Set(assetIds);
     mutate(() => {
       timeline.mediaFolders.forEach(folder => {
-        folder.assetIds = (folder.assetIds || []).filter(id => id !== assetId);
+        folder.assetIds = (folder.assetIds || []).filter(id => !moving.has(id));
       });
       const target = timeline.mediaFolders.find(folder => folder.id === folderId);
-      if (target && !target.assetIds.includes(assetId)) target.assetIds.push(assetId);
+      if (target) moving.forEach(id => { if (!target.assetIds.includes(id)) target.assetIds.push(id); });
     });
     renderBin();
   }
@@ -566,20 +574,22 @@
   function renderMediaFolders() {
     if (!mediaFoldersNode) return;
     mediaFoldersNode.replaceChildren();
-    const makeButton = (label, folderId, title) => {
+    const makeButton = (label, action, title) => {
       const button = document.createElement("button");
       button.type = "button";
-      button.className = `secondary movie-bin-folder${currentMediaFolderId === folderId ? " active" : ""}`;
+      button.className = "secondary movie-bin-folder";
       button.textContent = label;
       button.title = title || label;
-      button.onclick = () => { currentMediaFolderId = folderId; renderBin(); };
-      button.ondragover = event => { if (![...event.dataTransfer.types].includes("text/asset-id")) return; event.preventDefault(); button.classList.add("drop-target"); };
-      button.ondragleave = () => button.classList.remove("drop-target");
-      button.ondrop = event => { event.preventDefault(); button.classList.remove("drop-target"); const id = event.dataTransfer.getData("text/asset-id"); if (id) moveAssetToFolder(id, folderId); };
+      button.onclick = action;
       return button;
     };
-    mediaFoldersNode.append(makeButton("All", null, "Show all media"));
-    timeline.mediaFolders.forEach(folder => mediaFoldersNode.append(makeButton(folder.name, folder.id, `Open ${folder.name}`)));
+    const folder = timeline.mediaFolders.find(item => item.id === currentMediaFolderId);
+    if (folder) {
+      mediaFoldersNode.append(makeButton("\u2190 Back", () => { currentMediaFolderId = null; selectedMediaIds.clear(); renderBin(); }, "Back to Media"));
+      const title = document.createElement("strong"); title.textContent = folder.name; mediaFoldersNode.append(title);
+    } else {
+      const title = document.createElement("strong"); title.textContent = "Media"; mediaFoldersNode.append(title);
+    }
     if (!canEdit) return;
     const create = document.createElement("button");
     create.type = "button"; create.className = "icon-button secondary"; create.textContent = "+"; create.title = "Create folder";
@@ -619,14 +629,34 @@
     const sort = q("[data-bin-sort]")?.value || "latest";
     const used = new Set(timeline.tracks.flatMap(track => track.clips.map(clip => clip.assetId)));
     let montageMedia = [...assetMap.values()].filter(asset => timeline.mediaAssetIds.includes(asset.id) && (kind === "ALL" || asset.kind === kind) && (!q("[data-bin-unused]")?.checked || !used.has(asset.id)));
+    const filedIds = new Set(timeline.mediaFolders.flatMap(folder => folder.assetIds || []));
     if (currentMediaFolderId) {
       const folder = timeline.mediaFolders.find(item => item.id === currentMediaFolderId);
       if (!folder) currentMediaFolderId = null;
       else montageMedia = montageMedia.filter(asset => folder.assetIds.includes(asset.id));
-    }
+    } else montageMedia = montageMedia.filter(asset => !filedIds.has(asset.id));
     if (sort === "alpha") montageMedia.sort((a, b) => a.name.localeCompare(b.name));
     else if (sort === "duration") montageMedia.sort((a, b) => Number(b.durationMs || 0) - Number(a.durationMs || 0));
     else montageMedia.sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+    if (!currentMediaFolderId) timeline.mediaFolders.forEach(folder => {
+      const tile = document.createElement("div");
+      tile.className = "movie-bin-folder-tile";
+      tile.dataset.folderId = folder.id;
+      tile.innerHTML = "<div></div><strong></strong><small></small>";
+      tile.querySelector("strong").textContent = folder.name;
+      tile.querySelector("small").textContent = `${folder.assetIds?.length || 0} item${folder.assetIds?.length === 1 ? "" : "s"}`;
+      tile.title = `Double-click to open ${folder.name}`;
+      tile.ondblclick = () => { currentMediaFolderId = folder.id; selectedMediaIds.clear(); renderBin(); };
+      tile.ondragover = event => { if (![...event.dataTransfer.types].some(type => ["text/asset-id", "text/asset-ids"].includes(type))) return; event.preventDefault(); tile.classList.add("drop-target"); };
+      tile.ondragleave = () => tile.classList.remove("drop-target");
+      tile.ondrop = event => {
+        event.preventDefault(); tile.classList.remove("drop-target");
+        let ids = []; try { ids = JSON.parse(event.dataTransfer.getData("text/asset-ids") || "[]"); } catch (_) {}
+        const single = event.dataTransfer.getData("text/asset-id"); if (!ids.length && single) ids = [single];
+        if (ids.length) moveAssetsToFolder(ids, folder.id);
+      };
+      bin.append(tile);
+    });
     montageMedia.forEach(asset => {
       const item = document.createElement("div");
       const visual = document.createElement("div");
@@ -636,6 +666,7 @@
       item.className = "movie-bin-item";
       item.draggable = canEdit && asset.status === "READY";
       item.dataset.assetId = asset.id;
+      item.classList.toggle("media-selected", selectedMediaIds.has(asset.id));
       item.classList.toggle("previewing", standalonePreviewAssetId === asset.id);
       item.setAttribute("aria-selected", standalonePreviewAssetId === asset.id ? "true" : "false");
       item.title = [
@@ -656,6 +687,9 @@
         image.alt = "";
         visual.append(image);
       } else visual.textContent = asset.kind;
+      if (used.has(asset.id)) {
+        const dot = document.createElement("i"); dot.className = "movie-bin-used-dot"; dot.title = "Used on timeline"; visual.append(dot);
+      }
       if (asset.status === "QUEUED" || asset.status === "PROCESSING") {
         const processing = document.createElement("i");
         processing.className = "movie-media-processing";
@@ -683,22 +717,27 @@
         copy.append(retry);
       }
       item.append(visual, copy);
-      if (canEdit) {
-        const remove = document.createElement("button");
-        remove.type = "button"; remove.className = "icon-button secondary movie-bin-remove";
-        remove.innerHTML = "&minus;";
-        remove.disabled = used.has(asset.id);
-        remove.title = remove.disabled ? "Remove its clips from the timeline first" : "Remove from this edit project";
-        remove.onclick = event => { event.stopPropagation(); mutate(() => { timeline.mediaAssetIds = timeline.mediaAssetIds.filter(id => id !== asset.id); }); renderBin(); renderLibrary(); };
-        copy.append(remove);
-      }
       item.addEventListener("dragstart", event => {
-        if (item.draggable) event.dataTransfer.setData("text/asset-id", asset.id);
+        if (!item.draggable) return;
+        if (!selectedMediaIds.has(asset.id)) selectedMediaIds = new Set([asset.id]);
+        const ids = [...selectedMediaIds];
+        event.dataTransfer.setData("text/asset-id", asset.id);
+        event.dataTransfer.setData("text/asset-ids", JSON.stringify(ids));
       });
-      item.addEventListener("click", () => previewAsset(asset));
+      item.addEventListener("click", event => {
+        mediaSelectionActive = true;
+        if (event.ctrlKey || event.metaKey || event.shiftKey) {
+          if (selectedMediaIds.has(asset.id)) selectedMediaIds.delete(asset.id); else selectedMediaIds.add(asset.id);
+        } else selectedMediaIds = new Set([asset.id]);
+        renderMediaSelection();
+        previewAsset(asset);
+      });
       item.addEventListener("contextmenu", event => {
         event.preventDefault();
         event.stopPropagation();
+        mediaSelectionActive = true;
+        if (!selectedMediaIds.has(asset.id)) selectedMediaIds = new Set([asset.id]);
+        renderMediaSelection();
         mediaContextAsset = asset;
         mediaContext.style.left = `${Math.min(event.clientX, innerWidth - 190)}px`;
         mediaContext.style.top = `${Math.min(event.clientY, innerHeight - 190)}px`;
@@ -722,8 +761,98 @@
       item.querySelector("progress").value = upload.progress;
       bin.prepend(item);
     });
-    if (!montageMedia.length && !pendingUploads.length) bin.innerHTML = '<p class="empty">Open + to add Project or Workspace media</p>';
+    if (!montageMedia.length && !pendingUploads.length && (currentMediaFolderId || !timeline.mediaFolders.length)) bin.insertAdjacentHTML("beforeend", '<p class="empty">Open + to add Project or Workspace media</p>');
     renderMediaFolders();
+  }
+
+  function renderMediaSelection() {
+    qa(".movie-bin-item[data-asset-id]").forEach(item => {
+      const selected = selectedMediaIds.has(item.dataset.assetId);
+      item.classList.toggle("media-selected", selected);
+      item.setAttribute("aria-selected", selected ? "true" : "false");
+    });
+  }
+
+  function selectedMediaAssets() {
+    return [...selectedMediaIds].map(id => assetMap.get(id)).filter(Boolean);
+  }
+
+  async function copySelectedMedia() {
+    const selected = selectedMediaAssets();
+    if (!selected.length) return;
+    mediaClipboardIds = selected.map(asset => asset.id);
+    const urls = selected.map(asset => asset.originalUrl ? new URL(asset.originalUrl, location.href).href : "").filter(Boolean);
+    if (urls.length) await navigator.clipboard.writeText(urls.join("\n"));
+    toast(`${selected.length} media item${selected.length === 1 ? "" : "s"} copied`);
+  }
+
+  function pasteSelectedMedia() {
+    const ids = mediaClipboardIds.filter(id => assetMap.has(id));
+    if (!ids.length) return toast("Nothing to paste", "error");
+    mutate(() => {
+      ids.forEach(id => {
+        if (!timeline.mediaAssetIds.includes(id)) timeline.mediaAssetIds.push(id);
+      });
+      const folder = timeline.mediaFolders.find(item => item.id === currentMediaFolderId);
+      if (folder) ids.forEach(id => { if (!folder.assetIds.includes(id)) folder.assetIds.push(id); });
+    });
+    selectedMediaIds = new Set(ids);
+    renderBin();
+  }
+
+  function removeSelectedMedia() {
+    const ids = new Set(selectedMediaAssets().map(asset => asset.id));
+    if (!ids.size) return;
+    const affectedClips = timeline.tracks.flatMap(track => track.clips.filter(clip => ids.has(clip.assetId)));
+    const applyRemoval = () => mutate(() => {
+      timeline.mediaAssetIds = timeline.mediaAssetIds.filter(id => !ids.has(id));
+      timeline.mediaFolders.forEach(folder => { folder.assetIds = folder.assetIds.filter(id => !ids.has(id)); });
+      timeline.tracks.forEach(track => { track.clips = track.clips.filter(clip => !ids.has(clip.assetId)); });
+    });
+    const finish = () => {
+      selectedMediaIds.clear();
+      selectedIds.clear();
+      selectedId = null;
+      mediaSelectionActive = false;
+      renderBin();
+      renderTimeline();
+      renderInspector();
+      syncPlayers(false, true);
+    };
+    if (!affectedClips.length) {
+      applyRemoval();
+      finish();
+      return;
+    }
+    const dialog = q("[data-media-remove-dialog]");
+    const message = dialog?.querySelector("[data-media-remove-message]");
+    if (!dialog || !message) return;
+    message.textContent = `${ids.size} selected media item${ids.size === 1 ? " is" : "s are"} used by ${affectedClips.length} timeline clip${affectedClips.length === 1 ? "" : "s"}. Remove the media and those clips?`;
+    dialog.showModal();
+    dialog.querySelector("[data-media-remove-confirm]").onclick = () => {
+      dialog.close();
+      applyRemoval();
+      finish();
+    };
+  }
+
+  function showSelectedMediaProperties() {
+    const selected = selectedMediaAssets();
+    if (!selected.length) return;
+    if (selected.length === 1) return openMediaProperties(selected[0]);
+    const dialog = q("[data-movie-media-properties]");
+    const content = dialog?.querySelector("[data-movie-media-properties-content]");
+    if (!dialog || !content) return;
+    const heading = document.createElement("p");
+    heading.textContent = `${selected.length} media items selected`;
+    const list = document.createElement("ul");
+    selected.forEach(asset => {
+      const item = document.createElement("li");
+      item.textContent = `${asset.name} (${asset.kind}, ${mediaSize(asset.size)})`;
+      list.append(item);
+    });
+    content.replaceChildren(heading, list);
+    dialog.showModal();
   }
 
   async function refreshMedia() {
@@ -1127,6 +1256,12 @@
         node.className = "movie-preview-layer";
         node.dataset.clipId = item.clip.id;
         if (node.tagName === "VIDEO") { node.playsInline = true; node.preload = "auto"; node.muted = true; }
+        node.addEventListener("pointerdown", event => {
+          if (standalonePreviewAssetId || event.button !== 0) return;
+          event.stopPropagation();
+          selectClip(node.dataset.clipId, false, event.ctrlKey || event.metaKey);
+          if (!(event.ctrlKey || event.metaKey)) beginPreviewPan(event);
+        });
         visualPlayers.set(item.clip.id, node);
         isNew = true;
       }
@@ -1577,6 +1712,7 @@
 
   function selectClip(id, movePlayhead = false, additive = false) {
     leaveStandalonePreview();
+    mediaSelectionActive = false;
     if (movePlayhead) {
       const found = findClip(id);
       if (found) setPlayhead(found.clip.start, true, false);
@@ -2421,6 +2557,11 @@
   });
   q("[data-movie-media-properties-close]")?.addEventListener("click", () => q("[data-movie-media-properties]")?.close());
   qa("[data-media-folder-cancel]").forEach(button => button.addEventListener("click", () => folderDialog?.close()));
+  folderDialog?.querySelector("[data-media-folder-name]")?.addEventListener("keydown", event => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    folderDialog.querySelector("[data-media-folder-save]")?.click();
+  });
   q("[data-media-folder-save]")?.addEventListener("click", () => {
     const mode = folderDialog.dataset.mode;
     const input = folderDialog.querySelector("[data-media-folder-name]");
@@ -2438,10 +2579,77 @@
     folderDialog.close(); renderBin();
   });
   const hideMediaContext = () => { if (mediaContext) mediaContext.hidden = true; mediaContextAsset = null; };
-  q("[data-media-context-copy]")?.addEventListener("click", async () => { if (mediaContextAsset?.originalUrl) await navigator.clipboard.writeText(new URL(mediaContextAsset.originalUrl, location.href).href); hideMediaContext(); });
-  q("[data-media-context-download]")?.addEventListener("click", event => { if (!mediaContextAsset?.downloadUrl) event.preventDefault(); else event.currentTarget.href = mediaContextAsset.downloadUrl; hideMediaContext(); });
-  q("[data-media-context-delete]")?.addEventListener("click", () => { const asset = mediaContextAsset; hideMediaContext(); if (!asset) return; const used = timeline.tracks.some(track => track.clips.some(clip => clip.assetId === asset.id)); if (used) return toast("Remove this media's clips from the timeline first", "error"); mutate(() => { timeline.mediaAssetIds = timeline.mediaAssetIds.filter(id => id !== asset.id); timeline.mediaFolders.forEach(folder => folder.assetIds = folder.assetIds.filter(id => id !== asset.id)); }); renderBin(); });
-  q("[data-media-context-properties]")?.addEventListener("click", () => { const asset = mediaContextAsset; hideMediaContext(); if (asset) openMediaProperties(asset); });
+  q("[data-media-context-select-all]")?.addEventListener("click", () => {
+    selectedMediaIds = new Set(qa(".movie-bin-item[data-asset-id]").map(item => item.dataset.assetId));
+    mediaSelectionActive = true;
+    hideMediaContext();
+    renderMediaSelection();
+  });
+  q("[data-media-context-copy]")?.addEventListener("click", async () => { hideMediaContext(); await copySelectedMedia(); });
+  q("[data-media-context-paste]")?.addEventListener("click", () => { hideMediaContext(); pasteSelectedMedia(); });
+  q("[data-media-context-download]")?.addEventListener("click", event => {
+    event.preventDefault();
+    const selected = selectedMediaAssets().filter(asset => asset.downloadUrl);
+    hideMediaContext();
+    selected.forEach((asset, index) => setTimeout(() => {
+      const link = document.createElement("a");
+      link.href = asset.downloadUrl;
+      link.download = asset.name || "media";
+      document.body.append(link);
+      link.click();
+      link.remove();
+    }, index * 120));
+  });
+  q("[data-media-context-delete]")?.addEventListener("click", () => { hideMediaContext(); removeSelectedMedia(); });
+  q("[data-media-context-properties]")?.addEventListener("click", () => { hideMediaContext(); showSelectedMediaProperties(); });
+  qa("[data-media-remove-cancel]").forEach(button => button.addEventListener("click", () => q("[data-media-remove-dialog]")?.close()));
+  bin?.addEventListener("contextmenu", event => {
+    if (event.target.closest(".movie-bin-item,.movie-bin-folder-tile,button,input,select,label")) return;
+    event.preventDefault();
+    mediaSelectionActive = true;
+    mediaContextAsset = null;
+    mediaContext.style.left = `${Math.min(event.clientX, innerWidth - 200)}px`;
+    mediaContext.style.top = `${Math.min(event.clientY, innerHeight - 230)}px`;
+    mediaContext.hidden = false;
+  });
+  bin?.addEventListener("pointerdown", event => {
+    if (event.button !== 0 || event.target.closest(".movie-bin-item,.movie-bin-folder-tile,button,input,select,label")) return;
+    event.preventDefault();
+    mediaSelectionActive = true;
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const preserved = event.ctrlKey || event.metaKey ? new Set(selectedMediaIds) : new Set();
+    const selection = document.createElement("i");
+    selection.className = "movie-bin-marquee";
+    selection.style.left = `${startX}px`;
+    selection.style.top = `${startY}px`;
+    document.body.append(selection);
+    const move = next => {
+      const left = Math.min(startX, next.clientX);
+      const top = Math.min(startY, next.clientY);
+      const right = Math.max(startX, next.clientX);
+      const bottom = Math.max(startY, next.clientY);
+      selection.style.left = `${left}px`;
+      selection.style.top = `${top}px`;
+      selection.style.width = `${right - left}px`;
+      selection.style.height = `${bottom - top}px`;
+      selectedMediaIds = new Set(preserved);
+      qa(".movie-bin-item[data-asset-id]").forEach(item => {
+        const rect = item.getBoundingClientRect();
+        if (rect.right >= left && rect.left <= right && rect.bottom >= top && rect.top <= bottom) selectedMediaIds.add(item.dataset.assetId);
+      });
+      renderMediaSelection();
+    };
+    const finish = () => {
+      selection.remove();
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", finish);
+      window.removeEventListener("pointercancel", finish);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", finish);
+    window.addEventListener("pointercancel", finish);
+  });
   document.addEventListener("pointerdown", event => { if (mediaContext && !mediaContext.hidden && !mediaContext.contains(event.target)) hideMediaContext(); });
 
   qa("[data-add-track]").forEach(button => button.onclick = () => addTrack(button.dataset.addTrack));
@@ -2587,8 +2795,18 @@
     const shortcut = event.ctrlKey || event.metaKey;
     if (shortcut && (event.code === "KeyZ" || event.key.toLowerCase() === "z")) { event.preventDefault(); event.shiftKey ? redo() : undo(); return; }
     if (shortcut && (event.code === "KeyY" || event.key.toLowerCase() === "y")) { event.preventDefault(); redo(); return; }
-    if (shortcut && (event.code === "KeyC" || event.key.toLowerCase() === "c") && !editing) { event.preventDefault(); copySelected(); return; }
-    if (shortcut && (event.code === "KeyV" || event.key.toLowerCase() === "v") && !editing) { event.preventDefault(); pasteSelected(); return; }
+    if (shortcut && (event.code === "KeyC" || event.key.toLowerCase() === "c") && !editing) {
+      event.preventDefault();
+      if (mediaSelectionActive && selectedMediaIds.size) copySelectedMedia();
+      else copySelected();
+      return;
+    }
+    if (shortcut && (event.code === "KeyV" || event.key.toLowerCase() === "v") && !editing) {
+      event.preventDefault();
+      if (mediaSelectionActive) pasteSelectedMedia();
+      else pasteSelected();
+      return;
+    }
     if (editing) return;
     if (event.code === "Space") { event.preventDefault(); togglePlayback(); }
     else if (event.key.toLowerCase() === "s" && !event.ctrlKey && !event.metaKey) { event.preventDefault(); splitSelected(); }
