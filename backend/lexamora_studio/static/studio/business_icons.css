@@ -1,12 +1,159 @@
 .business-command-icon{display:none;flex:0 0 auto;width:18px;height:18px;color:currentColor;pointer-events:none}
-.business-command-icon svg{display:block;width:100%;height:100%;overflow:visible;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:square;stroke-linejoin:miter}
+.business-command-icon svg{display:block;width:100%;height:100%;overflow:visible;fill:none;stroke:currentColor;stroke-width:1.75;stroke-linecap:round;stroke-linejoin:round}
+
+html[data-theme="business"]{
+  --business-control-height:36px;
+  --business-icon-control:34px;
+  --business-icon-size:18px;
+  --business-field-gap:6px;
+  --business-control-gap:8px;
+  --business-section-gap:18px;
+}
 html[data-theme="business"] [data-business-icon]{gap:7px}
 html[data-theme="business"] [data-business-icon]>.business-command-icon{display:inline-flex}
-html[data-theme="business"] .business-icon-only[data-business-icon]{font-size:0}
+html[data-theme="business"] .business-icon-only[data-business-icon]{
+  display:inline-grid!important;
+  place-items:center!important;
+  flex:0 0 var(--business-icon-control);
+  width:var(--business-icon-control)!important;
+  min-width:var(--business-icon-control)!important;
+  max-width:var(--business-icon-control)!important;
+  height:var(--business-icon-control)!important;
+  min-height:var(--business-icon-control)!important;
+  max-height:var(--business-icon-control)!important;
+  padding:0!important;
+  border-radius:4px!important;
+  font-size:0!important;
+  line-height:1!important;
+}
 html[data-theme="business"] .business-icon-only[data-business-icon]>*:not(.business-command-icon){display:none!important}
-html[data-theme="business"] .business-icon-only[data-business-icon]>.business-command-icon{width:17px;height:17px}
+html[data-theme="business"] .business-icon-only[data-business-icon]>.business-command-icon{width:var(--business-icon-size);height:var(--business-icon-size)}
+html[data-theme="business"] .business-legacy-command-icon{display:none!important}
 html[data-theme="business"] [data-business-icon="delete"]>.business-command-icon{color:var(--danger)}
-html[data-theme="business"] [data-business-icon="favorite"]>.business-command-icon{color:#b56b00}
+html[data-theme="business"] [data-business-icon="favorite"]>.business-command-icon{color:#b56b00;fill:color-mix(in srgb,#f0ab00 24%,transparent)}
 html[data-theme="business"] [data-business-icon="save"]>.business-command-icon{color:#18864b}
-html[data-theme="business"] button[data-business-icon]:focus-visible,html[data-theme="business"] a[data-business-icon]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+html[data-theme="business"] button[data-business-icon]:focus-visible,
+html[data-theme="business"] a[data-business-icon]:focus-visible,
+html[data-theme="business"] [role="button"][data-business-icon]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* Business controls: one compact metric across forms, filters and dialogs. */
+html[data-theme="business"] label{margin:0;min-width:0;font-size:12px;font-weight:650;color:var(--muted)}
+html[data-theme="business"] label>span:first-child{display:block;margin:0;color:var(--muted);font-size:12px;font-weight:650;line-height:1.25}
+html[data-theme="business"] .compact-control,
+html[data-theme="business"] .compact-field,
+html[data-theme="business"] [data-generation-field]:not(.reference-mode-control),
+html[data-theme="business"] [data-generation-key]:not(.reference-mode-control){display:flex;flex-direction:column;align-items:stretch;gap:var(--business-field-gap)}
+html[data-theme="business"] input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]),
+html[data-theme="business"] select,
+html[data-theme="business"] textarea{
+  min-height:var(--business-control-height);
+  padding:7px 10px;
+  border-radius:4px;
+  font-size:14px;
+  line-height:1.35;
+}
+html[data-theme="business"] textarea{padding-block:9px}
+html[data-theme="business"] .button,
+html[data-theme="business"] button:not(.business-icon-only){min-height:var(--business-control-height);padding:7px 12px;border-radius:4px;font-size:14px;line-height:1.2}
+html[data-theme="business"] button:disabled,
+html[data-theme="business"] .button.disabled{cursor:not-allowed;opacity:.5}
+html[data-theme="business"] input[type="checkbox"],html[data-theme="business"] input[type="radio"]{width:16px;height:16px;min-height:0;margin:0}
+html[data-theme="business"] .check,
+html[data-theme="business"] .inline-check{display:inline-flex;flex-direction:row;align-items:center;gap:7px}
+
+/* Toolbars and filter bars align by their control baseline instead of drifting. */
+html[data-theme="business"] .toolbar,
+html[data-theme="business"] .media-library-toolbar,
+html[data-theme="business"] .media-library-controls,
+html[data-theme="business"] .generation-filter-row,
+html[data-theme="business"] .generation-prompt-head,
+html[data-theme="business"] .generation-reference-head,
+html[data-theme="business"] .generation-library-head,
+html[data-theme="business"] .prompt-primary-tools,
+html[data-theme="business"] .prompt-icon-tools,
+html[data-theme="business"] .prompt-edit-tools,
+html[data-theme="business"] .prompt-text-tools,
+html[data-theme="business"] .prompt-bottom-toolbar,
+html[data-theme="business"] .workspace-actions,
+html[data-theme="business"] .asset-actions,
+html[data-theme="business"] .generation-job-actions,
+html[data-theme="business"] .view-switch{gap:var(--business-control-gap);align-items:center}
+html[data-theme="business"] .media-library-controls,
+html[data-theme="business"] .generation-filter-row{align-items:flex-end;row-gap:10px}
+html[data-theme="business"] .compact-control select{width:auto;min-width:128px;max-width:220px}
+html[data-theme="business"] .view-switch{display:inline-flex}
+html[data-theme="business"] .media-library-toolbar{padding-block:8px}
+html[data-theme="business"] .media-library-title{display:inline-flex;align-items:center;gap:7px;min-height:var(--business-control-height)}
+html[data-theme="business"] .media-library-controls{display:flex;flex-wrap:wrap}
+html[data-theme="business"] .asset-actions{min-height:var(--business-icon-control);margin-top:auto;padding-top:8px}
+html[data-theme="business"] .asset-actions form{display:inline-flex;align-items:center}
+html[data-theme="business"] .workspace-action-icon{color:var(--accent-strong)!important;background:transparent!important;border:1px solid transparent!important}
+html[data-theme="business"] .workspace-action-icon:hover{border-color:var(--line)!important;background:var(--panel-2)!important}
+html[data-theme="business"] .workspace-action-icon.disabled{opacity:.42}
+
+/* Cards keep metadata and command rows on stable visual baselines. */
+html[data-theme="business"] .asset,
+html[data-theme="business"] .generation-job-card{border-radius:4px}
+html[data-theme="business"] .asset figcaption,
+html[data-theme="business"] .generation-job-card figcaption{gap:4px;padding:10px 11px}
+html[data-theme="business"] .asset-name{line-height:1.3}
+html[data-theme="business"] .generation-library-results{align-items:stretch;gap:14px}
+html[data-theme="business"] .generation-job-card{display:grid;grid-template-rows:auto minmax(150px,1fr);height:100%;overflow:hidden}
+html[data-theme="business"] .generation-job-card figcaption{min-height:156px}
+html[data-theme="business"] .generation-job-actions{display:flex;flex-wrap:wrap;margin-top:auto;padding-top:8px}
+html[data-theme="business"] .generation-job-actions .icon-button{margin:0}
+html[data-theme="business"] .generation-filter-row label{display:flex;flex-direction:column;gap:var(--business-field-gap)}
+html[data-theme="business"] .video-gallery-card{border-radius:4px}
+html[data-theme="business"] .video-add-tile{font-size:0;min-width:0;border-radius:4px}
+html[data-theme="business"] .video-add-tile>span{font-size:28px;line-height:1;color:var(--accent)}
+html[data-theme="business"] .video-add-tile::after{font-size:11px}
+
+/* Generation and settings forms use responsive, measured columns. */
+html[data-theme="business"] .generation-settings,
+html[data-theme="business"] .generation-settings-grid,
+html[data-theme="business"] [data-generation-settings]{gap:12px 14px}
+html[data-theme="business"] [data-generation-field],
+html[data-theme="business"] [data-generation-key]{min-width:0}
+html[data-theme="business"] [data-generation-settings]{align-items:end}
+html[data-theme="business"] [data-generation-field] select,
+html[data-theme="business"] [data-generation-key] select{max-width:none}
+html[data-theme="business"] .composer-media-model{min-width:min(360px,100%)}
+html[data-theme="business"] .composer-prompt-heading{gap:12px;margin-bottom:7px}
+html[data-theme="business"] .composer-prompt-heading>span{font-size:13px;font-weight:700;color:var(--ink)}
+html[data-theme="business"] .composer-prompt-heading .prompt-primary-tools{padding:0;border:0;background:transparent}
+html[data-theme="business"] .prompt-bottom-toolbar{margin-top:8px}
+html[data-theme="business"] .prompt-tool-with-code{margin-top:5px}
+html[data-theme="business"] .language-code-button{
+  top:-8px;
+  right:-5px;
+  min-width:21px;
+  width:auto!important;
+  height:15px!important;
+  min-height:15px!important;
+  max-height:15px!important;
+  padding:0 3px!important;
+  border-radius:8px!important;
+  font-size:8px!important;
+  line-height:1!important;
+}
+html[data-theme="business"] .prompt-meta-grid,
+html[data-theme="business"] .prompt-meta-grid.compact{gap:12px 14px}
+html[data-theme="business"] .settings-grid{gap:var(--business-section-gap)}
+html[data-theme="business"] .settings-section,
+html[data-theme="business"] .generation-card,
+html[data-theme="business"] .panel{padding:20px}
+html[data-theme="business"] .settings-section h2,
+html[data-theme="business"] .generation-card h2,
+html[data-theme="business"] .generation-card h3{margin-top:0;margin-bottom:12px}
+html[data-theme="business"] .dialog-actions{gap:8px;margin-top:16px}
+html[data-theme="business"] .confirmation-dialog{padding:22px;border-radius:4px}
+html[data-theme="business"] .confirmation-dialog h2{margin:0 42px 14px 0}
+html[data-theme="business"] .dialog-close{position:absolute;top:12px;right:12px;left:auto}
+
+@media(max-width:900px){
+  html[data-theme="business"] .media-library-toolbar{align-items:flex-start}
+  html[data-theme="business"] .media-library-controls{width:100%}
+  html[data-theme="business"] .compact-control{flex:1 1 135px}
+  html[data-theme="business"] .compact-control select{width:100%;max-width:none}
+}
 @media (forced-colors:active){html[data-theme="business"] .business-command-icon{forced-color-adjust:auto}}

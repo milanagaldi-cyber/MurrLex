@@ -14,6 +14,7 @@
     delete: '<path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/>',
     download: '<path d="M12 3v12M7 10l5 5 5-5M4 20h16"/>',
     down: '<path d="M5 9l7 7 7-7"/>',
+    drag: '<circle cx="8" cy="6" r="1"/><circle cx="16" cy="6" r="1"/><circle cx="8" cy="12" r="1"/><circle cx="16" cy="12" r="1"/><circle cx="8" cy="18" r="1"/><circle cx="16" cy="18" r="1"/>',
     edit: '<path d="M4 20l4.5-1 10-10-3.5-3.5-10 10zM13.5 7l3.5 3.5"/>',
     expand: '<path d="M5 9l7 7 7-7"/>',
     export: '<path d="M12 3v12M7 10l5 5 5-5M5 20h14"/>',
@@ -29,6 +30,7 @@
     info: '<circle cx="12" cy="12" r="9"/><path d="M12 10v7M12 7h.01"/>',
     left: '<path d="M15 5l-7 7 7 7"/>',
     list: '<path d="M8 5h13M8 12h13M8 19h13M3 5h1M3 12h1M3 19h1"/>',
+    join: '<path d="M4 7h6a4 4 0 014 4v6M4 17h6a4 4 0 004-4V7M17 12h4M19 10v4"/>',
     lock: '<rect x="5" y="10" width="14" height="11"/><path d="M8 10V7a4 4 0 018 0v3"/>',
     magic: '<path d="M4 20L17 7M14 4l1-2 1 2 2 1-2 1-1 2-1-2-2-1zM18 13l1-2 1 2 2 1-2 1-1 2-1-2-2-1zM5 6l1-2 1 2 2 1-2 1-1 2-1-2-2-1z"/>',
     menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
@@ -46,6 +48,7 @@
     restore: '<path d="M4 4v6h6M5.5 9A8 8 0 1120 14M12 8v5l3 2"/>',
     right: '<path d="M9 5l7 7-7 7"/>',
     save: '<path d="M4 3h13l3 3v15H4zM8 3v6h8V3M8 15h8v6H8z"/>',
+    snap: '<path d="M6 3v10a6 6 0 0012 0V3M6 8h4M14 8h4"/>',
     search: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21"/>',
     settings: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9L7 7M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"/>',
     share: '<circle cx="18" cy="5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="19" r="2.5"/><path d="M8.2 10.8l7.6-4.5M8.2 13.2l7.6 4.5"/>',
@@ -59,6 +62,7 @@
     unlock: '<rect x="5" y="10" width="14" height="11"/><path d="M16 10V7a4 4 0 00-7-2"/>',
     up: '<path d="M5 15l7-7 7 7"/>',
     upload: '<path d="M12 21V9M7 14l5-5 5 5M5 4h14"/>',
+    users: '<path d="M16 20v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2M9 10a4 4 0 100-8 4 4 0 000 8zM22 20v-2a4 4 0 00-3-3.9M16 2.1a4 4 0 010 7.8"/>',
     video: '<rect x="3" y="5" width="14" height="14"/><path d="M17 10l4-3v10l-4-3z"/>',
     visible: '<path d="M3 12s3.5-7 9-7 9 7 9 7-3.5 7-9 7-9-7-9-7z"/><circle cx="12" cy="12" r="3"/>',
     zoomIn: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21M7.5 10.5h6M10.5 7.5v6"/>',
@@ -66,6 +70,7 @@
   };
 
   const rules = [
+    ['users', /share workspace|workspace access|manage users|people with access/],
     ['menu', /application navigation|main menu|open menu/],
     ['theme', /switch theme|dark theme|light theme|business theme/],
     ['power', /toggle ai|ai enabled|ai paused/],
@@ -81,6 +86,9 @@
     ['chat', /\bchat\b|ask assistant/],
     ['magic', /\bimprove\b|generate (image|video|comic)|ai suggestion|auto rough cut/],
     ['split', /\bsplit\b|cut at playhead/],
+    ['join', /\bjoin\b|merge clips|group clips/],
+    ['drag', /\bdrag\b|drag handle/],
+    ['snap', /magnetic snapping|\bsnap\b/],
     ['target', /\bcenter\b|align .*playhead|reset position/],
     ['zoomIn', /increase .*scale|zoom in|enlarge/],
     ['zoomOut', /reduce .*scale|zoom out|shrink/],
@@ -99,8 +107,8 @@
     ['back', /\bback\b|return to/],
     ['up', /move .*\bup\b|track above|video up|previous item/],
     ['down', /move .*\bdown\b|track below|video down|next item/],
-    ['left', /move .*\bleft\b|previous scene|previous scenes|one frame back/],
-    ['right', /move .*\bright\b|next scene|next scenes|one frame forward/],
+    ['left', /move .*\bleft\b|previous scene|previous scenes|previous (frame|keyframe)|one frame back/],
+    ['right', /move .*\bright\b|next scene|next scenes|next (frame|keyframe)|one frame forward/],
     ['redo', /\bredo\b|restore improvement/],
     ['undo', /\bundo\b|cancel improvement/],
     ['copy', /\bcopy\b|duplicate|clone/],
@@ -129,7 +137,20 @@
     ['more', /more actions|more options/]
   ];
 
-  const selector = 'button,a.button,summary[title],.icon-button,.icon-tool,.dialog-close,.timeline-scroll,[role="button"]';
+  const selector = [
+    'button',
+    'a.button',
+    'a.icon-button',
+    'a[title][aria-label]',
+    'summary[title]',
+    '.icon-button',
+    '.icon-tool',
+    '.asset-action-icon',
+    '.workspace-action-icon',
+    '.dialog-close',
+    '.timeline-scroll',
+    '[role="button"]'
+  ].join(',');
   const labelFor = element => [
     element.dataset?.businessCommand,
     element.getAttribute('aria-label'),
@@ -139,7 +160,7 @@
   ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim().toLowerCase();
 
   const isIconOnly = element => {
-    if (element.matches('.icon-button,.icon-tool,.dialog-close,.timeline-scroll,.premium-crown-link,.theme-toggle')) return true;
+    if (element.matches('.icon-button,.icon-tool,.asset-action-icon,.workspace-action-icon,.dialog-close,.timeline-scroll,.premium-crown-link,.theme-toggle,.section-add-button')) return true;
     const compact = (element.textContent || '').replace(/\s+/g, '');
     return compact.length <= 2 && (/^[A-Z][+\-]?$/.test(compact) || /^[+\-\u2212\u00d7x\u2190-\u21ff\u2303\u2304\u25a0-\u25ff\u2600-\u27ff]+$/u.test(compact));
   };
@@ -147,6 +168,7 @@
   const decorate = element => {
     if (!(element instanceof HTMLElement) || !element.matches(selector)) return;
     const explicit = element.dataset.businessCommand;
+    if (!explicit && (element.matches('.language-code-button,[data-mic-language-code],[data-translation-language-code],.video-gallery-preview,.generation-job-visual,.asset-picker-card,.generation-reference-choice') || element.querySelector(':scope > video,:scope > img,:scope > picture'))) return;
     const match = explicit && icons[explicit] ? [explicit] : rules.find(([, pattern]) => pattern.test(labelFor(element)));
     if (!match) return;
     const [name] = match;
@@ -154,6 +176,9 @@
     if (element.dataset.businessIcon === name && element.querySelector(':scope > .business-command-icon')) return;
     element.dataset.businessIcon = name;
     element.querySelector(':scope > .business-command-icon')?.remove();
+    element.querySelectorAll(':scope > svg,:scope > [aria-hidden="true"]').forEach(legacy => {
+      if (!legacy.classList.contains('business-command-icon')) legacy.classList.add('business-legacy-command-icon');
+    });
     const icon = document.createElement('span');
     icon.className = 'business-command-icon';
     icon.setAttribute('aria-hidden', 'true');
