@@ -16,11 +16,13 @@
   const saved = readJson("movie-timeline-data");
   let timeline = saved && Array.isArray(saved.tracks) ? saved : {schemaVersion: 1, tracks: []};
   timeline.mediaAssetIds = Array.isArray(timeline.mediaAssetIds) ? timeline.mediaAssetIds : [];
+  timeline.mediaOrder = Array.isArray(timeline.mediaOrder) ? timeline.mediaOrder : [];
   timeline.mediaFolders = Array.isArray(timeline.mediaFolders) ? timeline.mediaFolders : [];
   let selectedId = null;
   let selectedIds = new Set();
   let clipClipboard = [];
   let selectedMediaIds = new Set();
+  let selectedMediaFolderId = null;
   let mediaClipboardIds = [];
   let mediaSelectionActive = false;
   let pasteTargetTrackId = null;
@@ -42,7 +44,9 @@
   let standalonePreviewAssetId = null;
   let currentMediaFolderId = null;
   let mediaContextAsset = null;
+  let mediaContextFolderId = null;
   let pendingUploads = [];
+  const mediaSortKey = `studio-movie-media-sort-${timelineId}`;
   const defaultTrackHeight = Math.max(56, Math.min(200, Number(localStorage.getItem("studio-movie-track-height")) || 84));
   let mediaView = ["list", "small", "large"].includes(localStorage.getItem("studio-movie-media-view")) ? localStorage.getItem("studio-movie-media-view") : "list";
   let previewZoom = Math.max(.25, Math.min(2, Number(localStorage.getItem("studio-movie-preview-zoom")) || 1));
@@ -223,6 +227,8 @@
     const usedMedia = timeline.tracks.flatMap(track => (track.clips || []).map(clip => clip.assetId));
     timeline.mediaAssetIds = Array.isArray(timeline.mediaAssetIds) ? timeline.mediaAssetIds : [...new Set(usedMedia)];
     usedMedia.forEach(id => { if (id && !timeline.mediaAssetIds.includes(id)) timeline.mediaAssetIds.push(id); });
+    timeline.mediaOrder = Array.isArray(timeline.mediaOrder) ? timeline.mediaOrder.filter(id => timeline.mediaAssetIds.includes(id)) : [];
+    timeline.mediaAssetIds.forEach(id => { if (!timeline.mediaOrder.includes(id)) timeline.mediaOrder.push(id); });
     timeline.tracks.forEach((track, trackIndex) => {
       track.id ||= uid();
       track.kind = ["VIDEO", "AUDIO", "TEXT"].includes(track.kind) ? track.kind : "VIDEO";
@@ -503,11 +509,15 @@
       clip.scale = clamp(original * (1 + delta / Math.max(80, Math.min(previewStage.clientWidth, previewStage.clientHeight))), .05, 8);
       changed = changed || Math.abs(delta) > 1;
       updatePreviewGeometry();
-      renderInspector();
+      const range = q("[data-clip-scale-range]");
+      const number = q("[data-clip-scale-number]");
+      if (range) range.value = String(clip.scale);
+      if (number) number.value = String(Math.round(clip.scale * 100));
     };
     const finish = () => {
       window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", finish); window.removeEventListener("pointercancel", finish);
       if (!changed) historyUndo.pop(); else { historyRedo = []; updateDirty(); updateHistoryButtons(); scheduleAutosave(); }
+      renderInspector();
     };
     window.addEventListener("pointermove", move); window.addEventListener("pointerup", finish); window.addEventListener("pointercancel", finish);
   }
@@ -587,8 +597,6 @@
     if (folder) {
       mediaFoldersNode.append(makeButton("\u2190 Back", () => { currentMediaFolderId = null; selectedMediaIds.clear(); renderBin(); }, "Back to Media"));
       const title = document.createElement("strong"); title.textContent = folder.name; mediaFoldersNode.append(title);
-    } else {
-      const title = document.createElement("strong"); title.textContent = "Media"; mediaFoldersNode.append(title);
     }
     if (!canEdit) return;
     const create = document.createElement("button");
@@ -600,6 +608,28 @@
       const remove = document.createElement("button"); remove.type = "button"; remove.className = "icon-button secondary"; remove.innerHTML = "&times;"; remove.title = "Delete folder"; remove.onclick = () => openMediaFolderDialog("delete");
       mediaFoldersNode.append(rename, remove);
     }
+  }
+
+  function mediaFolderLabel(value) {
+    const text = String(value || "Folder");
+    return text.length > 7 ? `${text.slice(0, 7)}...` : text;
+  }
+
+  function reorderMediaAssets(movingIds, beforeId) {
+    const moving = [...new Set(movingIds)].filter(id => timeline.mediaAssetIds.includes(id));
+    if (!moving.length || moving.includes(beforeId)) return;
+    mutate(() => {
+      const order = timeline.mediaOrder.filter(id => !moving.includes(id));
+      const index = Math.max(0, order.indexOf(beforeId));
+      order.splice(index, 0, ...moving);
+      timeline.mediaOrder = order;
+    });
+    const sortControl = q("[data-bin-sort]");
+    if (sortControl) {
+      sortControl.value = "custom";
+      sessionStorage.setItem(mediaSortKey, "custom");
+    }
+    renderBin();
   }
 
   function openMediaFolderDialog(mode) {
@@ -635,17 +665,40 @@
       if (!folder) currentMediaFolderId = null;
       else montageMedia = montageMedia.filter(asset => folder.assetIds.includes(asset.id));
     } else montageMedia = montageMedia.filter(asset => !filedIds.has(asset.id));
-    if (sort === "alpha") montageMedia.sort((a, b) => a.name.localeCompare(b.name));
+    if (sort === "custom") {
+      const order = new Map(timeline.mediaOrder.map((id, index) => [id, index]));
+      montageMedia.sort((a, b) => (order.get(a.id) ?? Number.MAX_SAFE_INTEGER) - (order.get(b.id) ?? Number.MAX_SAFE_INTEGER));
+    } else if (sort === "alpha") montageMedia.sort((a, b) => a.name.localeCompare(b.name));
     else if (sort === "duration") montageMedia.sort((a, b) => Number(b.durationMs || 0) - Number(a.durationMs || 0));
     else montageMedia.sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
     if (!currentMediaFolderId) timeline.mediaFolders.forEach(folder => {
       const tile = document.createElement("div");
       tile.className = "movie-bin-folder-tile";
       tile.dataset.folderId = folder.id;
-      tile.innerHTML = "<div></div><strong></strong><small></small>";
-      tile.querySelector("strong").textContent = folder.name;
-      tile.querySelector("small").textContent = `${folder.assetIds?.length || 0} item${folder.assetIds?.length === 1 ? "" : "s"}`;
+      tile.classList.toggle("media-selected", selectedMediaFolderId === folder.id);
+      tile.innerHTML = "<div class=\"movie-folder-art\"></div><strong></strong><small></small>";
+      tile.querySelector("strong").textContent = mediaFolderLabel(folder.name);
+      tile.querySelector("strong").title = folder.name;
+      tile.querySelector("small").textContent = String(folder.assetIds?.length || 0);
       tile.title = `Double-click to open ${folder.name}`;
+      tile.onclick = event => {
+        event.stopPropagation();
+        selectedMediaFolderId = folder.id;
+        selectedMediaIds.clear();
+        renderMediaSelection();
+      };
+      tile.oncontextmenu = event => {
+        event.preventDefault(); event.stopPropagation();
+        selectedMediaFolderId = folder.id;
+        selectedMediaIds.clear();
+        mediaSelectionActive = true;
+        mediaContextAsset = null;
+        mediaContextFolderId = folder.id;
+        renderMediaSelection();
+        mediaContext.style.left = `${Math.min(event.clientX, innerWidth - 190)}px`;
+        mediaContext.style.top = `${Math.min(event.clientY, innerHeight - 190)}px`;
+        mediaContext.hidden = false;
+      };
       tile.ondblclick = () => { currentMediaFolderId = folder.id; selectedMediaIds.clear(); renderBin(); };
       tile.ondragover = event => { if (![...event.dataTransfer.types].some(type => ["text/asset-id", "text/asset-ids"].includes(type))) return; event.preventDefault(); tile.classList.add("drop-target"); };
       tile.ondragleave = () => tile.classList.remove("drop-target");
@@ -685,6 +738,7 @@
         const image = document.createElement("img");
         image.src = asset.thumbnailUrl || asset.waveformUrl;
         image.alt = "";
+        image.draggable = false;
         visual.append(image);
       } else visual.textContent = asset.kind;
       if (used.has(asset.id)) {
@@ -721,11 +775,30 @@
         if (!item.draggable) return;
         if (!selectedMediaIds.has(asset.id)) selectedMediaIds = new Set([asset.id]);
         const ids = [...selectedMediaIds];
+        event.dataTransfer.setData("application/x-lexamora-media", "1");
         event.dataTransfer.setData("text/asset-id", asset.id);
         event.dataTransfer.setData("text/asset-ids", JSON.stringify(ids));
+        event.dataTransfer.effectAllowed = "copyMove";
+      });
+      item.addEventListener("dragover", event => {
+        if (![...event.dataTransfer.types].includes("application/x-lexamora-media")) return;
+        event.preventDefault();
+        item.classList.add("media-order-target");
+        event.dataTransfer.dropEffect = "move";
+      });
+      item.addEventListener("dragleave", () => item.classList.remove("media-order-target"));
+      item.addEventListener("drop", event => {
+        item.classList.remove("media-order-target");
+        if (![...event.dataTransfer.types].includes("application/x-lexamora-media")) return;
+        event.preventDefault(); event.stopPropagation();
+        let ids = [];
+        try { ids = JSON.parse(event.dataTransfer.getData("text/asset-ids") || "[]"); } catch (_) {}
+        if (!ids.length) ids = [event.dataTransfer.getData("text/asset-id")].filter(Boolean);
+        reorderMediaAssets(ids, asset.id);
       });
       item.addEventListener("click", event => {
         mediaSelectionActive = true;
+        selectedMediaFolderId = null;
         if (event.ctrlKey || event.metaKey || event.shiftKey) {
           if (selectedMediaIds.has(asset.id)) selectedMediaIds.delete(asset.id); else selectedMediaIds.add(asset.id);
         } else selectedMediaIds = new Set([asset.id]);
@@ -771,6 +844,7 @@
       item.classList.toggle("media-selected", selected);
       item.setAttribute("aria-selected", selected ? "true" : "false");
     });
+    qa(".movie-bin-folder-tile").forEach(item => item.classList.toggle("media-selected", item.dataset.folderId === selectedMediaFolderId));
   }
 
   function selectedMediaAssets() {
@@ -792,6 +866,7 @@
     mutate(() => {
       ids.forEach(id => {
         if (!timeline.mediaAssetIds.includes(id)) timeline.mediaAssetIds.push(id);
+        if (!timeline.mediaOrder.includes(id)) timeline.mediaOrder.push(id);
       });
       const folder = timeline.mediaFolders.find(item => item.id === currentMediaFolderId);
       if (folder) ids.forEach(id => { if (!folder.assetIds.includes(id)) folder.assetIds.push(id); });
@@ -806,6 +881,7 @@
     const affectedClips = timeline.tracks.flatMap(track => track.clips.filter(clip => ids.has(clip.assetId)));
     const applyRemoval = () => mutate(() => {
       timeline.mediaAssetIds = timeline.mediaAssetIds.filter(id => !ids.has(id));
+      timeline.mediaOrder = timeline.mediaOrder.filter(id => !ids.has(id));
       timeline.mediaFolders.forEach(folder => { folder.assetIds = folder.assetIds.filter(id => !ids.has(id)); });
       timeline.tracks.forEach(track => { track.clips = track.clips.filter(clip => !ids.has(clip.assetId)); });
     });
@@ -1498,8 +1574,9 @@
     positionX.max = "7680"; positionY.max = "7680";
     const clipScale = document.createElement("input");
     clipScale.type = "range"; clipScale.min = ".05"; clipScale.max = "8"; clipScale.step = ".01";
+    clipScale.dataset.clipScaleRange = "";
     clipScale.value = Number(clip?.scale || 1).toFixed(2);
-    const clipScaleNumber = numberInput(Math.round(Number(clip?.scale || 1) * 100), "1", "5"); clipScaleNumber.max = "800";
+    const clipScaleNumber = numberInput(Math.round(Number(clip?.scale || 1) * 100), "1", "5"); clipScaleNumber.max = "800"; clipScaleNumber.dataset.clipScaleNumber = "";
     const speed = numberInput(Number(clip?.speed || 1).toFixed(2), ".05", ".1"); speed.max = "8"; speed.className = "movie-clip-speed";
     const speedMethod = document.createElement("select");
     [["FRAME_SAMPLE", "Frame sampling"], ["FRAME_BLEND", "Frame blending"], ["OPTICAL_FLOW", "Optical flow"]].forEach(([value, label]) => {
@@ -2540,7 +2617,7 @@
     const progress = q("[data-media-progress]"); const bar = progress.querySelector("i"); progress.hidden = false; bar.style.width = "0";
     const xhr = new XMLHttpRequest(); xhr.open("POST", root.dataset.mediaUrl); xhr.setRequestHeader("X-CSRFToken", csrfToken());
     xhr.upload.onprogress = update => { if (update.lengthComputable) { const percent = Math.round(update.loaded / update.total * 100); bar.style.width = `${percent}%`; pendingUploads.forEach(item => item.progress = percent); renderBin(); } };
-    xhr.onload = async () => { pendingUploads = []; progress.hidden = true; input.value = ""; let data = {}; try { data = JSON.parse(xhr.responseText); } catch (_) {} if (xhr.status >= 400) toast(data.error || "Upload failed", "error"); else { mutate(() => (data.items || []).forEach(item => { if (!timeline.mediaAssetIds.includes(item.id)) timeline.mediaAssetIds.push(item.id); })); if (data.errors?.length) toast(data.errors.join(" / "), "error"); } await refreshMedia(); };
+    xhr.onload = async () => { pendingUploads = []; progress.hidden = true; input.value = ""; let data = {}; try { data = JSON.parse(xhr.responseText); } catch (_) {} if (xhr.status >= 400) toast(data.error || "Upload failed", "error"); else { mutate(() => (data.items || []).forEach(item => { if (!timeline.mediaAssetIds.includes(item.id)) timeline.mediaAssetIds.push(item.id); if (!timeline.mediaOrder.includes(item.id)) timeline.mediaOrder.push(item.id); })); if (data.errors?.length) toast(data.errors.join(" / "), "error"); } await refreshMedia(); };
     xhr.onerror = () => { pendingUploads = []; renderBin(); progress.hidden = true; toast("Upload failed", "error"); };
     xhr.send(form);
   };
@@ -2550,10 +2627,10 @@
   });
   let mediaDragDepth = 0;
   [q(".movie-bin")].filter(Boolean).forEach(target => {
-    target.addEventListener("dragenter", event => { if (![...event.dataTransfer.types].includes("Files")) return; event.preventDefault(); mediaDragDepth += 1; target.classList.add("file-drop-active"); });
-    target.addEventListener("dragover", event => { if (![...event.dataTransfer.types].includes("Files")) return; event.preventDefault(); event.dataTransfer.dropEffect = "copy"; });
+    target.addEventListener("dragenter", event => { if ([...event.dataTransfer.types].includes("application/x-lexamora-media") || ![...event.dataTransfer.types].includes("Files")) return; event.preventDefault(); mediaDragDepth += 1; target.classList.add("file-drop-active"); });
+    target.addEventListener("dragover", event => { if ([...event.dataTransfer.types].includes("application/x-lexamora-media") || ![...event.dataTransfer.types].includes("Files")) return; event.preventDefault(); event.dataTransfer.dropEffect = "copy"; });
     target.addEventListener("dragleave", () => { mediaDragDepth = Math.max(0, mediaDragDepth - 1); if (!mediaDragDepth) target.classList.remove("file-drop-active"); });
-    target.addEventListener("drop", event => { if (!event.dataTransfer.files.length) return; event.preventDefault(); event.stopPropagation(); mediaDragDepth = 0; target.classList.remove("file-drop-active"); uploadMediaFiles(event.dataTransfer.files); });
+    target.addEventListener("drop", event => { if ([...event.dataTransfer.types].includes("application/x-lexamora-media") || !event.dataTransfer.files.length) return; event.preventDefault(); event.stopPropagation(); mediaDragDepth = 0; target.classList.remove("file-drop-active"); uploadMediaFiles(event.dataTransfer.files); });
   });
   q("[data-movie-media-properties-close]")?.addEventListener("click", () => q("[data-movie-media-properties]")?.close());
   qa("[data-media-folder-cancel]").forEach(button => button.addEventListener("click", () => folderDialog?.close()));
@@ -2578,15 +2655,25 @@
     });
     folderDialog.close(); renderBin();
   });
-  const hideMediaContext = () => { if (mediaContext) mediaContext.hidden = true; mediaContextAsset = null; };
+  const hideMediaContext = () => { if (mediaContext) mediaContext.hidden = true; mediaContextAsset = null; mediaContextFolderId = null; };
   q("[data-media-context-select-all]")?.addEventListener("click", () => {
     selectedMediaIds = new Set(qa(".movie-bin-item[data-asset-id]").map(item => item.dataset.assetId));
     mediaSelectionActive = true;
     hideMediaContext();
     renderMediaSelection();
   });
-  q("[data-media-context-copy]")?.addEventListener("click", async () => { hideMediaContext(); await copySelectedMedia(); });
-  q("[data-media-context-paste]")?.addEventListener("click", () => { hideMediaContext(); pasteSelectedMedia(); });
+  q("[data-media-context-copy]")?.addEventListener("click", async () => {
+    const folder = timeline.mediaFolders.find(item => item.id === mediaContextFolderId);
+    hideMediaContext();
+    if (folder) { await navigator.clipboard.writeText(folder.name); toast("Folder name copied"); return; }
+    await copySelectedMedia();
+  });
+  q("[data-media-context-paste]")?.addEventListener("click", () => {
+    const folderId = mediaContextFolderId;
+    hideMediaContext();
+    if (folderId && mediaClipboardIds.length) { moveAssetsToFolder(mediaClipboardIds, folderId); return; }
+    pasteSelectedMedia();
+  });
   q("[data-media-context-download]")?.addEventListener("click", event => {
     event.preventDefault();
     const selected = selectedMediaAssets().filter(asset => asset.downloadUrl);
@@ -2600,8 +2687,30 @@
       link.remove();
     }, index * 120));
   });
-  q("[data-media-context-delete]")?.addEventListener("click", () => { hideMediaContext(); removeSelectedMedia(); });
-  q("[data-media-context-properties]")?.addEventListener("click", () => { hideMediaContext(); showSelectedMediaProperties(); });
+  q("[data-media-context-delete]")?.addEventListener("click", () => {
+    const folderId = mediaContextFolderId;
+    hideMediaContext();
+    if (folderId) {
+      mutate(() => { timeline.mediaFolders = timeline.mediaFolders.filter(item => item.id !== folderId); });
+      selectedMediaFolderId = null; renderBin(); return;
+    }
+    removeSelectedMedia();
+  });
+  q("[data-media-context-properties]")?.addEventListener("click", () => {
+    const folder = timeline.mediaFolders.find(item => item.id === mediaContextFolderId);
+    hideMediaContext();
+    if (folder) {
+      const dialog = q("[data-movie-media-properties]");
+      const content = dialog?.querySelector("[data-movie-media-properties-content]");
+      if (dialog && content) {
+        content.innerHTML = `<div><strong>Name</strong><span></span></div><div><strong>Type</strong><span>Media folder</span></div><div><strong>Items</strong><span>${folder.assetIds?.length || 0}</span></div>`;
+        content.querySelector("span").textContent = folder.name;
+        dialog.showModal();
+      }
+      return;
+    }
+    showSelectedMediaProperties();
+  });
   qa("[data-media-remove-cancel]").forEach(button => button.addEventListener("click", () => q("[data-media-remove-dialog]")?.close()));
   bin?.addEventListener("contextmenu", event => {
     if (event.target.closest(".movie-bin-item,.movie-bin-folder-tile,button,input,select,label")) return;
@@ -2839,7 +2948,16 @@
       renderBin();
     };
   });
-  qa("[data-bin-kind],[data-bin-sort],[data-bin-unused]").forEach(control => control.addEventListener("change", renderBin));
+  const binSortControl = q("[data-bin-sort]");
+  if (binSortControl) {
+    const savedMediaSort = sessionStorage.getItem(mediaSortKey);
+    if (["latest", "alpha", "duration", "custom"].includes(savedMediaSort)) binSortControl.value = savedMediaSort;
+    binSortControl.addEventListener("change", () => {
+      sessionStorage.setItem(mediaSortKey, binSortControl.value);
+      renderBin();
+    });
+  }
+  qa("[data-bin-kind],[data-bin-unused]").forEach(control => control.addEventListener("change", renderBin));
   q("[data-media-position]")?.addEventListener("click", event => {
     const stage = event.currentTarget.closest(".movie-stage-column");
     stage.classList.toggle("media-bottom");

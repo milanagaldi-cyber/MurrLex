@@ -16,6 +16,7 @@ def default_movie_timeline():
     return {
         "schemaVersion": MOVIE_TIMELINE_SCHEMA_VERSION,
         "mediaAssetIds": [],
+        "mediaOrder": [],
         "mediaFolders": [],
         "tracks": [
             {
@@ -89,12 +90,21 @@ def normalize_movie_timeline(value):
     if not isinstance(media_asset_ids, list) or len(media_asset_ids) > 2_000:
         raise MovieTimelineValidationError("Timeline media library must be a list with at most 2000 items.")
     normalized["mediaAssetIds"] = list(dict.fromkeys(str(item)[:100] for item in media_asset_ids if item))
+    media_order = value.get("mediaOrder", [])
+    if not isinstance(media_order, list) or len(media_order) > 2_000:
+        raise MovieTimelineValidationError("Timeline media order must be a list with at most 2000 items.")
+    valid_asset_ids = set(normalized["mediaAssetIds"])
+    normalized_order = list(dict.fromkeys(
+        str(item)[:100] for item in media_order if str(item) in valid_asset_ids
+    ))
+    normalized["mediaOrder"] = normalized_order + [
+        item for item in normalized["mediaAssetIds"] if item not in normalized_order
+    ]
     media_folders = value.get("mediaFolders", [])
     if not isinstance(media_folders, list) or len(media_folders) > 100:
         raise MovieTimelineValidationError("Timeline media folders must be a list with at most 100 items.")
     normalized_folders = []
     folder_ids = set()
-    valid_asset_ids = set(normalized["mediaAssetIds"])
     for folder in media_folders:
         if not isinstance(folder, dict):
             raise MovieTimelineValidationError("Timeline media folder is invalid.")
