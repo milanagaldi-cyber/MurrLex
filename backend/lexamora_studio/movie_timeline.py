@@ -15,6 +15,8 @@ class MovieTimelineValidationError(ValueError):
 def default_movie_timeline():
     return {
         "schemaVersion": MOVIE_TIMELINE_SCHEMA_VERSION,
+        "mediaAssetIds": [],
+        "mediaFolders": [],
         "tracks": [
             {
                 "id": "video-1",
@@ -87,6 +89,30 @@ def normalize_movie_timeline(value):
     if not isinstance(media_asset_ids, list) or len(media_asset_ids) > 2_000:
         raise MovieTimelineValidationError("Timeline media library must be a list with at most 2000 items.")
     normalized["mediaAssetIds"] = list(dict.fromkeys(str(item)[:100] for item in media_asset_ids if item))
+    media_folders = value.get("mediaFolders", [])
+    if not isinstance(media_folders, list) or len(media_folders) > 100:
+        raise MovieTimelineValidationError("Timeline media folders must be a list with at most 100 items.")
+    normalized_folders = []
+    folder_ids = set()
+    valid_asset_ids = set(normalized["mediaAssetIds"])
+    for folder in media_folders:
+        if not isinstance(folder, dict):
+            raise MovieTimelineValidationError("Timeline media folder is invalid.")
+        folder_id = _bounded_text(folder.get("id"), field="Media folder id", maximum=100)
+        if folder_id in folder_ids:
+            raise MovieTimelineValidationError(f"Media folder id {folder_id} is duplicated.")
+        folder_ids.add(folder_id)
+        asset_ids = folder.get("assetIds", [])
+        if not isinstance(asset_ids, list) or len(asset_ids) > 2_000:
+            raise MovieTimelineValidationError("Media folder assets must be a list with at most 2000 items.")
+        normalized_folders.append({
+            "id": folder_id,
+            "name": _bounded_text(folder.get("name"), field="Media folder name", maximum=100),
+            "assetIds": list(dict.fromkeys(
+                str(item)[:100] for item in asset_ids if str(item) in valid_asset_ids
+            )),
+        })
+    normalized["mediaFolders"] = normalized_folders
     normalized_tracks = []
     track_ids = set()
     clip_ids = set()

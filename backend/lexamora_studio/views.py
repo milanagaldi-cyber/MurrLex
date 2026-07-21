@@ -1041,7 +1041,9 @@ def _accessible_workspace_videos(user, workspace):
         workspace=workspace,
         content_type__startswith="video/",
     ).filter(
-        Q(projects__in=projects) | Q(projects__isnull=True),
+        Q(project__in=projects)
+        | Q(projects__in=projects)
+        | Q(project__isnull=True, projects__isnull=True),
     ).select_related("workspace", "project", "created_by", "updated_by").prefetch_related(
         "projects",
         Prefetch("referenced_by_scenes", queryset=Scene.objects.select_related("episode")),
@@ -1059,7 +1061,10 @@ def _video_gallery_assets(user, workspace, project=None):
     project_id = str(project.id) if project else ""
     for asset in videos:
         asset.is_current_project = bool(project_id and project_id in asset.gallery_project_ids.split(","))
-        asset.gallery_project_names = ", ".join(item.title for item in asset.projects.all()) or "Workspace library"
+        attached = {str(item.id): item.title for item in asset.projects.all()}
+        if asset.project_id and asset.project:
+            attached[str(asset.project_id)] = asset.project.title
+        asset.gallery_project_names = ", ".join(attached.values()) or "Workspace library"
     return videos
 
 
@@ -1099,6 +1104,8 @@ def _direct_media_upload(request, *, workspace, project=None):
         except ValidationError as exc:
             errors.append(f"{uploaded.name}: {'; '.join(exc.messages)}")
             continue
+        if project:
+            asset.projects.add(project)
         created.append({
             "id": str(asset.id), "name": asset.original_filename,
             "contentType": asset.content_type, "status": asset.processing_status,
@@ -4681,6 +4688,9 @@ def _movie_media_payload(asset, project):
     kind = "VIDEO" if asset.content_type.startswith("video/") else (
         "IMAGE" if asset.content_type.startswith("image/") else "AUDIO"
     )
+    attached_projects = {str(item.id): item for item in getattr(asset, "_movie_projects", [])}
+    if asset.project_id and asset.project:
+        attached_projects[str(asset.project_id)] = asset.project
     return {
         "id": str(asset.id),
         "name": asset.original_filename,
@@ -4696,7 +4706,7 @@ def _movie_media_payload(asset, project):
         "createdAt": asset.created_at.isoformat(),
         "createdBy": asset.created_by.get_full_name() or asset.created_by.get_username(),
         "workspaceName": asset.workspace.name,
-        "projectNames": [item.title for item in getattr(asset, "_movie_projects", [])],
+        "projectNames": [item.title for item in attached_projects.values()],
         "originalUrl": reverse("studio_api:asset_view", kwargs={"asset_id": asset.id}),
         "downloadUrl": reverse("studio_api:asset_download", kwargs={"asset_id": asset.id}),
         "proxyUrl": reverse("studio_api:asset_proxy", kwargs={"asset_id": asset.id}) if ready and asset.proxy_file else "",
@@ -4709,7 +4719,7 @@ def _movie_media_payload(asset, project):
         "filmstripTileSize": 72,
         "attached": bool(
             asset.project_id == project.id
-            or any(item.id == project.id for item in getattr(asset, "_movie_projects", []))
+            or str(project.id) in attached_projects
         ),
         "retryUrl": reverse("studio:project_movie_media_retry", kwargs={
             "project_id": project.id, "asset_id": asset.id,
@@ -4724,7 +4734,7 @@ def _workspace_movie_media(user, project):
         ).filter(
             Q(content_type__startswith="video/") | Q(content_type__startswith="audio/")
             | Q(content_type__startswith="image/"),
-        ).select_related("workspace", "created_by").prefetch_related(
+        ).select_related("workspace", "project", "created_by").prefetch_related(
             Prefetch("projects", to_attr="_movie_projects"),
         )
         .distinct().order_by("-created_at", "id")

@@ -3781,7 +3781,14 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertEqual(MovieTimelineRevision.objects.filter(timeline=timeline).count(), 1)
 
         from .movie_timeline import normalize_movie_timeline
-        framed = normalize_movie_timeline({"schemaVersion": 1, "tracks": [{
+        framed = normalize_movie_timeline({
+            "schemaVersion": 1,
+            "mediaAssetIds": ["asset-1", "asset-2"],
+            "mediaFolders": [{
+                "id": "folder-references", "name": "References",
+                "assetIds": ["asset-1", "missing-asset", "asset-1"],
+            }],
+            "tracks": [{
             "id": "framed-video", "kind": "VIDEO", "height": 132, "clips": [{
                 "id": "framed-clip", "assetId": "asset-1", "duration": 1000,
                 "scale": 0.25, "positionX": 240, "positionY": -130,
@@ -3792,6 +3799,9 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertEqual(framed_clip["scale"], 0.25)
         self.assertEqual(framed_clip["positionX"], 240)
         self.assertEqual(framed_clip["positionY"], -130)
+        self.assertEqual(framed["mediaFolders"], [{
+            "id": "folder-references", "name": "References", "assetIds": ["asset-1"],
+        }])
 
         response = self.client.post(
             f"/studio/projects/{self.project.id}/movie-editor/",

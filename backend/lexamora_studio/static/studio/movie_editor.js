@@ -15,6 +15,8 @@
   let timelineId = root.dataset.timelineId || "";
   const saved = readJson("movie-timeline-data");
   let timeline = saved && Array.isArray(saved.tracks) ? saved : {schemaVersion: 1, tracks: []};
+  timeline.mediaAssetIds = Array.isArray(timeline.mediaAssetIds) ? timeline.mediaAssetIds : [];
+  timeline.mediaFolders = Array.isArray(timeline.mediaFolders) ? timeline.mediaFolders : [];
   let selectedId = null;
   let selectedIds = new Set();
   let clipClipboard = [];
@@ -35,6 +37,9 @@
   let savedSignature = "";
   let libraryScope = "project";
   let standalonePreviewAssetId = null;
+  let currentMediaFolderId = null;
+  let mediaContextAsset = null;
+  let pendingUploads = [];
   const defaultTrackHeight = Math.max(56, Math.min(200, Number(localStorage.getItem("studio-movie-track-height")) || 84));
   let mediaView = ["list", "small", "large"].includes(localStorage.getItem("studio-movie-media-view")) ? localStorage.getItem("studio-movie-media-view") : "list";
   let previewZoom = Math.max(.25, Math.min(2, Number(localStorage.getItem("studio-movie-preview-zoom")) || 1));
@@ -77,6 +82,9 @@
   const zoomInput = q("[data-timeline-zoom]");
   const libraryDialog = q("[data-media-library-dialog]");
   const libraryGrid = q("[data-media-library-grid]");
+  const mediaFoldersNode = q("[data-media-folders]");
+  const mediaContext = q("[data-movie-media-context]");
+  const folderDialog = q("[data-media-folder-dialog]");
   const assetMap = new Map();
   const audioPlayers = new Map();
   const visualPlayers = new Map();
@@ -472,6 +480,35 @@
     window.addEventListener("pointercancel", finish);
   }
 
+  function beginPreviewResize(event) {
+    const handle = event.currentTarget.dataset.previewResize || "se";
+    const {clip, track} = previewClipData();
+    if (!clip || !canEdit || track?.locked || standalonePreviewAssetId) return;
+    event.preventDefault(); event.stopPropagation();
+    if (!selectedIds.has(clip.id)) selectClip(clip.id);
+    remember();
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const original = Number(clip.scale || 1);
+    let changed = false;
+    const move = next => {
+      const horizontal = handle.includes("w") ? startX - next.clientX : next.clientX - startX;
+      const vertical = handle.includes("n") ? startY - next.clientY : next.clientY - startY;
+      const usesHorizontal = /[ew]/.test(handle);
+      const usesVertical = /[ns]/.test(handle);
+      const delta = usesHorizontal && usesVertical ? (horizontal + vertical) / 2 : usesHorizontal ? horizontal : vertical;
+      clip.scale = clamp(original * (1 + delta / Math.max(80, Math.min(previewStage.clientWidth, previewStage.clientHeight))), .05, 8);
+      changed = changed || Math.abs(delta) > 1;
+      updatePreviewGeometry();
+      renderInspector();
+    };
+    const finish = () => {
+      window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", finish); window.removeEventListener("pointercancel", finish);
+      if (!changed) historyUndo.pop(); else { historyRedo = []; updateDirty(); updateHistoryButtons(); scheduleAutosave(); }
+    };
+    window.addEventListener("pointermove", move); window.addEventListener("pointerup", finish); window.addEventListener("pointercancel", finish);
+  }
+
   function mediaStatus(asset) {
     if (asset.status === "READY") return `${clock(asset.durationMs || 0)} / Ready`;
     if (asset.status === "FAILED") return "Processing failed";
@@ -515,6 +552,62 @@
     dialog.showModal();
   }
 
+  function moveAssetToFolder(assetId, folderId) {
+    mutate(() => {
+      timeline.mediaFolders.forEach(folder => {
+        folder.assetIds = (folder.assetIds || []).filter(id => id !== assetId);
+      });
+      const target = timeline.mediaFolders.find(folder => folder.id === folderId);
+      if (target && !target.assetIds.includes(assetId)) target.assetIds.push(assetId);
+    });
+    renderBin();
+  }
+
+  function renderMediaFolders() {
+    if (!mediaFoldersNode) return;
+    mediaFoldersNode.replaceChildren();
+    const makeButton = (label, folderId, title) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `secondary movie-bin-folder${currentMediaFolderId === folderId ? " active" : ""}`;
+      button.textContent = label;
+      button.title = title || label;
+      button.onclick = () => { currentMediaFolderId = folderId; renderBin(); };
+      button.ondragover = event => { if (![...event.dataTransfer.types].includes("text/asset-id")) return; event.preventDefault(); button.classList.add("drop-target"); };
+      button.ondragleave = () => button.classList.remove("drop-target");
+      button.ondrop = event => { event.preventDefault(); button.classList.remove("drop-target"); const id = event.dataTransfer.getData("text/asset-id"); if (id) moveAssetToFolder(id, folderId); };
+      return button;
+    };
+    mediaFoldersNode.append(makeButton("All", null, "Show all media"));
+    timeline.mediaFolders.forEach(folder => mediaFoldersNode.append(makeButton(folder.name, folder.id, `Open ${folder.name}`)));
+    if (!canEdit) return;
+    const create = document.createElement("button");
+    create.type = "button"; create.className = "icon-button secondary"; create.textContent = "+"; create.title = "Create folder";
+    create.onclick = () => openMediaFolderDialog("create");
+    mediaFoldersNode.append(create);
+    if (currentMediaFolderId) {
+      const rename = document.createElement("button"); rename.type = "button"; rename.className = "icon-button secondary"; rename.textContent = "R"; rename.title = "Rename folder"; rename.onclick = () => openMediaFolderDialog("rename");
+      const remove = document.createElement("button"); remove.type = "button"; remove.className = "icon-button secondary"; remove.innerHTML = "&times;"; remove.title = "Delete folder"; remove.onclick = () => openMediaFolderDialog("delete");
+      mediaFoldersNode.append(rename, remove);
+    }
+  }
+
+  function openMediaFolderDialog(mode) {
+    if (!folderDialog) return;
+    const folder = timeline.mediaFolders.find(item => item.id === currentMediaFolderId);
+    folderDialog.dataset.mode = mode;
+    folderDialog.querySelector("[data-media-folder-title]").textContent = mode === "create" ? "Create media folder" : mode === "rename" ? "Rename media folder" : "Delete media folder";
+    const field = folderDialog.querySelector("[data-media-folder-name-field]");
+    const input = folderDialog.querySelector("[data-media-folder-name]");
+    const message = folderDialog.querySelector("[data-media-folder-message]");
+    field.hidden = mode === "delete";
+    message.hidden = mode !== "delete";
+    message.textContent = mode === "delete" ? `Delete “${folder?.name || "folder"}”? Media files remain in this edit project.` : "";
+    input.value = mode === "rename" ? folder?.name || "" : "";
+    folderDialog.showModal();
+    if (mode !== "delete") requestAnimationFrame(() => input.focus());
+  }
+
   function renderBin() {
     assetMap.clear();
     libraryAssets.forEach(item => assetMap.set(item.id, item));
@@ -526,6 +619,11 @@
     const sort = q("[data-bin-sort]")?.value || "latest";
     const used = new Set(timeline.tracks.flatMap(track => track.clips.map(clip => clip.assetId)));
     let montageMedia = [...assetMap.values()].filter(asset => timeline.mediaAssetIds.includes(asset.id) && (kind === "ALL" || asset.kind === kind) && (!q("[data-bin-unused]")?.checked || !used.has(asset.id)));
+    if (currentMediaFolderId) {
+      const folder = timeline.mediaFolders.find(item => item.id === currentMediaFolderId);
+      if (!folder) currentMediaFolderId = null;
+      else montageMedia = montageMedia.filter(asset => folder.assetIds.includes(asset.id));
+    }
     if (sort === "alpha") montageMedia.sort((a, b) => a.name.localeCompare(b.name));
     else if (sort === "duration") montageMedia.sort((a, b) => Number(b.durationMs || 0) - Number(a.durationMs || 0));
     else montageMedia.sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
@@ -601,7 +699,10 @@
       item.addEventListener("contextmenu", event => {
         event.preventDefault();
         event.stopPropagation();
-        openMediaProperties(asset);
+        mediaContextAsset = asset;
+        mediaContext.style.left = `${Math.min(event.clientX, innerWidth - 190)}px`;
+        mediaContext.style.top = `${Math.min(event.clientY, innerHeight - 190)}px`;
+        mediaContext.hidden = false;
       });
       item.addEventListener("dblclick", () => {
         if (!canEdit || asset.status !== "READY") return;
@@ -612,7 +713,17 @@
       });
       bin.append(item);
     });
-    if (!montageMedia.length) bin.innerHTML = '<p class="empty">Open + to add Project or Workspace media</p>';
+    pendingUploads.forEach(upload => {
+      const item = document.createElement("div");
+      item.className = "movie-bin-item movie-bin-uploading";
+      item.innerHTML = '<div class="movie-bin-visual"></div><div class="movie-bin-copy"><strong></strong><span>Uploading <b>0%</b></span><progress max="100" value="0"></progress></div>';
+      item.querySelector("strong").textContent = upload.name;
+      item.querySelector("b").textContent = `${upload.progress}%`;
+      item.querySelector("progress").value = upload.progress;
+      bin.prepend(item);
+    });
+    if (!montageMedia.length && !pendingUploads.length) bin.innerHTML = '<p class="empty">Open + to add Project or Workspace media</p>';
+    renderMediaFolders();
   }
 
   async function refreshMedia() {
@@ -2286,12 +2397,15 @@
     const input = q("[data-media-files]");
     const files = [...filesToUpload].slice(0, 10);
     if (!files.length) return;
+    const batchId = uid();
+    pendingUploads = files.map(file => ({id: `${batchId}-${file.name}`, name: file.name, progress: 0}));
+    renderBin();
     const form = new FormData(); files.forEach(file => form.append("files", file));
     const progress = q("[data-media-progress]"); const bar = progress.querySelector("i"); progress.hidden = false; bar.style.width = "0";
     const xhr = new XMLHttpRequest(); xhr.open("POST", root.dataset.mediaUrl); xhr.setRequestHeader("X-CSRFToken", csrfToken());
-    xhr.upload.onprogress = update => { if (update.lengthComputable) bar.style.width = `${Math.round(update.loaded / update.total * 100)}%`; };
-    xhr.onload = async () => { progress.hidden = true; input.value = ""; let data = {}; try { data = JSON.parse(xhr.responseText); } catch (_) {} if (xhr.status >= 400) toast(data.error || "Upload failed", "error"); else { mutate(() => (data.items || []).forEach(item => { if (!timeline.mediaAssetIds.includes(item.id)) timeline.mediaAssetIds.push(item.id); })); if (data.errors?.length) toast(data.errors.join(" / "), "error"); } await refreshMedia(); };
-    xhr.onerror = () => { progress.hidden = true; toast("Upload failed", "error"); };
+    xhr.upload.onprogress = update => { if (update.lengthComputable) { const percent = Math.round(update.loaded / update.total * 100); bar.style.width = `${percent}%`; pendingUploads.forEach(item => item.progress = percent); renderBin(); } };
+    xhr.onload = async () => { pendingUploads = []; progress.hidden = true; input.value = ""; let data = {}; try { data = JSON.parse(xhr.responseText); } catch (_) {} if (xhr.status >= 400) toast(data.error || "Upload failed", "error"); else { mutate(() => (data.items || []).forEach(item => { if (!timeline.mediaAssetIds.includes(item.id)) timeline.mediaAssetIds.push(item.id); })); if (data.errors?.length) toast(data.errors.join(" / "), "error"); } await refreshMedia(); };
+    xhr.onerror = () => { pendingUploads = []; renderBin(); progress.hidden = true; toast("Upload failed", "error"); };
     xhr.send(form);
   };
   q("[data-media-upload-form]")?.addEventListener("submit", event => {
@@ -2306,6 +2420,29 @@
     target.addEventListener("drop", event => { if (!event.dataTransfer.files.length) return; event.preventDefault(); event.stopPropagation(); mediaDragDepth = 0; target.classList.remove("file-drop-active"); uploadMediaFiles(event.dataTransfer.files); });
   });
   q("[data-movie-media-properties-close]")?.addEventListener("click", () => q("[data-movie-media-properties]")?.close());
+  qa("[data-media-folder-cancel]").forEach(button => button.addEventListener("click", () => folderDialog?.close()));
+  q("[data-media-folder-save]")?.addEventListener("click", () => {
+    const mode = folderDialog.dataset.mode;
+    const input = folderDialog.querySelector("[data-media-folder-name]");
+    const name = input.value.trim();
+    if (mode !== "delete" && !name) return input.focus();
+    mutate(() => {
+      if (mode === "create") {
+        const folder = {id: uid(), name, assetIds: []}; timeline.mediaFolders.push(folder); currentMediaFolderId = folder.id;
+      } else if (mode === "rename") {
+        const folder = timeline.mediaFolders.find(item => item.id === currentMediaFolderId); if (folder) folder.name = name;
+      } else {
+        timeline.mediaFolders = timeline.mediaFolders.filter(item => item.id !== currentMediaFolderId); currentMediaFolderId = null;
+      }
+    });
+    folderDialog.close(); renderBin();
+  });
+  const hideMediaContext = () => { if (mediaContext) mediaContext.hidden = true; mediaContextAsset = null; };
+  q("[data-media-context-copy]")?.addEventListener("click", async () => { if (mediaContextAsset?.originalUrl) await navigator.clipboard.writeText(new URL(mediaContextAsset.originalUrl, location.href).href); hideMediaContext(); });
+  q("[data-media-context-download]")?.addEventListener("click", event => { if (!mediaContextAsset?.downloadUrl) event.preventDefault(); else event.currentTarget.href = mediaContextAsset.downloadUrl; hideMediaContext(); });
+  q("[data-media-context-delete]")?.addEventListener("click", () => { const asset = mediaContextAsset; hideMediaContext(); if (!asset) return; const used = timeline.tracks.some(track => track.clips.some(clip => clip.assetId === asset.id)); if (used) return toast("Remove this media's clips from the timeline first", "error"); mutate(() => { timeline.mediaAssetIds = timeline.mediaAssetIds.filter(id => id !== asset.id); timeline.mediaFolders.forEach(folder => folder.assetIds = folder.assetIds.filter(id => id !== asset.id)); }); renderBin(); });
+  q("[data-media-context-properties]")?.addEventListener("click", () => { const asset = mediaContextAsset; hideMediaContext(); if (asset) openMediaProperties(asset); });
+  document.addEventListener("pointerdown", event => { if (mediaContext && !mediaContext.hidden && !mediaContext.contains(event.target)) hideMediaContext(); });
 
   qa("[data-add-track]").forEach(button => button.onclick = () => addTrack(button.dataset.addTrack));
   q("[data-delete-track]")?.addEventListener("click", removeTargetTrack);
@@ -2345,6 +2482,21 @@
   preview.addEventListener("loadedmetadata", () => updatePreviewGeometry());
   preview.addEventListener("error", () => { previewStatus.textContent = preview.error?.message || "Preview failed"; });
   previewStage.addEventListener("pointerdown", beginPreviewPan);
+  qa("[data-preview-resize]").forEach(handle => handle.addEventListener("pointerdown", beginPreviewResize));
+  qa("[data-canvas-frame]").forEach(button => button.addEventListener("click", event => {
+    event.preventDefault(); event.stopPropagation();
+    const found = selectedId ? findClip(selectedId) : null;
+    if (!found || !canEdit || found.track.locked || standalonePreviewAssetId) return;
+    const action = button.dataset.canvasFrame;
+    mutate(() => {
+      if (action === "reset") { found.clip.positionX = 0; found.clip.positionY = 0; found.clip.scale = 1; }
+      else if (action === "left") found.clip.positionX = Number(found.clip.positionX || 0) - 1;
+      else if (action === "right") found.clip.positionX = Number(found.clip.positionX || 0) + 1;
+      else if (action === "up") found.clip.positionY = Number(found.clip.positionY || 0) + 1;
+      else if (action === "down") found.clip.positionY = Number(found.clip.positionY || 0) - 1;
+    });
+    updatePreviewGeometry(); renderInspector();
+  }));
   previewStage.addEventListener("wheel", () => {}, {passive: true});
   playheadNode.addEventListener("pointerdown", beginPlayheadGesture);
   previewZoomInput?.addEventListener("input", event => {

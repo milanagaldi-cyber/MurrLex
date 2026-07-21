@@ -7,9 +7,24 @@
   overlay.className = "direct-media-drop-overlay";
   overlay.innerHTML = '<div><b>Drop to upload</b><span>Images and videos are attached automatically</span><i></i></div>';
 
+  const buildPlaceholders = files => files.map(file => {
+    const grid = file.type.startsWith("video/")
+      ? document.querySelector("[data-video-grid]")
+      : document.querySelector("[data-media-grid]");
+    if (!grid) return null;
+    const card = document.createElement("figure");
+    card.className = "video-upload-placeholder";
+    card.innerHTML = '<div class="video-upload-placeholder-preview"><i class="direct-media-spinner" aria-hidden="true"></i></div><figcaption class="video-upload-placeholder-copy"><strong></strong><small>Uploading <span>0%</span></small><div class="video-upload-progress"><i></i></div></figcaption>';
+    card.querySelector("strong").textContent = file.name;
+    const add = grid.querySelector(".asset-add-tile");
+    if (add) add.insertAdjacentElement("afterend", card); else grid.prepend(card);
+    return card;
+  }).filter(Boolean);
+
   const upload = filesValue => {
     const files = fileList(filesValue);
     if (!uploadUrl || !files.length) return;
+    const placeholders = buildPlaceholders(files);
     if (!overlay.isConnected) document.body.append(overlay);
     overlay.classList.add("uploading");
     overlay.querySelector("b").textContent = `Uploading ${files.length} file${files.length === 1 ? "" : "s"}`;
@@ -19,12 +34,20 @@
     xhr.open("POST", uploadUrl);
     xhr.setRequestHeader("X-CSRFToken", csrf());
     xhr.upload.onprogress = event => {
-      if (event.lengthComputable) overlay.style.setProperty("--upload-progress", `${Math.round(event.loaded / event.total * 100)}%`);
+      if (event.lengthComputable) {
+        const percent = Math.round(event.loaded / event.total * 100);
+        overlay.style.setProperty("--upload-progress", `${percent}%`);
+        placeholders.forEach(card => {
+          card.querySelector(".video-upload-progress i").style.width = `${percent}%`;
+          card.querySelector("small span").textContent = `${percent}%`;
+        });
+      }
     };
     xhr.onload = () => {
       let data = {};
       try { data = JSON.parse(xhr.responseText); } catch (_) {}
       if (xhr.status >= 400 || !data.items?.length) {
+        placeholders.forEach(card => card.remove());
         overlay.remove();
         window.studioToast?.(data.error || data.errors?.join(" / ") || "Upload failed", "error");
         return;
@@ -33,7 +56,7 @@
       if (data.errors?.length) window.studioToast?.(data.errors.join(" / "), "error");
       location.reload();
     };
-    xhr.onerror = () => { overlay.remove(); window.studioToast?.("Upload failed", "error"); };
+    xhr.onerror = () => { placeholders.forEach(card => card.remove()); overlay.remove(); window.studioToast?.("Upload failed", "error"); };
     xhr.send(form);
   };
 
