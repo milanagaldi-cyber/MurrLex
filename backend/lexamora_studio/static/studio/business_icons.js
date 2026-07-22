@@ -50,7 +50,7 @@
     save: '<path d="M4 3h13l3 3v15H4zM8 3v6h8V3M8 15h8v6H8z"/>',
     snap: '<path d="M6 3v10a6 6 0 0012 0V3M6 8h4M14 8h4"/>',
     search: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21"/>',
-    settings: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9L7 7M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"/>',
+    settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 00.3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 00-1.9-.3 1.7 1.7 0 00-1 1.6v.2h-4V21a1.7 1.7 0 00-1-1.6 1.7 1.7 0 00-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 00.3-1.9A1.7 1.7 0 003 14H2.8v-4H3a1.7 1.7 0 001.6-1 1.7 1.7 0 00-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 009 4.6 1.7 1.7 0 0010 3v-.2h4V3a1.7 1.7 0 001 1.6 1.7 1.7 0 001.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 00-.3 1.9 1.7 1.7 0 001.6 1h.2v4H21a1.7 1.7 0 00-1.6 1z"/>',
     share: '<circle cx="18" cy="5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="19" r="2.5"/><path d="M8.2 10.8l7.6-4.5M8.2 13.2l7.6 4.5"/>',
     sort: '<path d="M8 5h12M8 12h9M8 19h6M4 4v16M2 18l2 2 2-2"/>',
     split: '<path d="M8 3v7a3 3 0 003 3h2M16 3v7a3 3 0 01-3 3h-2M8 21v-4a3 3 0 013-3h2M16 21v-4a3 3 0 00-3-3h-2"/>',
@@ -137,6 +137,12 @@
     ['more', /more actions|more options/]
   ];
 
+  window.LexamoraIconPack = Object.freeze({
+    name: 'command-monoline-24',
+    size: 24,
+    icons: Object.freeze({...icons})
+  });
+
   const selector = [
     'button',
     'a.button',
@@ -180,7 +186,7 @@
       if (!legacy.classList.contains('business-command-icon')) legacy.classList.add('business-legacy-command-icon');
     });
     const icon = document.createElement('span');
-    icon.className = 'business-command-icon';
+    icon.className = 'business-command-icon command-icon';
     icon.setAttribute('aria-hidden', 'true');
     icon.innerHTML = `<svg viewBox="0 0 24 24" focusable="false">${icons[name]}</svg>`;
     element.prepend(icon);

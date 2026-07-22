@@ -4,7 +4,7 @@
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{% block title %}Lexamora Studio{% endblock %}</title>
 <link rel="icon" href="{% static 'studio/favicon.svg' %}" type="image/svg+xml">
-<script defer src="{% static 'studio/business_icons.js' %}?v=3"></script>
+<script defer src="{% static 'studio/business_icons.js' %}?v=4"></script>
 <script>
 (() => {
   try {
@@ -110,7 +110,7 @@ body{font-family:"Segoe UI",Inter,Roboto,Arial,sans-serif}.site-header{backgroun
 .prompt-settings-popover[data-mode="translation"]{width:min(260px,95%)}
 .reference-mode-control{min-width:185px}
 </style>
-<link rel="stylesheet" href="{% static 'studio/business_icons.css' %}?v=3">
+<link rel="stylesheet" href="{% static 'studio/business_icons.css' %}?v=4">
 </head>
 <body>
 <header class="site-header"><div class="topbar"><a class="brand" href="{% url 'studio:dashboard' %}"><span class="brand-mark">LS</span><span>Lexamora Studio</span></a><details class="app-menu"><summary title="Application navigation" aria-label="Application navigation">&#9776;</summary><div class="app-menu-list"><a href="{% url 'home' %}">MurrLex</a><a href="{% url 'account' %}">User Cabinet</a><a href="{% url 'studio:dashboard' %}">Lexamora Studio</a>{% if project %}<a href="{% url 'studio:workspace_detail' project.workspace_id %}">Workspace</a><a href="{% url 'studio:project_detail' project.id %}">Project</a>{% elif scene %}<a href="{% url 'studio:workspace_detail' scene.episode.project.workspace_id %}">Workspace</a><a href="{% url 'studio:project_detail' scene.episode.project_id %}">Project</a>{% elif character %}<a href="{% url 'studio:workspace_detail' character.project.workspace_id %}">Workspace</a><a href="{% url 'studio:project_detail' character.project_id %}">Project</a>{% elif workspace %}<a href="{% url 'studio:workspace_detail' workspace.id %}">Workspace</a>{% endif %}</div></details><nav aria-label="Studio navigation"><span class="ai-credit-control"><button class="premium-crown-link{% if not studio_ai_enabled %} paused{% endif %}" type="button" data-ai-toggle data-ai-toggle-url="{% url 'studio:ai_usage_toggle' %}" data-ai-enabled="{% if studio_ai_enabled %}1{% else %}0{% endif %}" title="{% if studio_ai_enabled %}AI enabled - click to pause{% else %}AI paused - click to enable{% endif %}" aria-label="Toggle AI">&#9813;</button><a class="token-counter" data-token-counter href="{% url 'premium' %}" title="Open Premium cabinet"><span class="token-plan">{{ studio_token_summary.plan|default:'Free' }} Plan</span><span class="token-amount">{{ studio_token_summary.remaining }}</span></a></span><button class="theme-toggle icon-button" type="button" data-theme-toggle title="Switch theme" aria-label="Switch theme"></button>{% with social=request.user.socialaccount_set.first %}<a class="user-avatar" href="{% url 'account' %}" title="{{ request.user.get_full_name|default:request.user.username }}">{% if social.extra_data.picture %}<img src="{{ social.extra_data.picture }}" alt="">{% else %}{{ request.user.get_full_name|default:request.user.username|first|upper }}{% endif %}</a>{% endwith %}</nav></div></header>

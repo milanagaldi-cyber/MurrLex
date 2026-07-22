@@ -2983,14 +2983,17 @@ def _asset_usage_count(asset):
 
 def _decorate_gallery_assets(user, assets, *, deduplicate=False):
     accessible_ids = set(accessible_projects(user).values_list("id", flat=True))
+    workspace_edit_access = {}
     for asset in assets:
         usage_project_ids = _asset_usage_project_ids(asset)
         asset._gallery_project_id_set = usage_project_ids
         asset.gallery_project_ids = ",".join(str(value) for value in sorted(usage_project_ids, key=str))
         asset.usage_count = _asset_usage_count(asset)
         asset.requires_usage_confirmation = asset.usage_count > 1
+        if asset.workspace_id not in workspace_edit_access:
+            workspace_edit_access[asset.workspace_id] = has_capability(user, asset.workspace, "edit")
         asset.can_trash_from_workspace = (
-            has_capability(user, asset.workspace, "edit")
+            workspace_edit_access[asset.workspace_id]
             and usage_project_ids.issubset(accessible_ids)
         )
     if not deduplicate:
