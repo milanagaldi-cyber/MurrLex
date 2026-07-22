@@ -60,7 +60,7 @@
   let mediaContextFolderId = null;
   let pendingUploads = [];
   const mediaSortKey = `studio-movie-media-sort-${timelineId}`;
-  const defaultTrackHeight = Math.max(56, Math.min(200, Number(localStorage.getItem("studio-movie-track-height")) || 84));
+  const defaultTrackHeight = Math.max(21, Math.min(210, Number(localStorage.getItem("studio-movie-track-height")) || 84));
   let mediaView = ["list", "small", "large"].includes(localStorage.getItem("studio-movie-media-view")) ? localStorage.getItem("studio-movie-media-view") : "list";
   let previewZoom = Math.max(.25, Math.min(2, Number(localStorage.getItem("studio-movie-preview-zoom")) || 1));
   let inspectorTab = "VIDEO";
@@ -77,6 +77,7 @@
   const tracksNode = q("[data-movie-tracks]");
   const headsNode = q("[data-track-heads]");
   const preview = q("[data-movie-preview]");
+  const previewBody = q(".movie-preview-body");
   const previewStage = q("[data-preview-stage]");
   const previewLayers = q("[data-preview-layers]");
   const previewOutline = q("[data-preview-outline]");
@@ -118,8 +119,8 @@
   const layoutModeKey = `studio-movie-layout-mode-${timelineId}`;
   const layoutStateKey = mode => `studio-movie-layout-${timelineId}-${mode}`;
   const layoutDefaults = {
-    columns: {mediaWidth: 250, inspectorWidth: 390, upperHeight: 390, inspectorHeight: 390},
-    stacked: {mediaWidth: 250, inspectorWidth: 390, upperHeight: 390, inspectorHeight: 190},
+    columns: {mediaWidth: 250, inspectorWidth: 390, mediaHeight: 390, canvasHeight: 390, inspectorHeight: 390},
+    stacked: {mediaWidth: 250, inspectorWidth: 390, mediaHeight: 390, canvasHeight: 390, inspectorHeight: 190},
   };
   const readLayoutGeometry = mode => {
     try {
@@ -136,6 +137,17 @@
     columns: readLayoutGeometry("columns"),
     stacked: readLayoutGeometry("stacked"),
   };
+  const previewDockKey = `studio-movie-preview-dock-${timelineId}`;
+  let previewDockMode = localStorage.getItem(previewDockKey) === "center" ? "center" : "bottom";
+  const applyPreviewDock = () => {
+    previewBody?.classList.toggle("dock-bottom", previewDockMode === "bottom");
+    const button = q("[data-preview-dock]");
+    if (button) {
+      button.classList.toggle("active", previewDockMode === "bottom");
+      button.setAttribute("aria-pressed", previewDockMode === "bottom" ? "true" : "false");
+      button.title = previewDockMode === "bottom" ? "Center canvas" : "Dock canvas near timeline";
+    }
+  };
 
   const cloneLayoutState = () => ({mode: editorLayoutMode, layouts: structuredClone(editorLayouts)});
   const persistLayout = mode => {
@@ -150,7 +162,8 @@
     return {
       mediaWidth: clamp(Number(geometry.mediaWidth), 180, Math.min(620, mediaMaximum)),
       inspectorWidth: clamp(Number(geometry.inspectorWidth), 220, Math.min(720, inspectorMaximum)),
-      upperHeight: clamp(Number(geometry.upperHeight ?? (Math.max(geometry.mediaHeight || 0, geometry.canvasHeight || 0) || 390)), 220, 900),
+      mediaHeight: clamp(Number(geometry.mediaHeight ?? geometry.upperHeight ?? 390), 150, 900),
+      canvasHeight: clamp(Number(geometry.canvasHeight ?? geometry.upperHeight ?? 390), 220, 900),
       inspectorHeight: clamp(Number(geometry.inspectorHeight), 72, 900),
     };
   };
@@ -168,11 +181,12 @@
     editorLayout.dataset.layout = editorLayoutMode;
     editorLayout.style.setProperty("--layout-media-width", `${geometry.mediaWidth}px`);
     editorLayout.style.setProperty("--layout-inspector-width", `${geometry.inspectorWidth}px`);
-    editorLayout.style.setProperty("--layout-upper-height", `${geometry.upperHeight}px`);
+    editorLayout.style.setProperty("--layout-media-height", `${geometry.mediaHeight}px`);
+    editorLayout.style.setProperty("--layout-canvas-height", `${geometry.canvasHeight}px`);
     editorLayout.style.setProperty("--layout-inspector-height", `${geometry.inspectorHeight}px`);
-    if (layoutPanels.media) layoutPanels.media.style.height = `${geometry.upperHeight}px`;
-    if (layoutPanels.preview) layoutPanels.preview.style.height = `${geometry.upperHeight}px`;
-    if (layoutPanels.inspector) layoutPanels.inspector.style.height = `${editorLayoutMode === "columns" ? geometry.upperHeight : geometry.inspectorHeight}px`;
+    if (layoutPanels.media) layoutPanels.media.style.height = `${geometry.mediaHeight}px`;
+    if (layoutPanels.preview) layoutPanels.preview.style.height = `${geometry.canvasHeight}px`;
+    if (layoutPanels.inspector) layoutPanels.inspector.style.height = `${geometry.inspectorHeight}px`;
     layoutPanels.media?.classList.remove("media-minimized");
     qa("[data-layout-mode]").forEach(button => {
       const active = button.dataset.layoutMode === editorLayoutMode;
@@ -330,7 +344,7 @@
       track.muted = Boolean(track.muted);
       track.locked = Boolean(track.locked);
       track.hidden = Boolean(track.hidden);
-      track.height = clamp(Number(track.height || defaultTrackHeight), 56, 200);
+      track.height = clamp(Number(track.height || defaultTrackHeight), 21, 210);
       track.displayMode = ["CLIPS", "WAVEFORM"].includes(track.displayMode) ? track.displayMode : "CLIPS";
       track.loudnessGuide = clamp(Number(track.loudnessGuide ?? 1), 0, 2);
       track.clips = Array.isArray(track.clips) ? track.clips : [];
@@ -1214,6 +1228,7 @@
       updateHistoryButtons();
       if (!silent) toast("Timeline saved");
       if (data.repaired) toast("Clip lengths were adjusted to their source files");
+      (data.warnings || []).forEach(message => toast(message, "warning"));
       if (historyPanel && !historyPanel.hidden) await loadHistory();
       return true;
     } catch (error) {
@@ -2073,6 +2088,33 @@
     selectClip(clip.id, true);
   }
 
+  function addClipGroup(track, assetIds, start) {
+    if (!track || track.locked) return;
+    const uniqueIds = [...new Set((assetIds || []).filter(Boolean))];
+    const ready = uniqueIds.map(id => assetMap.get(id)).filter(asset => asset?.status === "READY");
+    const skipped = uniqueIds.length - ready.length;
+    if (!ready.length) {
+      if (skipped) toast(`${skipped} media item${skipped === 1 ? " is" : "s are"} not ready and was skipped`, "warning");
+      return;
+    }
+    let cursor = snapTime(start, null);
+    const added = [];
+    mutate(() => {
+      ready.forEach(asset => {
+        const clip = {id: uid(), assetId: asset.id, sourceAssetId: asset.id, name: asset.name, start: cursor, sourceStart: 0, duration: Math.max(200, asset.durationMs || 8000), volume: 1, scale: 1, positionX: 0, positionY: 0, positionUnit: "PIXELS", speed: 1, speedMethod: "FRAME_SAMPLE", fadeIn: 0, fadeOut: 0, audioCleanup: "NONE", opacity: 1, blur: 0, sharpen: 0, brightness: 0, contrast: 1, saturation: 1, gamma: 1, volumeKeyframes: []};
+        track.clips.push(clip);
+        added.push(clip);
+        cursor = quantize(cursor + clip.duration);
+      });
+      selectedIds = new Set(added.map(clip => clip.id));
+      selectedId = added.at(-1)?.id || null;
+    });
+    snapGuide.hidden = true;
+    renderTimeline();
+    if (selectedId) selectClip(selectedId, true);
+    if (skipped) toast(`${skipped} media item${skipped === 1 ? " is" : "s are"} not ready and was skipped`, "warning");
+  }
+
   function makeTrackHead(track) {
     const head = document.createElement("div");
     const nameWrap = document.createElement("div");
@@ -2089,7 +2131,7 @@
     const loudnessGuide = document.createElement("input");
     const height = document.createElement("select");
     const remove = document.createElement("button");
-    head.className = `movie-track-head${track.locked ? " locked" : ""}${track.hidden ? " hidden-track" : ""}`;
+    head.className = `movie-track-head${track.locked ? " locked" : ""}${track.hidden ? " hidden-track" : ""}${Number(track.height) <= 21 ? " height-1" : ""}`;
     nameWrap.className = "movie-track-name";
     code.className = "movie-track-code";
     const sameKind = timeline.tracks.filter(item => item.kind === track.kind);
@@ -2108,12 +2150,12 @@
     mute.classList.add("movie-track-mute"); visibility.classList.add("movie-track-visible"); lock.classList.add("movie-track-lock");
     display.textContent = track.displayMode === "WAVEFORM" ? "W" : "C";
     display.title = track.displayMode === "WAVEFORM" ? "Show clips and frames" : "Show waveform and loudness guide";
-    const heightPresets = [[56, "Mini"], [84, "Standard"], [144, "Max"]];
+    const heightPresets = [[21, "1"], [42, "2"], [63, "3"], [84, "4"], [105, "5"], [210, "10"]];
     heightPresets.forEach(([value, label]) => {
       const option = document.createElement("option"); option.value = String(value); option.textContent = label; height.append(option);
     });
     height.value = String(heightPresets.reduce((closest, item) => Math.abs(item[0] - track.height) < Math.abs(closest[0] - track.height) ? item : closest)[0]);
-    height.className = "movie-track-size"; height.title = "Track height: Mini, Standard or Max"; height.setAttribute("aria-label", "Track height");
+    height.className = "movie-track-size"; height.title = "Track height level"; height.setAttribute("aria-label", "Track height level");
     remove.innerHTML = "&#215;"; remove.title = "Delete empty track";
     mute.onclick = () => mutate(() => { track.muted = !track.muted; renderTimeline(); syncPlayers(false, true); });
     visibility.onclick = () => mutate(() => { track.hidden = !track.hidden; renderTimeline(); syncPlayers(false, true); });
@@ -2511,7 +2553,10 @@
       lane.ondragover = event => { if (!track.locked && canEdit) event.preventDefault(); };
       lane.ondrop = event => {
         event.preventDefault();
-        addClip(track, event.dataTransfer.getData("text/asset-id"), (event.clientX - lane.getBoundingClientRect().left) / zoom * 1000);
+        let assetIds = [];
+        try { assetIds = JSON.parse(event.dataTransfer.getData("text/asset-ids") || "[]"); } catch (_) {}
+        if (!assetIds.length) assetIds = [event.dataTransfer.getData("text/asset-id")].filter(Boolean);
+        addClipGroup(track, assetIds, (event.clientX - lane.getBoundingClientRect().left) / zoom * 1000);
         requestAnimationFrame(() => {
           const placedLane = q(`.movie-track-lane[data-track-id="${CSS.escape(track.id)}"]`);
           placedLane?.classList.add("placed");
@@ -3240,25 +3285,30 @@
   };
   bindLayoutDivider(q("[data-stage-resizer]"), "media");
   bindLayoutDivider(q("[data-inspector-resizer]"), "inspector");
-  const upperResizer = q("[data-upper-resizer]");
-  if (upperResizer) upperResizer.onpointerdown = event => {
-    if (event.button !== 0) return;
-    event.preventDefault();
-    remember();
-    const startY = event.clientY;
-    const start = {...editorLayouts[editorLayoutMode]};
-    upperResizer.classList.add("dragging");
-    upperResizer.setPointerCapture(event.pointerId);
-    upperResizer.onpointermove = move => updateLayoutGeometry({upperHeight: start.upperHeight + move.clientY - startY});
-    const finish = () => {
-      upperResizer.onpointermove = null;
-      upperResizer.onpointerup = null;
-      upperResizer.onpointercancel = null;
-      finishLayoutResize(upperResizer);
+  qa("[data-panel-height-resizer]").forEach(handle => {
+    handle.onpointerdown = event => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      remember();
+      const key = handle.dataset.panelHeightResizer;
+      const startY = event.clientY;
+      const start = {...editorLayouts[editorLayoutMode]};
+      const property = key === "media" ? "mediaHeight" : key === "canvas" ? "canvasHeight" : "inspectorHeight";
+      handle.classList.add("dragging");
+      handle.setPointerCapture(event.pointerId);
+      // These handles sit on the top edge. Moving the handle down makes the
+      // panel shorter while its lower edge stays visually anchored.
+      handle.onpointermove = move => updateLayoutGeometry({[property]: start[property] - (move.clientY - startY)});
+      const finish = () => {
+        handle.onpointermove = null;
+        handle.onpointerup = null;
+        handle.onpointercancel = null;
+        finishLayoutResize(handle);
+      };
+      handle.onpointerup = finish;
+      handle.onpointercancel = finish;
     };
-    upperResizer.onpointerup = finish;
-    upperResizer.onpointercancel = finish;
-  };
+  });
 
   qa("[data-layout-mode]").forEach(button => {
     button.addEventListener("click", () => {
@@ -3279,11 +3329,19 @@
     updateHistoryButtons();
     toast("Layout reset");
   });
+  q("[data-preview-dock]")?.addEventListener("click", () => {
+    previewDockMode = previewDockMode === "bottom" ? "center" : "bottom";
+    localStorage.setItem(previewDockKey, previewDockMode);
+    applyPreviewDock();
+    applyPreviewZoom();
+    updatePreviewGeometry();
+  });
 
   q("[data-movie-ratio]").value = root.dataset.aspectRatio || "16:9";
   q("[data-movie-resolution]").value = root.dataset.resolution || "1920x1080";
   q("[data-movie-fps]").value = root.dataset.fps || "25";
   applyEditorLayout(cloneLayoutState(), {persist: false, refresh: false});
+  applyPreviewDock();
   normalizeTimeline(); applyCanvas(); renderBin(); renderTimeline(); renderInspector(); renderRenderJobs(); renderLibrary(); scheduleRenderPoll(); setPlayhead(0, true, true);
   savedSignature = signature(); updateDirty(); updateHistoryButtons(); refreshMedia();
 })();

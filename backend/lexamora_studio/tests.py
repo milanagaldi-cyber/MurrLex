@@ -3767,7 +3767,8 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertContains(page, "data-media-context-root")
         self.assertContains(page, "data-stage-resizer")
         self.assertContains(page, "data-inspector-resizer")
-        self.assertContains(page, "data-upper-resizer")
+        self.assertContains(page, "data-panel-height-resizer", count=3)
+        self.assertContains(page, "data-preview-dock")
         self.assertContains(page, "data-track-sidebar-resizer")
         self.assertContains(page, "data-clip-render-toolbar")
         self.assertContains(page, 'data-inspector-tab="VIDEO"')
@@ -4071,6 +4072,51 @@ class StudioProductionPilotFeaturesTests(TestCase):
         uploaded = next(item for item in status.json()["libraryItems"] if item["id"] == str(asset.id))
         self.assertEqual(uploaded["status"], "QUEUED")
         self.assertEqual(uploaded["kind"], "VIDEO")
+
+    def test_movie_editor_saves_with_warning_for_media_still_processing(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from .models import Asset
+        from .storage import create_asset
+
+        asset = create_asset(
+            user=self.owner,
+            workspace=self.workspace,
+            project=self.project,
+            uploaded=SimpleUploadedFile("processing.mp4", b"video", content_type="video/mp4"),
+            kind=Asset.Kind.OTHER,
+        )
+        Asset.objects.filter(id=asset.id).update(
+            processing_status=Asset.ProcessingStatus.PROCESSING,
+        )
+        self.client.force_login(self.owner)
+        response = self.client.post(
+            f"/studio/projects/{self.project.id}/movie-editor/",
+            data=json.dumps({
+                "title": "Processing media draft",
+                "aspectRatio": "9:16",
+                "resolution": "1080x1920",
+                "fps": 25,
+                "timeline": {
+                    "tracks": [{
+                        "id": "video-1",
+                        "kind": "VIDEO",
+                        "clips": [{
+                            "id": "processing-clip",
+                            "assetId": str(asset.id),
+                            "name": "Processing clip",
+                            "start": 0,
+                            "sourceStart": 0,
+                            "duration": 1000,
+                        }],
+                    }],
+                },
+            }),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(len(response.json()["warnings"]), 1)
+        self.assertIn("not ready", response.json()["warnings"][0])
 
     def test_direct_project_media_upload_attaches_video(self):
         from django.core.files.uploadedfile import SimpleUploadedFile

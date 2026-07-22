@@ -4499,7 +4499,7 @@ def _movie_timeline_snapshot(timeline, user, reason=MovieTimelineRevision.Reason
     return revision
 
 
-def _movie_timeline_media_error(user, project, timeline_data):
+def _movie_timeline_media_error(user, project, timeline_data, *, require_ready=True):
     asset_ids = movie_timeline_asset_ids(timeline_data)
     if not asset_ids:
         return ""
@@ -4521,13 +4521,26 @@ def _movie_timeline_media_error(user, project, timeline_data):
             if not asset:
                 continue
             if asset.processing_status != Asset.ProcessingStatus.READY:
-                return f"Media {asset.original_filename} is not ready for timeline editing."
+                if require_ready:
+                    return f"Media {asset.original_filename} is not ready for rendering."
+                continue
             source_end = int(clip.get("sourceStart", 0)) + round(
                 int(clip.get("duration", 0)) * float(clip.get("speed", 1))
             )
             if asset.duration_ms and source_end > asset.duration_ms + 50:
                 return f"Clip {clip.get('name') or clip.get('id')} extends beyond its source media."
     return ""
+
+
+def _movie_timeline_media_warnings(user, project, timeline_data):
+    asset_ids = movie_timeline_asset_ids(timeline_data)
+    if not asset_ids:
+        return []
+    pending = accessible_assets(user).filter(
+        workspace=project.workspace,
+        id__in=asset_ids,
+    ).exclude(processing_status=Asset.ProcessingStatus.READY)
+    return [f"Media {asset.original_filename} is not ready and may not appear in preview or render yet." for asset in pending]
 
 
 def _clamp_movie_timeline_to_sources(user, project, timeline_data):
@@ -4796,7 +4809,9 @@ def project_movie_editor(request, project_id):
         except MovieTimelineValidationError as exc:
             return JsonResponse({"error": str(exc)}, status=400)
         timeline_data, repaired = _clamp_movie_timeline_to_sources(request.user, project, timeline_data)
-        media_error = _movie_timeline_media_error(request.user, project, timeline_data)
+        media_error = _movie_timeline_media_error(
+            request.user, project, timeline_data, require_ready=False,
+        )
         if media_error:
             return JsonResponse({"error": media_error}, status=400)
         with transaction.atomic():
@@ -4838,6 +4853,7 @@ def project_movie_editor(request, project_id):
             "updatedAt": timeline.updated_at.isoformat(),
             "schemaVersion": timeline.schema_version,
             "revisionCount": timeline.revisions.count(),
+            "warnings": _movie_timeline_media_warnings(request.user, project, timeline_data),
         })
     library_assets = list(_workspace_movie_media(request.user, project))
     asset_data = [
