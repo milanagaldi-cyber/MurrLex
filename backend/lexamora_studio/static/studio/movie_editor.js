@@ -118,9 +118,10 @@
 
   const layoutModeKey = `studio-movie-layout-mode-${timelineId}`;
   const layoutStateKey = mode => `studio-movie-layout-${timelineId}-${mode}`;
+  const savedLayoutKey = `studio-movie-layout-saved-${timelineId}`;
   const layoutDefaults = {
-    columns: {mediaWidth: 250, inspectorWidth: 390, mediaHeight: 390, canvasHeight: 390, inspectorHeight: 390},
-    stacked: {mediaWidth: 250, inspectorWidth: 390, mediaHeight: 390, canvasHeight: 390, inspectorHeight: 190},
+    columns: {mediaWidth: 250, inspectorWidth: 390, mediaHeight: 390, canvasHeight: 390, inspectorHeight: 390, timelineHeight: 520, timelineInsetLeft: 0, timelineInsetRight: 0},
+    stacked: {mediaWidth: 250, inspectorWidth: 390, mediaHeight: 390, canvasHeight: 390, inspectorHeight: 190, timelineHeight: 520, timelineInsetLeft: 0, timelineInsetRight: 0},
   };
   const readLayoutGeometry = mode => {
     try {
@@ -159,12 +160,17 @@
     const columns = mode === "columns";
     const mediaMaximum = columns ? Math.max(180, width - 650) : Math.max(180, width - 330);
     const inspectorMaximum = Math.max(220, width - 520);
+    const timelineInsetLeft = clamp(Number(geometry.timelineInsetLeft || 0), 0, Math.floor(width * .35));
+    const timelineInsetRight = clamp(Number(geometry.timelineInsetRight || 0), 0, Math.max(0, Math.floor(width * .35) - timelineInsetLeft));
     return {
       mediaWidth: clamp(Number(geometry.mediaWidth), 180, Math.min(620, mediaMaximum)),
       inspectorWidth: clamp(Number(geometry.inspectorWidth), 220, Math.min(720, inspectorMaximum)),
       mediaHeight: clamp(Number(geometry.mediaHeight ?? geometry.upperHeight ?? 390), 150, 900),
       canvasHeight: clamp(Number(geometry.canvasHeight ?? geometry.upperHeight ?? 390), 220, 900),
       inspectorHeight: clamp(Number(geometry.inspectorHeight), 72, 900),
+      timelineHeight: clamp(Number(geometry.timelineHeight || 520), 220, 1000),
+      timelineInsetLeft,
+      timelineInsetRight,
     };
   };
   const applyEditorLayout = (state = cloneLayoutState(), {persist = true, refresh = true} = {}) => {
@@ -184,9 +190,19 @@
     editorLayout.style.setProperty("--layout-media-height", `${geometry.mediaHeight}px`);
     editorLayout.style.setProperty("--layout-canvas-height", `${geometry.canvasHeight}px`);
     editorLayout.style.setProperty("--layout-inspector-height", `${geometry.inspectorHeight}px`);
+    editorLayout.style.setProperty("--layout-timeline-height", `${geometry.timelineHeight}px`);
+    editorLayout.style.setProperty("--layout-timeline-inset-left", `${geometry.timelineInsetLeft}px`);
+    editorLayout.style.setProperty("--layout-timeline-inset-right", `${geometry.timelineInsetRight}px`);
     if (layoutPanels.media) layoutPanels.media.style.height = `${geometry.mediaHeight}px`;
     if (layoutPanels.preview) layoutPanels.preview.style.height = `${geometry.canvasHeight}px`;
     if (layoutPanels.inspector) layoutPanels.inspector.style.height = `${geometry.inspectorHeight}px`;
+    const timelinePanel = q('[data-panel-key="timeline"]');
+    const timelineShell = q("[data-timeline-shell]");
+    if (timelinePanel) {
+      timelinePanel.style.marginLeft = `${geometry.timelineInsetLeft}px`;
+      timelinePanel.style.marginRight = `${geometry.timelineInsetRight}px`;
+    }
+    if (timelineShell) timelineShell.style.height = `${geometry.timelineHeight}px`;
     layoutPanels.media?.classList.remove("media-minimized");
     qa("[data-layout-mode]").forEach(button => {
       const active = button.dataset.layoutMode === editorLayoutMode;
@@ -2150,7 +2166,7 @@
     mute.classList.add("movie-track-mute"); visibility.classList.add("movie-track-visible"); lock.classList.add("movie-track-lock");
     display.textContent = track.displayMode === "WAVEFORM" ? "W" : "C";
     display.title = track.displayMode === "WAVEFORM" ? "Show clips and frames" : "Show waveform and loudness guide";
-    const heightPresets = [[21, "1"], [42, "2"], [63, "3"], [84, "4"], [105, "5"], [210, "10"]];
+    const heightPresets = [[21, "1"], [42, "2"], [63, "3"], [84, "4"], [105, "5"], [126, "6"], [147, "7"], [210, "10"]];
     heightPresets.forEach(([value, label]) => {
       const option = document.createElement("option"); option.value = String(value); option.textContent = label; height.append(option);
     });
@@ -2466,7 +2482,8 @@
     node.dataset.clipId = clip.id;
     node.style.left = `${clip.start / 1000 * zoom}px`;
     node.style.width = `${Math.max(8, clip.duration / 1000 * zoom)}px`;
-    node.style.height = `${Math.max(48, track.height - 8)}px`;
+    node.style.height = `${Math.max(13, track.height - 4)}px`;
+    node.classList.toggle("compact-height", Number(track.height) <= 63);
     strip.className = "movie-clip-strip";
     if (mediaKind === "VIDEO" && (asset?.filmstripUrl || asset?.thumbnailUrl)) {
       const interval = asset.filmstripIntervalMs || 2000;
@@ -3285,6 +3302,87 @@
   };
   bindLayoutDivider(q("[data-stage-resizer]"), "media");
   bindLayoutDivider(q("[data-inspector-resizer]"), "inspector");
+  qa("[data-panel-width-resizer]").forEach(handle => {
+    handle.onpointerdown = event => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      remember();
+      const startX = event.clientX;
+      const start = {...editorLayouts[editorLayoutMode]};
+      const panel = handle.dataset.panelWidthResizer;
+      handle.classList.add("dragging");
+      handle.setPointerCapture(event.pointerId);
+      handle.onpointermove = move => {
+        const deltaX = move.clientX - startX;
+        if (panel === "media") updateLayoutGeometry({mediaWidth: start.mediaWidth - deltaX});
+        if (panel === "inspector" && editorLayoutMode === "columns") updateLayoutGeometry({inspectorWidth: start.inspectorWidth + deltaX});
+      };
+      const finish = () => {
+        handle.onpointermove = null;
+        handle.onpointerup = null;
+        handle.onpointercancel = null;
+        finishLayoutResize(handle);
+      };
+      handle.onpointerup = finish;
+      handle.onpointercancel = finish;
+    };
+  });
+  qa("[data-timeline-edge-resizer]").forEach(handle => {
+    handle.onpointerdown = event => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      remember();
+      const startX = event.clientX;
+      const start = {...editorLayouts[editorLayoutMode]};
+      const edge = handle.dataset.timelineEdgeResizer;
+      handle.classList.add("dragging");
+      handle.setPointerCapture(event.pointerId);
+      handle.onpointermove = move => {
+        const deltaX = move.clientX - startX;
+        updateLayoutGeometry(edge === "left"
+          ? {timelineInsetLeft: start.timelineInsetLeft + deltaX}
+          : {timelineInsetRight: start.timelineInsetRight - deltaX});
+      };
+      const finish = () => {
+        handle.onpointermove = null;
+        handle.onpointerup = null;
+        handle.onpointercancel = null;
+        finishLayoutResize(handle);
+      };
+      handle.onpointerup = finish;
+      handle.onpointercancel = finish;
+    };
+  });
+  const timelineHeightResizer = q("[data-timeline-height-resizer]");
+  if (timelineHeightResizer) {
+    timelineHeightResizer.onpointerdown = event => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      remember();
+      const startY = event.clientY;
+      const start = {...editorLayouts[editorLayoutMode]};
+      timelineHeightResizer.classList.add("dragging");
+      timelineHeightResizer.setPointerCapture(event.pointerId);
+      timelineHeightResizer.onpointermove = move => {
+        const deltaY = move.clientY - startY;
+        const upper = {
+          mediaHeight: start.mediaHeight + deltaY,
+          canvasHeight: start.canvasHeight + deltaY,
+          timelineHeight: start.timelineHeight - deltaY,
+        };
+        if (editorLayoutMode === "columns") upper.inspectorHeight = start.inspectorHeight + deltaY;
+        updateLayoutGeometry(upper);
+      };
+      const finish = () => {
+        timelineHeightResizer.onpointermove = null;
+        timelineHeightResizer.onpointerup = null;
+        timelineHeightResizer.onpointercancel = null;
+        finishLayoutResize(timelineHeightResizer);
+      };
+      timelineHeightResizer.onpointerup = finish;
+      timelineHeightResizer.onpointercancel = finish;
+    };
+  }
   qa("[data-panel-height-resizer]").forEach(handle => {
     handle.onpointerdown = event => {
       if (event.button !== 0) return;
@@ -3329,6 +3427,31 @@
     updateHistoryButtons();
     toast("Layout reset");
   });
+  const loadLayoutButton = q("[data-layout-load]");
+  const refreshSavedLayoutButton = () => {
+    if (!loadLayoutButton) return;
+    const available = Boolean(localStorage.getItem(savedLayoutKey));
+    loadLayoutButton.disabled = !available;
+    loadLayoutButton.title = available ? "Load saved layout" : "No saved layout";
+  };
+  q("[data-layout-save]")?.addEventListener("click", () => {
+    localStorage.setItem(savedLayoutKey, JSON.stringify(cloneLayoutState()));
+    refreshSavedLayoutButton();
+    toast("Layout saved");
+  });
+  loadLayoutButton?.addEventListener("click", () => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(savedLayoutKey) || "null");
+      if (!saved?.layouts) return;
+      remember();
+      applyEditorLayout(saved);
+      updateHistoryButtons();
+      toast("Saved layout loaded");
+    } catch (_) {
+      toast("Saved layout is unavailable");
+    }
+  });
+  refreshSavedLayoutButton();
   q("[data-preview-dock]")?.addEventListener("click", () => {
     previewDockMode = previewDockMode === "bottom" ? "center" : "bottom";
     localStorage.setItem(previewDockKey, previewDockMode);
