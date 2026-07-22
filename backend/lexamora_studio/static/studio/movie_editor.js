@@ -120,8 +120,8 @@
   const layoutStateKey = mode => `studio-movie-layout-${timelineId}-${mode}`;
   const savedLayoutKey = `studio-movie-layout-saved-${timelineId}`;
   const layoutDefaults = {
-    columns: {mediaWidth: 250, inspectorWidth: 390, mediaHeight: 390, canvasHeight: 390, inspectorHeight: 390, timelineHeight: 520, timelineInsetLeft: 0, timelineInsetRight: 0},
-    stacked: {mediaWidth: 250, inspectorWidth: 390, mediaHeight: 390, canvasHeight: 390, inspectorHeight: 190, timelineHeight: 520, timelineInsetLeft: 0, timelineInsetRight: 0},
+    columns: {mediaWidth: 250, inspectorWidth: 390, mediaHeight: 390, canvasHeight: 390, inspectorHeight: 390, timelineHeight: 520, timelineInsetLeft: 0, timelineInsetRight: 0, workspaceExtraLeft: 0, workspaceExtraRight: 0},
+    stacked: {mediaWidth: 250, inspectorWidth: 390, mediaHeight: 390, canvasHeight: 390, inspectorHeight: 190, timelineHeight: 520, timelineInsetLeft: 0, timelineInsetRight: 0, workspaceExtraLeft: 0, workspaceExtraRight: 0},
   };
   const readLayoutGeometry = mode => {
     try {
@@ -156,21 +156,26 @@
     if (mode && editorLayouts[mode]) localStorage.setItem(layoutStateKey(mode), JSON.stringify(editorLayouts[mode]));
   };
   const clampLayoutGeometry = (mode, geometry) => {
-    const width = Math.max(760, editorLayout?.clientWidth || innerWidth);
+    const width = Math.max(760, root.parentElement?.clientWidth || innerWidth);
     const columns = mode === "columns";
-    const mediaMaximum = columns ? Math.max(180, width - 650) : Math.max(180, width - 330);
-    const inspectorMaximum = Math.max(220, width - 520);
-    const timelineInsetLeft = clamp(Number(geometry.timelineInsetLeft || 0), 0, Math.floor(width * .35));
-    const timelineInsetRight = clamp(Number(geometry.timelineInsetRight || 0), 0, Math.max(0, Math.floor(width * .35) - timelineInsetLeft));
+    const workspaceExtraLeft = clamp(Number(geometry.workspaceExtraLeft || 0), 0, Math.floor(width * .35));
+    const workspaceExtraRight = clamp(Number(geometry.workspaceExtraRight || 0), 0, Math.floor(width * .35));
+    const workingWidth = width + workspaceExtraLeft + workspaceExtraRight;
+    const mediaMaximum = columns ? Math.max(180, workingWidth - 650) : Math.max(180, workingWidth - 330);
+    const inspectorMaximum = Math.max(220, workingWidth - 520);
+    const timelineInsetLeft = clamp(Number(geometry.timelineInsetLeft || 0), -Math.floor(width * .35), Math.floor(width * .35));
+    const timelineInsetRight = clamp(Number(geometry.timelineInsetRight || 0), -Math.floor(width * .35), Math.floor(width * .35));
     return {
-      mediaWidth: clamp(Number(geometry.mediaWidth), 180, Math.min(620, mediaMaximum)),
-      inspectorWidth: clamp(Number(geometry.inspectorWidth), 220, Math.min(720, inspectorMaximum)),
+      mediaWidth: clamp(Number(geometry.mediaWidth), 180, Math.min(Math.floor(workingWidth * .65), mediaMaximum)),
+      inspectorWidth: clamp(Number(geometry.inspectorWidth), 220, Math.min(Math.floor(workingWidth * .65), inspectorMaximum)),
       mediaHeight: clamp(Number(geometry.mediaHeight ?? geometry.upperHeight ?? 390), 150, 900),
       canvasHeight: clamp(Number(geometry.canvasHeight ?? geometry.upperHeight ?? 390), 220, 900),
       inspectorHeight: clamp(Number(geometry.inspectorHeight), 72, 900),
       timelineHeight: clamp(Number(geometry.timelineHeight || 520), 220, 1000),
       timelineInsetLeft,
       timelineInsetRight,
+      workspaceExtraLeft,
+      workspaceExtraRight,
     };
   };
   const applyEditorLayout = (state = cloneLayoutState(), {persist = true, refresh = true} = {}) => {
@@ -193,6 +198,9 @@
     editorLayout.style.setProperty("--layout-timeline-height", `${geometry.timelineHeight}px`);
     editorLayout.style.setProperty("--layout-timeline-inset-left", `${geometry.timelineInsetLeft}px`);
     editorLayout.style.setProperty("--layout-timeline-inset-right", `${geometry.timelineInsetRight}px`);
+    editorLayout.style.width = `calc(100% + ${geometry.workspaceExtraLeft + geometry.workspaceExtraRight}px)`;
+    editorLayout.style.marginLeft = `${-geometry.workspaceExtraLeft}px`;
+    editorLayout.style.marginRight = `${-geometry.workspaceExtraRight}px`;
     if (layoutPanels.media) layoutPanels.media.style.height = `${geometry.mediaHeight}px`;
     if (layoutPanels.preview) layoutPanels.preview.style.height = `${geometry.canvasHeight}px`;
     if (layoutPanels.inspector) layoutPanels.inspector.style.height = `${geometry.inspectorHeight}px`;
@@ -1360,7 +1368,7 @@
   function setPlayhead(value, sync = true, autoSelect = true) {
     playheadMs = clamp(quantize(value), 0, Math.max(0, visibleDuration()));
     playheadNode.style.left = `${playheadMs / 1000 * zoom}px`;
-    playheadLabel.textContent = clock(playheadMs);
+    if (playheadLabel) playheadLabel.textContent = clock(playheadMs);
     previewTime.textContent = `${clock(playheadMs)} / ${clock(timelineEnd())}`;
     previewScrub.max = Math.max(PRECISION_MS, visibleDuration());
     previewScrub.value = Math.min(playheadMs, Number(previewScrub.max));
@@ -2145,7 +2153,11 @@
     const lock = document.createElement("button");
     const display = document.createElement("button");
     const loudnessGuide = document.createElement("input");
-    const height = document.createElement("select");
+    const height = document.createElement("span");
+    const heightDown = document.createElement("button");
+    const heightValue = document.createElement("output");
+    const heightUp = document.createElement("button");
+    const heightResizer = document.createElement("i");
     const remove = document.createElement("button");
     head.className = `movie-track-head${track.locked ? " locked" : ""}${track.hidden ? " hidden-track" : ""}${Number(track.height) <= 21 ? " height-1" : ""}`;
     nameWrap.className = "movie-track-name";
@@ -2164,14 +2176,64 @@
     visibility.innerHTML = "&#128065;"; visibility.classList.toggle("off", track.hidden); visibility.title = track.hidden ? "Show track" : "Hide track";
     lock.innerHTML = track.locked ? "&#128274;" : "&#128275;"; lock.classList.toggle("off", track.locked); lock.title = track.locked ? "Unlock track" : "Lock track";
     mute.classList.add("movie-track-mute"); visibility.classList.add("movie-track-visible"); lock.classList.add("movie-track-lock");
-    display.textContent = track.displayMode === "WAVEFORM" ? "W" : "C";
+    display.textContent = track.displayMode === "WAVEFORM" ? "\u224b" : "\u2261";
+    display.classList.add("movie-track-display");
     display.title = track.displayMode === "WAVEFORM" ? "Show clips and frames" : "Show waveform and loudness guide";
-    const heightPresets = [[21, "1"], [42, "2"], [63, "3"], [84, "4"], [105, "5"], [126, "6"], [147, "7"], [210, "10"]];
-    heightPresets.forEach(([value, label]) => {
-      const option = document.createElement("option"); option.value = String(value); option.textContent = label; height.append(option);
-    });
-    height.value = String(heightPresets.reduce((closest, item) => Math.abs(item[0] - track.height) < Math.abs(closest[0] - track.height) ? item : closest)[0]);
-    height.className = "movie-track-size"; height.title = "Track height level"; height.setAttribute("aria-label", "Track height level");
+    const levelForHeight = value => clamp(Math.round(Number(value || 84) / 21), 1, 10);
+    const applyHeightLevel = (level, {commit = true} = {}) => {
+      const nextLevel = clamp(Math.round(level), 1, 10);
+      const nextHeight = nextLevel * 21;
+      if (commit) remember();
+      track.height = nextHeight;
+      heightValue.value = String(nextLevel);
+      heightValue.textContent = String(nextLevel);
+      localStorage.setItem("studio-movie-track-height", String(nextHeight));
+      if (commit) {
+        historyRedo = [];
+        updateDirty();
+        updateHistoryButtons();
+        scheduleAutosave();
+        renderTimeline();
+      } else {
+        head.style.height = `${nextHeight}px`;
+        const lane = q(`.movie-track-lane[data-track-id="${track.id}"]`);
+        if (lane) lane.style.height = `${nextHeight}px`;
+      }
+    };
+    height.className = "movie-track-height-stepper";
+    height.title = "Track height level from 1 to 10";
+    heightDown.type = "button"; heightDown.className = "icon-button secondary"; heightDown.textContent = "\u2212"; heightDown.title = "Decrease track height";
+    heightUp.type = "button"; heightUp.className = "icon-button secondary"; heightUp.textContent = "+"; heightUp.title = "Increase track height";
+    heightValue.value = String(levelForHeight(track.height)); heightValue.textContent = heightValue.value;
+    heightDown.onclick = () => applyHeightLevel(levelForHeight(track.height) - 1);
+    heightUp.onclick = () => applyHeightLevel(levelForHeight(track.height) + 1);
+    height.append(heightDown, heightValue, heightUp);
+    heightResizer.className = "movie-track-boundary-resizer";
+    heightResizer.title = "Drag the track boundary to change its height";
+    heightResizer.onpointerdown = event => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      remember();
+      const startY = event.clientY;
+      const startHeight = track.height;
+      heightResizer.classList.add("dragging");
+      heightResizer.setPointerCapture(event.pointerId);
+      heightResizer.onpointermove = move => applyHeightLevel((startHeight + move.clientY - startY) / 21, {commit: false});
+      const finish = () => {
+        heightResizer.onpointermove = null;
+        heightResizer.onpointerup = null;
+        heightResizer.onpointercancel = null;
+        heightResizer.classList.remove("dragging");
+        historyRedo = [];
+        updateDirty();
+        updateHistoryButtons();
+        scheduleAutosave();
+        renderTimeline();
+      };
+      heightResizer.onpointerup = finish;
+      heightResizer.onpointercancel = finish;
+    };
     remove.innerHTML = "&#215;"; remove.title = "Delete empty track";
     mute.onclick = () => mutate(() => { track.muted = !track.muted; renderTimeline(); syncPlayers(false, true); });
     visibility.onclick = () => mutate(() => { track.hidden = !track.hidden; renderTimeline(); syncPlayers(false, true); });
@@ -2182,20 +2244,13 @@
     loudnessGuide.title = "Target volume guide"; loudnessGuide.setAttribute("aria-label", "Target volume guide");
     loudnessGuide.hidden = track.displayMode !== "WAVEFORM";
     loudnessGuide.onchange = () => mutate(() => { track.loudnessGuide = Number(loudnessGuide.value); renderTimeline(); });
-    height.onchange = () => {
-      remember();
-      track.height = Number(height.value);
-      historyRedo = []; updateDirty(); updateHistoryButtons(); scheduleAutosave();
-      localStorage.setItem("studio-movie-track-height", String(track.height));
-      renderTimeline();
-    };
     remove.onclick = () => {
       if (track.clips.length) return toast("Remove clips before deleting this track");
       mutate(() => { timeline.tracks = timeline.tracks.filter(item => item.id !== track.id); });
       renderTimeline();
     };
     controls.append(up, down, mute, visibility, lock, display, loudnessGuide, height, remove);
-    head.append(nameWrap, controls);
+    head.append(nameWrap, controls, heightResizer);
     return head;
   }
 
@@ -2483,6 +2538,7 @@
     node.style.left = `${clip.start / 1000 * zoom}px`;
     node.style.width = `${Math.max(8, clip.duration / 1000 * zoom)}px`;
     node.style.height = `${Math.max(13, track.height - 4)}px`;
+    node.classList.add(`track-level-${clamp(Math.round(Number(track.height || 84) / 21), 1, 10)}`);
     node.classList.toggle("compact-height", Number(track.height) <= 63);
     strip.className = "movie-clip-strip";
     if (mediaKind === "VIDEO" && (asset?.filmstripUrl || asset?.thumbnailUrl)) {
@@ -3314,8 +3370,14 @@
       handle.setPointerCapture(event.pointerId);
       handle.onpointermove = move => {
         const deltaX = move.clientX - startX;
-        if (panel === "media") updateLayoutGeometry({mediaWidth: start.mediaWidth - deltaX});
-        if (panel === "inspector" && editorLayoutMode === "columns") updateLayoutGeometry({inspectorWidth: start.inspectorWidth + deltaX});
+        if (panel === "media") updateLayoutGeometry({
+          mediaWidth: start.mediaWidth - deltaX,
+          workspaceExtraLeft: start.workspaceExtraLeft - deltaX,
+        });
+        if (panel === "inspector" && editorLayoutMode === "columns") updateLayoutGeometry({
+          inspectorWidth: start.inspectorWidth + deltaX,
+          workspaceExtraRight: start.workspaceExtraRight + deltaX,
+        });
       };
       const finish = () => {
         handle.onpointermove = null;

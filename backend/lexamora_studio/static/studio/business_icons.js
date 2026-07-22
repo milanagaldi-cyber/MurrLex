@@ -8,6 +8,8 @@
     chat: '<path d="M4 5h16v11H9l-5 4z"/>',
     clear: '<path d="M4 16l8-11 8 6-7 9H7zM13 20h8"/>',
     close: '<path d="M5 5l14 14M19 5L5 19"/>',
+    circleMinus: '<circle cx="12" cy="12" r="9"/><path d="M8 12h8"/>',
+    circlePlus: '<circle cx="12" cy="12" r="9"/><path d="M8 12h8M12 8v8"/>',
     collapse: '<path d="M5 15l7-7 7 7"/>',
     copy: '<rect x="8" y="8" width="12" height="12"/><path d="M16 8V4H4v12h4"/>',
     crop: '<path d="M7 3v14h14M3 7h14v14"/>',
