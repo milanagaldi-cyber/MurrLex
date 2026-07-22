@@ -59,7 +59,7 @@
     theme: '<path d="M14 3a9 9 0 107 13 8 8 0 01-7-13z"/>',
     themeDark: '<path d="M14 3a9 9 0 107 13 8 8 0 01-7-13z"/>',
     themeLight: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4"/>',
-    themeBusiness: '<path d="M4 7h16v13H4zM8 7V4h8v3M8 11h2M14 11h2M8 15h2M14 15h2M11 20v-4h2v4"/>',
+    themeBusiness: '<text x="12" y="17" text-anchor="middle" fill="currentColor" stroke="none" font-family="Arial,sans-serif" font-size="16" font-weight="800">B</text>',
     target: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>',
     translate: '<path d="M3 5h10M8 3v2M5 8c1 3 3 5 6 7M11 8c-1 3-3 5-6 7M14 20l3-8 3 8M15 17h4"/>',
     undo: '<path d="M6 8l-3 3 3 3M3 11h9a6 6 0 016 6"/>',
@@ -177,7 +177,7 @@
   const decorate = (element, force = false) => {
     if (!(element instanceof HTMLElement) || !element.matches(selector)) return;
     const explicit = element.dataset.businessCommand;
-    if (element.matches('.video-gallery-preview,.generation-job-visual,.asset-picker-card,.generation-reference-choice') || element.querySelector(':scope > video,:scope > img,:scope > picture')) return;
+    if (element.matches('.video-gallery-preview,.generation-job-visual,.asset-picker-card,.generation-reference-choice,.asset-add-tile') || element.querySelector(':scope > video,:scope > img,:scope > picture')) return;
     if (!explicit && element.matches('.language-code-button,[data-mic-language-code],[data-translation-language-code]')) return;
     const match = explicit && icons[explicit] ? [explicit] : rules.find(([, pattern]) => pattern.test(labelFor(element)));
     if (!match) return;

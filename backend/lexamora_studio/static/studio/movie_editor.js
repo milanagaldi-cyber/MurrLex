@@ -2666,7 +2666,7 @@
   qa("[data-media-scope]").forEach(button => button.onclick = () => { libraryScope = button.dataset.mediaScope; qa("[data-media-scope]").forEach(item => item.classList.toggle("active", item === button)); renderLibrary(); });
   q("[data-media-kind]")?.addEventListener("change", renderLibrary);
   q("[data-media-sort]")?.addEventListener("change", renderLibrary);
-  const uploadMediaFiles = filesToUpload => {
+  const uploadMediaFiles = (filesToUpload, targetFolderId = currentMediaFolderId) => {
     const input = q("[data-media-files]");
     const files = [...filesToUpload].slice(0, 10);
     if (!files.length) return;
@@ -2677,7 +2677,7 @@
     const progress = q("[data-media-progress]"); const bar = progress.querySelector("i"); progress.hidden = false; bar.style.width = "0";
     const xhr = new XMLHttpRequest(); xhr.open("POST", root.dataset.mediaUrl); xhr.setRequestHeader("X-CSRFToken", csrfToken());
     xhr.upload.onprogress = update => { if (update.lengthComputable) { const percent = Math.round(update.loaded / update.total * 100); bar.style.width = `${percent}%`; pendingUploads.forEach(item => item.progress = percent); renderBin(); } };
-    xhr.onload = async () => { pendingUploads = []; progress.hidden = true; input.value = ""; let data = {}; try { data = JSON.parse(xhr.responseText); } catch (_) {} if (xhr.status >= 400) toast(data.error || "Upload failed", "error"); else { mutate(() => (data.items || []).forEach(item => { if (!timeline.mediaAssetIds.includes(item.id)) timeline.mediaAssetIds.push(item.id); if (!timeline.mediaOrder.includes(item.id)) timeline.mediaOrder.push(item.id); })); if (data.errors?.length) toast(data.errors.join(" / "), "error"); } await refreshMedia(); };
+    xhr.onload = async () => { pendingUploads = []; progress.hidden = true; input.value = ""; let data = {}; try { data = JSON.parse(xhr.responseText); } catch (_) {} if (xhr.status >= 400) toast(data.error || "Upload failed", "error"); else { mutate(() => { const uploadedIds = []; (data.items || []).forEach(item => { uploadedIds.push(item.id); if (!timeline.mediaAssetIds.includes(item.id)) timeline.mediaAssetIds.push(item.id); if (!timeline.mediaOrder.includes(item.id)) timeline.mediaOrder.push(item.id); }); const folder = timeline.mediaFolders.find(item => item.id === targetFolderId); if (folder) uploadedIds.forEach(id => { if (!folder.assetIds.includes(id)) folder.assetIds.push(id); }); }); if (data.errors?.length) toast(data.errors.join(" / "), "error"); } await refreshMedia(); };
     xhr.onerror = () => { pendingUploads = []; renderBin(); progress.hidden = true; toast("Upload failed", "error"); };
     xhr.send(form);
   };
@@ -2685,6 +2685,29 @@
     event.preventDefault();
     uploadMediaFiles(q("[data-media-files]").files);
   });
+  const clipboardFileName = (blob, index) => {
+    const subtype = String(blob.type || "").split("/")[1] || "bin";
+    const extension = subtype === "jpeg" ? "jpg" : subtype.replace(/[^a-z0-9]+/gi, "") || "bin";
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    return `clipboard-${stamp}-${index + 1}.${extension}`;
+  };
+  const pasteSystemMedia = async (targetFolderId = currentMediaFolderId) => {
+    if (!navigator.clipboard?.read) return toast("Use Ctrl+V to paste a copied media file", "error");
+    try {
+      const clipboardItems = await navigator.clipboard.read();
+      const files = [];
+      for (const item of clipboardItems) {
+        const type = item.types.find(value => /^(image|video|audio)\//.test(value));
+        if (!type) continue;
+        const blob = await item.getType(type);
+        files.push(new File([blob], clipboardFileName(blob, files.length), {type, lastModified: Date.now()}));
+      }
+      if (!files.length) return toast("Clipboard does not contain a supported media file", "error");
+      uploadMediaFiles(files, targetFolderId);
+    } catch (error) {
+      toast(error.message || "Clipboard access was denied", "error");
+    }
+  };
   let mediaDragDepth = 0;
   [q(".movie-bin")].filter(Boolean).forEach(target => {
     target.addEventListener("dragenter", event => { if ([...event.dataTransfer.types].includes("application/x-lexamora-media") || ![...event.dataTransfer.types].includes("Files")) return; event.preventDefault(); mediaDragDepth += 1; target.classList.add("file-drop-active"); });
@@ -2737,10 +2760,11 @@
     toast(`${selected.length} media item${selected.length === 1 ? "" : "s"} ready to move`);
   });
   q("[data-media-context-paste]")?.addEventListener("click", () => {
-    const folderId = mediaContextFolderId;
+    const folderId = mediaContextFolderId || currentMediaFolderId;
     hideMediaContext();
     if (folderId && mediaClipboardIds.length) { moveAssetsToFolder(mediaClipboardIds, folderId); return; }
-    pasteSelectedMedia();
+    if (mediaClipboardIds.some(id => assetMap.has(id))) pasteSelectedMedia();
+    else pasteSystemMedia(folderId);
   });
   q("[data-media-context-root]")?.addEventListener("click", () => {
     const ids = selectedMediaAssets().map(asset => asset.id);
@@ -2835,6 +2859,13 @@
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", finish);
     window.addEventListener("pointercancel", finish);
+  });
+  document.addEventListener("paste", event => {
+    if (!mediaSelectionActive || event.target.closest("input,textarea,[contenteditable=true]")) return;
+    const files = [...(event.clipboardData?.files || [])].filter(file => /^(image|video|audio)\//.test(file.type));
+    if (!files.length) return;
+    event.preventDefault();
+    uploadMediaFiles(files, currentMediaFolderId);
   });
   document.addEventListener("pointerdown", event => { if (mediaContext && !mediaContext.hidden && !mediaContext.contains(event.target)) hideMediaContext(); });
 
@@ -2988,9 +3019,12 @@
       return;
     }
     if (shortcut && (event.code === "KeyV" || event.key.toLowerCase() === "v") && !editing) {
+      if (mediaSelectionActive) {
+        if (mediaClipboardIds.some(id => assetMap.has(id))) { event.preventDefault(); pasteSelectedMedia(); }
+        return;
+      }
       event.preventDefault();
-      if (mediaSelectionActive) pasteSelectedMedia();
-      else pasteSelected();
+      pasteSelected();
       return;
     }
     if (editing) return;
@@ -3087,18 +3121,29 @@
   const binResizerTop = q("[data-bin-resizer-top]");
   const mediaPanel = q(".movie-bin");
   if (binResizerTop && mediaPanel) {
+    const mediaHeightKey = "studio-movie-media-height";
+    const storedHeight = Number(localStorage.getItem(mediaHeightKey));
+    if (storedHeight >= 46) {
+      mediaPanel.style.height = `${storedHeight}px`;
+      mediaPanel.style.alignSelf = "end";
+      mediaPanel.classList.toggle("media-minimized", storedHeight < 78);
+    }
     binResizerTop.onpointerdown = event => {
       event.preventDefault();
       const startX = event.clientX;
       const startY = event.clientY;
       const startWidth = mediaPanel.offsetWidth;
       const startHeight = mediaPanel.offsetHeight;
+      mediaPanel.style.alignSelf = "end";
       binResizerTop.setPointerCapture(event.pointerId);
       binResizerTop.onpointermove = move => {
         mediaPanel.style.width = `${Math.max(180, startWidth + move.clientX - startX)}px`;
-        mediaPanel.style.height = `${Math.max(120, startHeight - (move.clientY - startY))}px`;
+        const maxHeight = Math.max(46, mediaPanel.parentElement?.clientHeight || startHeight);
+        const nextHeight = clamp(startHeight - (move.clientY - startY), 46, maxHeight);
+        mediaPanel.style.height = `${nextHeight}px`;
+        mediaPanel.classList.toggle("media-minimized", nextHeight < 78);
       };
-      binResizerTop.onpointerup = () => { binResizerTop.onpointermove = null; binResizerTop.onpointerup = null; };
+      binResizerTop.onpointerup = () => { localStorage.setItem(mediaHeightKey, String(Math.round(mediaPanel.offsetHeight))); binResizerTop.onpointermove = null; binResizerTop.onpointerup = null; };
     };
   }
   const stageColumn = q(".movie-stage-column");

@@ -313,6 +313,16 @@ html[data-theme] [data-business-icon="favoriteFilled"]>.business-command-icon sv
 .prompt-primary-tools,.prompt-edit-tools,.prompt-icon-tools,.prompt-text-tools{display:flex;align-items:center;min-height:var(--command-control-size);line-height:1}
 .prompt-primary-tools .icon-button,.prompt-edit-tools .icon-button,.prompt-icon-tools .icon-button,.prompt-text-tools .icon-button{align-self:center}
 .composer-prompt-heading,.generation-prompt-tools,.prompt-bottom-toolbar{align-items:center!important}
+
+/* Shared command alignment across all themes. */
+.workspace-actions>.workspace-action-icon:first-child{transform:translateY(1px)}
+.workspace-actions>.workspace-action-icon:first-child:hover{transform:translateY(0)}
+.asset-actions [data-business-command="favorite"],
+.asset-actions [data-business-command="favoriteFilled"],
+.media-card-actions [data-business-command="favorite"],
+.media-card-actions [data-business-command="favoriteFilled"],
+.generation-job-actions [data-business-command="favorite"],
+.generation-job-actions [data-business-command="favoriteFilled"]{order:99;margin-left:auto}
 .movie-bin-folder-tile{border-color:var(--line)!important;box-shadow:none}
 .generation-job-visual[type="button"]{position:relative}
 .generation-job-visual[type="button"]::after{content:"";position:absolute;left:50%;top:50%;width:0;height:0;border-top:10px solid transparent;border-bottom:10px solid transparent;border-left:16px solid rgba(255,255,255,.94);filter:drop-shadow(0 2px 5px rgba(0,0,0,.55));translate:-40% -50%;pointer-events:none}
