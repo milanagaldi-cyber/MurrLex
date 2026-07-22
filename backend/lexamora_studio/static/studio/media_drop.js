@@ -2,15 +2,17 @@
   const marker = document.querySelector("[data-page-media-drop]");
   const uploadUrl = marker?.dataset.mediaUploadUrl;
   const csrf = () => document.cookie.match(/(?:^|; )csrftoken=([^;]+)/)?.[1] || "";
-  const fileList = value => [...(value || [])].filter(file => /^(image|video)\//.test(file.type)).slice(0, 10);
+  const fileList = value => [...(value || [])].filter(file => /^(image|video|audio)\//.test(file.type)).slice(0, 10);
   const overlay = document.createElement("div");
   overlay.className = "direct-media-drop-overlay";
-  overlay.innerHTML = '<div><b>Drop to upload</b><span>Images and videos are attached automatically</span><i></i></div>';
+  overlay.innerHTML = '<div><b>Drop to upload</b><span>Images, videos, and audio are attached automatically</span><i></i></div>';
 
   const buildPlaceholders = files => files.map(file => {
     const grid = file.type.startsWith("video/")
       ? document.querySelector("[data-video-grid]")
-      : document.querySelector("[data-media-grid]");
+      : file.type.startsWith("audio/")
+        ? document.querySelector("[data-audio-grid]")
+        : document.querySelector("[data-media-grid]");
     if (!grid) return null;
     const card = document.createElement("figure");
     card.className = "video-upload-placeholder";

@@ -4079,6 +4079,22 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertTrue(asset.projects.filter(id=self.project.id).exists())
         self.assertEqual(asset.processing_status, Asset.ProcessingStatus.QUEUED)
 
+    def test_direct_project_media_upload_attaches_audio(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from .models import Asset
+
+        self.client.force_login(self.owner)
+        response = self.client.post(
+            f"/studio/projects/{self.project.id}/media/direct/",
+            {"files": SimpleUploadedFile("dialogue.mp3", b"test-audio", content_type="audio/mpeg")},
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        asset = Asset.objects.get(id=response.json()["items"][0]["id"])
+        self.assertEqual(asset.content_type, "audio/mpeg")
+        self.assertEqual(asset.workspace, self.workspace)
+        self.assertTrue(asset.projects.filter(id=self.project.id).exists())
+        self.assertEqual(asset.processing_status, Asset.ProcessingStatus.QUEUED)
+
     def test_workspace_and_project_pages_expose_direct_media_upload(self):
         self.client.force_login(self.owner)
         workspace_response = self.client.get(f"/studio/workspaces/{self.workspace.id}/")
@@ -4090,6 +4106,8 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertContains(project_response, f"/studio/projects/{self.project.id}/media/direct/")
         self.assertContains(workspace_response, "Add Video")
         self.assertContains(project_response, "Add Video")
+        self.assertContains(workspace_response, "Add Audio")
+        self.assertContains(project_response, "Add Audio")
 
     def test_direct_project_upload_reuses_matching_workspace_media(self):
         from django.core.files.uploadedfile import SimpleUploadedFile

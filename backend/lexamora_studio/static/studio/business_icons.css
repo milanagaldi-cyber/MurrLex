@@ -291,6 +291,14 @@ html[data-theme] [data-business-icon="favorite"]>.business-command-icon,
 html[data-theme] [data-business-icon="favoriteFilled"]>.business-command-icon{color:#e3a008!important}
 html[data-theme] [data-business-icon="favorite"]>.business-command-icon svg{fill:none!important}
 html[data-theme] [data-business-icon="favoriteFilled"]>.business-command-icon svg{fill:currentColor!important}
+html[data-theme] [data-business-icon="favoriteFilled"],
+html[data-theme] [data-business-icon="favoriteFilled"]:focus,
+html[data-theme] [data-business-icon="favoriteFilled"]:focus-visible{
+  outline:0!important;
+  border:0!important;
+  box-shadow:none!important;
+  color:#e3a008!important;
+}
 .asset-actions,.media-card-actions,.generation-job-actions,.workspace-actions{
   align-items:center!important;
   min-height:var(--command-control-size);

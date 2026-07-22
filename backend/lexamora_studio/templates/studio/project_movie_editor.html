@@ -53,7 +53,7 @@
 .movie-preview-body{flex-wrap:wrap}.movie-bin-visual{position:relative}.movie-bin-list[data-view="list"] .movie-bin-folder-tile{grid-template-columns:72px minmax(0,1fr);grid-template-rows:auto;min-height:62px;align-items:center}.movie-bin-list[data-view="list"] .movie-folder-art{width:72px;height:50px;min-height:0}.movie-bin-list[data-view="small"] .movie-bin-folder-tile,.movie-bin-list[data-view="large"] .movie-bin-folder-tile{min-height:0;aspect-ratio:1/1}
 .movie-preview-resize-handle{pointer-events:auto}.movie-preview-resize-handle:hover,.movie-preview-resize-handle:focus-visible{opacity:1}
 .movie-bin-resizer-top{position:absolute;z-index:6;top:-5px;right:-5px;width:18px;height:18px;cursor:nesw-resize}.movie-bin-resizer-top::after{content:"";position:absolute;right:2px;top:2px;width:9px;height:9px;border-top:2px solid var(--accent);border-right:2px solid var(--accent)}.movie-bin{position:relative}.movie-bin-folder-tile{border-color:var(--line)!important;box-shadow:none!important}.movie-sidebar-width [data-track-width-restore]{flex:0 0 28px}.movie-media-context [hidden]{display:none!important}
-.movie-bin{display:flex;min-height:46px;flex-direction:column}.movie-bin-list{min-height:120px;flex:1;align-content:start}.movie-bin.media-minimized [data-panel-body]{display:none!important}.movie-bin-list[data-view="small"] .movie-bin-folder-tile,.movie-bin-list[data-view="large"] .movie-bin-folder-tile{grid-template-rows:auto 24px;gap:3px;min-height:0;padding:4px;aspect-ratio:auto}.movie-bin-list[data-view="small"] .movie-folder-art,.movie-bin-list[data-view="large"] .movie-folder-art{height:auto;min-height:0;aspect-ratio:1/1}
+.movie-bin{display:flex;min-height:46px;flex-direction:column}.movie-bin-list{min-height:120px;flex:1;align-content:start}.movie-bin.media-minimized [data-panel-body]{display:none!important}.movie-bin-list[data-view="small"] .movie-bin-folder-tile,.movie-bin-list[data-view="large"] .movie-bin-folder-tile{grid-template-rows:auto 24px;gap:3px;min-height:0;padding:4px;aspect-ratio:auto}.movie-bin-list[data-view="small"] .movie-folder-art,.movie-bin-list[data-view="large"] .movie-folder-art{height:auto;min-height:0;aspect-ratio:1/1}.movie-bin-folder-up{width:34px!important;min-width:34px!important;height:34px!important;padding:0!important;border:0!important;background:transparent!important;font-size:25px!important;line-height:1}.movie-bin-folder-tile strong{display:block;width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 </style>{% endblock %}
 {% block content %}
 {% include "studio/_project_navigation.html" %}
@@ -67,10 +67,10 @@
       <span class="movie-editor-state" data-movie-state>Saved</span>
       <button class="icon-button secondary" type="button" data-editor-undo title="Undo (Ctrl+Z)" aria-label="Undo" disabled>&#8630;</button>
       <button class="icon-button secondary" type="button" data-editor-redo title="Redo (Ctrl+Y)" aria-label="Redo" disabled>&#8631;</button>
-      {% if can_edit %}<button type="button" data-save-movie>Save</button>{% endif %}
       <button class="icon-button secondary movie-save-as" type="button" data-export-timeline data-business-command="export" title="Export As" aria-label="Export As">&#8595;</button>
       {% if can_edit %}<button class="icon-button secondary" type="button" data-edit-import data-business-command="import" title="Import edit project" aria-label="Import edit project">&#8682;</button><input type="file" accept="application/json,.json,application/zip,.zip" data-edit-import-file hidden data-no-drop-enhance><button class="icon-button secondary" type="button" data-edit-copy data-business-command="copy" title="Copy edit project" aria-label="Copy edit project">&#10697;</button><button class="icon-button secondary" type="button" data-edit-delete data-business-command="delete" title="Delete edit project" aria-label="Delete edit project">&#128465;</button><button class="icon-button secondary" type="button" data-edit-archive data-business-command="archive" title="Archive edit project" aria-label="Archive edit project">&#128451;</button><button class="icon-button secondary" type="button" data-edit-detach data-business-command="remove" title="Detach edit project" aria-label="Detach edit project">&minus;</button>{% endif %}
       <button class="secondary" type="button" data-movie-history-toggle>History</button>
+      {% if can_edit %}<button type="button" data-save-movie>Save</button>{% endif %}
       {% if can_export %}<button type="button" data-render-toggle>Render MP4</button>{% endif %}
     </div>
   </div>
@@ -127,4 +127,4 @@
 </section>
 {{ movie_timeline_data|json_script:"movie-timeline-data" }}{{ movie_assets|json_script:"movie-assets-data" }}{{ movie_library_assets|json_script:"movie-library-data" }}{{ movie_render_jobs|json_script:"movie-render-jobs-data" }}{{ movie_edits|json_script:"movie-edits-data" }}
 {% endblock %}
-{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260722-media-paste"></script>{% endblock %}
+{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260722-root-media-paste"></script>{% endblock %}

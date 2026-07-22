@@ -608,7 +608,9 @@
     };
     const folder = timeline.mediaFolders.find(item => item.id === currentMediaFolderId);
     if (folder) {
-      const back = makeButton("\u2190 Back", () => { currentMediaFolderId = null; selectedMediaIds.clear(); renderBin(); }, "Back to Media");
+      const back = makeButton("\u21B0", () => { currentMediaFolderId = null; selectedMediaIds.clear(); renderBin(); }, "Back to Media");
+      back.classList.add("movie-bin-folder-up");
+      back.setAttribute("aria-label", "Back to Media");
       back.ondragover = event => { if (![...event.dataTransfer.types].some(type => ["text/asset-id", "text/asset-ids"].includes(type))) return; event.preventDefault(); back.classList.add("drop-target"); };
       back.ondragleave = () => back.classList.remove("drop-target");
       back.ondrop = event => {
@@ -633,8 +635,7 @@
   }
 
   function mediaFolderLabel(value) {
-    const text = String(value || "Folder");
-    return text.length > 7 ? `${text.slice(0, 7)}...` : text;
+    return String(value || "Folder");
   }
 
   function reorderMediaAssets(movingIds, beforeId) {
@@ -895,6 +896,7 @@
       });
       const folder = timeline.mediaFolders.find(item => item.id === currentMediaFolderId);
       if (folder) ids.forEach(id => { if (!folder.assetIds.includes(id)) folder.assetIds.push(id); });
+      else timeline.mediaFolders.forEach(item => { item.assetIds = item.assetIds.filter(id => !ids.includes(id)); });
     });
     selectedMediaIds = new Set(ids);
     if (mediaClipboardMode === "cut") {

@@ -263,6 +263,7 @@ def workspace_detail(request, workspace_id):
         deduplicate=True,
     )
     workspace_videos = _video_gallery_assets(request.user, workspace)
+    workspace_audio = _audio_gallery_assets(request.user, workspace)
     montage_projects = _movie_timeline_gallery_items(
         request.user,
         workspace,
@@ -288,6 +289,7 @@ def workspace_detail(request, workspace_id):
         "project_assets": [],
         "workspace_assets": workspace_assets,
         "gallery_videos": workspace_videos,
+        "gallery_audio": workspace_audio,
         "montage_projects": montage_projects,
         "copy_target_workspaces": _project_copy_targets(request.user),
         "direct_media_upload_url": reverse("studio:workspace_media_upload", kwargs={"workspace_id": workspace.id}),
@@ -1035,11 +1037,11 @@ def _accessible_workspace_images(user, workspace):
     ).distinct().order_by("-created_at")
 
 
-def _accessible_workspace_videos(user, workspace):
+def _accessible_workspace_media(user, workspace, content_prefix):
     projects = accessible_projects(user).filter(workspace=workspace)
     return Asset.objects.filter(
         workspace=workspace,
-        content_type__startswith="video/",
+        content_type__startswith=content_prefix,
     ).filter(
         Q(project__in=projects)
         | Q(projects__in=projects)
@@ -1056,30 +1058,46 @@ def _accessible_workspace_videos(user, workspace):
     ).distinct().order_by("-created_at")
 
 
-def _video_gallery_assets(user, workspace, project=None):
-    videos = _decorate_gallery_assets(user, list(_accessible_workspace_videos(user, workspace)))
+def _accessible_workspace_videos(user, workspace):
+    return _accessible_workspace_media(user, workspace, "video/")
+
+
+def _accessible_workspace_audio(user, workspace):
+    return _accessible_workspace_media(user, workspace, "audio/")
+
+
+def _media_gallery_assets(user, workspace, assets, project=None):
+    media = _decorate_gallery_assets(user, list(assets))
     project_id = str(project.id) if project else ""
-    for asset in videos:
+    for asset in media:
         asset.is_current_project = bool(project_id and project_id in asset.gallery_project_ids.split(","))
         attached = {str(item.id): item.title for item in asset.projects.all()}
         if asset.project_id and asset.project:
             attached[str(asset.project_id)] = asset.project.title
         asset.gallery_project_names = ", ".join(attached.values()) or "Workspace library"
-    return videos
+    return media
+
+
+def _video_gallery_assets(user, workspace, project=None):
+    return _media_gallery_assets(user, workspace, _accessible_workspace_videos(user, workspace), project)
+
+
+def _audio_gallery_assets(user, workspace, project=None):
+    return _media_gallery_assets(user, workspace, _accessible_workspace_audio(user, workspace), project)
 
 
 def _direct_media_upload(request, *, workspace, project=None):
     uploads = request.FILES.getlist("files")
     if request.method != "POST" or not uploads or len(uploads) > 10:
-        return JsonResponse({"error": "Choose between 1 and 10 image or video files."}, status=400)
+        return JsonResponse({"error": "Choose between 1 and 10 image, video, or audio files."}, status=400)
     permitted = has_project_capability(request.user, project, "edit") if project else has_capability(request.user, workspace, "edit")
     if not permitted:
         return JsonResponse({"error": "Edit permission is required."}, status=403)
     created, errors = [], []
     for uploaded in uploads:
         content_type = (getattr(uploaded, "content_type", "") or "").lower()
-        if not content_type.startswith(("image/", "video/")):
-            errors.append(f"{uploaded.name}: choose an image or video file")
+        if not content_type.startswith(("image/", "video/", "audio/")):
+            errors.append(f"{uploaded.name}: choose an image, video, or audio file")
             continue
         existing = Asset.objects.filter(
             workspace=workspace, deleted_at__isnull=True,
@@ -2052,6 +2070,7 @@ def project_detail(request, project_id):
     recent_project_ids = {asset.id for asset in project_assets[:10]}
     gallery_assets = workspace_assets
     gallery_videos = _video_gallery_assets(request.user, project.workspace, project)
+    gallery_audio = _audio_gallery_assets(request.user, project.workspace, project)
     montage_projects = _movie_timeline_gallery_items(
         request.user,
         project.workspace,
@@ -2070,6 +2089,7 @@ def project_detail(request, project_id):
         "workspace_assets": workspace_assets,
         "gallery_assets": gallery_assets,
         "gallery_videos": gallery_videos,
+        "gallery_audio": gallery_audio,
         "gallery_projects": [project],
         "montage_projects": montage_projects,
         "direct_media_upload_url": reverse("studio:project_media_upload", kwargs={"project_id": project.id}),
