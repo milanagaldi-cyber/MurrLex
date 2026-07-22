@@ -26,10 +26,7 @@
       <label class="compact-control">Preview
         <select data-preview-shape><option value="auto">Auto</option><option value="vertical">Vertical</option><option value="horizontal">Horizontal</option><option value="square">Square</option></select>
       </label>
-      <span class="view-switch" data-view-switch="{{ gallery_view_key }}">
-        <button type="button" class="icon-button" data-view="large" title="Large images" aria-label="Large images" data-business-command="gridLarge">&#x25A6;</button>
-        <button type="button" class="icon-button" data-view="small" title="Small images" aria-label="Small images" data-business-command="gridSmall">&#x25A5;</button>
-      </span>
+      <span class="view-switch" data-view-switch="{{ gallery_view_key }}"><button type="button" class="icon-button" data-view-cycle data-business-command="gridLarge" title="Large cards; click to change view" aria-label="Change image view"></button></span>
     </span>
   </summary>
   <div class="asset-grid media-grid large" data-view-container="{{ gallery_view_key }}" data-media-grid>

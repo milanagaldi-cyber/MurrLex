@@ -24,8 +24,21 @@
   let selectedMediaIds = new Set();
   let selectedMediaFolderId = null;
   let mediaClipboardIds = [];
+  let mediaClipboardMode = "copy";
   let mediaSelectionActive = false;
   let pasteTargetTrackId = null;
+  const setMediaContextMode = mode => {
+    if (!mediaContext) return;
+    const free = mode === "free";
+    ["select-all", "cut", "copy", "root", "download", "delete"].forEach(name => {
+      const node = mediaContext.querySelector(`[data-media-context-${name}]`);
+      if (node) node.hidden = free;
+    });
+    ["paste", "properties"].forEach(name => {
+      const node = mediaContext.querySelector(`[data-media-context-${name}]`);
+      if (node) node.hidden = false;
+    });
+  };
   let playheadMs = 0;
   let dirty = false;
   let snapping = true;
@@ -595,7 +608,16 @@
     };
     const folder = timeline.mediaFolders.find(item => item.id === currentMediaFolderId);
     if (folder) {
-      mediaFoldersNode.append(makeButton("\u2190 Back", () => { currentMediaFolderId = null; selectedMediaIds.clear(); renderBin(); }, "Back to Media"));
+      const back = makeButton("\u2190 Back", () => { currentMediaFolderId = null; selectedMediaIds.clear(); renderBin(); }, "Back to Media");
+      back.ondragover = event => { if (![...event.dataTransfer.types].some(type => ["text/asset-id", "text/asset-ids"].includes(type))) return; event.preventDefault(); back.classList.add("drop-target"); };
+      back.ondragleave = () => back.classList.remove("drop-target");
+      back.ondrop = event => {
+        event.preventDefault(); back.classList.remove("drop-target");
+        let ids = []; try { ids = JSON.parse(event.dataTransfer.getData("text/asset-ids") || "[]"); } catch (_) {}
+        const single = event.dataTransfer.getData("text/asset-id"); if (!ids.length && single) ids = [single];
+        if (ids.length) { moveAssetsToFolder(ids, null); currentMediaFolderId = null; renderBin(); }
+      };
+      mediaFoldersNode.append(back);
       const title = document.createElement("strong"); title.textContent = folder.name; mediaFoldersNode.append(title);
     }
     if (!canEdit) return;
@@ -695,6 +717,7 @@
         mediaContextAsset = null;
         mediaContextFolderId = folder.id;
         renderMediaSelection();
+        setMediaContextMode("item");
         mediaContext.style.left = `${Math.min(event.clientX, innerWidth - 190)}px`;
         mediaContext.style.top = `${Math.min(event.clientY, innerHeight - 190)}px`;
         mediaContext.hidden = false;
@@ -812,6 +835,7 @@
         if (!selectedMediaIds.has(asset.id)) selectedMediaIds = new Set([asset.id]);
         renderMediaSelection();
         mediaContextAsset = asset;
+        setMediaContextMode("item");
         mediaContext.style.left = `${Math.min(event.clientX, innerWidth - 190)}px`;
         mediaContext.style.top = `${Math.min(event.clientY, innerHeight - 190)}px`;
         mediaContext.hidden = false;
@@ -855,6 +879,7 @@
     const selected = selectedMediaAssets();
     if (!selected.length) return;
     mediaClipboardIds = selected.map(asset => asset.id);
+    mediaClipboardMode = "copy";
     const urls = selected.map(asset => asset.originalUrl ? new URL(asset.originalUrl, location.href).href : "").filter(Boolean);
     if (urls.length) await navigator.clipboard.writeText(urls.join("\n"));
     toast(`${selected.length} media item${selected.length === 1 ? "" : "s"} copied`);
@@ -872,6 +897,10 @@
       if (folder) ids.forEach(id => { if (!folder.assetIds.includes(id)) folder.assetIds.push(id); });
     });
     selectedMediaIds = new Set(ids);
+    if (mediaClipboardMode === "cut") {
+      mediaClipboardIds = [];
+      mediaClipboardMode = "copy";
+    }
     renderBin();
   }
 
@@ -2668,11 +2697,27 @@
     if (folder) { await navigator.clipboard.writeText(folder.name); toast("Folder name copied"); return; }
     await copySelectedMedia();
   });
+  q("[data-media-context-cut]")?.addEventListener("click", () => {
+    const selected = selectedMediaAssets();
+    if (!selected.length) return;
+    mediaClipboardIds = selected.map(asset => asset.id);
+    mediaClipboardMode = "cut";
+    hideMediaContext();
+    toast(`${selected.length} media item${selected.length === 1 ? "" : "s"} ready to move`);
+  });
   q("[data-media-context-paste]")?.addEventListener("click", () => {
     const folderId = mediaContextFolderId;
     hideMediaContext();
     if (folderId && mediaClipboardIds.length) { moveAssetsToFolder(mediaClipboardIds, folderId); return; }
     pasteSelectedMedia();
+  });
+  q("[data-media-context-root]")?.addEventListener("click", () => {
+    const ids = selectedMediaAssets().map(asset => asset.id);
+    hideMediaContext();
+    if (!ids.length) return;
+    moveAssetsToFolder(ids, null);
+    currentMediaFolderId = null;
+    renderBin();
   });
   q("[data-media-context-download]")?.addEventListener("click", event => {
     event.preventDefault();
@@ -2717,6 +2762,7 @@
     event.preventDefault();
     mediaSelectionActive = true;
     mediaContextAsset = null;
+    setMediaContextMode("free");
     mediaContext.style.left = `${Math.min(event.clientX, innerWidth - 200)}px`;
     mediaContext.style.top = `${Math.min(event.clientY, innerHeight - 230)}px`;
     mediaContext.hidden = false;
@@ -2941,13 +2987,25 @@
     resizeTimer = setTimeout(() => { applyPreviewZoom(); updatePreviewGeometry(); renderTimeline(); }, 120);
   });
 
-  qa("[data-media-view]").forEach(button => {
-    button.onclick = () => {
-      mediaView = button.dataset.mediaView;
+  const mediaViewCycle = q("[data-media-view-cycle]");
+  const mediaViews = ["large", "small", "list"];
+  const mediaViewCommands = {large: "gridLarge", small: "gridSmall", list: "list"};
+  const syncMediaViewCycle = () => {
+    if (!mediaViewCycle) return;
+    mediaViewCycle.dataset.view = mediaView;
+    mediaViewCycle.dataset.businessCommand = mediaViewCommands[mediaView];
+    mediaViewCycle.title = `${mediaView[0].toUpperCase()}${mediaView.slice(1)} view`;
+    document.dispatchEvent(new CustomEvent("studio:icons-refresh", {detail: {root: mediaViewCycle}}));
+  };
+  if (mediaViewCycle) {
+    mediaViewCycle.onclick = () => {
+      mediaView = mediaViews[(mediaViews.indexOf(mediaView) + 1) % mediaViews.length];
       localStorage.setItem("studio-movie-media-view", mediaView);
+      syncMediaViewCycle();
       renderBin();
     };
-  });
+    syncMediaViewCycle();
+  }
   const binSortControl = q("[data-bin-sort]");
   if (binSortControl) {
     const savedMediaSort = sessionStorage.getItem(mediaSortKey);
@@ -2970,8 +3028,10 @@
     const key = `studio-movie-panel-${panel?.dataset.panelKey || "panel"}`;
     const apply = collapsed => {
       panel.classList.toggle("collapsed", collapsed);
-      button.innerHTML = collapsed ? "&#43;" : "&#8722;";
+      button.dataset.businessCommand = collapsed ? "add" : "remove";
       button.title = `${collapsed ? "Expand" : "Collapse"} ${panel.dataset.panelKey}`;
+      button.setAttribute("aria-label", button.title);
+      window.refreshLexamoraIcons?.(button);
     };
     apply(sessionStorage.getItem(key) === "collapsed");
     button.onclick = () => { const collapsed = !panel.classList.contains("collapsed"); apply(collapsed); sessionStorage.setItem(key, collapsed ? "collapsed" : "expanded"); };
@@ -2985,7 +3045,29 @@
       timelineShell.classList.toggle("compact-tracks", Number(trackWidth.value) < 92);
     };
     trackWidth.oninput = () => { applyTrackWidth(); localStorage.setItem("studio-movie-track-width", trackWidth.value); };
+    q("[data-track-width-restore]")?.addEventListener("click", () => {
+      trackWidth.value = "190";
+      applyTrackWidth();
+      localStorage.setItem("studio-movie-track-width", trackWidth.value);
+    });
     applyTrackWidth();
+  }
+  const binResizerTop = q("[data-bin-resizer-top]");
+  const mediaPanel = q(".movie-bin");
+  if (binResizerTop && mediaPanel) {
+    binResizerTop.onpointerdown = event => {
+      event.preventDefault();
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const startWidth = mediaPanel.offsetWidth;
+      const startHeight = mediaPanel.offsetHeight;
+      binResizerTop.setPointerCapture(event.pointerId);
+      binResizerTop.onpointermove = move => {
+        mediaPanel.style.width = `${Math.max(180, startWidth + move.clientX - startX)}px`;
+        mediaPanel.style.height = `${Math.max(120, startHeight - (move.clientY - startY))}px`;
+      };
+      binResizerTop.onpointerup = () => { binResizerTop.onpointermove = null; binResizerTop.onpointerup = null; };
+    };
   }
   const stageColumn = q(".movie-stage-column");
   const stageResizer = q("[data-stage-resizer]");

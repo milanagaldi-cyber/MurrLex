@@ -31,7 +31,7 @@ html[data-theme="business"] .business-icon-only[data-business-icon]>.business-co
 html[data-theme="business"] .business-legacy-command-icon{display:none!important}
 html[data-theme="business"] [data-business-icon="delete"]>.business-command-icon{color:var(--danger)}
 html[data-theme="business"] [data-business-icon="favorite"]>.business-command-icon{color:#b56b00;fill:color-mix(in srgb,#f0ab00 24%,transparent)}
-html[data-theme="business"] [data-business-icon="save"]>.business-command-icon{color:#18864b}
+html[data-theme="business"] [data-business-icon="save"]>.business-command-icon{color:var(--accent-strong)}
 html[data-theme="business"] button[data-business-icon]:focus-visible,
 html[data-theme="business"] a[data-business-icon]:focus-visible,
 html[data-theme="business"] [role="button"][data-business-icon]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
@@ -203,7 +203,7 @@ button[data-business-icon]:focus-visible,a[data-business-icon]:focus-visible,[ro
 }
 .icon-button:hover,.asset-action-icon:hover,.workspace-action-icon:hover{border-color:var(--accent)!important;background:var(--panel-2)!important;color:var(--ink)!important;transform:none!important;filter:none!important}
 .icon-button>.business-command-icon,.asset-action-icon>.business-command-icon,.workspace-action-icon>.business-command-icon{width:var(--command-icon-size);height:var(--command-icon-size)}
-.asset-actions,.media-card-actions,.generation-job-actions{display:flex;align-items:center;gap:var(--command-gap);flex-wrap:wrap;margin-top:auto;padding-top:9px}
+.asset-actions,.media-card-actions,.generation-job-actions{display:flex;align-items:center;gap:var(--command-gap);flex-wrap:nowrap;margin-top:auto;padding-top:9px}
 .asset-actions form,.media-card-actions form,.generation-job-actions form{display:inline-flex;align-items:center;margin:0}
 
 .media-card,.asset[data-media-item],.video-gallery-card,.generation-job-card{
@@ -301,6 +301,12 @@ html[data-theme] [data-business-icon="favoriteFilled"]>.business-command-icon sv
   margin:0!important;
 }
 .video-gallery-card form[action*="/detach/"]{display:inline-flex!important}
+.asset-actions .icon-button,.media-card-actions .icon-button,.generation-job-actions .icon-button{flex:0 0 var(--command-control-size)}
+.media-grid.small .asset-actions,.video-gallery-grid.small .asset-actions{gap:4px}
+.media-grid.small .asset-actions .icon-button,.video-gallery-grid.small .asset-actions .icon-button{--command-control-size:26px;--command-icon-size:15px}
+.prompt-primary-tools,.prompt-edit-tools,.prompt-icon-tools,.prompt-text-tools{display:flex;align-items:center}
+.prompt-primary-tools .icon-button,.prompt-edit-tools .icon-button,.prompt-icon-tools .icon-button,.prompt-text-tools .icon-button{align-self:center}
+.movie-bin-folder-tile{border-color:var(--line)!important;box-shadow:none}
 
 /* Popup close commands are always borderless and anchored in the top-right. */
 dialog{position:relative}

@@ -146,6 +146,7 @@
     size: 24,
     icons: Object.freeze({...icons})
   });
+  window.refreshLexamoraIcons = root => decorateTree(root || document);
 
   const selector = [
     'button',
@@ -207,6 +208,7 @@
       if (record.type === 'attributes') decorate(record.target);
       record.addedNodes.forEach(node => { if (node.nodeType === Node.ELEMENT_NODE) decorateTree(node); });
     })).observe(document.body, {subtree:true, childList:true, attributes:true, attributeFilter:['title','aria-label','data-business-command']});
+    document.addEventListener('studio:icons-refresh', event => decorateTree(event.detail?.root || document));
   };
   document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', start, {once:true}) : start();
 })();
