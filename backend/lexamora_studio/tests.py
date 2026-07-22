@@ -3759,6 +3759,7 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertContains(page, "data-media-view-cycle")
         self.assertContains(page, "data-track-width-restore")
         self.assertContains(page, "data-bin-resizer-top")
+        self.assertContains(page, "data-preview-panel-resizer")
         self.assertContains(page, "data-media-context-cut")
         self.assertContains(page, "data-media-context-root")
         self.assertContains(page, "data-stage-resizer")

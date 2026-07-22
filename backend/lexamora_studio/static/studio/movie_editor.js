@@ -3122,6 +3122,54 @@
   }
   const binResizerTop = q("[data-bin-resizer-top]");
   const mediaPanel = q(".movie-bin");
+  const previewPanelResizer = q("[data-preview-panel-resizer]");
+  const previewPanel = q(".movie-preview-panel");
+  const stageColumn = q(".movie-stage-column");
+  const maximumPanelWidth = () => Math.max(180, (stageColumn?.clientWidth || innerWidth) * .8);
+  const applyMediaWidth = width => {
+    if (!stageColumn) return;
+    const nextWidth = clamp(width, 180, maximumPanelWidth());
+    stageColumn.style.setProperty("--movie-media-width", `${nextWidth}px`);
+    localStorage.setItem("studio-movie-media-width", String(Math.round(nextWidth)));
+    applyPreviewZoom();
+    updatePreviewGeometry();
+  };
+  const bindCornerResize = ({handle, panel, side, heightKey}) => {
+    if (!handle || !panel) return;
+    const storedHeight = Number(localStorage.getItem(heightKey));
+    if (storedHeight >= 72) panel.style.height = `${storedHeight}px`;
+    handle.onpointerdown = event => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const startX = event.clientX;
+      const startY = event.clientY;
+      const startWidth = panel.getBoundingClientRect().width;
+      const startHeight = panel.getBoundingClientRect().height;
+      const startMediaWidth = mediaPanel?.getBoundingClientRect().width || 250;
+      const maxHeight = Math.max(180, innerHeight * .86);
+      handle.classList.add("dragging");
+      handle.setPointerCapture(event.pointerId);
+      handle.onpointermove = move => {
+        const deltaX = move.clientX - startX;
+        const nextHeight = clamp(startHeight - (move.clientY - startY), 72, maxHeight);
+        panel.style.height = `${nextHeight}px`;
+        if (panel === mediaPanel) panel.classList.toggle("media-minimized", nextHeight < 78);
+        if (side === "media-left") applyMediaWidth(startWidth - deltaX);
+        else if (side === "preview-right") applyMediaWidth(startMediaWidth - deltaX);
+      };
+      const finish = () => {
+        localStorage.setItem(heightKey, String(Math.round(panel.getBoundingClientRect().height)));
+        handle.classList.remove("dragging");
+        handle.onpointermove = null;
+        handle.onpointerup = null;
+        handle.onpointercancel = null;
+        updatePreviewGeometry();
+      };
+      handle.onpointerup = finish;
+      handle.onpointercancel = finish;
+    };
+  };
   if (binResizerTop && mediaPanel) {
     const mediaHeightKey = "studio-movie-media-height";
     const storedHeight = Number(localStorage.getItem(mediaHeightKey));
@@ -3130,25 +3178,9 @@
       mediaPanel.style.alignSelf = "end";
       mediaPanel.classList.toggle("media-minimized", storedHeight < 78);
     }
-    binResizerTop.onpointerdown = event => {
-      event.preventDefault();
-      const startX = event.clientX;
-      const startY = event.clientY;
-      const startWidth = mediaPanel.offsetWidth;
-      const startHeight = mediaPanel.offsetHeight;
-      mediaPanel.style.alignSelf = "end";
-      binResizerTop.setPointerCapture(event.pointerId);
-      binResizerTop.onpointermove = move => {
-        mediaPanel.style.width = `${Math.max(180, startWidth + move.clientX - startX)}px`;
-        const maxHeight = Math.max(46, mediaPanel.parentElement?.clientHeight || startHeight);
-        const nextHeight = clamp(startHeight - (move.clientY - startY), 46, maxHeight);
-        mediaPanel.style.height = `${nextHeight}px`;
-        mediaPanel.classList.toggle("media-minimized", nextHeight < 78);
-      };
-      binResizerTop.onpointerup = () => { localStorage.setItem(mediaHeightKey, String(Math.round(mediaPanel.offsetHeight))); binResizerTop.onpointermove = null; binResizerTop.onpointerup = null; };
-    };
+    bindCornerResize({handle: binResizerTop, panel: mediaPanel, side: "media-left", heightKey: mediaHeightKey});
   }
-  const stageColumn = q(".movie-stage-column");
+  bindCornerResize({handle: previewPanelResizer, panel: previewPanel, side: "preview-right", heightKey: "studio-movie-preview-height"});
   const stageResizer = q("[data-stage-resizer]");
   if (stageColumn && stageResizer) {
     const maximumWidth = () => Math.max(180, stageColumn.clientWidth * .8);
