@@ -238,3 +238,84 @@ button[data-business-icon]:focus-visible,a[data-business-icon]:focus-visible,[ro
   .compact-control select,.generation-filter-row select{width:100%;max-width:none}
 }
 @media (forced-colors:active){.business-command-icon{forced-color-adjust:auto}}
+
+/* Canonical icon-only controls: comfortable hit targets with no visible boxes. */
+:root{
+  --command-control-size:36px;
+  --command-icon-size:22px;
+  --command-gap:9px;
+}
+html[data-theme] .business-icon-only[data-business-icon],
+html[data-theme] .icon-button.business-icon-only,
+html[data-theme] .asset-action-icon.business-icon-only,
+html[data-theme] .workspace-action-icon.business-icon-only{
+  display:inline-grid!important;
+  place-items:center!important;
+  flex:0 0 var(--command-control-size)!important;
+  width:var(--command-control-size)!important;
+  min-width:var(--command-control-size)!important;
+  max-width:var(--command-control-size)!important;
+  height:var(--command-control-size)!important;
+  min-height:var(--command-control-size)!important;
+  max-height:var(--command-control-size)!important;
+  margin:0!important;
+  padding:0!important;
+  border:0!important;
+  border-radius:0!important;
+  background:transparent!important;
+  box-shadow:none!important;
+  color:var(--accent-strong)!important;
+  line-height:1!important;
+}
+html[data-theme] .business-icon-only[data-business-icon]:hover,
+html[data-theme] .icon-button.business-icon-only:hover,
+html[data-theme] .asset-action-icon.business-icon-only:hover,
+html[data-theme] .workspace-action-icon.business-icon-only:hover{
+  border:0!important;
+  background:transparent!important;
+  color:var(--ink)!important;
+  transform:none!important;
+  filter:none!important;
+}
+html[data-theme] .business-icon-only[data-business-icon]>.business-command-icon{
+  display:inline-grid!important;
+  place-items:center!important;
+  width:var(--command-icon-size)!important;
+  height:var(--command-icon-size)!important;
+  color:currentColor!important;
+}
+html[data-theme] [data-business-icon="delete"]>.business-command-icon,
+html[data-theme] [data-business-icon="remove"]>.business-command-icon{color:currentColor!important}
+html[data-theme] [data-business-icon="favorite"]>.business-command-icon,
+html[data-theme] [data-business-icon="favoriteFilled"]>.business-command-icon{color:#e3a008!important}
+html[data-theme] [data-business-icon="favorite"]>.business-command-icon svg{fill:none!important}
+html[data-theme] [data-business-icon="favoriteFilled"]>.business-command-icon svg{fill:currentColor!important}
+.asset-actions,.media-card-actions,.generation-job-actions,.workspace-actions{
+  align-items:center!important;
+  min-height:var(--command-control-size);
+}
+.asset-actions form,.media-card-actions form,.generation-job-actions form,.workspace-actions form{
+  display:inline-flex!important;
+  align-items:center!important;
+  height:var(--command-control-size);
+  margin:0!important;
+}
+.video-gallery-card form[action*="/detach/"]{display:inline-flex!important}
+
+/* Popup close commands are always borderless and anchored in the top-right. */
+dialog{position:relative}
+dialog [data-business-icon="close"],
+dialog .dialog-close,
+.modal [data-business-icon="close"],
+.popup [data-business-icon="close"]{
+  position:absolute!important;
+  z-index:5;
+  top:10px!important;
+  right:10px!important;
+  bottom:auto!important;
+  left:auto!important;
+  border:0!important;
+  background:transparent!important;
+  box-shadow:none!important;
+}
+dialog h1:first-child,dialog h2:first-child,dialog .image-picker-head{padding-right:44px}
