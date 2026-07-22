@@ -105,9 +105,89 @@
   const mediaFoldersNode = q("[data-media-folders]");
   const mediaContext = q("[data-movie-media-context]");
   const folderDialog = q("[data-media-folder-dialog]");
+  const editorLayout = q("[data-editor-layout]");
+  const layoutPanels = {
+    media: q('[data-panel-key="media"]'),
+    preview: q('[data-panel-key="preview"]'),
+    inspector: q('[data-panel-key="inspector"]'),
+  };
   const assetMap = new Map();
   const audioPlayers = new Map();
   const visualPlayers = new Map();
+
+  const layoutModeKey = `studio-movie-layout-mode-${timelineId}`;
+  const layoutStateKey = mode => `studio-movie-layout-${timelineId}-${mode}`;
+  const layoutDefaults = {
+    columns: {mediaWidth: 250, inspectorWidth: 390, mediaHeight: 390, canvasHeight: 390, inspectorHeight: 390},
+    stacked: {mediaWidth: 250, inspectorWidth: 390, mediaHeight: 390, canvasHeight: 390, inspectorHeight: 190},
+  };
+  const readLayoutGeometry = mode => {
+    try {
+      const stored = JSON.parse(localStorage.getItem(layoutStateKey(mode)) || "{}");
+      return {...layoutDefaults[mode], ...stored};
+    } catch (_) {
+      return {...layoutDefaults[mode]};
+    }
+  };
+  let editorLayoutMode = ["columns", "stacked"].includes(localStorage.getItem(layoutModeKey))
+    ? localStorage.getItem(layoutModeKey)
+    : "stacked";
+  let editorLayouts = {
+    columns: readLayoutGeometry("columns"),
+    stacked: readLayoutGeometry("stacked"),
+  };
+
+  const cloneLayoutState = () => ({mode: editorLayoutMode, layouts: structuredClone(editorLayouts)});
+  const persistLayout = mode => {
+    localStorage.setItem(layoutModeKey, editorLayoutMode);
+    if (mode && editorLayouts[mode]) localStorage.setItem(layoutStateKey(mode), JSON.stringify(editorLayouts[mode]));
+  };
+  const clampLayoutGeometry = (mode, geometry) => {
+    const width = Math.max(760, editorLayout?.clientWidth || innerWidth);
+    const columns = mode === "columns";
+    const mediaMaximum = columns ? Math.max(180, width - 650) : Math.max(180, width - 330);
+    const inspectorMaximum = Math.max(220, width - 520);
+    return {
+      mediaWidth: clamp(Number(geometry.mediaWidth), 180, Math.min(620, mediaMaximum)),
+      inspectorWidth: clamp(Number(geometry.inspectorWidth), 220, Math.min(720, inspectorMaximum)),
+      mediaHeight: clamp(Number(geometry.mediaHeight), 72, 900),
+      canvasHeight: clamp(Number(geometry.canvasHeight), 160, 900),
+      inspectorHeight: clamp(Number(geometry.inspectorHeight), 72, 900),
+    };
+  };
+  const applyEditorLayout = (state = cloneLayoutState(), {persist = true, refresh = true} = {}) => {
+    if (!editorLayout) return;
+    if (state.layouts) {
+      editorLayouts = {
+        columns: {...layoutDefaults.columns, ...(state.layouts.columns || {})},
+        stacked: {...layoutDefaults.stacked, ...(state.layouts.stacked || {})},
+      };
+    }
+    editorLayoutMode = ["columns", "stacked"].includes(state.mode) ? state.mode : "stacked";
+    const geometry = clampLayoutGeometry(editorLayoutMode, editorLayouts[editorLayoutMode]);
+    editorLayouts[editorLayoutMode] = geometry;
+    editorLayout.dataset.layout = editorLayoutMode;
+    editorLayout.style.setProperty("--layout-media-width", `${geometry.mediaWidth}px`);
+    editorLayout.style.setProperty("--layout-inspector-width", `${geometry.inspectorWidth}px`);
+    editorLayout.style.setProperty("--layout-media-height", `${geometry.mediaHeight}px`);
+    editorLayout.style.setProperty("--layout-canvas-height", `${geometry.canvasHeight}px`);
+    editorLayout.style.setProperty("--layout-inspector-height", `${geometry.inspectorHeight}px`);
+    if (layoutPanels.media) layoutPanels.media.style.height = `${geometry.mediaHeight}px`;
+    if (layoutPanels.preview) layoutPanels.preview.style.height = `${geometry.canvasHeight}px`;
+    if (layoutPanels.inspector) layoutPanels.inspector.style.height = `${geometry.inspectorHeight}px`;
+    layoutPanels.media?.classList.toggle("media-minimized", geometry.mediaHeight < 78);
+    qa("[data-layout-mode]").forEach(button => {
+      const active = button.dataset.layoutMode === editorLayoutMode;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-pressed", active ? "true" : "false");
+    });
+    if (persist) persistLayout(editorLayoutMode);
+    if (refresh) requestAnimationFrame(() => {
+      applyPreviewZoom();
+      updatePreviewGeometry();
+      renderTimeline();
+    });
+  };
 
   const toast = (message, type) => window.studioToast ? window.studioToast(String(message).replace(/\.$/, ""), type) : console.info(message);
   const csrfToken = () => document.cookie.match(/csrftoken=([^;]+)/)?.[1] || "";
@@ -171,10 +251,12 @@
     resolution: q("[data-movie-resolution]").value,
     fps: q("[data-movie-fps]").value,
     selectedId,
+    editorLayout: cloneLayoutState(),
   });
   const signature = state => {
     const value = state || currentState();
-    return JSON.stringify({ ...value, selectedId: null });
+    const {editorLayout: _editorLayout, ...projectState} = value;
+    return JSON.stringify({ ...projectState, selectedId: null });
   };
   const updateHistoryButtons = () => {
     qa("[data-editor-undo]").forEach(button => { button.disabled = !canEdit || !historyUndo.length; });
@@ -201,6 +283,7 @@
     q("[data-movie-ratio]").value = state.aspectRatio;
     q("[data-movie-resolution]").value = state.resolution;
     q("[data-movie-fps]").value = state.fps;
+    if (state.editorLayout) applyEditorLayout(state.editorLayout);
     applyCanvas();
     normalizeTimeline();
     renderTimeline();
@@ -3084,12 +3167,7 @@
     });
   }
   qa("[data-bin-kind],[data-bin-unused]").forEach(control => control.addEventListener("change", renderBin));
-  q("[data-media-position]")?.addEventListener("click", event => {
-    const stage = event.currentTarget.closest(".movie-stage-column");
-    stage.classList.toggle("media-bottom");
-    event.currentTarget.title = stage.classList.contains("media-bottom") ? "Move media to the top" : "Move media to the bottom";
-    sessionStorage.setItem("studio-movie-media-bottom", stage.classList.contains("media-bottom") ? "1" : "0");
-  });
+  q("[data-media-position]")?.setAttribute("hidden", "hidden");
 
   qa("[data-panel-toggle]").forEach(button => {
     const panel = button.closest(".movie-collapsible");
@@ -3120,100 +3198,122 @@
     });
     applyTrackWidth();
   }
-  const binResizerTop = q("[data-bin-resizer-top]");
-  const mediaPanel = q(".movie-bin");
-  const previewPanelResizer = q("[data-preview-panel-resizer]");
-  const previewPanel = q(".movie-preview-panel");
-  const stageColumn = q(".movie-stage-column");
-  const maximumPanelWidth = () => Math.max(180, (stageColumn?.clientWidth || innerWidth) * .8);
-  const applyMediaWidth = width => {
-    if (!stageColumn) return;
-    const nextWidth = clamp(width, 180, maximumPanelWidth());
-    stageColumn.style.setProperty("--movie-media-width", `${nextWidth}px`);
-    localStorage.setItem("studio-movie-media-width", String(Math.round(nextWidth)));
+  const updateLayoutGeometry = geometry => {
+    editorLayouts[editorLayoutMode] = clampLayoutGeometry(editorLayoutMode, {
+      ...editorLayouts[editorLayoutMode],
+      ...geometry,
+    });
+    applyEditorLayout(cloneLayoutState(), {persist: false, refresh: false});
     applyPreviewZoom();
     updatePreviewGeometry();
   };
-  const bindCornerResize = ({handle, panel, side, heightKey}) => {
-    if (!handle || !panel) return;
-    const storedHeight = Number(localStorage.getItem(heightKey));
-    if (storedHeight >= 72) panel.style.height = `${storedHeight}px`;
+  const finishLayoutResize = handle => {
+    handle?.classList.remove("dragging");
+    persistLayout(editorLayoutMode);
+    applyPreviewZoom();
+    updatePreviewGeometry();
+    renderTimeline();
+    updateHistoryButtons();
+  };
+  const bindLayoutDivider = (handle, side) => {
+    if (!handle || !editorLayout) return;
     handle.onpointerdown = event => {
       if (event.button !== 0) return;
       event.preventDefault();
-      event.stopPropagation();
+      remember();
       const startX = event.clientX;
-      const startY = event.clientY;
-      const startWidth = panel.getBoundingClientRect().width;
-      const startHeight = panel.getBoundingClientRect().height;
-      const startMediaWidth = mediaPanel?.getBoundingClientRect().width || 250;
-      const maxHeight = Math.max(180, innerHeight * .86);
+      const start = {...editorLayouts[editorLayoutMode]};
       handle.classList.add("dragging");
       handle.setPointerCapture(event.pointerId);
       handle.onpointermove = move => {
         const deltaX = move.clientX - startX;
-        const nextHeight = clamp(startHeight - (move.clientY - startY), 72, maxHeight);
-        panel.style.height = `${nextHeight}px`;
-        if (panel === mediaPanel) panel.classList.toggle("media-minimized", nextHeight < 78);
-        if (side === "media-left") applyMediaWidth(startWidth - deltaX);
-        else if (side === "preview-right") applyMediaWidth(startMediaWidth - deltaX);
+        if (side === "media") updateLayoutGeometry({mediaWidth: start.mediaWidth + deltaX});
+        else if (editorLayoutMode === "columns") updateLayoutGeometry({inspectorWidth: start.inspectorWidth - deltaX});
       };
       const finish = () => {
-        localStorage.setItem(heightKey, String(Math.round(panel.getBoundingClientRect().height)));
-        handle.classList.remove("dragging");
         handle.onpointermove = null;
         handle.onpointerup = null;
         handle.onpointercancel = null;
-        updatePreviewGeometry();
+        finishLayoutResize(handle);
       };
       handle.onpointerup = finish;
       handle.onpointercancel = finish;
     };
   };
-  if (binResizerTop && mediaPanel) {
-    const mediaHeightKey = "studio-movie-media-height";
-    const storedHeight = Number(localStorage.getItem(mediaHeightKey));
-    if (storedHeight >= 46) {
-      mediaPanel.style.height = `${storedHeight}px`;
-      mediaPanel.style.alignSelf = "end";
-      mediaPanel.classList.toggle("media-minimized", storedHeight < 78);
+  bindLayoutDivider(q("[data-stage-resizer]"), "media");
+  bindLayoutDivider(q("[data-inspector-resizer]"), "inspector");
+
+  const horizontalCornerGeometry = (panelName, corner, start, deltaX) => {
+    const east = corner.endsWith("e");
+    if (panelName === "media") return {mediaWidth: start.mediaWidth + (east ? deltaX : -deltaX)};
+    if (panelName === "inspector" && editorLayoutMode === "columns") {
+      return {inspectorWidth: start.inspectorWidth + (east ? deltaX : -deltaX)};
     }
-    bindCornerResize({handle: binResizerTop, panel: mediaPanel, side: "media-left", heightKey: mediaHeightKey});
-  }
-  bindCornerResize({handle: previewPanelResizer, panel: previewPanel, side: "preview-right", heightKey: "studio-movie-preview-height"});
-  const stageResizer = q("[data-stage-resizer]");
-  if (stageColumn && stageResizer) {
-    const maximumWidth = () => Math.max(180, stageColumn.clientWidth * .8);
-    const storedWidth = clamp(Number(localStorage.getItem("studio-movie-media-width")) || 250, 150, maximumWidth());
-    stageColumn.style.setProperty("--movie-media-width", `${storedWidth}px`);
-    stageResizer.onpointerdown = event => {
+    if (panelName === "preview") {
+      if (corner.endsWith("w")) return {mediaWidth: start.mediaWidth + deltaX};
+      if (editorLayoutMode === "columns") return {inspectorWidth: start.inspectorWidth - deltaX};
+      return {mediaWidth: start.mediaWidth - deltaX};
+    }
+    return {};
+  };
+  qa("[data-panel-resizer]").forEach(handle => {
+    handle.onpointerdown = event => {
       if (event.button !== 0) return;
       event.preventDefault();
+      event.stopPropagation();
+      remember();
+      const panelName = handle.dataset.panelResizer;
+      const corner = handle.dataset.panelCorner || "se";
       const startX = event.clientX;
-      const startWidth = q("[data-panel-key=media]").getBoundingClientRect().width;
-      const move = next => {
-        const width = clamp(startWidth - (next.clientX - startX), 150, maximumWidth());
-        stageColumn.style.setProperty("--movie-media-width", `${width}px`);
-        localStorage.setItem("studio-movie-media-width", String(Math.round(width)));
-        applyPreviewZoom();
-        updatePreviewGeometry();
+      const startY = event.clientY;
+      const start = {...editorLayouts[editorLayoutMode]};
+      const heightProperty = panelName === "media" ? "mediaHeight" : panelName === "preview" ? "canvasHeight" : "inspectorHeight";
+      handle.classList.add("dragging");
+      handle.setPointerCapture(event.pointerId);
+      handle.onpointermove = move => {
+        const deltaX = move.clientX - startX;
+        const deltaY = move.clientY - startY;
+        const heightDelta = corner.startsWith("n") ? -deltaY : deltaY;
+        updateLayoutGeometry({
+          ...horizontalCornerGeometry(panelName, corner, start, deltaX),
+          [heightProperty]: start[heightProperty] + heightDelta,
+        });
       };
       const finish = () => {
-        window.removeEventListener("pointermove", move);
-        window.removeEventListener("pointerup", finish);
-        stageResizer.classList.remove("dragging");
-        updatePreviewGeometry();
+        handle.onpointermove = null;
+        handle.onpointerup = null;
+        handle.onpointercancel = null;
+        finishLayoutResize(handle);
       };
-      stageResizer.classList.add("dragging");
-      window.addEventListener("pointermove", move);
-      window.addEventListener("pointerup", finish);
+      handle.onpointerup = finish;
+      handle.onpointercancel = finish;
     };
-  }
+  });
+
+  qa("[data-layout-mode]").forEach(button => {
+    button.addEventListener("click", () => {
+      const mode = button.dataset.layoutMode;
+      if (!canEdit || mode === editorLayoutMode || !editorLayouts[mode]) return;
+      remember();
+      persistLayout(editorLayoutMode);
+      editorLayoutMode = mode;
+      applyEditorLayout(cloneLayoutState());
+      updateHistoryButtons();
+    });
+  });
+  q("[data-layout-reset]")?.addEventListener("click", () => {
+    if (!canEdit) return;
+    remember();
+    editorLayouts[editorLayoutMode] = {...layoutDefaults[editorLayoutMode]};
+    applyEditorLayout(cloneLayoutState());
+    updateHistoryButtons();
+    toast("Layout reset");
+  });
 
   q("[data-movie-ratio]").value = root.dataset.aspectRatio || "16:9";
   q("[data-movie-resolution]").value = root.dataset.resolution || "1920x1080";
   q("[data-movie-fps]").value = root.dataset.fps || "25";
-  q(".movie-stage-column")?.classList.toggle("media-bottom", sessionStorage.getItem("studio-movie-media-bottom") === "1");
+  applyEditorLayout(cloneLayoutState(), {persist: false, refresh: false});
   normalizeTimeline(); applyCanvas(); renderBin(); renderTimeline(); renderInspector(); renderRenderJobs(); renderLibrary(); scheduleRenderPoll(); setPlayhead(0, true, true);
   savedSignature = signature(); updateDirty(); updateHistoryButtons(); refreshMedia();
 })();
