@@ -943,7 +943,38 @@
 
   function showSelectedMediaProperties() {
     const selected = selectedMediaAssets();
-    if (!selected.length) return;
+    if (!selected.length) {
+      const dialog = q("[data-movie-media-properties]");
+      const content = dialog?.querySelector("[data-movie-media-properties-content]");
+      if (!dialog || !content) return;
+      const visible = qa(".movie-bin-item[data-asset-id]")
+        .map(item => assetMap.get(item.dataset.assetId))
+        .filter(Boolean);
+      const folders = currentMediaFolderId ? [] : (timeline.mediaFolders || []);
+      const activeFolder = (timeline.mediaFolders || []).find(
+        folder => String(folder.id) === String(currentMediaFolderId || ""),
+      );
+      const totalSize = visible.reduce((sum, asset) => sum + Number(asset.size || 0), 0);
+      const rows = [
+        ["Location", activeFolder?.name || "Media"],
+        ["Visible files", String(visible.length)],
+        ["Folders", String(folders.length)],
+        ["Visible size", mediaSize(totalSize)],
+        ["Sort", q("[data-bin-sort]")?.selectedOptions?.[0]?.textContent || "Newest"],
+      ];
+      const properties = document.createElement("dl");
+      properties.className = "asset-properties";
+      rows.forEach(([name, value]) => {
+        const term = document.createElement("dt");
+        const description = document.createElement("dd");
+        term.textContent = name;
+        description.textContent = value;
+        properties.append(term, description);
+      });
+      content.replaceChildren(properties);
+      dialog.showModal();
+      return;
+    }
     if (selected.length === 1) return openMediaProperties(selected[0]);
     const dialog = q("[data-movie-media-properties]");
     const content = dialog?.querySelector("[data-movie-media-properties-content]");
@@ -2995,7 +3026,8 @@
     mediaViewCycle.dataset.view = mediaView;
     mediaViewCycle.dataset.businessCommand = mediaViewCommands[mediaView];
     mediaViewCycle.title = `${mediaView[0].toUpperCase()}${mediaView.slice(1)} view`;
-    document.dispatchEvent(new CustomEvent("studio:icons-refresh", {detail: {root: mediaViewCycle}}));
+    if (window.setLexamoraIcon) window.setLexamoraIcon(mediaViewCycle, mediaViewCommands[mediaView]);
+    else document.dispatchEvent(new CustomEvent("studio:icons-refresh", {detail: {root: mediaViewCycle}}));
   };
   if (mediaViewCycle) {
     mediaViewCycle.onclick = () => {

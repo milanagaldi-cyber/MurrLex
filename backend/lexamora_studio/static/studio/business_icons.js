@@ -146,8 +146,6 @@
     size: 24,
     icons: Object.freeze({...icons})
   });
-  window.refreshLexamoraIcons = root => decorateTree(root || document);
-
   const selector = [
     'button',
     'a.button',
@@ -176,15 +174,16 @@
     return compact.length <= 2 && (/^[A-Z][+\-]?$/.test(compact) || /^[+\-\u2212\u00d7x\u2190-\u21ff\u2303\u2304\u25a0-\u25ff\u2600-\u27ff]+$/u.test(compact));
   };
 
-  const decorate = element => {
+  const decorate = (element, force = false) => {
     if (!(element instanceof HTMLElement) || !element.matches(selector)) return;
     const explicit = element.dataset.businessCommand;
-    if (!explicit && (element.matches('.language-code-button,[data-mic-language-code],[data-translation-language-code],.video-gallery-preview,.generation-job-visual,.asset-picker-card,.generation-reference-choice') || element.querySelector(':scope > video,:scope > img,:scope > picture'))) return;
+    if (element.matches('.video-gallery-preview,.generation-job-visual,.asset-picker-card,.generation-reference-choice') || element.querySelector(':scope > video,:scope > img,:scope > picture')) return;
+    if (!explicit && element.matches('.language-code-button,[data-mic-language-code],[data-translation-language-code]')) return;
     const match = explicit && icons[explicit] ? [explicit] : rules.find(([, pattern]) => pattern.test(labelFor(element)));
     if (!match) return;
     const [name] = match;
     element.classList.toggle('business-icon-only', isIconOnly(element));
-    if (element.dataset.businessIcon === name && element.querySelector(':scope > .business-command-icon')) return;
+    if (!force && element.dataset.businessIcon === name && element.querySelector(':scope > .business-command-icon')) return;
     element.dataset.businessIcon = name;
     element.querySelector(':scope > .business-command-icon')?.remove();
     element.querySelectorAll(':scope > svg,:scope > [aria-hidden="true"]').forEach(legacy => {
@@ -197,13 +196,21 @@
     element.prepend(icon);
   };
 
-  const decorateTree = root => {
-    if (root instanceof HTMLElement) decorate(root);
-    root.querySelectorAll?.(selector).forEach(decorate);
+  const decorateTree = (root, force = false) => {
+    if (root instanceof HTMLElement) decorate(root, force);
+    root.querySelectorAll?.(selector).forEach(element => decorate(element, force));
+  };
+
+  window.refreshLexamoraIcons = root => decorateTree(root || document, true);
+  window.setLexamoraIcon = (element, name) => {
+    if (!(element instanceof HTMLElement) || !icons[name]) return;
+    element.dataset.businessCommand = name;
+    decorate(element, true);
   };
 
   const start = () => {
     decorateTree(document);
+    document.dispatchEvent(new CustomEvent('studio:icons-ready'));
     new MutationObserver(records => records.forEach(record => {
       if (record.type === 'attributes') decorate(record.target);
       record.addedNodes.forEach(node => { if (node.nodeType === Node.ELEMENT_NODE) decorateTree(node); });

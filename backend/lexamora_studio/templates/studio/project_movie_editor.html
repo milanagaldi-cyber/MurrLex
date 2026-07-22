@@ -73,12 +73,13 @@
       {% if can_edit %}<button type="button" data-save-movie>Save</button>{% endif %}
     </div>
   </div>
-  <section class="panel movie-history" data-movie-history hidden>
-    <div class="movie-history-head"><div><h3>Timeline history</h3><p class="muted">The latest 50 previous saves are retained</p></div><button class="icon-button secondary" type="button" data-movie-history-close title="Close history" aria-label="Close history">&times;</button></div>
-    <div class="movie-history-list" data-movie-history-list><p class="muted">Loading history</p></div>
+  <section class="panel movie-history movie-collapsible" data-movie-history data-panel-key="history" hidden>
+    <div class="movie-history-head"><div><h3>Timeline history</h3><p class="muted">The latest 50 previous saves are retained</p></div><div class="movie-panel-actions"><button class="icon-button secondary movie-panel-toggle" type="button" data-panel-toggle data-business-command="remove" title="Collapse history" aria-label="Collapse history"></button><button class="icon-button secondary" type="button" data-movie-history-close data-business-command="close" title="Close history" aria-label="Close history"></button></div></div>
+    <div class="movie-history-list" data-movie-history-list data-panel-body><p class="muted">Loading history</p></div>
   </section>
-  <section class="panel movie-renders" data-movie-renders hidden>
-    <div class="movie-render-head"><div><h3>Rough-cut exports</h3><p class="muted">Renders continue on the server after you leave this page</p></div><button class="icon-button secondary" type="button" data-render-close title="Close exports" aria-label="Close exports">&times;</button></div>
+  <section class="panel movie-renders movie-collapsible" data-movie-renders data-panel-key="exports" hidden>
+    <div class="movie-render-head"><div><h3>Rough-cut exports</h3><p class="muted">Renders continue on the server after you leave this page</p></div><div class="movie-panel-actions"><button class="icon-button secondary movie-panel-toggle" type="button" data-panel-toggle data-business-command="remove" title="Collapse exports" aria-label="Collapse exports"></button><button class="icon-button secondary" type="button" data-render-close data-business-command="close" title="Close exports" aria-label="Close exports"></button></div></div>
+    <div data-panel-body>
     {% if can_export %}<div class="movie-render-form">
       <label>Video<select data-render-profile><option value="DRAFT_720">Draft 720p</option><option value="REVIEW_1080">Review 1080p</option></select></label>
       <label>Audio cleanup<select data-render-audio-profile title="Original keeps the mix unchanged. Balanced evens levels. Clean speech also reduces steady noise and rumble."><option value="CLEAN_SPEECH">Clean speech</option><option value="BALANCED">Balanced</option><option value="ORIGINAL">Original mix</option></select></label>
@@ -86,6 +87,7 @@
       <button type="button" data-render-start>Save and render MP4</button>
     </div>{% endif %}
     <div class="movie-render-list" data-render-list><p class="muted">No exports yet</p></div>
+    </div>
   </section>
   <div class="movie-workbench">
     <div class="movie-stage-column">
@@ -124,4 +126,4 @@
 </section>
 {{ movie_timeline_data|json_script:"movie-timeline-data" }}{{ movie_assets|json_script:"movie-assets-data" }}{{ movie_library_assets|json_script:"movie-library-data" }}{{ movie_render_jobs|json_script:"movie-render-jobs-data" }}{{ movie_edits|json_script:"movie-edits-data" }}
 {% endblock %}
-{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260721-media-folders"></script>{% endblock %}
+{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260722-media-polish"></script>{% endblock %}
