@@ -198,7 +198,7 @@
       mediaHeight: clamp(Number(geometry.mediaHeight ?? geometry.upperHeight ?? 390), 150, 900),
       canvasHeight: clamp(Number(geometry.canvasHeight ?? geometry.upperHeight ?? 390), 220, 900),
       inspectorHeight: clamp(Number(geometry.inspectorHeight), 72, 900),
-      timelineHeight: clamp(Number(geometry.timelineHeight || 520), 220, 1000),
+      timelineHeight: clamp(Number(geometry.timelineHeight || 520), 220, 6000),
       timelineInsetLeft,
       timelineInsetRight,
       workspaceExtraLeft,
@@ -247,14 +247,81 @@
     });
     if (persist) persistLayout(editorLayoutMode);
     applyFloatingPanels();
+    updateFloatingWorkspaceExtent();
     if (refresh) requestAnimationFrame(() => {
       applyPreviewZoom();
       updatePreviewGeometry();
       renderTimeline();
+      updateFloatingWorkspaceExtent();
     });
   };
 
   const panelHomes = new Map();
+  const floatingWorkspaceSpacer = document.createElement("i");
+  floatingWorkspaceSpacer.className = "movie-floating-workspace-spacer";
+  floatingWorkspaceSpacer.setAttribute("aria-hidden", "true");
+  document.body.appendChild(floatingWorkspaceSpacer);
+  document.documentElement.classList.add("movie-editor-windowing");
+  document.body.classList.add("movie-editor-windowing");
+  const initialRootRect = root.getBoundingClientRect();
+  const workspaceExtent = {
+    width: Math.ceil(Math.max(document.documentElement.clientWidth, initialRootRect.right + scrollX + 48)),
+    height: Math.ceil(Math.max(document.documentElement.clientHeight, initialRootRect.bottom + scrollY + 48)),
+  };
+  const pageRect = node => {
+    const rect = node.getBoundingClientRect();
+    return {
+      left: rect.left + scrollX,
+      top: rect.top + scrollY,
+      right: rect.right + scrollX,
+      bottom: rect.bottom + scrollY,
+      width: rect.width,
+      height: rect.height,
+    };
+  };
+  const updateFloatingWorkspaceExtent = () => {
+    const rootBounds = pageRect(root);
+    let right = Math.max(
+      workspaceExtent.width,
+      document.documentElement.clientWidth,
+      rootBounds.left + root.scrollWidth + 48,
+    );
+    let bottom = Math.max(
+      workspaceExtent.height,
+      document.documentElement.clientHeight,
+      rootBounds.top + root.scrollHeight + 48,
+    );
+    Object.values(layoutPanels).filter(panel => panel?.classList.contains("movie-panel-floating")).forEach(panel => {
+      const rect = pageRect(panel);
+      right = Math.max(right, rect.right + 48);
+      bottom = Math.max(bottom, rect.bottom + 48);
+    });
+    workspaceExtent.width = Math.ceil(right);
+    workspaceExtent.height = Math.ceil(bottom);
+    floatingWorkspaceSpacer.style.width = `${workspaceExtent.width}px`;
+    floatingWorkspaceSpacer.style.height = `${workspaceExtent.height}px`;
+    document.body.style.setProperty("min-width", `${workspaceExtent.width}px`, "important");
+    document.body.style.setProperty("min-height", `${workspaceExtent.height}px`, "important");
+  };
+  const autoScrollWorkspace = event => {
+    const edge = 42;
+    const step = 24;
+    let left = 0;
+    let top = 0;
+    if (event.clientX < edge) left = -step;
+    else if (event.clientX > innerWidth - edge) left = step;
+    if (event.clientY < edge) top = -step;
+    else if (event.clientY > innerHeight - edge) top = step;
+    if (left || top) window.scrollBy({left, top, behavior: "auto"});
+  };
+  const flashWindowAction = element => {
+    if (!element) return;
+    element.classList.remove("movie-window-action-flash");
+    void element.offsetWidth;
+    element.classList.add("movie-window-action-flash");
+    setTimeout(() => element.classList.remove("movie-window-action-flash"), 620);
+  };
+  const flashLayoutLock = () => flashWindowAction(q("[data-layout-lock]"));
   const rememberPanelHome = (key, panel) => {
     if (panelHomes.has(key)) return panelHomes.get(key);
     const placeholder = document.createElement("div");
@@ -262,17 +329,23 @@
     placeholder.dataset.panelPlaceholder = key;
     placeholder.hidden = true;
     panel.parentNode.insertBefore(placeholder, panel);
-    const home = {parent: panel.parentNode, placeholder};
+    const home = {parent: panel.parentNode, placeholder, rect: pageRect(panel)};
     panelHomes.set(key, home);
     return home;
   };
   const clearPanelSnapFeedback = () => {
     Object.values(layoutPanels).filter(Boolean).forEach(panel => {
-      panel.classList.remove("movie-panel-snap-active", "movie-panel-snap-target");
+      panel.classList.remove(
+        "movie-panel-snap-active",
+        "movie-panel-snap-target",
+        "movie-panel-home-snap",
+        "movie-panel-edge-snap",
+      );
     });
   };
   const persistFloatingPanels = () => localStorage.setItem(floatingPanelsKey, JSON.stringify(floatingPanels));
   const refreshFloatingGeometry = () => requestAnimationFrame(() => {
+    updateFloatingWorkspaceExtent();
     applyPreviewZoom();
     updatePreviewGeometry();
     renderTimeline();
@@ -289,9 +362,20 @@
     const panel = layoutPanels[key];
     const home = panelHomes.get(key);
     if (!panel || !home) return;
-    panel.classList.remove("movie-panel-floating", "movie-panel-moving", "movie-panel-resizing", "movie-panel-snap-active", "movie-panel-snap-target");
+    const homeButton = panel.querySelector(".movie-window-home");
+    flashWindowAction(homeButton);
+    panel.classList.remove(
+      "movie-panel-floating",
+      "movie-panel-moving",
+      "movie-panel-resizing",
+      "movie-panel-snap-active",
+      "movie-panel-snap-target",
+      "movie-panel-home-snap",
+      "movie-panel-edge-snap",
+    );
     ["left", "top", "width", "height"].forEach(property => panel.style.removeProperty(property));
     home.parent.insertBefore(panel, home.placeholder.nextSibling);
+    home.rect = pageRect(panel);
     home.placeholder.hidden = true;
     delete floatingPanels[key];
     panel.querySelector(".movie-window-home")?.setAttribute("disabled", "disabled");
@@ -306,17 +390,19 @@
     const panel = layoutPanels[key];
     if (!panel) return;
     const home = rememberPanelHome(key, panel);
-    const fallback = panel.getBoundingClientRect();
+    const fallback = pageRect(panel);
+    if (!panel.classList.contains("movie-panel-floating")) home.rect = fallback;
     const rect = {
       left: Number(geometry?.left ?? fallback.left),
       top: Number(geometry?.top ?? fallback.top),
-      width: clamp(Number(geometry?.width ?? fallback.width), 220, Math.max(220, innerWidth - 16)),
-      height: clamp(Number(geometry?.height ?? fallback.height), 120, Math.max(120, innerHeight - 16)),
+      width: Math.max(220, Number(geometry?.width ?? fallback.width)),
+      height: Math.max(120, Number(geometry?.height ?? fallback.height)),
     };
-    rect.left = clamp(rect.left, 4, Math.max(4, innerWidth - Math.min(rect.width, innerWidth - 8) - 4));
-    rect.top = clamp(rect.top, 4, Math.max(4, innerHeight - Math.min(rect.height, innerHeight - 8) - 4));
+    rect.left = Math.max(4, rect.left);
+    rect.top = Math.max(4, rect.top);
     home.placeholder.hidden = true;
     panel.hidden = false;
+    if (panel.parentElement !== document.body) document.body.appendChild(panel);
     panel.classList.add("movie-panel-floating");
     panel.style.setProperty("left", `${rect.left}px`, "important");
     panel.style.setProperty("top", `${rect.top}px`, "important");
@@ -324,6 +410,7 @@
     panel.style.setProperty("height", `${rect.height}px`, "important");
     panel.querySelector(".movie-window-home")?.removeAttribute("disabled");
     setPanelFloatingState(key, panel, rect);
+    updateFloatingWorkspaceExtent();
     if (persist) persistFloatingPanels();
   }
   function applyFloatingPanels() {
@@ -337,7 +424,7 @@
   }
   const panelSnapTargets = activeKey => Object.entries(layoutPanels)
     .filter(([key, panel]) => key !== activeKey && panel && !panel.hidden)
-    .map(([key, panel]) => ({key, panel, rect: panel.getBoundingClientRect()}));
+    .map(([key, panel]) => ({key, panel, rect: pageRect(panel)}));
   const nearestPanelSnap = (value, candidates, tolerance = 14) => {
     let result = {value, target: null, snapped: false};
     let best = tolerance + 1;
@@ -350,10 +437,10 @@
     });
     return result;
   };
-  const showPanelSnapFeedback = (panel, ...snaps) => {
+  const showPanelSnapFeedback = (panel, snaps, {home = false} = {}) => {
     clearPanelSnapFeedback();
     if (!snaps.some(snap => snap?.snapped)) return;
-    panel.classList.add("movie-panel-snap-active");
+    panel.classList.add("movie-panel-snap-active", home ? "movie-panel-home-snap" : "movie-panel-edge-snap");
     snaps.forEach(snap => snap?.target?.classList.add("movie-panel-snap-target"));
   };
   const ensureWindowResizeHandles = (key, panel) => {
@@ -365,21 +452,27 @@
       handle.setAttribute("aria-hidden", "true");
       panel.appendChild(handle);
       handle.addEventListener("pointerdown", event => {
-        if (!canEdit || layoutLocked || event.button !== 0) return;
+        if (!canEdit || event.button !== 0) return;
+        if (layoutLocked) {
+          event.preventDefault();
+          event.stopPropagation();
+          flashLayoutLock();
+          return;
+        }
         event.preventDefault();
         event.stopPropagation();
         remember();
-        if (!panel.classList.contains("movie-panel-floating")) floatPanel(key, panel.getBoundingClientRect(), {persist: false});
-        const origin = panel.getBoundingClientRect();
-        const startX = event.clientX;
-        const startY = event.clientY;
+        if (!panel.classList.contains("movie-panel-floating")) floatPanel(key, pageRect(panel), {persist: false});
+        const origin = pageRect(panel);
+        const startX = event.pageX;
+        const startY = event.pageY;
         const minimumWidth = key === "toolbar" ? 220 : 240;
         const minimumHeight = panel.classList.contains("collapsed") ? panel.offsetHeight : 86;
         panel.classList.add("movie-panel-resizing");
         handle.setPointerCapture(event.pointerId);
         const move = next => {
-          const dx = next.clientX - startX;
-          const dy = next.clientY - startY;
+          const dx = next.pageX - startX;
+          const dy = next.pageY - startY;
           let left = origin.left;
           let top = origin.top;
           let width = origin.width;
@@ -398,14 +491,14 @@
           const horizontalEdge = direction.includes("w") ? left : left + width;
           const verticalEdge = direction.includes("n") ? top : top + height;
           const horizontal = nearestPanelSnap(horizontalEdge, [
-            {value: direction.includes("w") ? 4 : innerWidth - 4},
+            {value: 4},
             ...targets.flatMap(target => [
               {value: target.rect.left, target: target.panel},
               {value: target.rect.right, target: target.panel},
             ]),
           ]);
           const vertical = nearestPanelSnap(verticalEdge, [
-            {value: direction.includes("n") ? 4 : innerHeight - 4},
+            {value: 4},
             ...targets.flatMap(target => [
               {value: target.rect.top, target: target.panel},
               {value: target.rect.bottom, target: target.panel},
@@ -427,17 +520,18 @@
               height = vertical.value - top;
             }
           }
-          left = clamp(left, 0, Math.max(0, innerWidth - 48));
-          top = clamp(top, 0, Math.max(0, innerHeight - 40));
-          width = Math.max(minimumWidth, Math.min(width, innerWidth - left));
-          height = Math.max(minimumHeight, Math.min(height, innerHeight - top));
+          left = Math.max(0, left);
+          top = Math.max(0, top);
+          width = Math.max(minimumWidth, width);
+          height = Math.max(minimumHeight, height);
           panel.style.setProperty("left", `${left}px`, "important");
           panel.style.setProperty("top", `${top}px`, "important");
           panel.style.setProperty("width", `${width}px`, "important");
           panel.style.setProperty("height", `${height}px`, "important");
           setPanelFloatingState(key, panel, {left, top, width, height});
-          showPanelSnapFeedback(panel, horizontal, vertical);
+          showPanelSnapFeedback(panel, [horizontal, vertical]);
           refreshFloatingGeometry();
+          autoScrollWorkspace(next);
         };
         const finish = () => {
           handle.onpointermove = null;
@@ -471,7 +565,7 @@
       actions.className = "movie-window-actions";
       handle.appendChild(actions);
     }
-    if (key === "projectHeader" && actions.parentElement !== panel) {
+    if ((key === "projectHeader" || key === "preview") && actions.parentElement !== panel) {
       panel.appendChild(actions);
     }
     let home = actions.querySelector(".movie-window-home");
@@ -499,6 +593,35 @@
         updateHistoryButtons();
       });
       actions.appendChild(home);
+    }
+    if (key === "toolbar" && !actions.querySelector("[data-toolbar-height-step]")) {
+      [-1, 1].forEach(direction => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "icon-button secondary movie-toolbar-height-step";
+        button.dataset.toolbarHeightStep = String(direction);
+        button.dataset.businessCommand = direction < 0 ? "previous" : "next";
+        button.title = direction < 0 ? "Make toolbar shorter" : "Make toolbar taller";
+        button.setAttribute("aria-label", button.title);
+        button.addEventListener("click", event => {
+          event.stopPropagation();
+          if (layoutLocked) return flashLayoutLock();
+          remember();
+          const rect = pageRect(panel);
+          const height = Math.max(72, rect.height + direction * 44);
+          if (!panel.classList.contains("movie-panel-floating")) {
+            floatPanel(key, {...rect, height}, {persist: false});
+          } else {
+            panel.style.setProperty("height", `${height}px`, "important");
+            setPanelFloatingState(key, panel, {...rect, height});
+          }
+          persistFloatingPanels();
+          updateFloatingWorkspaceExtent();
+          historyRedo = [];
+          updateHistoryButtons();
+        });
+        actions.appendChild(button);
+      });
     }
     let toggle = panel.querySelector(":scope > [data-panel-drag] [data-panel-toggle]");
     if (!toggle) {
@@ -595,16 +718,70 @@
     const panel = layoutPanels.toolbar;
     const previewPanel = layoutPanels.preview;
     if (!panel || !previewPanel) return;
-    const anchor = previewPanel.getBoundingClientRect();
-    const width = Math.min(520, Math.max(300, anchor.width * .72));
+    const anchor = pageRect(previewPanel);
+    const width = Math.min(820, Math.max(480, anchor.width * .8));
     floatPanel("toolbar", {
-      left: clamp(anchor.left + 14, 4, Math.max(4, innerWidth - width - 4)),
-      top: clamp(anchor.top + 46, 4, Math.max(4, innerHeight - 116)),
+      left: Math.max(4, anchor.left + 14),
+      top: Math.max(4, anchor.top + 46),
       width,
-      height: 76,
+      height: 96,
     });
     ensurePanelChrome("toolbar", panel);
     window.refreshLexamoraIcons?.(panel);
+  };
+  let canvasPopout = null;
+  let canvasPopoutTimer = null;
+  const closeCanvasPopoutSync = () => {
+    if (canvasPopoutTimer) clearInterval(canvasPopoutTimer);
+    canvasPopoutTimer = null;
+    canvasPopout = null;
+  };
+  const syncCanvasPopout = () => {
+    if (!canvasPopout || canvasPopout.closed) {
+      closeCanvasPopoutSync();
+      return;
+    }
+    const host = canvasPopout.document.getElementById("canvas-host");
+    if (!host || !previewStage) return;
+    const clone = previewStage.cloneNode(true);
+    clone.removeAttribute("style");
+    clone.querySelectorAll(".movie-preview-source-outline,.movie-preview-empty,.movie-canvas-snap-edge").forEach(node => node.remove());
+    const originalVideos = [...previewStage.querySelectorAll("video")];
+    const clonedVideos = [...clone.querySelectorAll("video")];
+    clonedVideos.forEach((video, index) => {
+      const original = originalVideos[index];
+      if (!original) return;
+      video.src = original.currentSrc || original.src;
+      video.currentTime = original.currentTime || 0;
+      video.muted = original.muted;
+      if (!original.paused) video.play().catch(() => {});
+    });
+    host.replaceChildren(clone);
+  };
+  const openCanvasPopout = () => {
+    if (canvasPopout && !canvasPopout.closed) {
+      canvasPopout.focus();
+      return;
+    }
+    canvasPopout = window.open("", `lexamora-canvas-${root.dataset.timelineId || "preview"}`, "popup=yes,width=960,height=900,resizable=yes,scrollbars=yes");
+    if (!canvasPopout) {
+      toast("Allow pop-ups to open Canvas on another screen", "error");
+      return;
+    }
+    const {width, height} = outputDimensions();
+    canvasPopout.document.open();
+    canvasPopout.document.write(`<!doctype html><html><head><title>Lexamora Canvas</title><style>
+      *{box-sizing:border-box}html,body{margin:0;min-width:100%;min-height:100%;background:#07111b;color:#fff;font-family:Arial,sans-serif;overflow:auto}
+      body{display:grid;place-items:center;padding:18px}
+      #canvas-host{position:relative;width:min(96vw,calc(96vh * ${width} / ${height}));aspect-ratio:${width}/${height};overflow:hidden;background:#000;border:2px solid #2fc5ff}
+      .movie-preview-stage{position:relative!important;width:100%!important;height:100%!important;min-width:0!important;min-height:0!important;max-width:none!important;max-height:none!important;transform:none!important;overflow:hidden!important;background:#000!important}
+      .movie-preview-layers{position:absolute;inset:0;overflow:hidden}
+      .movie-preview-layer,[data-movie-preview]{position:absolute;max-width:none!important;max-height:none!important;transform-origin:center center}
+    </style></head><body><main id="canvas-host"></main></body></html>`);
+    canvasPopout.document.close();
+    canvasPopout.addEventListener("beforeunload", closeCanvasPopoutSync, {once: true});
+    syncCanvasPopout();
+    canvasPopoutTimer = setInterval(syncCanvasPopout, 180);
   };
   const initializeCanvasControls = () => {
     const controls = q(".movie-preview-controls");
@@ -614,7 +791,8 @@
     if (!controls) return;
     if (fps && frameSize) fps.insertAdjacentElement("afterend", frameSize);
     if (frameControls) controls.appendChild(frameControls);
-    let toolbarButton = controls.querySelector("[data-floating-toolbar-open]");
+    const actionHost = layoutPanels.preview?.querySelector(":scope > .movie-window-actions") || controls;
+    let toolbarButton = actionHost.querySelector("[data-floating-toolbar-open]");
     if (!toolbarButton) {
       toolbarButton = document.createElement("button");
       toolbarButton.type = "button";
@@ -624,11 +802,22 @@
       toolbarButton.title = "Open floating toolbar";
       toolbarButton.setAttribute("aria-label", toolbarButton.title);
       toolbarButton.addEventListener("click", openFloatingToolbar);
-      controls.appendChild(toolbarButton);
+      actionHost.appendChild(toolbarButton);
+    }
+    let popoutButton = actionHost.querySelector("[data-canvas-popout]");
+    if (!popoutButton) {
+      popoutButton = document.createElement("button");
+      popoutButton.type = "button";
+      popoutButton.className = "icon-button secondary";
+      popoutButton.dataset.canvasPopout = "";
+      popoutButton.dataset.businessCommand = "open";
+      popoutButton.title = "Open Canvas in a separate window";
+      popoutButton.setAttribute("aria-label", popoutButton.title);
+      popoutButton.addEventListener("click", openCanvasPopout);
+      actionHost.appendChild(popoutButton);
     }
   };
   const bindPanelDragging = () => {
-    initializeCanvasControls();
     initializeFloatingToolbar();
     initializeProjectFullscreen();
     Object.entries(layoutPanels).forEach(([key, panel]) => {
@@ -636,6 +825,7 @@
       rememberPanelHome(key, panel);
       ensurePanelChrome(key, panel);
     });
+    initializeCanvasControls();
     window.refreshLexamoraIcons?.(root);
     if (projectHeaderPanel) window.refreshLexamoraIcons?.(projectHeaderPanel);
     [...document.querySelectorAll("[data-panel-drag]")].forEach(handle => {
@@ -644,25 +834,37 @@
       if (!panel || handle.dataset.dragBound === "true") return;
       handle.dataset.dragBound = "true";
       handle.addEventListener("dblclick", event => {
-        if (layoutLocked) return;
         if (event.target.closest("button,input,select,a")) return;
-        if (panel.classList.contains("movie-panel-floating")) {
-          remember();
-          dockFloatingPanel(key);
-          updateHistoryButtons();
+        if (layoutLocked) {
+          flashLayoutLock();
+          return;
         }
+        remember();
+        if (panel.classList.contains("movie-panel-floating")) {
+          dockFloatingPanel(key);
+        } else {
+          const rect = pageRect(panel);
+          floatPanel(key, {...rect, left: rect.left + 12, top: rect.top + 12});
+        }
+        historyRedo = [];
+        updateHistoryButtons();
       });
       handle.addEventListener("pointerdown", event => {
-        if (!canEdit || layoutLocked || event.button !== 0 || event.target.closest("button,input,select,a,label")) return;
-        const origin = panel.getBoundingClientRect();
-        const startX = event.clientX;
-        const startY = event.clientY;
+        if (!canEdit || event.button !== 0 || event.target.closest("button,input,select,a,label")) return;
+        if (layoutLocked) {
+          flashLayoutLock();
+          return;
+        }
+        const origin = pageRect(panel);
+        const startX = event.pageX;
+        const startY = event.pageY;
         let active = false;
         let remembered = false;
+        let pendingHome = false;
         handle.setPointerCapture(event.pointerId);
         const move = next => {
-          const dx = next.clientX - startX;
-          const dy = next.clientY - startY;
+          const dx = next.pageX - startX;
+          const dy = next.pageY - startY;
           if (!active && Math.hypot(dx, dy) < 6) return;
           if (!remembered) { remember(); remembered = true; }
           if (!panel.classList.contains("movie-panel-floating")) floatPanel(key, origin, {persist: false});
@@ -671,9 +873,16 @@
           const width = panel.offsetWidth;
           const height = panel.offsetHeight;
           const targets = panelSnapTargets(key);
-          const xSnap = nearestPanelSnap(origin.left + dx, [
+          const rawLeft = Math.max(4, origin.left + dx);
+          const rawTop = Math.max(4, origin.top + dy);
+          const home = panelHomes.get(key);
+          const homeX = home?.rect?.left;
+          const homeY = home?.rect?.top;
+          pendingHome = Number.isFinite(homeX) && Number.isFinite(homeY)
+            && Math.abs(rawLeft - homeX) <= 30
+            && Math.abs(rawTop - homeY) <= 30;
+          const xSnap = nearestPanelSnap(rawLeft, [
             {value: 4},
-            {value: innerWidth - width - 4},
             ...targets.flatMap(target => [
               {value: target.rect.left, target: target.panel},
               {value: target.rect.right, target: target.panel},
@@ -681,9 +890,8 @@
               {value: target.rect.right - width, target: target.panel},
             ]),
           ]);
-          const ySnap = nearestPanelSnap(origin.top + dy, [
+          const ySnap = nearestPanelSnap(rawTop, [
             {value: 4},
-            {value: innerHeight - height - 4},
             ...targets.flatMap(target => [
               {value: target.rect.top, target: target.panel},
               {value: target.rect.bottom, target: target.panel},
@@ -691,12 +899,16 @@
               {value: target.rect.bottom - height, target: target.panel},
             ]),
           ]);
-          const left = clamp(xSnap.value, 4, Math.max(4, innerWidth - width - 4));
-          const top = clamp(ySnap.value, 4, Math.max(4, innerHeight - height - 4));
+          const left = pendingHome ? homeX : Math.max(4, xSnap.value);
+          const top = pendingHome ? homeY : Math.max(4, ySnap.value);
           panel.style.setProperty("left", `${left}px`, "important");
           panel.style.setProperty("top", `${top}px`, "important");
           setPanelFloatingState(key, panel, {left, top, width, height});
-          showPanelSnapFeedback(panel, xSnap, ySnap);
+          showPanelSnapFeedback(panel, pendingHome
+            ? [{snapped: true, target: null}]
+            : [xSnap, ySnap], {home: pendingHome});
+          updateFloatingWorkspaceExtent();
+          autoScrollWorkspace(next);
         };
         const finish = () => {
           handle.onpointermove = null;
@@ -706,7 +918,11 @@
           panel.classList.remove("movie-panel-moving");
           clearPanelSnapFeedback();
           if (active) {
-            persistFloatingPanels();
+            if (pendingHome) dockFloatingPanel(key);
+            else {
+              persistFloatingPanels();
+              updateFloatingWorkspaceExtent();
+            }
             historyRedo = [];
             updateHistoryButtons();
           }
@@ -722,6 +938,11 @@
       document.addEventListener("pointerup", clearPanelSnapFeedback, true);
       document.addEventListener("pointercancel", clearPanelSnapFeedback, true);
       window.addEventListener("blur", clearPanelSnapFeedback);
+      window.addEventListener("resize", updateFloatingWorkspaceExtent);
+      document.addEventListener("pointerdown", event => {
+        if (!layoutLocked || !event.target.closest("[data-layout-resizer],[data-stage-resizer],[data-inspector-resizer],[data-panel-width-resizer],[data-panel-height-resizer],[data-timeline-edge-resizer],[data-timeline-height-resizer],[data-timeline-bottom-resizer]")) return;
+        flashLayoutLock();
+      }, true);
     }
   };
 
@@ -1118,18 +1339,21 @@
     if (action === "down") nextY -= 1;
     const clampedX = clamp(nextX, limits.minX, limits.maxX);
     const clampedY = clamp(nextY, limits.minY, limits.maxY);
-    const hit = action !== "reset" && (clampedX !== nextX || clampedY !== nextY);
-    const edgeClass = action === "left" ? "snap-left" : action === "right" ? "snap-right" : action === "up" ? "snap-top" : "snap-bottom";
-    if (hit) {
-      previewStage.classList.add(edgeClass);
-      setTimeout(() => previewStage.classList.remove(edgeClass), 220);
-      return;
-    }
     mutate(() => {
       clip.positionX = clampedX;
       clip.positionY = clampedY;
       if (action === "reset") clip.scale = 1;
     });
+    const epsilon = .5;
+    const edgeClasses = [];
+    if (action === "left" && Math.abs(clampedX - limits.minX) <= epsilon) edgeClasses.push("snap-left");
+    if (action === "right" && Math.abs(clampedX - limits.maxX) <= epsilon) edgeClasses.push("snap-right");
+    if (action === "up" && Math.abs(clampedY - limits.maxY) <= epsilon) edgeClasses.push("snap-top");
+    if (action === "down" && Math.abs(clampedY - limits.minY) <= epsilon) edgeClasses.push("snap-bottom");
+    if (edgeClasses.length) {
+      previewStage.classList.add(...edgeClasses);
+      setTimeout(() => previewStage.classList.remove(...edgeClasses), 240);
+    }
     updatePreviewGeometry();
     renderInspector();
   }
@@ -1460,6 +1684,12 @@
         image.draggable = false;
         visual.append(image);
       } else visual.textContent = asset.kind;
+      const kindBadge = document.createElement("i");
+      kindBadge.className = "movie-media-kind-badge";
+      kindBadge.dataset.kind = asset.kind || "FILE";
+      kindBadge.textContent = asset.kind === "VIDEO" ? "\u25b6" : asset.kind === "AUDIO" ? "\u266a" : asset.kind === "IMAGE" ? "\u25a3" : "T";
+      kindBadge.title = asset.kind === "VIDEO" ? "Video" : asset.kind === "AUDIO" ? "Audio" : asset.kind === "IMAGE" ? "Photo" : "Text";
+      visual.append(kindBadge);
       if (used.has(asset.id)) {
         const dot = document.createElement("i"); dot.className = "movie-bin-used-dot"; dot.title = "Used on timeline"; visual.append(dot);
       }
@@ -3332,13 +3562,6 @@
       if (!track.clips.length) lane.innerHTML = '<span class="movie-empty">Drop a clip anywhere across this track</span>';
       tracksNode.append(lane);
     });
-    const timelineShell = q("[data-timeline-shell]");
-    if (timelineShell && !layoutPanels.timeline?.classList.contains("movie-panel-floating")) {
-      const tracksHeight = timeline.tracks.reduce((total, track) => total + Math.max(21, Number(track.height) || defaultTrackHeight), 0);
-      const reserveHeight = Math.max(48, defaultTrackHeight);
-      const compactHeight = Math.max(150, Math.min(editorLayouts[editorLayoutMode].timelineHeight, 38 + tracksHeight + reserveHeight));
-      timelineShell.style.setProperty("height", `${compactHeight}px`, "important");
-    }
     setPlayhead(playheadMs, false, false);
     q("[data-zoom-label]").textContent = `${zoom} px/s`;
     zoomInput.value = zoom;
@@ -4170,6 +4393,57 @@
       };
       timelineHeightResizer.onpointerup = finish;
       timelineHeightResizer.onpointercancel = finish;
+    };
+  }
+  const timelineBottomResizer = q("[data-timeline-bottom-resizer]");
+  if (timelineBottomResizer) {
+    timelineBottomResizer.onpointerdown = event => {
+      if (event.button !== 0) return;
+      if (layoutLocked) {
+        event.preventDefault();
+        flashLayoutLock();
+        return;
+      }
+      event.preventDefault();
+      remember();
+      const panel = layoutPanels.timeline;
+      const floating = panel?.classList.contains("movie-panel-floating");
+      const startY = event.pageY;
+      const startHeight = floating ? pageRect(panel).height : editorLayouts[editorLayoutMode].timelineHeight;
+      timelineBottomResizer.classList.add("dragging");
+      timelineBottomResizer.setPointerCapture(event.pointerId);
+      timelineBottomResizer.onpointermove = move => {
+        const height = Math.max(220, startHeight + move.pageY - startY);
+        if (floating && panel) {
+          const rect = pageRect(panel);
+          panel.style.setProperty("height", `${height}px`, "important");
+          setPanelFloatingState("timeline", panel, {...rect, height});
+          updateFloatingWorkspaceExtent();
+          renderTimeline();
+        } else {
+          updateLayoutGeometry({timelineHeight: height});
+          updateFloatingWorkspaceExtent();
+        }
+        autoScrollWorkspace(move);
+      };
+      const finish = () => {
+        timelineBottomResizer.onpointermove = null;
+        timelineBottomResizer.onpointerup = null;
+        timelineBottomResizer.onpointercancel = null;
+        timelineBottomResizer.onlostpointercapture = null;
+        timelineBottomResizer.classList.remove("dragging");
+        if (floating) persistFloatingPanels();
+        else persistLayout(editorLayoutMode);
+        applyPreviewZoom();
+        updatePreviewGeometry();
+        renderTimeline();
+        updateFloatingWorkspaceExtent();
+        historyRedo = [];
+        updateHistoryButtons();
+      };
+      timelineBottomResizer.onpointerup = finish;
+      timelineBottomResizer.onpointercancel = finish;
+      timelineBottomResizer.onlostpointercapture = finish;
     };
   }
   qa("[data-panel-height-resizer]").forEach(handle => {
