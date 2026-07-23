@@ -227,6 +227,54 @@
 .movie-panel-snap-edge.horizontal{height:2px;left:0;right:0}
 .movie-panel-snap-edge.vertical{width:2px;top:0;bottom:0}
 @media(max-width:900px){.movie-preview-stepper input[type=range]{width:68px}.movie-preview-body{grid-template-columns:minmax(0,1fr) 34px!important}}
+
+/* Final window-layout contract. Keep these overrides last so older editor rules
+   cannot pull Canvas controls back into the work area or restore fixed heights. */
+.movie-preview-head{display:flex!important;align-items:center!important;gap:8px!important}
+.movie-preview-controls{display:flex!important;align-items:center!important;gap:7px!important;flex:1 1 auto!important;min-width:0!important;flex-wrap:wrap!important}
+.movie-preview-controls select{width:auto!important;min-width:72px!important;max-width:154px!important}
+.movie-preview-controls [data-movie-ratio]{order:2}
+.movie-preview-controls [data-movie-resolution]{order:3}
+.movie-preview-controls [data-movie-fps]{order:4}
+.movie-preview-controls .movie-frame-size-stepper{order:5}
+.movie-preview-controls .movie-canvas-frame-controls{order:6;display:flex!important;grid-template-columns:none!important;grid-template-rows:none!important;align-items:center!important;width:auto!important;height:24px!important;margin:0!important;padding:0!important;gap:1px!important;border:0!important;background:transparent!important}
+.movie-preview-controls .movie-canvas-frame-controls button{position:static!important;display:grid!important;place-items:center!important;width:22px!important;height:22px!important;min-width:22px!important;min-height:22px!important;margin:0!important;padding:0!important;border:0!important;background:transparent!important;color:var(--accent)!important;font-size:13px!important;line-height:1!important}
+.movie-preview-controls .movie-canvas-frame-controls .reset{font-size:0!important}
+.movie-preview-controls .movie-canvas-frame-controls .reset::before{width:11px;height:11px}
+.movie-preview-controls [data-floating-toolbar-open]{order:7}
+.movie-preview-status-group{display:flex!important;align-items:center!important;gap:5px!important;flex:0 0 auto!important;margin-left:auto!important}
+.movie-preview-stepper-value{width:62px!important;min-width:62px!important}
+.movie-frame-size-stepper .movie-preview-stepper-value{width:78px!important;min-width:78px!important}
+.movie-preview-body{position:relative!important;display:flex!important;align-items:center!important;justify-content:center!important;min-height:0!important;flex:1 1 auto!important;gap:0!important;padding:6px!important;overflow:auto!important}
+.movie-preview-body .movie-preview-stage{grid-column:auto!important;grid-row:auto!important;align-self:center!important;justify-self:center!important;flex:0 0 auto!important;margin:0!important}
+.movie-preview-body.dock-bottom{align-items:flex-end!important}
+.movie-preview-body.dock-bottom .movie-preview-stage{align-self:auto!important;margin:0!important}
+.movie-timeline-shell{min-height:150px!important}
+.movie-floating-toolbar[hidden]{display:none!important}
+.project-shell-header,.movie-editor>.movie-toolbar{position:relative!important}
+.project-shell-header>.movie-window-actions,.movie-editor>.movie-toolbar>.movie-window-actions{position:absolute!important;z-index:20!important;top:7px!important;right:7px!important;margin:0!important}
+.movie-track-name{order:1!important}
+.movie-track-controls{order:2!important}
+.movie-track-code{order:3!important}
+.movie-panel-snap-active{outline:3px solid var(--accent)!important;outline-offset:-3px!important}
+.movie-panel-snap-target{box-shadow:0 0 0 3px var(--accent),0 14px 42px rgba(0,0,0,.34)!important}
+.movie-panel-dock-guide{border:3px solid var(--accent)!important;background:color-mix(in srgb,var(--accent) 10%,transparent)!important}
+.movie-panel-snap-edge{background:var(--accent)!important}
+.movie-panel-snap-edge.horizontal{height:3px!important}
+.movie-panel-snap-edge.vertical{width:3px!important}
+.movie-project-fullscreen{margin:0!important}
+body.movie-layout-locked .movie-window-resize-handle,
+body.movie-layout-locked [data-layout-resizer],
+body.movie-layout-locked [data-stage-resizer],
+body.movie-layout-locked [data-inspector-resizer],
+body.movie-layout-locked [data-panel-width-resizer],
+body.movie-layout-locked [data-panel-height-resizer],
+body.movie-layout-locked [data-timeline-edge-resizer],
+body.movie-layout-locked [data-timeline-height-resizer]{pointer-events:none!important;opacity:.2!important}
+@media(max-width:900px){
+  .movie-preview-controls{gap:4px!important}
+  .movie-preview-controls .movie-preview-stepper input[type=range]{width:68px!important}
+}
 </style>{% endblock %}
 {% block content %}
 {% include "studio/_project_navigation.html" %}
@@ -238,7 +286,7 @@
     </div>
     <div class="movie-actions">
       <span class="movie-editor-state" data-movie-state>Saved</span>
-      <span class="movie-layout-actions" aria-label="Editor layout"><button class="icon-button secondary movie-layout-button" type="button" data-layout-mode="columns" title="Media, Canvas and Attributes in one row" aria-label="Three column layout"><span class="movie-layout-glyph columns" aria-hidden="true"></span></button><button class="icon-button secondary movie-layout-button" type="button" data-layout-mode="stacked" title="Media and Canvas above Timeline; Attributes below" aria-label="Stacked layout"><span class="movie-layout-glyph stacked" aria-hidden="true"></span></button><button class="icon-button secondary" type="button" data-layout-save data-business-command="save" title="Save this layout" aria-label="Save this layout"></button><button class="icon-button secondary" type="button" data-layout-load data-business-command="restore" title="Load saved layout" aria-label="Load saved layout"></button><button class="icon-button secondary" type="button" data-layout-reset data-business-command="refresh" title="Reset active layout" aria-label="Reset active layout"></button></span>
+      <span class="movie-layout-actions" aria-label="Editor layout"><button class="icon-button secondary movie-layout-button" type="button" data-layout-mode="columns" title="Media, Canvas and Attributes in one row" aria-label="Three column layout"><span class="movie-layout-glyph columns" aria-hidden="true"></span></button><button class="icon-button secondary movie-layout-button" type="button" data-layout-mode="stacked" title="Media and Canvas above Timeline; Attributes below" aria-label="Stacked layout"><span class="movie-layout-glyph stacked" aria-hidden="true"></span></button><button class="icon-button secondary" type="button" data-layout-lock data-business-command="lock" title="Unlock layout editing" aria-label="Unlock layout editing" aria-pressed="true"></button><button class="icon-button secondary" type="button" data-layout-save data-business-command="save" title="Save this layout" aria-label="Save this layout"></button><button class="icon-button secondary" type="button" data-layout-load data-business-command="restore" title="Load saved layout" aria-label="Load saved layout"></button><button class="icon-button secondary" type="button" data-layout-reset data-business-command="refresh" title="Reset active layout" aria-label="Reset active layout"></button></span>
       <button class="icon-button secondary" type="button" data-editor-undo title="Undo (Ctrl+Z)" aria-label="Undo" disabled>&#8630;</button>
       <button class="icon-button secondary" type="button" data-editor-redo title="Redo (Ctrl+Y)" aria-label="Redo" disabled>&#8631;</button>
       <button class="icon-button secondary movie-save-as" type="button" data-export-timeline data-business-command="export" title="Export As" aria-label="Export As">&#8595;</button>
@@ -248,7 +296,7 @@
       {% if can_export %}<button type="button" data-render-toggle>Render MP4</button>{% endif %}
     </div>
   </div>
-  <section class="panel movie-floating-toolbar movie-collapsible" data-panel-key="toolbar">
+  <section class="panel movie-floating-toolbar movie-collapsible" data-panel-key="toolbar" hidden>
     <div class="movie-floating-toolbar-head" data-panel-drag="toolbar"><strong>Toolbar</strong></div>
     <div class="movie-floating-toolbar-body" data-panel-body data-floating-toolbar></div>
   </section>
@@ -311,4 +359,4 @@
 </section>
 {{ movie_timeline_data|json_script:"movie-timeline-data" }}{{ movie_assets|json_script:"movie-assets-data" }}{{ movie_library_assets|json_script:"movie-library-data" }}{{ movie_render_jobs|json_script:"movie-render-jobs-data" }}{{ movie_edits|json_script:"movie-edits-data" }}
 {% endblock %}
-{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260722-timeline-wide"></script>{% endblock %}
+{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260723-layout-lock"></script>{% endblock %}

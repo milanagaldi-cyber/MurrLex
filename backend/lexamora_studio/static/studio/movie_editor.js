@@ -140,6 +140,8 @@
   const layoutStateKey = mode => `studio-movie-layout-${timelineId}-${mode}`;
   const savedLayoutKey = `studio-movie-layout-saved-${timelineId}`;
   const floatingPanelsKey = `studio-movie-floating-panels-${timelineId}`;
+  const layoutLockKey = `studio-movie-layout-locked-${timelineId}`;
+  let layoutLocked = localStorage.getItem(layoutLockKey) !== "false";
   let floatingPanels = (() => {
     try { return JSON.parse(localStorage.getItem(floatingPanelsKey) || "{}"); }
     catch (_) { return {}; }
@@ -164,7 +166,7 @@
     stacked: readLayoutGeometry("stacked"),
   };
   const previewDockKey = `studio-movie-preview-dock-${timelineId}`;
-  let previewDockMode = localStorage.getItem(previewDockKey) === "center" ? "center" : "bottom";
+  let previewDockMode = localStorage.getItem(previewDockKey) === "bottom" ? "bottom" : "center";
   const applyPreviewDock = () => {
     previewBody?.classList.toggle("dock-bottom", previewDockMode === "bottom");
     const button = q("[data-preview-dock]");
@@ -227,16 +229,16 @@
     editorLayout.style.width = `calc(100% + ${geometry.workspaceExtraLeft + geometry.workspaceExtraRight}px)`;
     editorLayout.style.marginLeft = `${-geometry.workspaceExtraLeft}px`;
     editorLayout.style.marginRight = `${-geometry.workspaceExtraRight}px`;
-    if (layoutPanels.media) layoutPanels.media.style.height = `${geometry.mediaHeight}px`;
-    if (layoutPanels.preview) layoutPanels.preview.style.height = `${geometry.canvasHeight}px`;
-    if (layoutPanels.inspector) layoutPanels.inspector.style.height = `${geometry.inspectorHeight}px`;
+    if (layoutPanels.media) layoutPanels.media.style.setProperty("height", `${geometry.mediaHeight}px`, "important");
+    if (layoutPanels.preview) layoutPanels.preview.style.setProperty("height", `${geometry.canvasHeight}px`, "important");
+    if (layoutPanels.inspector) layoutPanels.inspector.style.setProperty("height", `${geometry.inspectorHeight}px`, "important");
     const timelinePanel = q('[data-panel-key="timeline"]');
     const timelineShell = q("[data-timeline-shell]");
     if (timelinePanel) {
       timelinePanel.style.marginLeft = `${geometry.timelineInsetLeft}px`;
       timelinePanel.style.marginRight = `${geometry.timelineInsetRight}px`;
     }
-    if (timelineShell) timelineShell.style.height = `${geometry.timelineHeight}px`;
+    if (timelineShell) timelineShell.style.setProperty("height", `${geometry.timelineHeight}px`, "important");
     layoutPanels.media?.classList.remove("media-minimized");
     qa("[data-layout-mode]").forEach(button => {
       const active = button.dataset.layoutMode === editorLayoutMode;
@@ -293,6 +295,7 @@
     home.placeholder.hidden = true;
     delete floatingPanels[key];
     panel.querySelector(".movie-window-home")?.setAttribute("disabled", "disabled");
+    if (key === "toolbar") panel.hidden = true;
     if (persist) {
       persistFloatingPanels();
       persistLayout(editorLayoutMode);
@@ -313,11 +316,12 @@
     rect.left = clamp(rect.left, 4, Math.max(4, innerWidth - Math.min(rect.width, innerWidth - 8) - 4));
     rect.top = clamp(rect.top, 4, Math.max(4, innerHeight - Math.min(rect.height, innerHeight - 8) - 4));
     home.placeholder.hidden = true;
+    panel.hidden = false;
     panel.classList.add("movie-panel-floating");
-    panel.style.left = `${rect.left}px`;
-    panel.style.top = `${rect.top}px`;
-    panel.style.width = `${rect.width}px`;
-    panel.style.height = `${rect.height}px`;
+    panel.style.setProperty("left", `${rect.left}px`, "important");
+    panel.style.setProperty("top", `${rect.top}px`, "important");
+    panel.style.setProperty("width", `${rect.width}px`, "important");
+    panel.style.setProperty("height", `${rect.height}px`, "important");
     panel.querySelector(".movie-window-home")?.removeAttribute("disabled");
     setPanelFloatingState(key, panel, rect);
     if (persist) persistFloatingPanels();
@@ -327,6 +331,7 @@
       if (!panel) return;
       rememberPanelHome(key, panel);
       if (floatingPanels[key]) floatPanel(key, floatingPanels[key], {persist: false});
+      else if (key === "toolbar") panel.hidden = true;
       else if (panel.classList.contains("movie-panel-floating")) dockFloatingPanel(key, {persist: false});
     });
   }
@@ -360,7 +365,7 @@
       handle.setAttribute("aria-hidden", "true");
       panel.appendChild(handle);
       handle.addEventListener("pointerdown", event => {
-        if (!canEdit || event.button !== 0) return;
+        if (!canEdit || layoutLocked || event.button !== 0) return;
         event.preventDefault();
         event.stopPropagation();
         remember();
@@ -426,10 +431,10 @@
           top = clamp(top, 0, Math.max(0, innerHeight - 40));
           width = Math.max(minimumWidth, Math.min(width, innerWidth - left));
           height = Math.max(minimumHeight, Math.min(height, innerHeight - top));
-          panel.style.left = `${left}px`;
-          panel.style.top = `${top}px`;
-          panel.style.width = `${width}px`;
-          panel.style.height = `${height}px`;
+          panel.style.setProperty("left", `${left}px`, "important");
+          panel.style.setProperty("top", `${top}px`, "important");
+          panel.style.setProperty("width", `${width}px`, "important");
+          panel.style.setProperty("height", `${height}px`, "important");
           setPanelFloatingState(key, panel, {left, top, width, height});
           showPanelSnapFeedback(panel, horizontal, vertical);
           refreshFloatingGeometry();
@@ -481,7 +486,15 @@
       home.addEventListener("click", event => {
         event.stopPropagation();
         remember();
-        dockFloatingPanel(key);
+        if (key === "toolbar") {
+          panel.hidden = true;
+          panel.classList.remove("movie-panel-floating", "movie-panel-moving", "movie-panel-resizing");
+          ["left", "top", "width", "height"].forEach(property => panel.style.removeProperty(property));
+          delete floatingPanels.toolbar;
+          persistFloatingPanels();
+        } else {
+          dockFloatingPanel(key);
+        }
         historyRedo = [];
         updateHistoryButtons();
       });
@@ -540,14 +553,16 @@
     });
   };
   const initializeProjectFullscreen = () => {
-    const title = projectHeaderPanel?.querySelector(".project-shell-copy h1");
-    if (!title || title.parentElement.querySelector("[data-project-fullscreen]")) return;
+    const nav = document.querySelector(".site-header .topbar nav");
+    const credits = nav?.querySelector(".ai-credit-control");
+    if (!nav || nav.querySelector("[data-project-fullscreen]")) return;
     const button = document.createElement("button");
     button.type = "button";
-    button.className = "secondary movie-project-fullscreen";
+    button.className = "theme-toggle icon-button movie-project-fullscreen";
     button.dataset.projectFullscreen = "";
-    button.textContent = "Full Screen";
+    button.dataset.businessCommand = "fullscreen";
     button.title = "Open the editor in browser full screen";
+    button.setAttribute("aria-label", button.title);
     button.addEventListener("click", async event => {
       event.stopPropagation();
       try {
@@ -557,12 +572,63 @@
         toast(error.message || "Full screen is unavailable", "error");
       }
     });
-    title.insertAdjacentElement("afterend", button);
+    nav.insertBefore(button, credits || nav.firstChild);
     document.addEventListener("fullscreenchange", () => {
-      button.textContent = document.fullscreenElement ? "Exit Full Screen" : "Full Screen";
+      button.classList.toggle("active", Boolean(document.fullscreenElement));
+      button.title = document.fullscreenElement ? "Exit full screen" : "Open the editor in browser full screen";
+      button.setAttribute("aria-label", button.title);
     });
+    window.refreshLexamoraIcons?.(button);
+  };
+  const applyLayoutLockState = () => {
+    document.body.classList.toggle("movie-layout-locked", layoutLocked);
+    root.classList.toggle("movie-layout-locked", layoutLocked);
+    const button = q("[data-layout-lock]");
+    if (!button) return;
+    button.dataset.businessCommand = layoutLocked ? "lock" : "unlock";
+    button.title = layoutLocked ? "Unlock layout editing" : "Lock layout editing";
+    button.setAttribute("aria-label", button.title);
+    button.setAttribute("aria-pressed", layoutLocked ? "true" : "false");
+    window.refreshLexamoraIcons?.(button);
+  };
+  const openFloatingToolbar = () => {
+    const panel = layoutPanels.toolbar;
+    const previewPanel = layoutPanels.preview;
+    if (!panel || !previewPanel) return;
+    const anchor = previewPanel.getBoundingClientRect();
+    const width = Math.min(520, Math.max(300, anchor.width * .72));
+    floatPanel("toolbar", {
+      left: clamp(anchor.left + 14, 4, Math.max(4, innerWidth - width - 4)),
+      top: clamp(anchor.top + 46, 4, Math.max(4, innerHeight - 116)),
+      width,
+      height: 76,
+    });
+    ensurePanelChrome("toolbar", panel);
+    window.refreshLexamoraIcons?.(panel);
+  };
+  const initializeCanvasControls = () => {
+    const controls = q(".movie-preview-controls");
+    const frameControls = q("[data-canvas-frame-controls]");
+    const frameSize = q(".movie-frame-size-stepper");
+    const fps = q("[data-movie-fps]");
+    if (!controls) return;
+    if (fps && frameSize) fps.insertAdjacentElement("afterend", frameSize);
+    if (frameControls) controls.appendChild(frameControls);
+    let toolbarButton = controls.querySelector("[data-floating-toolbar-open]");
+    if (!toolbarButton) {
+      toolbarButton = document.createElement("button");
+      toolbarButton.type = "button";
+      toolbarButton.className = "icon-button secondary";
+      toolbarButton.dataset.floatingToolbarOpen = "";
+      toolbarButton.dataset.businessCommand = "settings";
+      toolbarButton.title = "Open floating toolbar";
+      toolbarButton.setAttribute("aria-label", toolbarButton.title);
+      toolbarButton.addEventListener("click", openFloatingToolbar);
+      controls.appendChild(toolbarButton);
+    }
   };
   const bindPanelDragging = () => {
+    initializeCanvasControls();
     initializeFloatingToolbar();
     initializeProjectFullscreen();
     Object.entries(layoutPanels).forEach(([key, panel]) => {
@@ -578,6 +644,7 @@
       if (!panel || handle.dataset.dragBound === "true") return;
       handle.dataset.dragBound = "true";
       handle.addEventListener("dblclick", event => {
+        if (layoutLocked) return;
         if (event.target.closest("button,input,select,a")) return;
         if (panel.classList.contains("movie-panel-floating")) {
           remember();
@@ -586,7 +653,7 @@
         }
       });
       handle.addEventListener("pointerdown", event => {
-        if (!canEdit || event.button !== 0 || event.target.closest("button,input,select,a,label")) return;
+        if (!canEdit || layoutLocked || event.button !== 0 || event.target.closest("button,input,select,a,label")) return;
         const origin = panel.getBoundingClientRect();
         const startX = event.clientX;
         const startY = event.clientY;
@@ -626,8 +693,8 @@
           ]);
           const left = clamp(xSnap.value, 4, Math.max(4, innerWidth - width - 4));
           const top = clamp(ySnap.value, 4, Math.max(4, innerHeight - height - 4));
-          panel.style.left = `${left}px`;
-          panel.style.top = `${top}px`;
+          panel.style.setProperty("left", `${left}px`, "important");
+          panel.style.setProperty("top", `${top}px`, "important");
           setPanelFloatingState(key, panel, {left, top, width, height});
           showPanelSnapFeedback(panel, xSnap, ySnap);
         };
@@ -841,8 +908,8 @@
     if (!body || !previewStage) return;
     const output = outputDimensions();
     const ratio = output.width / output.height;
-    const availableWidth = Math.max(180, body.clientWidth - 36);
-    const availableHeight = Math.max(240, Math.min(640, window.innerHeight * .68));
+    const availableWidth = Math.max(90, body.clientWidth - 16);
+    const availableHeight = Math.max(90, body.clientHeight - 16);
     const naturalWidth = Math.min(availableWidth, availableHeight * ratio);
     const naturalHeight = naturalWidth / ratio;
     previewStage.style.width = `${Math.max(90, naturalWidth * previewZoom)}px`;
@@ -3265,6 +3332,13 @@
       if (!track.clips.length) lane.innerHTML = '<span class="movie-empty">Drop a clip anywhere across this track</span>';
       tracksNode.append(lane);
     });
+    const timelineShell = q("[data-timeline-shell]");
+    if (timelineShell && !layoutPanels.timeline?.classList.contains("movie-panel-floating")) {
+      const tracksHeight = timeline.tracks.reduce((total, track) => total + Math.max(21, Number(track.height) || defaultTrackHeight), 0);
+      const reserveHeight = Math.max(48, defaultTrackHeight);
+      const compactHeight = Math.max(150, Math.min(editorLayouts[editorLayoutMode].timelineHeight, 38 + tracksHeight + reserveHeight));
+      timelineShell.style.setProperty("height", `${compactHeight}px`, "important");
+    }
     setPlayhead(playheadMs, false, false);
     q("[data-zoom-label]").textContent = `${zoom} px/s`;
     zoomInput.value = zoom;
@@ -3987,7 +4061,7 @@
   const bindLayoutDivider = (handle, side) => {
     if (!handle || !editorLayout) return;
     handle.onpointerdown = event => {
-      if (event.button !== 0) return;
+      if (layoutLocked || event.button !== 0) return;
       event.preventDefault();
       remember();
       const startX = event.clientX;
@@ -4013,7 +4087,7 @@
   bindLayoutDivider(q("[data-inspector-resizer]"), "inspector");
   qa("[data-panel-width-resizer]").forEach(handle => {
     handle.onpointerdown = event => {
-      if (event.button !== 0) return;
+      if (layoutLocked || event.button !== 0) return;
       event.preventDefault();
       remember();
       const startX = event.clientX;
@@ -4044,7 +4118,7 @@
   });
   qa("[data-timeline-edge-resizer]").forEach(handle => {
     handle.onpointerdown = event => {
-      if (event.button !== 0) return;
+      if (layoutLocked || event.button !== 0) return;
       event.preventDefault();
       remember();
       const startX = event.clientX;
@@ -4071,7 +4145,7 @@
   const timelineHeightResizer = q("[data-timeline-height-resizer]");
   if (timelineHeightResizer) {
     timelineHeightResizer.onpointerdown = event => {
-      if (event.button !== 0) return;
+      if (layoutLocked || event.button !== 0) return;
       event.preventDefault();
       remember();
       const startY = event.clientY;
@@ -4100,7 +4174,7 @@
   }
   qa("[data-panel-height-resizer]").forEach(handle => {
     handle.onpointerdown = event => {
-      if (event.button !== 0) return;
+      if (layoutLocked || event.button !== 0) return;
       event.preventDefault();
       remember();
       const key = handle.dataset.panelHeightResizer;
@@ -4133,6 +4207,12 @@
       applyEditorLayout(cloneLayoutState());
       updateHistoryButtons();
     });
+  });
+  q("[data-layout-lock]")?.addEventListener("click", () => {
+    layoutLocked = !layoutLocked;
+    localStorage.setItem(layoutLockKey, String(layoutLocked));
+    applyLayoutLockState();
+    toast(layoutLocked ? "Layout locked" : "Layout unlocked");
   });
   q("[data-layout-reset]")?.addEventListener("click", () => {
     if (!canEdit) return;
@@ -4179,8 +4259,15 @@
   q("[data-movie-resolution]").value = root.dataset.resolution || "1920x1080";
   q("[data-movie-fps]").value = root.dataset.fps || "25";
   bindPanelDragging();
+  applyLayoutLockState();
   applyEditorLayout(cloneLayoutState(), {persist: false, refresh: false});
   applyPreviewDock();
   normalizeTimeline(); applyCanvas(); renderBin(); renderTimeline(); renderInspector(); renderRenderJobs(); renderLibrary(); scheduleRenderPoll(); setPlayhead(0, true, true);
   savedSignature = signature(); updateDirty(); updateHistoryButtons(); refreshMedia();
+  if ("ResizeObserver" in window && previewBody) {
+    new ResizeObserver(() => {
+      applyPreviewZoom();
+      updatePreviewGeometry();
+    }).observe(previewBody);
+  }
 })();
