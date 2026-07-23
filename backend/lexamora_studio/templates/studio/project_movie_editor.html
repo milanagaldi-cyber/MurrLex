@@ -155,15 +155,54 @@
 .movie-preview-source-outline .movie-preview-resize-handle.n{top:-8px!important}
 .movie-preview-source-outline .movie-preview-resize-handle.s{top:auto!important;bottom:-8px!important}
 .movie-preview-source-outline .movie-preview-resize-handle.w,.movie-preview-source-outline .movie-preview-resize-handle.e{width:16px!important;height:26px!important;margin-top:-13px!important;border:0!important;border-radius:2px!important;background:rgba(12,25,38,.82)!important;color:#fff!important}
-.movie-panel-toggle{display:none!important}
+.movie-panel-toggle{display:inline-grid!important;place-items:center}
 [data-panel-drag]{user-select:none}
 [data-panel-drag] button,[data-panel-drag] input,[data-panel-drag] select,[data-panel-drag] a{cursor:pointer}
-.movie-panel-placeholder{border:1px dashed color-mix(in srgb,var(--accent) 35%,transparent);background:color-mix(in srgb,var(--accent) 5%,transparent);min-height:92px}
-.movie-panel-floating{position:fixed!important;z-index:240!important;margin:0!important;max-width:none!important;max-height:calc(100vh - 8px)!important;box-shadow:0 14px 42px rgba(0,0,0,.34);resize:both!important;overflow:auto!important}
+.movie-panel-placeholder{display:none!important}
+.movie-panel-floating{position:fixed!important;z-index:240!important;margin:0!important;max-width:none!important;max-height:calc(100vh - 8px)!important;box-shadow:0 14px 42px rgba(0,0,0,.34);resize:none!important;overflow:auto!important}
 .movie-panel-floating.movie-panel-moving{opacity:.93;box-shadow:0 18px 54px rgba(0,0,0,.46)}
+.movie-panel-floating.movie-panel-resizing{box-shadow:0 18px 54px rgba(0,0,0,.46)}
 .movie-panel-floating [data-panel-drag]{cursor:grab}
 .movie-panel-floating [data-panel-drag]:active{cursor:grabbing}
 .movie-panel-floating [data-panel-body]{min-height:0}
+.movie-collapsible.collapsed{height:auto!important;min-height:0!important;padding-bottom:7px!important;overflow:hidden!important}
+.movie-panel-floating.collapsed{height:auto!important;min-height:0!important;overflow:hidden!important}
+.movie-panel-floating.collapsed .movie-window-resize-handle{display:none}
+.movie-collapsible.collapsed>.movie-panel-height-resizer,.movie-collapsible.collapsed>.movie-timeline-height-resizer,.movie-collapsible.collapsed>.movie-panel-width-resizer{display:none!important}
+.movie-timeline-panel.collapsed .movie-timeline-layout{display:none}
+.movie-timeline-panel.collapsed .movie-timeline-tools{margin-bottom:0}
+.movie-window-resize-handle{position:absolute;z-index:260;display:none;background:transparent;touch-action:none}
+.movie-panel-floating>.movie-window-resize-handle{display:block}
+.movie-window-resize-handle.n,.movie-window-resize-handle.s{left:10px;right:10px;height:7px;cursor:ns-resize}
+.movie-window-resize-handle.n{top:0}.movie-window-resize-handle.s{bottom:0}
+.movie-window-resize-handle.e,.movie-window-resize-handle.w{top:10px;bottom:10px;width:7px;cursor:ew-resize}
+.movie-window-resize-handle.e{right:0}.movie-window-resize-handle.w{left:0}
+.movie-window-resize-handle.ne,.movie-window-resize-handle.nw,.movie-window-resize-handle.se,.movie-window-resize-handle.sw{width:13px;height:13px}
+.movie-window-resize-handle.ne{right:0;top:0;cursor:nesw-resize}.movie-window-resize-handle.nw{left:0;top:0;cursor:nwse-resize}
+.movie-window-resize-handle.se{right:0;bottom:0;cursor:nwse-resize}.movie-window-resize-handle.sw{left:0;bottom:0;cursor:nesw-resize}
+.movie-panel-snap-active{outline:2px solid #f5c542!important;outline-offset:-2px}
+.movie-panel-snap-target{box-shadow:0 0 0 2px #f5c542,0 14px 42px rgba(0,0,0,.34)!important}
+.movie-window-actions{display:flex;align-items:center;gap:4px;margin-left:auto}
+.movie-window-actions .icon-button{width:28px;height:28px;min-width:28px;padding:3px}
+.movie-window-home[disabled]{opacity:.28;pointer-events:none}
+.movie-floating-toolbar{padding:7px 9px}
+.movie-floating-toolbar-head{display:flex;align-items:center;gap:10px;min-height:30px}
+.movie-floating-toolbar-body{display:flex;align-items:center;gap:5px;flex-wrap:wrap;padding-top:6px}
+.movie-floating-toolbar-body .icon-button{width:29px;height:29px;min-width:29px;padding:3px}
+.movie-project-fullscreen{margin-left:10px;vertical-align:middle}
+.movie-project-window-header{cursor:grab}
+.movie-project-window-header:active{cursor:grabbing}
+.movie-editor>.movie-toolbar.collapsed{padding:7px 10px}
+.movie-editor>.movie-toolbar.collapsed .movie-settings,.movie-editor>.movie-toolbar.collapsed .movie-actions>*:not(.movie-window-actions){display:none}
+.movie-editor>.movie-toolbar.collapsed .movie-actions{margin-left:auto}
+.project-shell-header.movie-panel-floating{padding:12px!important;background:var(--panel)!important;border:1px solid var(--line);border-radius:6px}
+.project-shell-header.collapsed>*:not(.movie-window-actions){display:none!important}
+.project-shell-header.collapsed{padding:7px 10px!important}
+.movie-canvas-frame-controls{grid-template-columns:repeat(3,34px)!important;grid-template-rows:repeat(3,34px)!important;padding:4px!important;background:transparent!important;border:0!important}
+.movie-canvas-frame-controls button{width:34px!important;height:34px!important;min-width:34px!important;padding:0!important;border:0!important;background:transparent!important;color:var(--accent)!important;font:700 21px/1 "Segoe UI Symbol","Segoe UI",sans-serif!important}
+.movie-canvas-frame-controls button:hover{background:color-mix(in srgb,var(--accent) 12%,transparent)!important}
+.movie-canvas-frame-controls .reset{font-size:0!important}
+.movie-canvas-frame-controls .reset::before{content:"";display:block;width:13px;height:13px;border:2px solid currentColor;border-radius:50%;background:currentColor;box-shadow:inset 0 0 0 3px var(--panel)}
 .movie-panel-dock-guide{position:fixed;z-index:235;pointer-events:none;border:2px solid #f5c542;background:rgba(245,197,66,.08)}
 .movie-track-context{position:fixed;z-index:280;display:grid;min-width:190px;padding:7px;border:1px solid var(--border);border-radius:4px;background:var(--panel);box-shadow:0 10px 30px rgba(0,0,0,.3)}
 .movie-track-context[hidden]{display:none!important}
@@ -193,7 +232,7 @@
 {% include "studio/_project_navigation.html" %}
 {% include "studio/_montage_gallery.html" with montage_gallery_key="draft-editor" montage_actions_url=movie_edits_url montage_can_edit=can_edit %}
 <section class="movie-editor" data-movie-editor data-can-edit="{{ can_edit|yesno:'true,false' }}" data-can-export="{{ can_export|yesno:'true,false' }}" data-timeline-id="{{ movie_timeline.id }}" data-edits-url="{{ movie_edits_url }}" data-aspect-ratio="{{ movie_timeline.aspect_ratio }}" data-resolution="{{ movie_timeline.resolution }}" data-fps="{{ movie_timeline.fps }}" data-save-url="{% url 'studio:project_movie_editor' project.id %}" data-history-url="{% url 'studio:project_movie_editor_revisions' project.id %}" data-media-url="{{ movie_media_url }}" data-render-url="{{ movie_render_url }}">
-  <div class="panel movie-toolbar">
+  <div class="panel movie-toolbar movie-collapsible" data-panel-key="editorHeader" data-panel-drag="editorHeader">
     <div class="movie-settings">
       <input data-movie-title value="{{ movie_timeline.title }}" aria-label="Timeline title" title="Timeline title">
     </div>
@@ -209,6 +248,10 @@
       {% if can_export %}<button type="button" data-render-toggle>Render MP4</button>{% endif %}
     </div>
   </div>
+  <section class="panel movie-floating-toolbar movie-collapsible" data-panel-key="toolbar">
+    <div class="movie-floating-toolbar-head" data-panel-drag="toolbar"><strong>Toolbar</strong></div>
+    <div class="movie-floating-toolbar-body" data-panel-body data-floating-toolbar></div>
+  </section>
   <section class="panel movie-history movie-collapsible" data-movie-history data-panel-key="history" hidden>
     <div class="movie-history-head"><div><h3>Timeline history</h3><p class="muted">The latest 50 previous saves are retained</p></div><div class="movie-panel-actions"><button class="icon-button secondary movie-panel-toggle" type="button" data-panel-toggle data-business-command="remove" title="Collapse history" aria-label="Collapse history"></button><button class="icon-button secondary" type="button" data-movie-history-close data-business-command="close" title="Close history" aria-label="Close history"></button></div></div>
     <div class="movie-history-list" data-movie-history-list data-panel-body><p class="muted">Loading history</p></div>

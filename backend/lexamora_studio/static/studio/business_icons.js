@@ -28,6 +28,7 @@
     gridLarge: '<rect x="3" y="3" width="8" height="8"/><rect x="13" y="3" width="8" height="8"/><rect x="3" y="13" width="8" height="8"/><rect x="13" y="13" width="8" height="8"/>',
     gridSmall: '<path d="M3 3h5v5H3zM10 3h4v5h-4zM16 3h5v5h-5zM3 10h5v4H3zM10 10h4v4h-4zM16 10h5v4h-5zM3 16h5v5H3zM10 16h4v5h-4zM16 16h5v5h-5z"/>',
     hidden: '<path d="M3 3l18 18M10.6 10.6a2 2 0 002.8 2.8M9 5.3A10.5 10.5 0 0112 5c5.5 0 9 7 9 7a17 17 0 01-2.1 3M6.2 6.2C4.2 7.7 3 12 3 12s3.5 7 9 7a10 10 0 004-.8"/>',
+    home: '<path d="M3 11.5L12 4l9 7.5"/><path d="M5.5 10v10h13V10M9.5 20v-6h5v6"/>',
     image: '<rect x="3" y="4" width="18" height="16"/><circle cx="8" cy="9" r="2"/><path d="M4 18l5-5 3 3 3-4 5 6"/>',
     import: '<path d="M12 21V9M7 14l5-5 5 5M5 4h14"/>',
     info: '<circle cx="12" cy="12" r="9"/><path d="M12 10v7M12 7h.01"/>',

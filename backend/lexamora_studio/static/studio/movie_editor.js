@@ -113,7 +113,20 @@
   const folderDialog = q("[data-media-folder-dialog]");
   const trackContext = q("[data-track-context]");
   const editorLayout = q("[data-editor-layout]");
+  const projectHeaderPanel = document.querySelector(".project-shell-header");
+  if (projectHeaderPanel) {
+    projectHeaderPanel.dataset.panelKey = "projectHeader";
+    projectHeaderPanel.classList.add("movie-collapsible");
+    const projectHeaderDrag = projectHeaderPanel.querySelector(".project-shell-identity") || projectHeaderPanel;
+    projectHeaderDrag.dataset.panelDrag = "projectHeader";
+    projectHeaderDrag.classList.add("movie-project-window-header");
+  }
   const layoutPanels = {
+    projectHeader: projectHeaderPanel,
+    editorHeader: q('[data-panel-key="editorHeader"]'),
+    toolbar: q('[data-panel-key="toolbar"]'),
+    history: historyPanel,
+    exports: renderPanel,
     media: q('[data-panel-key="media"]'),
     preview: q('[data-panel-key="preview"]'),
     inspector: q('[data-panel-key="inspector"]'),
@@ -251,19 +264,40 @@
     panelHomes.set(key, home);
     return home;
   };
+  const clearPanelSnapFeedback = () => {
+    Object.values(layoutPanels).filter(Boolean).forEach(panel => {
+      panel.classList.remove("movie-panel-snap-active", "movie-panel-snap-target");
+    });
+  };
+  const persistFloatingPanels = () => localStorage.setItem(floatingPanelsKey, JSON.stringify(floatingPanels));
+  const refreshFloatingGeometry = () => requestAnimationFrame(() => {
+    applyPreviewZoom();
+    updatePreviewGeometry();
+    renderTimeline();
+  });
+  const setPanelFloatingState = (key, panel, rect) => {
+    floatingPanels[key] = {
+      left: Math.round(rect.left),
+      top: Math.round(rect.top),
+      width: Math.round(rect.width),
+      height: Math.round(rect.height),
+    };
+  };
   function dockFloatingPanel(key, {persist = true} = {}) {
     const panel = layoutPanels[key];
     const home = panelHomes.get(key);
     if (!panel || !home) return;
-    panel.classList.remove("movie-panel-floating", "movie-panel-moving");
+    panel.classList.remove("movie-panel-floating", "movie-panel-moving", "movie-panel-resizing", "movie-panel-snap-active", "movie-panel-snap-target");
     ["left", "top", "width", "height"].forEach(property => panel.style.removeProperty(property));
     home.parent.insertBefore(panel, home.placeholder.nextSibling);
     home.placeholder.hidden = true;
     delete floatingPanels[key];
+    panel.querySelector(".movie-window-home")?.setAttribute("disabled", "disabled");
     if (persist) {
-      localStorage.setItem(floatingPanelsKey, JSON.stringify(floatingPanels));
+      persistFloatingPanels();
       persistLayout(editorLayoutMode);
     }
+    refreshFloatingGeometry();
   }
   function floatPanel(key, geometry, {persist = true} = {}) {
     const panel = layoutPanels[key];
@@ -278,16 +312,15 @@
     };
     rect.left = clamp(rect.left, 4, Math.max(4, innerWidth - Math.min(rect.width, innerWidth - 8) - 4));
     rect.top = clamp(rect.top, 4, Math.max(4, innerHeight - Math.min(rect.height, innerHeight - 8) - 4));
-    home.placeholder.style.width = `${fallback.width}px`;
-    home.placeholder.style.height = `${fallback.height}px`;
-    home.placeholder.hidden = false;
+    home.placeholder.hidden = true;
     panel.classList.add("movie-panel-floating");
     panel.style.left = `${rect.left}px`;
     panel.style.top = `${rect.top}px`;
     panel.style.width = `${rect.width}px`;
     panel.style.height = `${rect.height}px`;
-    floatingPanels[key] = rect;
-    if (persist) localStorage.setItem(floatingPanelsKey, JSON.stringify(floatingPanels));
+    panel.querySelector(".movie-window-home")?.removeAttribute("disabled");
+    setPanelFloatingState(key, panel, rect);
+    if (persist) persistFloatingPanels();
   }
   function applyFloatingPanels() {
     Object.entries(layoutPanels).forEach(([key, panel]) => {
@@ -299,18 +332,247 @@
   }
   const panelSnapTargets = activeKey => Object.entries(layoutPanels)
     .filter(([key, panel]) => key !== activeKey && panel && !panel.hidden)
-    .map(([, panel]) => panel.getBoundingClientRect());
-  const snapFloatingCoordinate = (value, candidates, tolerance = 14) => {
-    let result = value;
+    .map(([key, panel]) => ({key, panel, rect: panel.getBoundingClientRect()}));
+  const nearestPanelSnap = (value, candidates, tolerance = 14) => {
+    let result = {value, target: null, snapped: false};
     let best = tolerance + 1;
     candidates.forEach(candidate => {
-      const distance = Math.abs(value - candidate);
-      if (distance <= tolerance && distance < best) { best = distance; result = candidate; }
+      const distance = Math.abs(value - candidate.value);
+      if (distance <= tolerance && distance < best) {
+        best = distance;
+        result = {value: candidate.value, target: candidate.target || null, snapped: true};
+      }
     });
     return result;
   };
+  const showPanelSnapFeedback = (panel, ...snaps) => {
+    clearPanelSnapFeedback();
+    if (!snaps.some(snap => snap?.snapped)) return;
+    panel.classList.add("movie-panel-snap-active");
+    snaps.forEach(snap => snap?.target?.classList.add("movie-panel-snap-target"));
+  };
+  const ensureWindowResizeHandles = (key, panel) => {
+    if (!panel || panel.querySelector(":scope > .movie-window-resize-handle")) return;
+    ["n", "ne", "e", "se", "s", "sw", "w", "nw"].forEach(direction => {
+      const handle = document.createElement("i");
+      handle.className = `movie-window-resize-handle ${direction}`;
+      handle.dataset.windowResize = direction;
+      handle.setAttribute("aria-hidden", "true");
+      panel.appendChild(handle);
+      handle.addEventListener("pointerdown", event => {
+        if (!canEdit || event.button !== 0) return;
+        event.preventDefault();
+        event.stopPropagation();
+        remember();
+        if (!panel.classList.contains("movie-panel-floating")) floatPanel(key, panel.getBoundingClientRect(), {persist: false});
+        const origin = panel.getBoundingClientRect();
+        const startX = event.clientX;
+        const startY = event.clientY;
+        const minimumWidth = key === "toolbar" ? 220 : 240;
+        const minimumHeight = panel.classList.contains("collapsed") ? panel.offsetHeight : 86;
+        panel.classList.add("movie-panel-resizing");
+        handle.setPointerCapture(event.pointerId);
+        const move = next => {
+          const dx = next.clientX - startX;
+          const dy = next.clientY - startY;
+          let left = origin.left;
+          let top = origin.top;
+          let width = origin.width;
+          let height = origin.height;
+          if (direction.includes("e")) width = Math.max(minimumWidth, origin.width + dx);
+          if (direction.includes("s")) height = Math.max(minimumHeight, origin.height + dy);
+          if (direction.includes("w")) {
+            width = Math.max(minimumWidth, origin.width - dx);
+            left = origin.right - width;
+          }
+          if (direction.includes("n")) {
+            height = Math.max(minimumHeight, origin.height - dy);
+            top = origin.bottom - height;
+          }
+          const targets = panelSnapTargets(key);
+          const horizontalEdge = direction.includes("w") ? left : left + width;
+          const verticalEdge = direction.includes("n") ? top : top + height;
+          const horizontal = nearestPanelSnap(horizontalEdge, [
+            {value: direction.includes("w") ? 4 : innerWidth - 4},
+            ...targets.flatMap(target => [
+              {value: target.rect.left, target: target.panel},
+              {value: target.rect.right, target: target.panel},
+            ]),
+          ]);
+          const vertical = nearestPanelSnap(verticalEdge, [
+            {value: direction.includes("n") ? 4 : innerHeight - 4},
+            ...targets.flatMap(target => [
+              {value: target.rect.top, target: target.panel},
+              {value: target.rect.bottom, target: target.panel},
+            ]),
+          ]);
+          if ((direction.includes("w") || direction.includes("e")) && horizontal.snapped) {
+            if (direction.includes("w")) {
+              width += left - horizontal.value;
+              left = horizontal.value;
+            } else {
+              width = horizontal.value - left;
+            }
+          }
+          if ((direction.includes("n") || direction.includes("s")) && vertical.snapped) {
+            if (direction.includes("n")) {
+              height += top - vertical.value;
+              top = vertical.value;
+            } else {
+              height = vertical.value - top;
+            }
+          }
+          left = clamp(left, 0, Math.max(0, innerWidth - 48));
+          top = clamp(top, 0, Math.max(0, innerHeight - 40));
+          width = Math.max(minimumWidth, Math.min(width, innerWidth - left));
+          height = Math.max(minimumHeight, Math.min(height, innerHeight - top));
+          panel.style.left = `${left}px`;
+          panel.style.top = `${top}px`;
+          panel.style.width = `${width}px`;
+          panel.style.height = `${height}px`;
+          setPanelFloatingState(key, panel, {left, top, width, height});
+          showPanelSnapFeedback(panel, horizontal, vertical);
+          refreshFloatingGeometry();
+        };
+        const finish = () => {
+          handle.onpointermove = null;
+          handle.onpointerup = null;
+          handle.onpointercancel = null;
+          handle.onlostpointercapture = null;
+          panel.classList.remove("movie-panel-resizing");
+          clearPanelSnapFeedback();
+          persistFloatingPanels();
+          historyRedo = [];
+          updateHistoryButtons();
+        };
+        handle.onpointermove = move;
+        handle.onpointerup = finish;
+        handle.onpointercancel = finish;
+        handle.onlostpointercapture = finish;
+      });
+    });
+  };
+  const ensurePanelChrome = (key, panel) => {
+    if (!panel) return;
+    panel.classList.add("movie-collapsible");
+    const handle = panel.matches(`[data-panel-drag="${key}"]`)
+      ? panel
+      : panel.querySelector(`[data-panel-drag="${key}"]`) || panel.firstElementChild || panel;
+    if (!handle.dataset.panelDrag) handle.dataset.panelDrag = key;
+    let actions = panel.querySelector(":scope > .movie-window-actions")
+      || handle.querySelector(":scope > .movie-window-actions");
+    if (!actions) {
+      actions = document.createElement("span");
+      actions.className = "movie-window-actions";
+      handle.appendChild(actions);
+    }
+    if (key === "projectHeader" && actions.parentElement !== panel) {
+      panel.appendChild(actions);
+    }
+    let home = actions.querySelector(".movie-window-home");
+    if (!home) {
+      home = document.createElement("button");
+      home.type = "button";
+      home.className = "icon-button secondary movie-window-home";
+      home.dataset.businessCommand = "home";
+      home.title = "Return panel to its default position";
+      home.setAttribute("aria-label", home.title);
+      home.disabled = !panel.classList.contains("movie-panel-floating");
+      home.addEventListener("click", event => {
+        event.stopPropagation();
+        remember();
+        dockFloatingPanel(key);
+        historyRedo = [];
+        updateHistoryButtons();
+      });
+      actions.appendChild(home);
+    }
+    let toggle = panel.querySelector(":scope > [data-panel-drag] [data-panel-toggle]");
+    if (!toggle) {
+      toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "icon-button secondary movie-panel-toggle";
+      toggle.dataset.panelToggle = "";
+      toggle.dataset.businessCommand = "remove";
+      toggle.title = `Collapse ${key}`;
+      toggle.setAttribute("aria-label", toggle.title);
+      actions.appendChild(toggle);
+    } else if (toggle.parentElement !== actions) {
+      actions.appendChild(toggle);
+    }
+    ensureWindowResizeHandles(key, panel);
+  };
+  const initializeFloatingToolbar = () => {
+    const toolbar = layoutPanels.toolbar?.querySelector("[data-floating-toolbar]");
+    if (!toolbar || toolbar.childElementCount) return;
+    const tools = [
+      ["[data-auto-cut]", "auto", "Auto rough cut"],
+      ["[data-editor-undo]", "undo", "Undo"],
+      ["[data-editor-redo]", "redo", "Redo"],
+      ['[data-keyframe-step="-1"]', "previous", "Previous keyframe"],
+      ['[data-keyframe-step="1"]', "next", "Next keyframe"],
+      ["[data-preview-stop]", "stop", "Stop"],
+      ['[data-preview-step="-1"]', "previous", "Previous frame"],
+      ['[data-preview-step="1"]', "next", "Next frame"],
+      ['[data-add-track="VIDEO"]', "add", "Add video track"],
+      ['[data-add-track="AUDIO"]', "add", "Add audio track"],
+      ["[data-delete-track]", "delete", "Delete selected track"],
+      ['[data-clip-nudge="-1"]', "previous", "Move selected left"],
+      ["[data-timeline-split]", "edit", "Split at playhead"],
+      ['[data-clip-nudge="1"]', "next", "Move selected right"],
+      ["[data-timeline-snap]", "attach", "Toggle snapping"],
+      ["[data-clip-copy]", "copy", "Copy selected clips"],
+      ["[data-clip-paste]", "paste", "Paste clips"],
+      ["[data-clip-join]", "link", "Join clips"],
+      ["[data-clip-render-toolbar]", "export", "Render selected clip"],
+    ];
+    tools.forEach(([selector, command, title]) => {
+      if (!q(selector)) return;
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "icon-button secondary";
+      button.dataset.toolProxy = selector;
+      button.dataset.businessCommand = command;
+      button.title = title;
+      button.setAttribute("aria-label", title);
+      button.addEventListener("click", () => q(selector)?.click());
+      toolbar.appendChild(button);
+    });
+  };
+  const initializeProjectFullscreen = () => {
+    const title = projectHeaderPanel?.querySelector(".project-shell-copy h1");
+    if (!title || title.parentElement.querySelector("[data-project-fullscreen]")) return;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "secondary movie-project-fullscreen";
+    button.dataset.projectFullscreen = "";
+    button.textContent = "Full Screen";
+    button.title = "Open the editor in browser full screen";
+    button.addEventListener("click", async event => {
+      event.stopPropagation();
+      try {
+        if (document.fullscreenElement) await document.exitFullscreen();
+        else await document.documentElement.requestFullscreen();
+      } catch (error) {
+        toast(error.message || "Full screen is unavailable", "error");
+      }
+    });
+    title.insertAdjacentElement("afterend", button);
+    document.addEventListener("fullscreenchange", () => {
+      button.textContent = document.fullscreenElement ? "Exit Full Screen" : "Full Screen";
+    });
+  };
   const bindPanelDragging = () => {
-    qa("[data-panel-drag]").forEach(handle => {
+    initializeFloatingToolbar();
+    initializeProjectFullscreen();
+    Object.entries(layoutPanels).forEach(([key, panel]) => {
+      if (!panel) return;
+      rememberPanelHome(key, panel);
+      ensurePanelChrome(key, panel);
+    });
+    window.refreshLexamoraIcons?.(root);
+    if (projectHeaderPanel) window.refreshLexamoraIcons?.(projectHeaderPanel);
+    [...document.querySelectorAll("[data-panel-drag]")].forEach(handle => {
       const key = handle.dataset.panelDrag;
       const panel = layoutPanels[key];
       if (!panel || handle.dataset.dragBound === "true") return;
@@ -342,28 +604,42 @@
           const width = panel.offsetWidth;
           const height = panel.offsetHeight;
           const targets = panelSnapTargets(key);
-          const xCandidates = [4, innerWidth - width - 4];
-          const yCandidates = [4, innerHeight - height - 4];
-          targets.forEach(rect => {
-            xCandidates.push(rect.left, rect.right, rect.left - width, rect.right - width);
-            yCandidates.push(rect.top, rect.bottom, rect.top - height, rect.bottom - height);
-          });
-          const left = clamp(snapFloatingCoordinate(origin.left + dx, xCandidates), 4, Math.max(4, innerWidth - width - 4));
-          const top = clamp(snapFloatingCoordinate(origin.top + dy, yCandidates), 4, Math.max(4, innerHeight - height - 4));
+          const xSnap = nearestPanelSnap(origin.left + dx, [
+            {value: 4},
+            {value: innerWidth - width - 4},
+            ...targets.flatMap(target => [
+              {value: target.rect.left, target: target.panel},
+              {value: target.rect.right, target: target.panel},
+              {value: target.rect.left - width, target: target.panel},
+              {value: target.rect.right - width, target: target.panel},
+            ]),
+          ]);
+          const ySnap = nearestPanelSnap(origin.top + dy, [
+            {value: 4},
+            {value: innerHeight - height - 4},
+            ...targets.flatMap(target => [
+              {value: target.rect.top, target: target.panel},
+              {value: target.rect.bottom, target: target.panel},
+              {value: target.rect.top - height, target: target.panel},
+              {value: target.rect.bottom - height, target: target.panel},
+            ]),
+          ]);
+          const left = clamp(xSnap.value, 4, Math.max(4, innerWidth - width - 4));
+          const top = clamp(ySnap.value, 4, Math.max(4, innerHeight - height - 4));
           panel.style.left = `${left}px`;
           panel.style.top = `${top}px`;
-          floatingPanels[key] = {left, top, width, height};
+          setPanelFloatingState(key, panel, {left, top, width, height});
+          showPanelSnapFeedback(panel, xSnap, ySnap);
         };
         const finish = () => {
           handle.onpointermove = null;
           handle.onpointerup = null;
           handle.onpointercancel = null;
+          handle.onlostpointercapture = null;
           panel.classList.remove("movie-panel-moving");
+          clearPanelSnapFeedback();
           if (active) {
-            const homeRect = panelHomes.get(key)?.placeholder.getBoundingClientRect();
-            const rect = panel.getBoundingClientRect();
-            if (homeRect && Math.hypot(rect.left - homeRect.left, rect.top - homeRect.top) < 26) dockFloatingPanel(key, {persist: false});
-            localStorage.setItem(floatingPanelsKey, JSON.stringify(floatingPanels));
+            persistFloatingPanels();
             historyRedo = [];
             updateHistoryButtons();
           }
@@ -371,38 +647,14 @@
         handle.onpointermove = move;
         handle.onpointerup = finish;
         handle.onpointercancel = finish;
+        handle.onlostpointercapture = finish;
       });
     });
-    if (typeof ResizeObserver !== "undefined" && root.dataset.panelResizeBound !== "true") {
-      root.dataset.panelResizeBound = "true";
-      const observer = new ResizeObserver(entries => {
-        let changed = false;
-        entries.forEach(entry => {
-          const panel = entry.target;
-          if (!panel.classList.contains("movie-panel-floating") || panel.classList.contains("movie-panel-moving")) return;
-          const key = panel.dataset.panelKey;
-          if (!key || !floatingPanels[key]) return;
-          const rect = panel.getBoundingClientRect();
-          const previous = floatingPanels[key];
-          if (Math.abs(previous.width - rect.width) < 1 && Math.abs(previous.height - rect.height) < 1) return;
-          floatingPanels[key] = {
-            left: rect.left,
-            top: rect.top,
-            width: rect.width,
-            height: rect.height,
-          };
-          changed = true;
-        });
-        if (changed) {
-          localStorage.setItem(floatingPanelsKey, JSON.stringify(floatingPanels));
-          requestAnimationFrame(() => {
-            applyPreviewZoom();
-            updatePreviewGeometry();
-            renderTimeline();
-          });
-        }
-      });
-      Object.values(layoutPanels).filter(Boolean).forEach(panel => observer.observe(panel));
+    if (root.dataset.panelSnapCleanupBound !== "true") {
+      root.dataset.panelSnapCleanupBound = "true";
+      document.addEventListener("pointerup", clearPanelSnapFeedback, true);
+      document.addEventListener("pointercancel", clearPanelSnapFeedback, true);
+      window.addEventListener("blur", clearPanelSnapFeedback);
     }
   };
 
@@ -3648,19 +3900,33 @@
   qa("[data-bin-kind],[data-bin-unused]").forEach(control => control.addEventListener("change", renderBin));
   q("[data-media-position]")?.setAttribute("hidden", "hidden");
 
-  qa("[data-panel-toggle]").forEach(button => {
+  [...document.querySelectorAll("[data-panel-toggle]")].filter(button => button.closest("[data-panel-key]")).forEach(button => {
     const panel = button.closest(".movie-collapsible");
     const key = `studio-movie-panel-${panel?.dataset.panelKey || "panel"}`;
     const apply = collapsed => {
+      if (!panel) return;
+      if (collapsed && panel.classList.contains("movie-panel-floating")) {
+        const rect = panel.getBoundingClientRect();
+        panel.dataset.expandedHeight = String(rect.height);
+      }
       panel.classList.toggle("collapsed", collapsed);
       button.dataset.businessCommand = collapsed ? "add" : "remove";
       button.title = `${collapsed ? "Expand" : "Collapse"} ${panel.dataset.panelKey}`;
       button.setAttribute("aria-label", button.title);
+      if (panel.classList.contains("movie-panel-floating")) {
+        if (collapsed) {
+          panel.style.height = "auto";
+        } else if (panel.dataset.expandedHeight) {
+          panel.style.height = `${Math.max(86, Number(panel.dataset.expandedHeight))}px`;
+          const rect = panel.getBoundingClientRect();
+          setPanelFloatingState(panel.dataset.panelKey, panel, rect);
+          persistFloatingPanels();
+        }
+      }
       window.refreshLexamoraIcons?.(button);
+      refreshFloatingGeometry();
     };
-    const isCoreEditorPanel = Object.values(layoutPanels).includes(panel);
-    apply(isCoreEditorPanel ? false : sessionStorage.getItem(key) === "collapsed");
-    if (isCoreEditorPanel) sessionStorage.setItem(key, "expanded");
+    apply(sessionStorage.getItem(key) === "collapsed");
     button.onclick = () => { const collapsed = !panel.classList.contains("collapsed"); apply(collapsed); sessionStorage.setItem(key, collapsed ? "collapsed" : "expanded"); };
   });
   const trackWidth = q("[data-track-width]");
