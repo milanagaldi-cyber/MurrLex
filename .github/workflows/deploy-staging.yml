@@ -1,0 +1,36 @@
+name: Deploy staging
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: murrlex-staging-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: staging
+    permissions:
+      contents: read
+    steps:
+      - name: Verify approved branch
+        shell: bash
+        run: test "${GITHUB_REF_NAME}" = "Server_Main"
+      - name: Configure restricted deploy key
+        shell: bash
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.STAGING_SSH_PRIVATE_KEY }}
+          SSH_HOST_KEY: ${{ secrets.STAGING_SSH_HOST_KEY }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "${SSH_PRIVATE_KEY}" > ~/.ssh/murrlex_staging
+          chmod 600 ~/.ssh/murrlex_staging
+          printf '%s\n' "${SSH_HOST_KEY}" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+      - name: Deploy through forced SSH command
+        shell: bash
+        env:
+          SSH_HOST: ${{ secrets.STAGING_SSH_HOST }}
+          SSH_USER: ${{ secrets.STAGING_SSH_USER }}
+        run: ssh -i ~/.ssh/murrlex_staging -o BatchMode=yes -o IdentitiesOnly=yes "${SSH_USER}@${SSH_HOST}" deploy
