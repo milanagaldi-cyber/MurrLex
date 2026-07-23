@@ -3774,7 +3774,7 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertContains(page, "data-media-context-root")
         self.assertContains(page, "data-stage-resizer")
         self.assertContains(page, "data-inspector-resizer")
-        self.assertContains(page, "data-panel-height-resizer", count=3)
+        self.assertContains(page, "data-panel-height-resizer", count=4)
         self.assertContains(page, "data-preview-dock")
         self.assertContains(page, "data-track-sidebar-resizer")
         self.assertContains(page, "data-clip-render-toolbar")
