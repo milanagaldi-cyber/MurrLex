@@ -20,6 +20,8 @@
   timeline.mediaFolders = Array.isArray(timeline.mediaFolders) ? timeline.mediaFolders : [];
   let selectedId = null;
   let selectedIds = new Set();
+  let selectedTrackId = null;
+  let trackContextId = null;
   let clipClipboard = [];
   let selectedMediaIds = new Set();
   let selectedMediaFolderId = null;
@@ -87,6 +89,9 @@
   const inspector = q("[data-clip-inspector]");
   const inspectorActions = q("[data-inspector-actions]");
   const previewZoomInput = q("[data-preview-zoom]");
+  const previewZoomValue = q("[data-preview-zoom-value]");
+  const frameSizeInput = q("[data-frame-size]");
+  const frameSizeValue = q("[data-frame-size-value]");
   const stateNode = q("[data-movie-state]");
   const playheadLabel = q("[data-playhead-label]");
   const previewTime = q("[data-preview-time]");
@@ -106,11 +111,13 @@
   const mediaFoldersNode = q("[data-media-folders]");
   const mediaContext = q("[data-movie-media-context]");
   const folderDialog = q("[data-media-folder-dialog]");
+  const trackContext = q("[data-track-context]");
   const editorLayout = q("[data-editor-layout]");
   const layoutPanels = {
     media: q('[data-panel-key="media"]'),
     preview: q('[data-panel-key="preview"]'),
     inspector: q('[data-panel-key="inspector"]'),
+    timeline: q('[data-panel-key="timeline"]'),
   };
   const assetMap = new Map();
   const audioPlayers = new Map();
@@ -119,6 +126,11 @@
   const layoutModeKey = `studio-movie-layout-mode-${timelineId}`;
   const layoutStateKey = mode => `studio-movie-layout-${timelineId}-${mode}`;
   const savedLayoutKey = `studio-movie-layout-saved-${timelineId}`;
+  const floatingPanelsKey = `studio-movie-floating-panels-${timelineId}`;
+  let floatingPanels = (() => {
+    try { return JSON.parse(localStorage.getItem(floatingPanelsKey) || "{}"); }
+    catch (_) { return {}; }
+  })();
   const layoutDefaults = {
     columns: {mediaWidth: 250, inspectorWidth: 390, mediaHeight: 390, canvasHeight: 390, inspectorHeight: 390, timelineHeight: 520, timelineInsetLeft: 0, timelineInsetRight: 0, workspaceExtraLeft: 0, workspaceExtraRight: 0},
     stacked: {mediaWidth: 250, inspectorWidth: 390, mediaHeight: 390, canvasHeight: 390, inspectorHeight: 190, timelineHeight: 520, timelineInsetLeft: 0, timelineInsetRight: 0, workspaceExtraLeft: 0, workspaceExtraRight: 0},
@@ -150,7 +162,7 @@
     }
   };
 
-  const cloneLayoutState = () => ({mode: editorLayoutMode, layouts: structuredClone(editorLayouts)});
+  const cloneLayoutState = () => ({mode: editorLayoutMode, layouts: structuredClone(editorLayouts), floatingPanels: structuredClone(floatingPanels)});
   const persistLayout = mode => {
     localStorage.setItem(layoutModeKey, editorLayoutMode);
     if (mode && editorLayouts[mode]) localStorage.setItem(layoutStateKey(mode), JSON.stringify(editorLayouts[mode]));
@@ -186,6 +198,7 @@
         stacked: {...layoutDefaults.stacked, ...(state.layouts.stacked || {})},
       };
     }
+    if (state.floatingPanels && typeof state.floatingPanels === "object") floatingPanels = structuredClone(state.floatingPanels);
     editorLayoutMode = ["columns", "stacked"].includes(state.mode) ? state.mode : "stacked";
     const geometry = clampLayoutGeometry(editorLayoutMode, editorLayouts[editorLayoutMode]);
     editorLayouts[editorLayoutMode] = geometry;
@@ -218,11 +231,179 @@
       button.setAttribute("aria-pressed", active ? "true" : "false");
     });
     if (persist) persistLayout(editorLayoutMode);
+    applyFloatingPanels();
     if (refresh) requestAnimationFrame(() => {
       applyPreviewZoom();
       updatePreviewGeometry();
       renderTimeline();
     });
+  };
+
+  const panelHomes = new Map();
+  const rememberPanelHome = (key, panel) => {
+    if (panelHomes.has(key)) return panelHomes.get(key);
+    const placeholder = document.createElement("div");
+    placeholder.className = "movie-panel-placeholder";
+    placeholder.dataset.panelPlaceholder = key;
+    placeholder.hidden = true;
+    panel.parentNode.insertBefore(placeholder, panel);
+    const home = {parent: panel.parentNode, placeholder};
+    panelHomes.set(key, home);
+    return home;
+  };
+  function dockFloatingPanel(key, {persist = true} = {}) {
+    const panel = layoutPanels[key];
+    const home = panelHomes.get(key);
+    if (!panel || !home) return;
+    panel.classList.remove("movie-panel-floating", "movie-panel-moving");
+    ["left", "top", "width", "height"].forEach(property => panel.style.removeProperty(property));
+    home.parent.insertBefore(panel, home.placeholder.nextSibling);
+    home.placeholder.hidden = true;
+    delete floatingPanels[key];
+    if (persist) {
+      localStorage.setItem(floatingPanelsKey, JSON.stringify(floatingPanels));
+      persistLayout(editorLayoutMode);
+    }
+  }
+  function floatPanel(key, geometry, {persist = true} = {}) {
+    const panel = layoutPanels[key];
+    if (!panel) return;
+    const home = rememberPanelHome(key, panel);
+    const fallback = panel.getBoundingClientRect();
+    const rect = {
+      left: Number(geometry?.left ?? fallback.left),
+      top: Number(geometry?.top ?? fallback.top),
+      width: clamp(Number(geometry?.width ?? fallback.width), 220, Math.max(220, innerWidth - 16)),
+      height: clamp(Number(geometry?.height ?? fallback.height), 120, Math.max(120, innerHeight - 16)),
+    };
+    rect.left = clamp(rect.left, 4, Math.max(4, innerWidth - Math.min(rect.width, innerWidth - 8) - 4));
+    rect.top = clamp(rect.top, 4, Math.max(4, innerHeight - Math.min(rect.height, innerHeight - 8) - 4));
+    home.placeholder.style.width = `${fallback.width}px`;
+    home.placeholder.style.height = `${fallback.height}px`;
+    home.placeholder.hidden = false;
+    panel.classList.add("movie-panel-floating");
+    panel.style.left = `${rect.left}px`;
+    panel.style.top = `${rect.top}px`;
+    panel.style.width = `${rect.width}px`;
+    panel.style.height = `${rect.height}px`;
+    floatingPanels[key] = rect;
+    if (persist) localStorage.setItem(floatingPanelsKey, JSON.stringify(floatingPanels));
+  }
+  function applyFloatingPanels() {
+    Object.entries(layoutPanels).forEach(([key, panel]) => {
+      if (!panel) return;
+      rememberPanelHome(key, panel);
+      if (floatingPanels[key]) floatPanel(key, floatingPanels[key], {persist: false});
+      else if (panel.classList.contains("movie-panel-floating")) dockFloatingPanel(key, {persist: false});
+    });
+  }
+  const panelSnapTargets = activeKey => Object.entries(layoutPanels)
+    .filter(([key, panel]) => key !== activeKey && panel && !panel.hidden)
+    .map(([, panel]) => panel.getBoundingClientRect());
+  const snapFloatingCoordinate = (value, candidates, tolerance = 14) => {
+    let result = value;
+    let best = tolerance + 1;
+    candidates.forEach(candidate => {
+      const distance = Math.abs(value - candidate);
+      if (distance <= tolerance && distance < best) { best = distance; result = candidate; }
+    });
+    return result;
+  };
+  const bindPanelDragging = () => {
+    qa("[data-panel-drag]").forEach(handle => {
+      const key = handle.dataset.panelDrag;
+      const panel = layoutPanels[key];
+      if (!panel || handle.dataset.dragBound === "true") return;
+      handle.dataset.dragBound = "true";
+      handle.addEventListener("dblclick", event => {
+        if (event.target.closest("button,input,select,a")) return;
+        if (panel.classList.contains("movie-panel-floating")) {
+          remember();
+          dockFloatingPanel(key);
+          updateHistoryButtons();
+        }
+      });
+      handle.addEventListener("pointerdown", event => {
+        if (!canEdit || event.button !== 0 || event.target.closest("button,input,select,a,label")) return;
+        const origin = panel.getBoundingClientRect();
+        const startX = event.clientX;
+        const startY = event.clientY;
+        let active = false;
+        let remembered = false;
+        handle.setPointerCapture(event.pointerId);
+        const move = next => {
+          const dx = next.clientX - startX;
+          const dy = next.clientY - startY;
+          if (!active && Math.hypot(dx, dy) < 6) return;
+          if (!remembered) { remember(); remembered = true; }
+          if (!panel.classList.contains("movie-panel-floating")) floatPanel(key, origin, {persist: false});
+          active = true;
+          panel.classList.add("movie-panel-moving");
+          const width = panel.offsetWidth;
+          const height = panel.offsetHeight;
+          const targets = panelSnapTargets(key);
+          const xCandidates = [4, innerWidth - width - 4];
+          const yCandidates = [4, innerHeight - height - 4];
+          targets.forEach(rect => {
+            xCandidates.push(rect.left, rect.right, rect.left - width, rect.right - width);
+            yCandidates.push(rect.top, rect.bottom, rect.top - height, rect.bottom - height);
+          });
+          const left = clamp(snapFloatingCoordinate(origin.left + dx, xCandidates), 4, Math.max(4, innerWidth - width - 4));
+          const top = clamp(snapFloatingCoordinate(origin.top + dy, yCandidates), 4, Math.max(4, innerHeight - height - 4));
+          panel.style.left = `${left}px`;
+          panel.style.top = `${top}px`;
+          floatingPanels[key] = {left, top, width, height};
+        };
+        const finish = () => {
+          handle.onpointermove = null;
+          handle.onpointerup = null;
+          handle.onpointercancel = null;
+          panel.classList.remove("movie-panel-moving");
+          if (active) {
+            const homeRect = panelHomes.get(key)?.placeholder.getBoundingClientRect();
+            const rect = panel.getBoundingClientRect();
+            if (homeRect && Math.hypot(rect.left - homeRect.left, rect.top - homeRect.top) < 26) dockFloatingPanel(key, {persist: false});
+            localStorage.setItem(floatingPanelsKey, JSON.stringify(floatingPanels));
+            historyRedo = [];
+            updateHistoryButtons();
+          }
+        };
+        handle.onpointermove = move;
+        handle.onpointerup = finish;
+        handle.onpointercancel = finish;
+      });
+    });
+    if (typeof ResizeObserver !== "undefined" && root.dataset.panelResizeBound !== "true") {
+      root.dataset.panelResizeBound = "true";
+      const observer = new ResizeObserver(entries => {
+        let changed = false;
+        entries.forEach(entry => {
+          const panel = entry.target;
+          if (!panel.classList.contains("movie-panel-floating") || panel.classList.contains("movie-panel-moving")) return;
+          const key = panel.dataset.panelKey;
+          if (!key || !floatingPanels[key]) return;
+          const rect = panel.getBoundingClientRect();
+          const previous = floatingPanels[key];
+          if (Math.abs(previous.width - rect.width) < 1 && Math.abs(previous.height - rect.height) < 1) return;
+          floatingPanels[key] = {
+            left: rect.left,
+            top: rect.top,
+            width: rect.width,
+            height: rect.height,
+          };
+          changed = true;
+        });
+        if (changed) {
+          localStorage.setItem(floatingPanelsKey, JSON.stringify(floatingPanels));
+          requestAnimationFrame(() => {
+            applyPreviewZoom();
+            updatePreviewGeometry();
+            renderTimeline();
+          });
+        }
+      });
+      Object.values(layoutPanels).filter(Boolean).forEach(panel => observer.observe(panel));
+    }
   };
 
   const toast = (message, type) => window.studioToast ? window.studioToast(String(message).replace(/\.$/, ""), type) : console.info(message);
@@ -416,8 +597,45 @@
     previewStage.style.height = `${Math.max(90, naturalHeight * previewZoom)}px`;
     previewStage.style.aspectRatio = `${output.width} / ${output.height}`;
     if (previewZoomInput) previewZoomInput.value = previewZoom;
-    const zoomValue = q("[data-preview-zoom-value]");
-    if (zoomValue) zoomValue.textContent = `${Math.round(previewZoom * 100)}%`;
+    if (previewZoomValue && document.activeElement !== previewZoomValue) previewZoomValue.value = String(Math.round(previewZoom * 100));
+  }
+
+  function syncFrameSizeControls() {
+    if (!frameSizeInput || !frameSizeValue) return;
+    const found = selectedId ? findClip(selectedId) : null;
+    const asset = found ? assetMap.get(found.clip.assetId) : null;
+    const available = Boolean(found && asset && ["VIDEO", "IMAGE"].includes(asset.kind) && !found.track.locked);
+    frameSizeInput.disabled = !available;
+    frameSizeValue.disabled = !available;
+    q("[data-frame-size-down]")?.toggleAttribute("disabled", !available);
+    q("[data-frame-size-up]")?.toggleAttribute("disabled", !available);
+    if (!available) return;
+    const width = Math.max(16, Math.round((Number(asset.width) || outputDimensions().width) * Number(found.clip.scale || 1)));
+    const maximum = Math.max(4096, Math.round((Number(asset.width) || outputDimensions().width) * 8));
+    frameSizeInput.max = String(maximum);
+    frameSizeValue.max = String(maximum);
+    if (document.activeElement !== frameSizeInput) frameSizeInput.value = String(width);
+    if (document.activeElement !== frameSizeValue) frameSizeValue.value = String(width);
+  }
+
+  function setSelectedFrameWidth(width, {rememberChange = true} = {}) {
+    const found = selectedId ? findClip(selectedId) : null;
+    const asset = found ? assetMap.get(found.clip.assetId) : null;
+    if (!found || !asset || found.track.locked || !["VIDEO", "IMAGE"].includes(asset.kind)) return false;
+    const sourceWidth = Math.max(1, Number(asset.width) || outputDimensions().width);
+    const target = clamp(Math.round(Number(width) || sourceWidth), 16, sourceWidth * 8);
+    if (Math.abs(Number(found.clip.scale || 1) - target / sourceWidth) < .0001) return false;
+    if (rememberChange) remember();
+    found.clip.scale = target / sourceWidth;
+    if (rememberChange) {
+      historyRedo = [];
+      updateDirty();
+      updateHistoryButtons();
+      scheduleAutosave();
+    }
+    updatePreviewGeometry();
+    renderInspector();
+    return true;
   }
 
   function applyCanvas() {
@@ -556,6 +774,45 @@
     });
     if (previewOutline) previewOutline.hidden = !asset;
     previewGeometry = geometry ? {clip, ...geometry} : null;
+    syncFrameSizeControls();
+  }
+
+  function nudgeCanvasFrame(action) {
+    const found = selectedId ? findClip(selectedId) : null;
+    const asset = found ? assetMap.get(found.clip.assetId) : null;
+    if (!found || !asset || !canEdit || found.track.locked || standalonePreviewAssetId) return;
+    const clip = found.clip;
+    const output = outputDimensions();
+    const geometry = clipGeometry(asset, clip);
+    const limits = {
+      minX: 1 - output.width / 2 - geometry.widthPx / 2,
+      maxX: output.width / 2 + geometry.widthPx / 2 - 1,
+      minY: 1 - output.height / 2 - geometry.heightPx / 2,
+      maxY: output.height / 2 + geometry.heightPx / 2 - 1,
+    };
+    let nextX = Number(clip.positionX || 0);
+    let nextY = Number(clip.positionY || 0);
+    if (action === "reset") { nextX = 0; nextY = 0; }
+    if (action === "left") nextX -= 1;
+    if (action === "right") nextX += 1;
+    if (action === "up") nextY += 1;
+    if (action === "down") nextY -= 1;
+    const clampedX = clamp(nextX, limits.minX, limits.maxX);
+    const clampedY = clamp(nextY, limits.minY, limits.maxY);
+    const hit = action !== "reset" && (clampedX !== nextX || clampedY !== nextY);
+    const edgeClass = action === "left" ? "snap-left" : action === "right" ? "snap-right" : action === "up" ? "snap-top" : "snap-bottom";
+    if (hit) {
+      previewStage.classList.add(edgeClass);
+      setTimeout(() => previewStage.classList.remove(edgeClass), 220);
+      return;
+    }
+    mutate(() => {
+      clip.positionX = clampedX;
+      clip.positionY = clampedY;
+      if (action === "reset") clip.scale = 1;
+    });
+    updatePreviewGeometry();
+    renderInspector();
   }
 
   function beginPreviewPan(event) {
@@ -2097,6 +2354,82 @@
     renderTimeline();
   }
 
+  function selectTrack(trackId, {render = true} = {}) {
+    selectedTrackId = timeline.tracks.some(track => track.id === trackId) ? trackId : null;
+    const actions = q("[data-selected-track-actions]");
+    if (actions) actions.hidden = !selectedTrackId;
+    qa(".movie-track-head").forEach(head => head.classList.toggle("track-selected", head.dataset.trackId === selectedTrackId));
+    if (render) renderTimeline();
+  }
+
+  function moveSelectedTrack(direction) {
+    const track = timeline.tracks.find(item => item.id === selectedTrackId);
+    if (track) moveTrack(track, direction);
+  }
+
+  function reorderTrack(sourceId, targetId, after = false) {
+    const sourceIndex = timeline.tracks.findIndex(track => track.id === sourceId);
+    const targetIndex = timeline.tracks.findIndex(track => track.id === targetId);
+    if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) return;
+    mutate(() => {
+      const [track] = timeline.tracks.splice(sourceIndex, 1);
+      let insertion = timeline.tracks.findIndex(item => item.id === targetId);
+      if (after) insertion += 1;
+      timeline.tracks.splice(clamp(insertion, 0, timeline.tracks.length), 0, track);
+    });
+    selectedTrackId = sourceId;
+    renderTimeline();
+  }
+
+  function openTrackContext(event, track) {
+    if (!trackContext) return;
+    event.preventDefault();
+    event.stopPropagation();
+    trackContextId = track.id;
+    selectTrack(track.id, {render: false});
+    q("[data-track-context-title]", trackContext).textContent = track.name;
+    const labels = {
+      mute: track.muted ? "Unmute" : "Mute",
+      visibility: track.hidden ? "Show" : "Hide",
+      lock: track.locked ? "Unlock" : "Lock",
+      display: track.displayMode === "WAVEFORM" ? "Show clips and frames" : "Show waveform",
+    };
+    Object.entries(labels).forEach(([action, label]) => {
+      const button = q(`[data-track-context-action="${action}"]`, trackContext);
+      if (button) button.textContent = label;
+    });
+    trackContext.hidden = false;
+    const width = Math.max(190, trackContext.offsetWidth);
+    const height = Math.max(180, trackContext.offsetHeight);
+    trackContext.style.left = `${clamp(event.clientX, 4, innerWidth - width - 4)}px`;
+    trackContext.style.top = `${clamp(event.clientY, 4, innerHeight - height - 4)}px`;
+  }
+
+  function performTrackAction(action, trackId = trackContextId) {
+    const track = timeline.tracks.find(item => item.id === trackId);
+    if (!track) return;
+    if (action === "up") return moveTrack(track, -1);
+    if (action === "down") return moveTrack(track, 1);
+    if (action === "delete") {
+      if (track.clips.length) return toast("Remove clips before deleting this track");
+      mutate(() => { timeline.tracks = timeline.tracks.filter(item => item.id !== track.id); });
+      selectedTrackId = null;
+      renderTimeline();
+      return;
+    }
+    mutate(() => {
+      if (action === "mute") track.muted = !track.muted;
+      if (action === "visibility") track.hidden = !track.hidden;
+      if (action === "lock") track.locked = !track.locked;
+      if (action === "display") track.displayMode = track.displayMode === "WAVEFORM" ? "CLIPS" : "WAVEFORM";
+      if (action === "height-down") track.height = clamp(Math.round(Number(track.height || 84) / 21 - 1), 1, 10) * 21;
+      if (action === "height-up") track.height = clamp(Math.round(Number(track.height || 84) / 21 + 1), 1, 10) * 21;
+    });
+    renderTimeline();
+    renderInspector();
+    syncPlayers(false, true);
+  }
+
   function addClip(track, assetId, start) {
     const asset = assetMap.get(assetId);
     if (!asset || asset.status !== "READY" || track.locked) return;
@@ -2159,7 +2492,9 @@
     const heightUp = document.createElement("button");
     const heightResizer = document.createElement("i");
     const remove = document.createElement("button");
-    head.className = `movie-track-head${track.locked ? " locked" : ""}${track.hidden ? " hidden-track" : ""}${Number(track.height) <= 21 ? " height-1" : ""}`;
+    head.className = `movie-track-head${track.locked ? " locked" : ""}${track.hidden ? " hidden-track" : ""}${Number(track.height) <= 21 ? " height-1" : ""}${track.id === selectedTrackId ? " track-selected" : ""}`;
+    head.dataset.trackId = track.id;
+    head.draggable = canEdit;
     nameWrap.className = "movie-track-name";
     code.className = "movie-track-code";
     const sameKind = timeline.tracks.filter(item => item.kind === track.kind);
@@ -2249,8 +2584,40 @@
       mutate(() => { timeline.tracks = timeline.tracks.filter(item => item.id !== track.id); });
       renderTimeline();
     };
-    controls.append(up, down, mute, visibility, lock, display, loudnessGuide, height, remove);
+    controls.append(mute, visibility, lock, display, loudnessGuide, height, remove);
     head.append(nameWrap, controls, heightResizer);
+    nameWrap.addEventListener("click", event => {
+      event.stopPropagation();
+      selectTrack(track.id, {render: false});
+    });
+    nameWrap.addEventListener("contextmenu", event => openTrackContext(event, track));
+    head.addEventListener("contextmenu", event => openTrackContext(event, track));
+    head.addEventListener("dragstart", event => {
+      if (!canEdit || event.target.closest("button,input")) return event.preventDefault();
+      selectedTrackId = track.id;
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/x-lexamora-track", track.id);
+      requestAnimationFrame(() => head.classList.add("dragging"));
+    });
+    head.addEventListener("dragend", () => {
+      head.classList.remove("dragging");
+      qa(".movie-track-head").forEach(item => item.classList.remove("movie-track-drag-over"));
+    });
+    head.addEventListener("dragover", event => {
+      if (!event.dataTransfer.types.includes("text/x-lexamora-track")) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+      qa(".movie-track-head").forEach(item => item.classList.remove("movie-track-drag-over"));
+      head.classList.add("movie-track-drag-over");
+    });
+    head.addEventListener("drop", event => {
+      const sourceId = event.dataTransfer.getData("text/x-lexamora-track");
+      if (!sourceId) return;
+      event.preventDefault();
+      head.classList.remove("movie-track-drag-over");
+      const rect = head.getBoundingClientRect();
+      reorderTrack(sourceId, track.id, event.clientY > rect.top + rect.height / 2);
+    });
     return head;
   }
 
@@ -3086,20 +3453,7 @@
   preview.addEventListener("error", () => { previewStatus.textContent = preview.error?.message || "Preview failed"; });
   previewStage.addEventListener("pointerdown", beginPreviewPan);
   qa("[data-preview-resize]").forEach(handle => handle.addEventListener("pointerdown", beginPreviewResize));
-  qa("[data-canvas-frame]").forEach(button => button.addEventListener("click", event => {
-    event.preventDefault(); event.stopPropagation();
-    const found = selectedId ? findClip(selectedId) : null;
-    if (!found || !canEdit || found.track.locked || standalonePreviewAssetId) return;
-    const action = button.dataset.canvasFrame;
-    mutate(() => {
-      if (action === "reset") { found.clip.positionX = 0; found.clip.positionY = 0; found.clip.scale = 1; }
-      else if (action === "left") found.clip.positionX = Number(found.clip.positionX || 0) - 1;
-      else if (action === "right") found.clip.positionX = Number(found.clip.positionX || 0) + 1;
-      else if (action === "up") found.clip.positionY = Number(found.clip.positionY || 0) + 1;
-      else if (action === "down") found.clip.positionY = Number(found.clip.positionY || 0) - 1;
-    });
-    updatePreviewGeometry(); renderInspector();
-  }));
+  qa("[data-canvas-frame]").forEach(button => bindHold(button, () => nudgeCanvasFrame(button.dataset.canvasFrame), 210, 75));
   previewStage.addEventListener("wheel", () => {}, {passive: true});
   playheadNode.addEventListener("pointerdown", beginPlayheadGesture);
   previewZoomInput?.addEventListener("input", event => {
@@ -3108,6 +3462,19 @@
     applyPreviewZoom();
     updatePreviewGeometry();
   });
+  const setPreviewZoomPercent = value => {
+    previewZoom = clamp((Number(value) || 100) / 100, .25, 2);
+    localStorage.setItem("studio-movie-preview-zoom", String(previewZoom));
+    applyPreviewZoom();
+    updatePreviewGeometry();
+  };
+  previewZoomValue?.addEventListener("change", event => setPreviewZoomPercent(event.target.value));
+  q("[data-preview-zoom-down]")?.addEventListener("click", () => setPreviewZoomPercent(Math.round(previewZoom * 100) - 5));
+  q("[data-preview-zoom-up]")?.addEventListener("click", () => setPreviewZoomPercent(Math.round(previewZoom * 100) + 5));
+  frameSizeInput?.addEventListener("input", event => setSelectedFrameWidth(event.target.value));
+  frameSizeValue?.addEventListener("change", event => setSelectedFrameWidth(event.target.value));
+  q("[data-frame-size-down]")?.addEventListener("click", () => setSelectedFrameWidth(Number(frameSizeValue?.value || 0) - 1));
+  q("[data-frame-size-up]")?.addEventListener("click", () => setSelectedFrameWidth(Number(frameSizeValue?.value || 0) + 1));
   qa("[data-inspector-tab]").forEach(button => button.addEventListener("click", () => { inspectorTab = button.dataset.inspectorTab; renderInspector(); }));
   q("[data-timeline-split]").onclick = splitSelected;
   q("[data-clip-copy]")?.addEventListener("click", copySelected);
@@ -3117,6 +3484,8 @@
   q("[data-delete-selected]")?.addEventListener("click", deleteSelected);
   q("[data-selected-up]")?.addEventListener("click", () => moveSelectedToAdjacentTrack(-1));
   q("[data-selected-down]")?.addEventListener("click", () => moveSelectedToAdjacentTrack(1));
+  q("[data-selected-track-up]")?.addEventListener("click", () => moveSelectedTrack(-1));
+  q("[data-selected-track-down]")?.addEventListener("click", () => moveSelectedTrack(1));
   qa("[data-clip-nudge]").forEach(button => bindHold(button, () => nudgeSelected(Number(button.dataset.clipNudge))));
   q("[data-timeline-snap]").onclick = event => { snapping = !snapping; event.currentTarget.classList.toggle("active", snapping); toast(snapping ? "Snapping enabled" : "Snapping disabled"); };
   ruler.onpointerdown = event => {
@@ -3218,9 +3587,25 @@
   document.addEventListener("click", event => {
     const clipContext = q("[data-clip-context]");
     if (clipContext && !event.target.closest("[data-clip-context]")) clipContext.hidden = true;
+    if (trackContext && !event.target.closest("[data-track-context]")) trackContext.hidden = true;
+    if (
+      selectedTrackId &&
+      !event.target.closest(".movie-track-head") &&
+      !event.target.closest("[data-selected-track-actions]") &&
+      !event.target.closest("[data-track-context]")
+    ) {
+      selectTrack(null, {render: false});
+    }
     qa("details[open]").forEach(details => {
       if (!event.target.closest("summary") || !details.contains(event.target)) details.removeAttribute("open");
     });
+  });
+  trackContext?.addEventListener("click", event => {
+    const button = event.target.closest("[data-track-context-action]");
+    if (!button) return;
+    event.stopPropagation();
+    performTrackAction(button.dataset.trackContextAction);
+    trackContext.hidden = true;
   });
   root.addEventListener("pointerdown", event => {
     if (playing && !event.target.closest("[data-preview-play],[data-preview-step],[data-preview-stop]")) stopPlayback();
@@ -3273,7 +3658,9 @@
       button.setAttribute("aria-label", button.title);
       window.refreshLexamoraIcons?.(button);
     };
-    apply(sessionStorage.getItem(key) === "collapsed");
+    const isCoreEditorPanel = Object.values(layoutPanels).includes(panel);
+    apply(isCoreEditorPanel ? false : sessionStorage.getItem(key) === "collapsed");
+    if (isCoreEditorPanel) sessionStorage.setItem(key, "expanded");
     button.onclick = () => { const collapsed = !panel.classList.contains("collapsed"); apply(collapsed); sessionStorage.setItem(key, collapsed ? "collapsed" : "expanded"); };
   });
   const trackWidth = q("[data-track-width]");
@@ -3525,6 +3912,7 @@
   q("[data-movie-ratio]").value = root.dataset.aspectRatio || "16:9";
   q("[data-movie-resolution]").value = root.dataset.resolution || "1920x1080";
   q("[data-movie-fps]").value = root.dataset.fps || "25";
+  bindPanelDragging();
   applyEditorLayout(cloneLayoutState(), {persist: false, refresh: false});
   applyPreviewDock();
   normalizeTimeline(); applyCanvas(); renderBin(); renderTimeline(); renderInspector(); renderRenderJobs(); renderLibrary(); scheduleRenderPoll(); setPlayhead(0, true, true);
