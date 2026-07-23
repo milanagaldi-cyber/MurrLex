@@ -120,6 +120,10 @@ class Project(SoftDeleteModel):
         null=True,
         blank=True,
     )
+    editor_wallpaper = models.ImageField(
+        upload_to="studio/editor-wallpapers/",
+        blank=True,
+    )
     project_type = models.CharField(max_length=24, choices=Type.choices)
     title = models.CharField(max_length=240)
     description = models.TextField(blank=True)

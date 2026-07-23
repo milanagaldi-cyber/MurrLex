@@ -1232,7 +1232,7 @@ def project_settings(request, project_id):
     requested_original_language = (request.POST.get("original_language") or original_language).upper()
     original_language_changed = request.method == "POST" and requested_original_language != original_language.upper()
     propagation_confirmed = request.POST.get("confirm_language_propagation") == "on"
-    form = ProjectSettingsForm(request.POST or None, instance=project)
+    form = ProjectSettingsForm(request.POST or None, request.FILES or None, instance=project)
     if original_language_changed and not propagation_confirmed:
         form.add_error(
             None,

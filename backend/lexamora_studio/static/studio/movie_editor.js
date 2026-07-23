@@ -79,6 +79,7 @@
   const tracksNode = q("[data-movie-tracks]");
   const headsNode = q("[data-track-heads]");
   const preview = q("[data-movie-preview]");
+  const previewImage = q("[data-movie-preview-image]");
   const previewBody = q(".movie-preview-body");
   const previewStage = q("[data-preview-stage]");
   const previewLayers = q("[data-preview-layers]");
@@ -167,6 +168,11 @@
   };
   const previewDockKey = `studio-movie-preview-dock-${timelineId}`;
   let previewDockMode = localStorage.getItem(previewDockKey) === "bottom" ? "bottom" : "center";
+  if (root.dataset.editorWallpaper) {
+    const wallpaper = String(root.dataset.editorWallpaper).replace(/["\\\n\r]/g, "");
+    root.classList.add("has-editor-wallpaper");
+    root.style.backgroundImage = `linear-gradient(rgba(5,14,23,.86),rgba(5,14,23,.86)),url("${wallpaper}")`;
+  }
   const applyPreviewDock = () => {
     previewBody?.classList.toggle("dock-bottom", previewDockMode === "bottom");
     const button = q("[data-preview-dock]");
@@ -264,10 +270,7 @@
   document.documentElement.classList.add("movie-editor-windowing");
   document.body.classList.add("movie-editor-windowing");
   const initialRootRect = root.getBoundingClientRect();
-  const workspaceExtent = {
-    width: Math.ceil(Math.max(document.documentElement.clientWidth, initialRootRect.right + scrollX + 48)),
-    height: Math.ceil(Math.max(document.documentElement.clientHeight, initialRootRect.bottom + scrollY + 48)),
-  };
+  const workspaceExtent = {width: 0, height: 0};
   const pageRect = node => {
     const rect = node.getBoundingClientRect();
     return {
@@ -281,39 +284,38 @@
   };
   const updateFloatingWorkspaceExtent = () => {
     const rootBounds = pageRect(root);
+    const timelineReserve = Math.max(
+      520,
+      Number(layoutPanels.timeline?.getBoundingClientRect().height || 0) * 2,
+    );
     let right = Math.max(
-      workspaceExtent.width,
       document.documentElement.clientWidth,
       rootBounds.left + root.scrollWidth + 48,
     );
     let bottom = Math.max(
-      workspaceExtent.height,
       document.documentElement.clientHeight,
-      rootBounds.top + root.scrollHeight + 48,
+      rootBounds.top + root.scrollHeight + timelineReserve,
     );
     Object.values(layoutPanels).filter(panel => panel?.classList.contains("movie-panel-floating")).forEach(panel => {
       const rect = pageRect(panel);
       right = Math.max(right, rect.right + 48);
       bottom = Math.max(bottom, rect.bottom + 48);
     });
-    workspaceExtent.width = Math.ceil(right);
-    workspaceExtent.height = Math.ceil(bottom);
+    // Never shrink the detachable desktop while the editor is open. Shrinking
+    // changes page coordinates under the pointer and used to launch panels to
+    // the side or pin the Timeline against the browser bottom.
+    workspaceExtent.width = Math.ceil(Math.max(workspaceExtent.width, right));
+    workspaceExtent.height = Math.ceil(Math.max(workspaceExtent.height, bottom));
     floatingWorkspaceSpacer.style.width = `${workspaceExtent.width}px`;
     floatingWorkspaceSpacer.style.height = `${workspaceExtent.height}px`;
     document.body.style.setProperty("min-width", `${workspaceExtent.width}px`, "important");
     document.body.style.setProperty("min-height", `${workspaceExtent.height}px`, "important");
   };
-  const autoScrollWorkspace = event => {
-    const edge = 42;
-    const step = 24;
-    let left = 0;
-    let top = 0;
-    if (event.clientX < edge) left = -step;
-    else if (event.clientX > innerWidth - edge) left = step;
-    if (event.clientY < edge) top = -step;
-    else if (event.clientY > innerHeight - edge) top = step;
-    if (left || top) window.scrollBy({left, top, behavior: "auto"});
-  };
+  // Moving the document while a panel is being dragged changes the pointer's
+  // page coordinates and used to launch floating panels across the workspace.
+  // The workspace grows around the panel instead, so the normal page scrollbars
+  // remain available without mutating the drag coordinate system.
+  const autoScrollWorkspace = () => {};
   const flashWindowAction = element => {
     if (!element) return;
     element.classList.remove("movie-window-action-flash");
@@ -321,7 +323,14 @@
     element.classList.add("movie-window-action-flash");
     setTimeout(() => element.classList.remove("movie-window-action-flash"), 620);
   };
-  const flashLayoutLock = () => flashWindowAction(q("[data-layout-lock]"));
+  let lastLayoutLockWarning = 0;
+  const flashLayoutLock = () => {
+    flashWindowAction(q("[data-layout-lock]"));
+    if (Date.now() - lastLayoutLockWarning > 900) {
+      lastLayoutLockWarning = Date.now();
+      toast("Layout is locked", "warning");
+    }
+  };
   const rememberPanelHome = (key, panel) => {
     if (panelHomes.has(key)) return panelHomes.get(key);
     const placeholder = document.createElement("div");
@@ -373,6 +382,7 @@
       "movie-panel-home-snap",
       "movie-panel-edge-snap",
     );
+    panel.classList.add("movie-panel-docked");
     ["left", "top", "width", "height"].forEach(property => panel.style.removeProperty(property));
     home.parent.insertBefore(panel, home.placeholder.nextSibling);
     home.rect = pageRect(panel);
@@ -404,6 +414,7 @@
     panel.hidden = false;
     if (panel.parentElement !== document.body) document.body.appendChild(panel);
     panel.classList.add("movie-panel-floating");
+    panel.classList.remove("movie-panel-docked");
     panel.style.setProperty("left", `${rect.left}px`, "important");
     panel.style.setProperty("top", `${rect.top}px`, "important");
     panel.style.setProperty("width", `${rect.width}px`, "important");
@@ -469,6 +480,7 @@
         const minimumWidth = key === "toolbar" ? 220 : 240;
         const minimumHeight = panel.classList.contains("collapsed") ? panel.offsetHeight : 86;
         panel.classList.add("movie-panel-resizing");
+        document.body.classList.add("movie-panel-interacting");
         handle.setPointerCapture(event.pointerId);
         const move = next => {
           const dx = next.pageX - startX;
@@ -530,8 +542,9 @@
           panel.style.setProperty("height", `${height}px`, "important");
           setPanelFloatingState(key, panel, {left, top, width, height});
           showPanelSnapFeedback(panel, [horizontal, vertical]);
-          refreshFloatingGeometry();
-          autoScrollWorkspace(next);
+          updateFloatingWorkspaceExtent();
+          applyPreviewZoom();
+          updatePreviewGeometry();
         };
         const finish = () => {
           handle.onpointermove = null;
@@ -539,7 +552,10 @@
           handle.onpointercancel = null;
           handle.onlostpointercapture = null;
           panel.classList.remove("movie-panel-resizing");
+          document.body.classList.remove("movie-panel-interacting");
           clearPanelSnapFeedback();
+          updateFloatingWorkspaceExtent();
+          renderTimeline();
           persistFloatingPanels();
           historyRedo = [];
           updateHistoryButtons();
@@ -676,9 +692,8 @@
     });
   };
   const initializeProjectFullscreen = () => {
-    const nav = document.querySelector(".site-header .topbar nav");
-    const credits = nav?.querySelector(".ai-credit-control");
-    if (!nav || nav.querySelector("[data-project-fullscreen]")) return;
+    const host = q(".movie-actions");
+    if (!host || host.querySelector("[data-project-fullscreen]")) return;
     const button = document.createElement("button");
     button.type = "button";
     button.className = "theme-toggle icon-button movie-project-fullscreen";
@@ -695,13 +710,22 @@
         toast(error.message || "Full screen is unavailable", "error");
       }
     });
-    nav.insertBefore(button, credits || nav.firstChild);
+    host.insertBefore(button, host.firstChild);
+    const home = document.createElement("button");
+    home.type = "button";
+    home.className = "icon-button secondary";
+    home.dataset.editorHome = "";
+    home.dataset.businessCommand = "home";
+    home.title = "Reset the editor workspace";
+    home.setAttribute("aria-label", home.title);
+    home.addEventListener("click", () => q("[data-layout-reset]")?.click());
+    host.insertBefore(home, button.nextSibling);
     document.addEventListener("fullscreenchange", () => {
       button.classList.toggle("active", Boolean(document.fullscreenElement));
       button.title = document.fullscreenElement ? "Exit full screen" : "Open the editor in browser full screen";
       button.setAttribute("aria-label", button.title);
     });
-    window.refreshLexamoraIcons?.(button);
+    window.refreshLexamoraIcons?.(host);
   };
   const applyLayoutLockState = () => {
     document.body.classList.toggle("movie-layout-locked", layoutLocked);
@@ -790,7 +814,8 @@
     const fps = q("[data-movie-fps]");
     if (!controls) return;
     if (fps && frameSize) fps.insertAdjacentElement("afterend", frameSize);
-    if (frameControls) controls.appendChild(frameControls);
+    // Frame controls belong to the Canvas window. Keeping them beside the
+    // stage prevents them from collapsing into the global preview toolbar.
     const actionHost = layoutPanels.preview?.querySelector(":scope > .movie-window-actions") || controls;
     let toolbarButton = actionHost.querySelector("[data-floating-toolbar-open]");
     if (!toolbarButton) {
@@ -852,29 +877,36 @@
       handle.addEventListener("pointerdown", event => {
         if (!canEdit || event.button !== 0 || event.target.closest("button,input,select,a,label")) return;
         if (layoutLocked) {
+          event.preventDefault();
+          event.stopPropagation();
           flashLayoutLock();
           return;
         }
+        event.preventDefault();
+        event.stopPropagation();
         const origin = pageRect(panel);
-        const startX = event.pageX;
-        const startY = event.pageY;
+        const grabOffsetX = event.pageX - origin.left;
+        const grabOffsetY = event.pageY - origin.top;
         let active = false;
         let remembered = false;
         let pendingHome = false;
         handle.setPointerCapture(event.pointerId);
         const move = next => {
-          const dx = next.pageX - startX;
-          const dy = next.pageY - startY;
+          const rawPointerLeft = next.pageX - grabOffsetX;
+          const rawPointerTop = next.pageY - grabOffsetY;
+          const dx = rawPointerLeft - origin.left;
+          const dy = rawPointerTop - origin.top;
           if (!active && Math.hypot(dx, dy) < 6) return;
           if (!remembered) { remember(); remembered = true; }
           if (!panel.classList.contains("movie-panel-floating")) floatPanel(key, origin, {persist: false});
           active = true;
           panel.classList.add("movie-panel-moving");
+          document.body.classList.add("movie-panel-interacting");
           const width = panel.offsetWidth;
           const height = panel.offsetHeight;
           const targets = panelSnapTargets(key);
-          const rawLeft = Math.max(4, origin.left + dx);
-          const rawTop = Math.max(4, origin.top + dy);
+          const rawLeft = Math.max(4, rawPointerLeft);
+          const rawTop = Math.max(4, rawPointerTop);
           const home = panelHomes.get(key);
           const homeX = home?.rect?.left;
           const homeY = home?.rect?.top;
@@ -908,7 +940,6 @@
             ? [{snapped: true, target: null}]
             : [xSnap, ySnap], {home: pendingHome});
           updateFloatingWorkspaceExtent();
-          autoScrollWorkspace(next);
         };
         const finish = () => {
           handle.onpointermove = null;
@@ -916,6 +947,7 @@
           handle.onpointercancel = null;
           handle.onlostpointercapture = null;
           panel.classList.remove("movie-panel-moving");
+          document.body.classList.remove("movie-panel-interacting");
           clearPanelSnapFeedback();
           if (active) {
             if (pendingHome) dockFloatingPanel(key);
@@ -923,6 +955,9 @@
               persistFloatingPanels();
               updateFloatingWorkspaceExtent();
             }
+            applyPreviewZoom();
+            updatePreviewGeometry();
+            renderTimeline();
             historyRedo = [];
             updateHistoryButtons();
           }
@@ -1275,16 +1310,17 @@
 
   function applyStandalonePreviewGeometry(asset = assetMap.get(standalonePreviewAssetId)) {
     const output = outputDimensions();
-    const sourceWidth = Number(asset?.width || preview.videoWidth || 0);
-    const sourceHeight = Number(asset?.height || preview.videoHeight || 0);
+    const mediaNode = asset?.kind === "IMAGE" ? previewImage : preview;
+    const sourceWidth = Number(asset?.width || mediaNode?.naturalWidth || preview.videoWidth || 0);
+    const sourceHeight = Number(asset?.height || mediaNode?.naturalHeight || preview.videoHeight || 0);
     const exactCanvas = sourceWidth === output.width && sourceHeight === output.height;
     const guard = exactCanvas ? 1 : 0;
-    preview.style.setProperty("width", `calc(100% + ${guard * 2}px)`, "important");
-    preview.style.setProperty("height", `calc(100% + ${guard * 2}px)`, "important");
-    preview.style.setProperty("left", `${-guard}px`, "important");
-    preview.style.setProperty("top", `${-guard}px`, "important");
-    preview.style.setProperty("transform", "none", "important");
-    preview.style.setProperty("object-fit", exactCanvas ? "fill" : "contain", "important");
+    mediaNode.style.setProperty("width", `calc(100% + ${guard * 2}px)`, "important");
+    mediaNode.style.setProperty("height", `calc(100% + ${guard * 2}px)`, "important");
+    mediaNode.style.setProperty("left", `${-guard}px`, "important");
+    mediaNode.style.setProperty("top", `${-guard}px`, "important");
+    mediaNode.style.setProperty("transform", "none", "important");
+    mediaNode.style.setProperty("object-fit", exactCanvas ? "fill" : "contain", "important");
   }
 
   function renderMediaPreviewSelection() {
@@ -1300,7 +1336,47 @@
     standalonePreviewAssetId = null;
     preview.pause();
     preview.hidden = true;
+    previewImage.hidden = true;
+    preview.removeAttribute("src");
+    previewImage.removeAttribute("src");
     renderMediaPreviewSelection();
+  }
+
+  function updateLayerSnapGuides() {
+    const vertical = q('[data-layer-snap-guide="vertical"]');
+    const horizontal = q('[data-layer-snap-guide="horizontal"]');
+    [vertical, horizontal].forEach(guide => {
+      guide?.classList.remove("active");
+      if (guide) guide.style.removeProperty("--guide-position");
+    });
+    if (!selectedId || standalonePreviewAssetId) return;
+    const selected = visualPlayers.get(selectedId);
+    if (!selected || selected.hidden) return;
+    const stage = previewStage.getBoundingClientRect();
+    const source = selected.getBoundingClientRect();
+    const tolerance = 3;
+    visualPlayers.forEach((node, clipId) => {
+      if (clipId === selectedId || node.hidden) return;
+      const target = node.getBoundingClientRect();
+      const verticalPairs = [
+        [source.left, target.left], [source.left, target.right],
+        [source.right, target.left], [source.right, target.right],
+      ];
+      const horizontalPairs = [
+        [source.top, target.top], [source.top, target.bottom],
+        [source.bottom, target.top], [source.bottom, target.bottom],
+      ];
+      const x = verticalPairs.find(([first, second]) => Math.abs(first - second) <= tolerance);
+      const y = horizontalPairs.find(([first, second]) => Math.abs(first - second) <= tolerance);
+      if (x && vertical) {
+        vertical.style.setProperty("--guide-position", `${x[1] - stage.left}px`);
+        vertical.classList.add("active");
+      }
+      if (y && horizontal) {
+        horizontal.style.setProperty("--guide-position", `${y[1] - stage.top}px`);
+        horizontal.classList.add("active");
+      }
+    });
   }
 
   function updatePreviewGeometry() {
@@ -1315,6 +1391,24 @@
     if (previewOutline) previewOutline.hidden = !asset;
     previewGeometry = geometry ? {clip, ...geometry} : null;
     syncFrameSizeControls();
+    requestAnimationFrame(updateLayerSnapGuides);
+  }
+
+  function updateCanvasEdgeSnapFeedback(node, {flash = false} = {}) {
+    if (!node || node.hidden) return;
+    const stage = previewStage.getBoundingClientRect();
+    const frame = node.getBoundingClientRect();
+    const tolerance = 3;
+    const classes = [];
+    if (Math.abs(frame.left - stage.left) <= tolerance) classes.push("snap-left");
+    if (Math.abs(frame.right - stage.right) <= tolerance) classes.push("snap-right");
+    if (Math.abs(frame.top - stage.top) <= tolerance) classes.push("snap-top");
+    if (Math.abs(frame.bottom - stage.bottom) <= tolerance) classes.push("snap-bottom");
+    previewStage.classList.remove("snap-top", "snap-right", "snap-bottom", "snap-left");
+    if (classes.length) previewStage.classList.add(...classes);
+    if (flash && classes.length) {
+      setTimeout(() => previewStage.classList.remove(...classes), 320);
+    }
   }
 
   function nudgeCanvasFrame(action) {
@@ -1355,6 +1449,11 @@
       setTimeout(() => previewStage.classList.remove(...edgeClasses), 240);
     }
     updatePreviewGeometry();
+    requestAnimationFrame(() => {
+      const node = visualPlayers.get(clip.id) || previewOutline;
+      updateCanvasEdgeSnapFeedback(node, {flash: true});
+      updateLayerSnapGuides();
+    });
     renderInspector();
   }
 
@@ -2216,7 +2315,7 @@
   }
 
   function previewAsset(asset) {
-    if (!asset || asset.kind !== "VIDEO" || asset.status !== "READY") return;
+    if (!asset || !["VIDEO", "IMAGE"].includes(asset.kind) || asset.status !== "READY") return;
     stopPlayback();
     visualPlayers.forEach(player => { if (player.pause) player.pause(); player.remove(); });
     visualPlayers.clear();
@@ -2229,13 +2328,27 @@
     renderMediaPreviewSelection();
     renderTimeline();
     renderInspector();
-    preview.hidden = false;
+    preview.hidden = asset.kind !== "VIDEO";
+    previewImage.hidden = asset.kind !== "IMAGE";
     if (previewOutline) previewOutline.hidden = false;
     previewEmpty.hidden = true;
-    preview.dataset.assetId = asset.id;
-    preview.dataset.clipId = "standalone";
-    preview.src = asset.proxyUrl || asset.originalUrl;
-    preview.load();
+    const source = asset.proxyUrl || asset.originalUrl;
+    if (asset.kind === "IMAGE") {
+      preview.pause();
+      preview.removeAttribute("src");
+      previewImage.dataset.assetId = asset.id;
+      previewImage.dataset.clipId = "standalone";
+      previewImage.src = source;
+    } else {
+      previewImage.removeAttribute("src");
+      preview.dataset.assetId = asset.id;
+      preview.dataset.clipId = "standalone";
+      preview.src = source;
+      preview.load();
+      const start = () => preview.play().catch(() => {});
+      if (preview.readyState >= 2) start();
+      else preview.addEventListener("loadeddata", start, {once: true});
+    }
     updatePreviewGeometry(asset);
     previewStatus.textContent = `Previewing ${asset.name}`;
   }
@@ -2907,7 +3020,6 @@
     selectedTrackId = timeline.tracks.some(track => track.id === trackId) ? trackId : null;
     const actions = q("[data-selected-track-actions]");
     if (actions) actions.hidden = !selectedTrackId;
-    qa(".movie-track-head").forEach(head => head.classList.toggle("track-selected", head.dataset.trackId === selectedTrackId));
     if (render) renderTimeline();
   }
 
@@ -3041,7 +3153,7 @@
     const heightUp = document.createElement("button");
     const heightResizer = document.createElement("i");
     const remove = document.createElement("button");
-    head.className = `movie-track-head${track.locked ? " locked" : ""}${track.hidden ? " hidden-track" : ""}${Number(track.height) <= 21 ? " height-1" : ""}${track.id === selectedTrackId ? " track-selected" : ""}`;
+    head.className = `movie-track-head${track.locked ? " locked" : ""}${track.hidden ? " hidden-track" : ""}${Number(track.height) <= 21 ? " height-1" : ""}`;
     head.dataset.trackId = track.id;
     head.draggable = canEdit;
     nameWrap.className = "movie-track-name";
@@ -3049,7 +3161,7 @@
     const sameKind = timeline.tracks.filter(item => item.kind === track.kind);
     code.textContent = `${track.kind === "AUDIO" ? "A" : "V"}${sameKind.indexOf(track) + 1}`;
     controls.className = "movie-track-controls";
-    head.style.height = `${track.height}px`;
+    head.style.height = `${Number(track.height || 84) * 2}px`;
     title.textContent = track.name;
     kind.textContent = `${track.kind} / ${track.clips.length} clip${track.clips.length === 1 ? "" : "s"}`;
     nameWrap.append(code, title, kind);
@@ -3103,7 +3215,7 @@
       const startHeight = track.height;
       heightResizer.classList.add("dragging");
       heightResizer.setPointerCapture(event.pointerId);
-      heightResizer.onpointermove = move => applyHeightLevel((startHeight + move.clientY - startY) / 21, {commit: false});
+      heightResizer.onpointermove = move => applyHeightLevel((startHeight + (move.clientY - startY) / 2) / 21, {commit: false});
       const finish = () => {
         heightResizer.onpointermove = null;
         heightResizer.onpointerup = null;
@@ -3135,15 +3247,10 @@
     };
     controls.append(mute, visibility, lock, display, loudnessGuide, height, remove);
     head.append(nameWrap, controls, heightResizer);
-    nameWrap.addEventListener("click", event => {
-      event.stopPropagation();
-      selectTrack(track.id, {render: false});
-    });
     nameWrap.addEventListener("contextmenu", event => openTrackContext(event, track));
     head.addEventListener("contextmenu", event => openTrackContext(event, track));
     head.addEventListener("dragstart", event => {
       if (!canEdit || event.target.closest("button,input")) return event.preventDefault();
-      selectedTrackId = track.id;
       event.dataTransfer.effectAllowed = "move";
       event.dataTransfer.setData("text/x-lexamora-track", track.id);
       requestAnimationFrame(() => head.classList.add("dragging"));
@@ -3532,7 +3639,7 @@
     timeline.tracks.forEach(track => {
       headsNode.append(makeTrackHead(track));
       const lane = document.createElement("div"); lane.className = `movie-track-lane${track.locked ? " locked" : ""}${track.hidden ? " hidden-track" : ""}${track.displayMode === "WAVEFORM" ? " waveform-mode" : ""}`; lane.dataset.trackId = track.id;
-      lane.style.height = `${track.height}px`;
+      lane.style.height = `${Number(track.height || 84) * 2}px`;
       lane.onpointerenter = () => { pasteTargetTrackId = track.id; };
       lane.onpointermove = () => { pasteTargetTrackId = track.id; };
       lane.onpointerdown = event => {
@@ -3667,15 +3774,15 @@
         });
         item.attached = attached.attached;
       }
-      location.assign(item.openUrl);
+      window.open(item.openUrl, "_blank", "noopener");
     } catch (error) { editSelect.value = timelineId; toast(error.message, "error"); }
   });
   q("[data-edit-create]")?.addEventListener("click", async () => {
-    try { const item = await montageAction("create", {title: "Untitled edit"}); location.assign(item.openUrl); }
+    try { const item = await montageAction("create", {title: "Untitled edit"}); window.open(item.openUrl, "_blank", "noopener"); }
     catch (error) { toast(error.message, "error"); }
   });
   q("[data-edit-copy]")?.addEventListener("click", async () => {
-    try { const item = await montageAction("copy", {title: `${q("[data-movie-title]").value} copy`}); location.assign(item.openUrl); }
+    try { const item = await montageAction("copy", {title: `${q("[data-movie-title]").value} copy`}); window.open(item.openUrl, "_blank", "noopener"); }
     catch (error) { toast(error.message, "error"); }
   });
   const importDialog = q("[data-import-dialog]");
@@ -3726,7 +3833,7 @@
     const form = new FormData(); form.append("file", pendingImport.file);
     try {
       const item = await requestJson(root.dataset.editsUrl, {method: "POST", headers: {"X-CSRFToken": csrfToken()}, body: form});
-      location.assign(item.openUrl);
+      window.open(item.openUrl, "_blank", "noopener");
     } catch (error) { toast(error.message, "error"); }
   });
   q("[data-edit-detach]")?.addEventListener("click", async () => {
