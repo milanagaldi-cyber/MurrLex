@@ -98,6 +98,7 @@
   const previewZoomValue = q("[data-preview-zoom-value]");
   const frameSizeInput = q("[data-frame-size]");
   const frameSizeValue = q("[data-frame-size-value]");
+  const frameScaleValue = q("[data-frame-scale-value]");
   const stateNode = q("[data-movie-state]");
   const playheadLabel = q("[data-playhead-label]");
   const previewTime = q("[data-preview-time]");
@@ -153,8 +154,8 @@
     catch (_) { return {}; }
   })();
   const layoutDefaults = {
-    columns: {mediaWidth: 250, inspectorWidth: 390, mediaHeight: 390, canvasHeight: 390, inspectorHeight: 390, timelineHeight: 360, timelineInsetLeft: 0, timelineInsetRight: 0, workspaceExtraLeft: 0, workspaceExtraRight: 0},
-    stacked: {mediaWidth: 250, inspectorWidth: 390, mediaHeight: 390, canvasHeight: 390, inspectorHeight: 190, timelineHeight: 360, timelineInsetLeft: 0, timelineInsetRight: 0, workspaceExtraLeft: 0, workspaceExtraRight: 0},
+    columns: {mediaWidth: 250, inspectorWidth: 390, mediaHeight: 390, canvasHeight: 390, inspectorHeight: 390, timelineHeight: 180, timelineInsetLeft: 0, timelineInsetRight: 0, workspaceExtraLeft: 0, workspaceExtraRight: 0},
+    stacked: {mediaWidth: 250, inspectorWidth: 390, mediaHeight: 390, canvasHeight: 390, inspectorHeight: 190, timelineHeight: 180, timelineInsetLeft: 0, timelineInsetRight: 0, workspaceExtraLeft: 0, workspaceExtraRight: 0},
   };
   const readLayoutGeometry = mode => {
     try {
@@ -172,18 +173,30 @@
     stacked: readLayoutGeometry("stacked"),
   };
   const previewDockKey = `studio-movie-preview-dock-${timelineId}`;
+  const panelGapKey = `studio-movie-panel-gap-${timelineId}`;
   let previewDockMode = localStorage.getItem(previewDockKey) === "bottom" ? "bottom" : "center";
+  let widePanelGaps = localStorage.getItem(panelGapKey) === "wide";
+  const applyPanelGapMode = () => editorLayout?.classList.toggle("movie-wide-gaps", widePanelGaps);
   const applyEditorWallpaper = value => {
     const wallpaper = String(value || "").replace(/["\\\n\r]/g, "");
     root.classList.toggle("has-editor-wallpaper", Boolean(wallpaper));
+    document.body.classList.toggle("movie-editor-wallpaper-active", Boolean(wallpaper));
     if (!wallpaper) {
       ["background-image", "background-position", "background-repeat", "background-size"].forEach(property => root.style.removeProperty(property));
+      ["--movie-editor-wallpaper", "background-image", "background-position", "background-repeat", "background-size", "background-attachment"].forEach(property => document.body.style.removeProperty(property));
       return;
     }
-    root.style.setProperty("background-image", `linear-gradient(rgba(5,14,23,.86),rgba(5,14,23,.86)),url("${wallpaper}")`, "important");
+    const background = `linear-gradient(rgba(5,14,23,.86),rgba(5,14,23,.86)),url("${wallpaper}")`;
+    root.style.setProperty("background-image", background, "important");
     root.style.setProperty("background-position", "center top", "important");
     root.style.setProperty("background-repeat", "no-repeat", "important");
     root.style.setProperty("background-size", "cover", "important");
+    document.body.style.setProperty("--movie-editor-wallpaper", background);
+    document.body.style.setProperty("background-image", background, "important");
+    document.body.style.setProperty("background-position", "center top", "important");
+    document.body.style.setProperty("background-repeat", "no-repeat", "important");
+    document.body.style.setProperty("background-size", "cover", "important");
+    document.body.style.setProperty("background-attachment", "fixed", "important");
   };
   applyEditorWallpaper(root.dataset.editorWallpaper);
   const applyPreviewDock = () => {
@@ -253,7 +266,7 @@
       mediaHeight: clamp(Number(geometry.mediaHeight ?? geometry.upperHeight ?? 390), 150, 900),
       canvasHeight: clamp(Number(geometry.canvasHeight ?? geometry.upperHeight ?? 390), 220, 900),
       inspectorHeight: clamp(Number(geometry.inspectorHeight), 72, 900),
-      timelineHeight: clamp(Number(geometry.timelineHeight || 520), 220, 6000),
+      timelineHeight: clamp(Number(geometry.timelineHeight || 180), 120, 6000),
       timelineInsetLeft,
       timelineInsetRight,
       workspaceExtraLeft,
@@ -331,6 +344,88 @@
       height: rect.height,
     };
   };
+  let activeEditorPointerFinish = null;
+  const releasePointerCaptureSafely = (node, pointerId) => {
+    try {
+      if (node?.hasPointerCapture?.(pointerId)) node.releasePointerCapture(pointerId);
+    } catch (_) {
+      // Pointer capture can already be gone after blur, cancel, or DOM movement.
+    }
+  };
+  const capturePointerSafely = (node, pointerId) => {
+    try {
+      node?.setPointerCapture?.(pointerId);
+      return true;
+    } catch (_) {
+      // A browser can reject capture while layout changes move the node.
+      return false;
+    }
+  };
+  const forceEditorPointerCleanup = () => {
+    document.body.classList.remove("movie-panel-interacting");
+    document.querySelectorAll(".movie-panel-moving,.movie-panel-resizing,.dragging,.resizing").forEach(node =>
+      node.classList.remove("movie-panel-moving", "movie-panel-resizing", "dragging", "resizing")
+    );
+    previewStage?.classList.remove("snap-top", "snap-right", "snap-bottom", "snap-left");
+  };
+  const registerEditorPointerFinish = finish => {
+    const previous = activeEditorPointerFinish;
+    if (previous && previous !== finish) {
+      activeEditorPointerFinish = null;
+      try {
+        previous();
+      } finally {
+        forceEditorPointerCleanup();
+      }
+    }
+    activeEditorPointerFinish = finish;
+  };
+  const clearEditorPointerFinish = finish => {
+    if (activeEditorPointerFinish === finish) activeEditorPointerFinish = null;
+  };
+  const finishActiveEditorPointer = () => {
+    const finish = activeEditorPointerFinish;
+    activeEditorPointerFinish = null;
+    try {
+      finish?.();
+    } finally {
+      forceEditorPointerCleanup();
+    }
+  };
+  const floatingSideAllowance = () => Math.max(
+    Number(layoutDefaults.columns.mediaWidth || 250),
+    Number(layoutDefaults.stacked.mediaWidth || 250),
+  );
+  const clampFloatingRect = rect => {
+    const viewportLeft = scrollX;
+    const viewportTop = scrollY;
+    const viewportWidth = document.documentElement.clientWidth;
+    const viewportHeight = document.documentElement.clientHeight;
+    const allowance = floatingSideAllowance();
+    const width = clamp(Number(rect.width || 0), 140, viewportWidth + allowance * 2);
+    const height = clamp(Number(rect.height || 0), 52, viewportHeight * 2);
+    const visibleWidth = Math.min(140, width);
+    const visibleHeight = Math.min(52, height);
+    const sideOverflow = Math.min(allowance, Math.max(0, width - visibleWidth));
+    const minimumLeft = viewportLeft - sideOverflow;
+    const maximumLeft = Math.max(
+      minimumLeft,
+      viewportLeft + viewportWidth - width + sideOverflow,
+    );
+    const minimumTop = Math.max(4, viewportTop);
+    const maximumTop = Math.max(minimumTop, viewportTop + viewportHeight - visibleHeight);
+    const left = clamp(Number(rect.left || 0), minimumLeft, maximumLeft);
+    const top = clamp(Number(rect.top || 0), minimumTop, maximumTop);
+    return {
+      ...rect,
+      width,
+      height,
+      left,
+      top,
+      right: left + width,
+      bottom: top + height,
+    };
+  };
   const updateFloatingWorkspaceExtent = () => {
     const rootBounds = pageRect(root);
     const viewportWidth = document.documentElement.clientWidth;
@@ -339,9 +434,9 @@
     const timelineReserve = clamp(timelineHeight * .5, 120, 320);
     const floating = Object.values(layoutPanels).filter(panel => panel?.classList.contains("movie-panel-floating"));
     const floatingRects = floating.map(pageRect);
-    const widestPanel = Math.max(rootBounds.width, ...floatingRects.map(rect => rect.width), 760);
+    const allowance = floatingSideAllowance();
     const tallestPanel = Math.max(timelineHeight, ...floatingRects.map(rect => rect.height), 360);
-    const maximumRight = viewportWidth + widestPanel + 48;
+    const maximumRight = viewportWidth + allowance + 48;
     const maximumBottom = viewportHeight + tallestPanel + timelineReserve;
     let right = viewportWidth;
     let bottom = Math.max(viewportHeight, rootBounds.bottom + timelineReserve);
@@ -352,7 +447,7 @@
     workspaceExtent.width = Math.ceil(right);
     workspaceExtent.height = Math.ceil(bottom);
     floatingWorkspaceSpacer.style.width = right > viewportWidth ? `${workspaceExtent.width}px` : "0px";
-    floatingWorkspaceSpacer.style.height = `${workspaceExtent.height}px`;
+    floatingWorkspaceSpacer.style.height = bottom > viewportHeight ? `${workspaceExtent.height}px` : "0px";
     if (right > viewportWidth) document.body.style.setProperty("min-width", `${workspaceExtent.width}px`, "important");
     else document.body.style.removeProperty("min-width");
     document.body.style.setProperty("min-height", `${workspaceExtent.height}px`, "important");
@@ -399,12 +494,16 @@
     });
   };
   const persistFloatingPanels = () => localStorage.setItem(floatingPanelsKey, JSON.stringify(floatingPanels));
-  const refreshFloatingGeometry = () => requestAnimationFrame(() => {
-    updateFloatingWorkspaceExtent();
-    applyPreviewZoom();
-    updatePreviewGeometry();
-    renderTimeline();
-  });
+  let floatingGeometryFrame = 0;
+  const refreshFloatingGeometry = () => {
+    cancelAnimationFrame(floatingGeometryFrame);
+    floatingGeometryFrame = requestAnimationFrame(() => {
+      updateFloatingWorkspaceExtent();
+      applyPreviewZoom();
+      updatePreviewGeometry();
+      renderTimeline();
+    });
+  };
   const setPanelFloatingState = (key, panel, rect) => {
     floatingPanels[key] = {
       left: Math.round(rect.left),
@@ -440,23 +539,30 @@
       persistFloatingPanels();
       persistLayout(editorLayoutMode);
     }
-    refreshFloatingGeometry();
+    cancelAnimationFrame(floatingGeometryFrame);
+    floatingGeometryFrame = 0;
+    updateFloatingWorkspaceExtent();
+    requestAnimationFrame(() => {
+      applyPreviewZoom();
+      updatePreviewGeometry();
+      renderTimeline();
+      updateFloatingWorkspaceExtent();
+    });
   }
-  function floatPanel(key, geometry, {persist = true} = {}) {
+  function floatPanel(key, geometry, {persist = true, refresh = true} = {}) {
     const panel = layoutPanels[key];
     if (!panel) return;
     const home = rememberPanelHome(key, panel);
     const fallback = pageRect(panel);
     if (!panel.classList.contains("movie-panel-floating")) home.rect = fallback;
     const minimum = panelMinimumSize(key);
-    const rect = {
+    let rect = {
       left: Number(geometry?.left ?? fallback.left),
       top: Number(geometry?.top ?? fallback.top),
       width: Math.max(minimum.width, Number(geometry?.width ?? fallback.width)),
       height: Math.max(minimum.height, Number(geometry?.height ?? fallback.height)),
     };
-    rect.left = Math.max(4, rect.left);
-    rect.top = Math.max(4, rect.top);
+    rect = clampFloatingRect(rect);
     home.placeholder.hidden = true;
     panel.hidden = false;
     if (panel.parentElement !== document.body) document.body.appendChild(panel);
@@ -469,7 +575,7 @@
     panel.querySelector(".movie-window-home")?.removeAttribute("disabled");
     setPanelFloatingState(key, panel, rect);
     refreshPanelHomeButtons();
-    updateFloatingWorkspaceExtent();
+    if (refresh) refreshFloatingGeometry();
     if (persist) persistFloatingPanels();
   }
   function applyFloatingPanels() {
@@ -532,19 +638,22 @@
         event.preventDefault();
         event.stopPropagation();
         remember();
-        if (!panel.classList.contains("movie-panel-floating")) floatPanel(key, pageRect(panel), {persist: false});
+        if (!panel.classList.contains("movie-panel-floating")) floatPanel(key, pageRect(panel), {persist: false, refresh: false});
         const origin = pageRect(panel);
-        const startX = event.pageX;
-        const startY = event.pageY;
+        const startX = event.clientX;
+        const startY = event.clientY;
         const minimum = panelMinimumSize(key);
         const minimumWidth = minimum.width;
         const minimumHeight = panel.classList.contains("collapsed") ? panel.offsetHeight : minimum.height;
+        const pointerId = event.pointerId;
         panel.classList.add("movie-panel-resizing");
         document.body.classList.add("movie-panel-interacting");
-        handle.setPointerCapture(event.pointerId);
+        capturePointerSafely(handle, pointerId);
+        let finished = false;
+        let previewRefreshFrame = 0;
         const move = next => {
-          const dx = next.pageX - startX;
-          const dy = next.pageY - startY;
+          const dx = next.clientX - startX;
+          const dy = next.clientY - startY;
           let left = origin.left;
           let top = origin.top;
           let width = origin.width;
@@ -592,29 +701,41 @@
               height = vertical.value - top;
             }
           }
-          left = Math.max(0, left);
-          top = Math.max(0, top);
           width = Math.max(minimumWidth, width);
           height = Math.max(minimumHeight, height);
+          const bounded = clampFloatingRect({left, top, width, height});
+          left = bounded.left;
+          top = bounded.top;
           panel.style.setProperty("left", `${left}px`, "important");
           panel.style.setProperty("top", `${top}px`, "important");
           panel.style.setProperty("width", `${width}px`, "important");
           panel.style.setProperty("height", `${height}px`, "important");
           setPanelFloatingState(key, panel, {left, top, width, height});
           showPanelSnapFeedback(panel, [horizontal, vertical]);
-          updateFloatingWorkspaceExtent();
-          applyPreviewZoom();
-          updatePreviewGeometry();
+          if (key === "preview" && !previewRefreshFrame) {
+            previewRefreshFrame = requestAnimationFrame(() => {
+              previewRefreshFrame = 0;
+              applyPreviewZoom();
+              updatePreviewGeometry();
+            });
+          }
         };
         const finish = () => {
+          if (finished) return;
+          finished = true;
+          clearEditorPointerFinish(finish);
+          if (previewRefreshFrame) cancelAnimationFrame(previewRefreshFrame);
           handle.onpointermove = null;
           handle.onpointerup = null;
           handle.onpointercancel = null;
           handle.onlostpointercapture = null;
+          releasePointerCaptureSafely(handle, pointerId);
           panel.classList.remove("movie-panel-resizing");
           document.body.classList.remove("movie-panel-interacting");
           clearPanelSnapFeedback();
           updateFloatingWorkspaceExtent();
+          applyPreviewZoom();
+          updatePreviewGeometry();
           renderTimeline();
           persistFloatingPanels();
           historyRedo = [];
@@ -624,6 +745,7 @@
         handle.onpointerup = finish;
         handle.onpointercancel = finish;
         handle.onlostpointercapture = finish;
+        registerEditorPointerFinish(finish);
       });
     });
   };
@@ -945,28 +1067,30 @@
         event.preventDefault();
         event.stopPropagation();
         const origin = pageRect(panel);
-        const grabOffsetX = event.pageX - origin.left;
-        const grabOffsetY = event.pageY - origin.top;
+        const startClientX = event.clientX;
+        const startClientY = event.clientY;
         let active = false;
         let remembered = false;
         let pendingHome = false;
-        handle.setPointerCapture(event.pointerId);
+        let finished = false;
+        const pointerId = event.pointerId;
+        capturePointerSafely(handle, pointerId);
         const move = next => {
-          const rawPointerLeft = next.pageX - grabOffsetX;
-          const rawPointerTop = next.pageY - grabOffsetY;
-          const dx = rawPointerLeft - origin.left;
-          const dy = rawPointerTop - origin.top;
+          const dx = next.clientX - startClientX;
+          const dy = next.clientY - startClientY;
+          const rawPointerLeft = origin.left + dx;
+          const rawPointerTop = origin.top + dy;
           if (!active && Math.hypot(dx, dy) < 6) return;
           if (!remembered) { remember(); remembered = true; }
-          if (!panel.classList.contains("movie-panel-floating")) floatPanel(key, origin, {persist: false});
+          if (!panel.classList.contains("movie-panel-floating")) floatPanel(key, origin, {persist: false, refresh: false});
           active = true;
           panel.classList.add("movie-panel-moving");
           document.body.classList.add("movie-panel-interacting");
           const width = panel.offsetWidth;
           const height = panel.offsetHeight;
           const targets = panelSnapTargets(key);
-          const rawLeft = Math.max(4, rawPointerLeft);
-          const rawTop = Math.max(4, rawPointerTop);
+          const rawLeft = rawPointerLeft;
+          const rawTop = rawPointerTop;
           const home = panelHomes.get(key);
           const homeX = home?.rect?.left;
           const homeY = home?.rect?.top;
@@ -991,33 +1115,43 @@
               {value: target.rect.bottom - height, target: target.panel},
             ]),
           ]);
-          const left = pendingHome ? homeX : Math.max(4, xSnap.value);
-          const top = pendingHome ? homeY : Math.max(4, ySnap.value);
+          const bounded = clampFloatingRect({
+            left: pendingHome ? homeX : xSnap.value,
+            top: pendingHome ? homeY : ySnap.value,
+            width,
+            height,
+          });
+          const left = bounded.left;
+          const top = bounded.top;
           panel.style.setProperty("left", `${left}px`, "important");
           panel.style.setProperty("top", `${top}px`, "important");
           setPanelFloatingState(key, panel, {left, top, width, height});
           showPanelSnapFeedback(panel, pendingHome
             ? [{snapped: true, target: null}]
             : [xSnap, ySnap], {home: pendingHome});
-          updateFloatingWorkspaceExtent();
         };
         const finish = () => {
+          if (finished) return;
+          finished = true;
+          clearEditorPointerFinish(finish);
           handle.onpointermove = null;
           handle.onpointerup = null;
           handle.onpointercancel = null;
           handle.onlostpointercapture = null;
+          releasePointerCaptureSafely(handle, pointerId);
           panel.classList.remove("movie-panel-moving");
           document.body.classList.remove("movie-panel-interacting");
           clearPanelSnapFeedback();
           if (active) {
             if (pendingHome) dockFloatingPanel(key);
             else {
+              const bounded = clampFloatingRect(pageRect(panel));
+              panel.style.setProperty("left", `${bounded.left}px`, "important");
+              panel.style.setProperty("top", `${bounded.top}px`, "important");
+              setPanelFloatingState(key, panel, bounded);
               persistFloatingPanels();
-              updateFloatingWorkspaceExtent();
+              refreshFloatingGeometry();
             }
-            applyPreviewZoom();
-            updatePreviewGeometry();
-            renderTimeline();
             historyRedo = [];
             updateHistoryButtons();
           }
@@ -1026,13 +1160,24 @@
         handle.onpointerup = finish;
         handle.onpointercancel = finish;
         handle.onlostpointercapture = finish;
+        registerEditorPointerFinish(finish);
       });
     });
     if (root.dataset.panelSnapCleanupBound !== "true") {
       root.dataset.panelSnapCleanupBound = "true";
-      document.addEventListener("pointerup", clearPanelSnapFeedback, true);
-      document.addEventListener("pointercancel", clearPanelSnapFeedback, true);
-      window.addEventListener("blur", clearPanelSnapFeedback);
+      document.addEventListener("pointerup", finishActiveEditorPointer, true);
+      document.addEventListener("pointercancel", finishActiveEditorPointer, true);
+      window.addEventListener("blur", () => {
+        finishActiveEditorPointer();
+        clearPanelSnapFeedback();
+        forceEditorPointerCleanup();
+      });
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden) return;
+        finishActiveEditorPointer();
+        clearPanelSnapFeedback();
+        forceEditorPointerCleanup();
+      });
       window.addEventListener("resize", updateFloatingWorkspaceExtent);
       document.addEventListener("pointerdown", event => {
         if (!layoutLocked || !event.target.closest("[data-layout-resizer],[data-stage-resizer],[data-inspector-resizer],[data-panel-width-resizer],[data-panel-height-resizer],[data-timeline-edge-resizer],[data-timeline-height-resizer],[data-timeline-bottom-resizer]")) return;
@@ -1235,32 +1380,36 @@
   }
 
   function syncFrameSizeControls() {
-    if (!frameSizeInput || !frameSizeValue) return;
+    if (!frameSizeInput || !frameSizeValue || !frameScaleValue) return;
     const found = selectedId ? findClip(selectedId) : null;
     const asset = found ? assetMap.get(found.clip.assetId) : null;
     const available = Boolean(found && asset && ["VIDEO", "IMAGE"].includes(asset.kind) && !found.track.locked);
     frameSizeInput.disabled = !available;
     frameSizeValue.disabled = !available;
+    frameScaleValue.disabled = !available;
     q("[data-frame-size-down]")?.toggleAttribute("disabled", !available);
     q("[data-frame-size-up]")?.toggleAttribute("disabled", !available);
-    if (!available) return;
-    const width = Math.max(16, Math.round((Number(asset.width) || outputDimensions().width) * Number(found.clip.scale || 1)));
-    const maximum = Math.max(4096, Math.round((Number(asset.width) || outputDimensions().width) * 8));
-    frameSizeInput.max = String(maximum);
-    frameSizeValue.max = String(maximum);
-    if (document.activeElement !== frameSizeInput) frameSizeInput.value = String(width);
-    if (document.activeElement !== frameSizeValue) frameSizeValue.value = String(width);
+    if (!available) {
+      frameScaleValue.value = "100";
+      frameSizeValue.value = String(outputDimensions().width);
+      return;
+    }
+    const sourceWidth = Math.max(1, Number(asset.width) || outputDimensions().width);
+    const scale = clamp(Number(found.clip.scale || 1), .05, 8);
+    const width = Math.max(1, Math.round(sourceWidth * scale));
+    if (document.activeElement !== frameSizeInput) frameSizeInput.value = String(scale);
+    if (document.activeElement !== frameScaleValue) frameScaleValue.value = String(Math.round(scale * 100));
+    frameSizeValue.value = String(width);
   }
 
-  function setSelectedFrameWidth(width, {rememberChange = true} = {}) {
+  function setSelectedFrameScale(scale, {rememberChange = true} = {}) {
     const found = selectedId ? findClip(selectedId) : null;
     const asset = found ? assetMap.get(found.clip.assetId) : null;
     if (!found || !asset || found.track.locked || !["VIDEO", "IMAGE"].includes(asset.kind)) return false;
-    const sourceWidth = Math.max(1, Number(asset.width) || outputDimensions().width);
-    const target = clamp(Math.round(Number(width) || sourceWidth), 16, sourceWidth * 8);
-    if (Math.abs(Number(found.clip.scale || 1) - target / sourceWidth) < .0001) return false;
+    const target = clamp(Number(scale) || 1, .05, 8);
+    if (Math.abs(Number(found.clip.scale || 1) - target) < .0001) return false;
     if (rememberChange) remember();
-    found.clip.scale = target / sourceWidth;
+    found.clip.scale = target;
     if (rememberChange) {
       historyRedo = [];
       updateDirty();
@@ -1532,7 +1681,9 @@
     const originalX = Number(clip.positionX || 0);
     const originalY = Number(clip.positionY || 0);
     const output = outputDimensions();
+    const pointerId = event.pointerId;
     let changed = false;
+    let finished = false;
     const clearCanvasSnapEdges = () => previewStage.classList.remove("snap-top", "snap-right", "snap-bottom", "snap-left");
     const move = next => {
       const dx = next.clientX - startX;
@@ -1564,9 +1715,14 @@
       updatePreviewGeometry();
     };
     const finish = () => {
+      if (finished) return;
+      finished = true;
+      clearEditorPointerFinish(finish);
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", finish);
       window.removeEventListener("pointercancel", finish);
+      previewStage.onlostpointercapture = null;
+      releasePointerCaptureSafely(previewStage, pointerId);
       previewStage.classList.remove("dragging");
       clearCanvasSnapEdges();
       if (!changed) historyUndo.pop();
@@ -1574,13 +1730,17 @@
       renderInspector();
     };
     previewStage.classList.add("dragging");
+    capturePointerSafely(previewStage, pointerId);
+    previewStage.onlostpointercapture = finish;
+    registerEditorPointerFinish(finish);
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", finish);
     window.addEventListener("pointercancel", finish);
   }
 
   function beginPreviewResize(event) {
-    const handle = event.currentTarget.dataset.previewResize || "se";
+    const handleNode = event.currentTarget;
+    const handle = handleNode.dataset.previewResize || "se";
     const {clip, track} = previewClipData();
     if (!clip || !canEdit || track?.locked || standalonePreviewAssetId) return;
     event.preventDefault(); event.stopPropagation();
@@ -1589,7 +1749,9 @@
     const startX = event.clientX;
     const startY = event.clientY;
     const original = Number(clip.scale || 1);
+    const pointerId = event.pointerId;
     let changed = false;
+    let finished = false;
     const move = next => {
       const horizontal = handle.includes("w") ? startX - next.clientX : next.clientX - startX;
       const vertical = handle.includes("n") ? startY - next.clientY : next.clientY - startY;
@@ -1605,10 +1767,20 @@
       if (number) number.value = String(Math.round(clip.scale * 100));
     };
     const finish = () => {
+      if (finished) return;
+      finished = true;
+      clearEditorPointerFinish(finish);
       window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", finish); window.removeEventListener("pointercancel", finish);
+      handleNode.onlostpointercapture = null;
+      releasePointerCaptureSafely(handleNode, pointerId);
+      previewStage.classList.remove("resizing");
       if (!changed) historyUndo.pop(); else { historyRedo = []; updateDirty(); updateHistoryButtons(); scheduleAutosave(); }
       renderInspector();
     };
+    previewStage.classList.add("resizing");
+    capturePointerSafely(handleNode, pointerId);
+    handleNode.onlostpointercapture = finish;
+    registerEditorPointerFinish(finish);
     window.addEventListener("pointermove", move); window.addEventListener("pointerup", finish); window.addEventListener("pointercancel", finish);
   }
 
@@ -2598,7 +2770,7 @@
   function togglePlayback() {
     if (standalonePreviewAssetId) {
       if (preview.paused) {
-        q("[data-preview-play]").innerHTML = "&#10074;&#10074;";
+        q("[data-preview-play]").innerHTML = "&#9654;";
         previewStatus.textContent = "Playing";
         preview.play().catch(error => {
           q("[data-preview-play]").innerHTML = "&#9654;";
@@ -2623,7 +2795,7 @@
     playbackOrigin = playheadMs;
     playbackStartedAt = performance.now();
     lastPlaybackSync = playbackStartedAt;
-    q("[data-preview-play]").innerHTML = "&#10074;&#10074;";
+    q("[data-preview-play]").innerHTML = "&#9654;";
     previewStatus.textContent = "Playing";
     syncPlayers(true, true);
     playbackFrame = requestAnimationFrame(playbackTick);
@@ -3273,7 +3445,7 @@
       const startY = event.clientY;
       const startHeight = track.height;
       heightResizer.classList.add("dragging");
-      heightResizer.setPointerCapture(event.pointerId);
+      capturePointerSafely(heightResizer, event.pointerId);
       heightResizer.onpointermove = move => applyHeightLevel((startHeight + (move.clientY - startY) / 2) / 21, {commit: false});
       const finish = () => {
         heightResizer.onpointermove = null;
@@ -3386,7 +3558,7 @@
     if (!anchor) { historyUndo.pop(); return; }
     let changed = false;
     items.forEach(item => item.node.classList.add("dragging"));
-    node.setPointerCapture(event.pointerId);
+    capturePointerSafely(node, event.pointerId);
     const move = next => {
       const bounds = timelineScroll.getBoundingClientRect();
       if (next.clientX > bounds.right - 36) timelineScroll.scrollLeft += 22;
@@ -4250,10 +4422,9 @@
   previewZoomValue?.addEventListener("change", event => setPreviewZoomPercent(event.target.value));
   q("[data-preview-zoom-down]")?.addEventListener("click", () => setPreviewZoomPercent(Math.round(previewZoom * 100) - 5));
   q("[data-preview-zoom-up]")?.addEventListener("click", () => setPreviewZoomPercent(Math.round(previewZoom * 100) + 5));
-  frameSizeInput?.addEventListener("input", event => setSelectedFrameWidth(event.target.value));
-  frameSizeValue?.addEventListener("change", event => setSelectedFrameWidth(event.target.value));
-  q("[data-frame-size-down]")?.addEventListener("click", () => setSelectedFrameWidth(Number(frameSizeValue?.value || 0) - 1));
-  q("[data-frame-size-up]")?.addEventListener("click", () => setSelectedFrameWidth(Number(frameSizeValue?.value || 0) + 1));
+  frameSizeInput?.addEventListener("input", event => setSelectedFrameScale(event.target.value));
+  q("[data-frame-size-down]")?.addEventListener("click", () => setSelectedFrameScale((Number(frameScaleValue?.value || 100) - 1) / 100));
+  q("[data-frame-size-up]")?.addEventListener("click", () => setSelectedFrameScale((Number(frameScaleValue?.value || 100) + 1) / 100));
   qa("[data-inspector-tab]").forEach(button => button.addEventListener("click", () => { inspectorTab = button.dataset.inspectorTab; renderInspector(); }));
   q("[data-timeline-split]").onclick = splitSelected;
   q("[data-clip-copy]")?.addEventListener("click", copySelected);
@@ -4271,7 +4442,7 @@
     leaveStandalonePreview();
     stopPlayback();
     const update = next => setPlayhead((next.clientX - ruler.getBoundingClientRect().left) / zoom * 1000);
-    update(event); ruler.setPointerCapture(event.pointerId); ruler.onpointermove = update; ruler.onpointerup = () => { ruler.onpointermove = null; ruler.onpointerup = null; };
+    update(event); capturePointerSafely(ruler, event.pointerId); ruler.onpointermove = update; ruler.onpointerup = () => { ruler.onpointermove = null; ruler.onpointerup = null; };
   };
   timelineScroll.addEventListener("scroll", () => { headsNode.style.transform = `translateY(-${timelineScroll.scrollTop}px)`; }, {passive: true});
   timelineScroll.addEventListener("wheel", event => {
@@ -4386,8 +4557,14 @@
     performTrackAction(button.dataset.trackContextAction);
     trackContext.hidden = true;
   });
-  root.addEventListener("pointerdown", event => {
-    if (playing && !event.target.closest("[data-preview-play],[data-preview-step],[data-preview-stop]")) stopPlayback();
+  document.addEventListener("pointerdown", event => {
+    if (event.target.closest("[data-preview-play]")) return;
+    if (playing) stopPlayback();
+    if (standalonePreviewAssetId && !preview.paused) {
+      preview.pause();
+      previewStatus.textContent = "Ready";
+      q("[data-preview-play]").innerHTML = "&#9654;";
+    }
   }, {capture: true});
   let resizeTimer;
   addEventListener("resize", () => {
@@ -4474,10 +4651,12 @@
     if (trackSidebarResizer) trackSidebarResizer.onpointerdown = event => {
       if (event.button !== 0) return;
       event.preventDefault();
+      event.stopPropagation();
       const startX = event.clientX;
       const startWidth = Number(trackWidth.value);
+      const pointerId = event.pointerId;
       trackSidebarResizer.classList.add("dragging");
-      trackSidebarResizer.setPointerCapture(event.pointerId);
+      capturePointerSafely(trackSidebarResizer, pointerId);
       trackSidebarResizer.onpointermove = move => {
         trackWidth.value = String(clamp(startWidth + move.clientX - startX, 44, 320));
         applyTrackWidth();
@@ -4486,11 +4665,14 @@
         trackSidebarResizer.onpointermove = null;
         trackSidebarResizer.onpointerup = null;
         trackSidebarResizer.onpointercancel = null;
+        trackSidebarResizer.onlostpointercapture = null;
+        releasePointerCaptureSafely(trackSidebarResizer, pointerId);
         trackSidebarResizer.classList.remove("dragging");
         localStorage.setItem("studio-movie-track-width", trackWidth.value);
       };
       trackSidebarResizer.onpointerup = finish;
       trackSidebarResizer.onpointercancel = finish;
+      trackSidebarResizer.onlostpointercapture = finish;
     };
     applyTrackWidth();
   }
@@ -4516,24 +4698,34 @@
     handle.onpointerdown = event => {
       if (layoutLocked || event.button !== 0) return;
       event.preventDefault();
+      event.stopPropagation();
       remember();
       const startX = event.clientX;
       const start = {...editorLayouts[editorLayoutMode]};
+      const pointerId = event.pointerId;
       handle.classList.add("dragging");
-      handle.setPointerCapture(event.pointerId);
+      capturePointerSafely(handle, pointerId);
       handle.onpointermove = move => {
         const deltaX = move.clientX - startX;
         if (side === "media") updateLayoutGeometry({mediaWidth: start.mediaWidth + deltaX});
         else if (editorLayoutMode === "columns") updateLayoutGeometry({inspectorWidth: start.inspectorWidth - deltaX});
       };
+      let finished = false;
       const finish = () => {
+        if (finished) return;
+        finished = true;
+        clearEditorPointerFinish(finish);
         handle.onpointermove = null;
         handle.onpointerup = null;
         handle.onpointercancel = null;
+        handle.onlostpointercapture = null;
+        releasePointerCaptureSafely(handle, pointerId);
         finishLayoutResize(handle);
       };
       handle.onpointerup = finish;
       handle.onpointercancel = finish;
+      handle.onlostpointercapture = finish;
+      registerEditorPointerFinish(finish);
     };
   };
   bindLayoutDivider(q("[data-stage-resizer]"), "media");
@@ -4542,12 +4734,14 @@
     handle.onpointerdown = event => {
       if (layoutLocked || event.button !== 0) return;
       event.preventDefault();
+      event.stopPropagation();
       remember();
       const startX = event.clientX;
       const start = {...editorLayouts[editorLayoutMode]};
       const panel = handle.dataset.panelWidthResizer;
+      const pointerId = event.pointerId;
       handle.classList.add("dragging");
-      handle.setPointerCapture(event.pointerId);
+      capturePointerSafely(handle, pointerId);
       handle.onpointermove = move => {
         const deltaX = move.clientX - startX;
         if (panel === "media") {
@@ -4567,40 +4761,58 @@
           });
         }
       };
+      let finished = false;
       const finish = () => {
+        if (finished) return;
+        finished = true;
+        clearEditorPointerFinish(finish);
         handle.onpointermove = null;
         handle.onpointerup = null;
         handle.onpointercancel = null;
+        handle.onlostpointercapture = null;
+        releasePointerCaptureSafely(handle, pointerId);
         finishLayoutResize(handle);
       };
       handle.onpointerup = finish;
       handle.onpointercancel = finish;
+      handle.onlostpointercapture = finish;
+      registerEditorPointerFinish(finish);
     };
   });
   qa("[data-timeline-edge-resizer]").forEach(handle => {
     handle.onpointerdown = event => {
       if (layoutLocked || event.button !== 0) return;
       event.preventDefault();
+      event.stopPropagation();
       remember();
       const startX = event.clientX;
       const start = {...editorLayouts[editorLayoutMode]};
       const edge = handle.dataset.timelineEdgeResizer;
+      const pointerId = event.pointerId;
       handle.classList.add("dragging");
-      handle.setPointerCapture(event.pointerId);
+      capturePointerSafely(handle, pointerId);
       handle.onpointermove = move => {
         const deltaX = move.clientX - startX;
         updateLayoutGeometry(edge === "left"
           ? {timelineInsetLeft: start.timelineInsetLeft + deltaX}
           : {timelineInsetRight: start.timelineInsetRight - deltaX});
       };
+      let finished = false;
       const finish = () => {
+        if (finished) return;
+        finished = true;
+        clearEditorPointerFinish(finish);
         handle.onpointermove = null;
         handle.onpointerup = null;
         handle.onpointercancel = null;
+        handle.onlostpointercapture = null;
+        releasePointerCaptureSafely(handle, pointerId);
         finishLayoutResize(handle);
       };
       handle.onpointerup = finish;
       handle.onpointercancel = finish;
+      handle.onlostpointercapture = finish;
+      registerEditorPointerFinish(finish);
     };
   });
   const timelineHeightResizer = q("[data-timeline-height-resizer]");
@@ -4608,11 +4820,13 @@
     timelineHeightResizer.onpointerdown = event => {
       if (layoutLocked || event.button !== 0) return;
       event.preventDefault();
+      event.stopPropagation();
       remember();
       const startY = event.clientY;
       const start = {...editorLayouts[editorLayoutMode]};
+      const pointerId = event.pointerId;
       timelineHeightResizer.classList.add("dragging");
-      timelineHeightResizer.setPointerCapture(event.pointerId);
+      capturePointerSafely(timelineHeightResizer, pointerId);
       timelineHeightResizer.onpointermove = move => {
         const deltaY = move.clientY - startY;
         const upper = {
@@ -4623,14 +4837,22 @@
         if (editorLayoutMode === "columns") upper.inspectorHeight = start.inspectorHeight + deltaY;
         updateLayoutGeometry(upper);
       };
+      let finished = false;
       const finish = () => {
+        if (finished) return;
+        finished = true;
+        clearEditorPointerFinish(finish);
         timelineHeightResizer.onpointermove = null;
         timelineHeightResizer.onpointerup = null;
         timelineHeightResizer.onpointercancel = null;
+        timelineHeightResizer.onlostpointercapture = null;
+        releasePointerCaptureSafely(timelineHeightResizer, pointerId);
         finishLayoutResize(timelineHeightResizer);
       };
       timelineHeightResizer.onpointerup = finish;
       timelineHeightResizer.onpointercancel = finish;
+      timelineHeightResizer.onlostpointercapture = finish;
+      registerEditorPointerFinish(finish);
     };
   }
   const timelineBottomResizer = q("[data-timeline-bottom-resizer]");
@@ -4643,35 +4865,63 @@
         return;
       }
       event.preventDefault();
+      event.stopPropagation();
       remember();
       const panel = layoutPanels.timeline;
       const floating = panel?.classList.contains("movie-panel-floating");
-      const startY = event.pageY;
-      const startHeight = floating ? pageRect(panel).height : editorLayouts[editorLayoutMode].timelineHeight;
+      const startY = event.clientY;
+      const timelineShell = q("[data-timeline-shell]");
+      const startHeight = pageRect(floating ? panel : timelineShell).height;
+      const pointerId = event.pointerId;
+      let liveHeight = startHeight;
       timelineBottomResizer.classList.add("dragging");
-      timelineBottomResizer.setPointerCapture(event.pointerId);
-      timelineBottomResizer.onpointermove = move => {
-        const height = Math.max(220, startHeight + move.pageY - startY);
+      document.body.classList.add("movie-panel-interacting");
+      capturePointerSafely(timelineBottomResizer, pointerId);
+      const moveTimelineBottom = move => {
+        if (move.pointerId !== pointerId) return;
+        const height = Math.max(120, startHeight + move.clientY - startY);
+        liveHeight = height;
         if (floating && panel) {
           const rect = pageRect(panel);
           panel.style.setProperty("height", `${height}px`, "important");
           setPanelFloatingState("timeline", panel, {...rect, height});
-          updateFloatingWorkspaceExtent();
-          renderTimeline();
         } else {
-          updateLayoutGeometry({timelineHeight: height});
-          updateFloatingWorkspaceExtent();
+          editorLayouts[editorLayoutMode] = {...editorLayouts[editorLayoutMode], timelineHeight: height};
+          timelineShell?.style.setProperty("height", `${height}px`, "important");
         }
-        autoScrollWorkspace(move);
+        updateFloatingWorkspaceExtent();
       };
-      const finish = () => {
-        timelineBottomResizer.onpointermove = null;
-        timelineBottomResizer.onpointerup = null;
-        timelineBottomResizer.onpointercancel = null;
+      window.addEventListener("pointermove", moveTimelineBottom, true);
+      let finished = false;
+      const finish = finishEvent => {
+        if (finishEvent?.pointerId != null && finishEvent.pointerId !== pointerId) return;
+        if (finished) return;
+        finished = true;
+        clearEditorPointerFinish(finish);
+        window.removeEventListener("pointermove", moveTimelineBottom, true);
+        window.removeEventListener("pointerup", finish, true);
+        window.removeEventListener("pointercancel", finish, true);
         timelineBottomResizer.onlostpointercapture = null;
+        releasePointerCaptureSafely(timelineBottomResizer, pointerId);
         timelineBottomResizer.classList.remove("dragging");
-        if (floating) persistFloatingPanels();
-        else persistLayout(editorLayoutMode);
+        document.body.classList.remove("movie-panel-interacting");
+        if (floating) {
+          if (panel) {
+            const rect = pageRect(panel);
+            panel.style.setProperty("height", `${liveHeight}px`, "important");
+            setPanelFloatingState("timeline", panel, {...rect, height: liveHeight});
+          }
+          persistFloatingPanels();
+        }
+        else {
+          const geometry = clampLayoutGeometry(editorLayoutMode, {
+            ...editorLayouts[editorLayoutMode],
+            timelineHeight: liveHeight,
+          });
+          editorLayouts[editorLayoutMode] = geometry;
+          timelineShell?.style.setProperty("height", `${geometry.timelineHeight}px`, "important");
+          persistLayout(editorLayoutMode);
+        }
         applyPreviewZoom();
         updatePreviewGeometry();
         renderTimeline();
@@ -4679,33 +4929,58 @@
         historyRedo = [];
         updateHistoryButtons();
       };
-      timelineBottomResizer.onpointerup = finish;
-      timelineBottomResizer.onpointercancel = finish;
+      window.addEventListener("pointerup", finish, true);
+      window.addEventListener("pointercancel", finish, true);
       timelineBottomResizer.onlostpointercapture = finish;
+      registerEditorPointerFinish(finish);
     };
   }
   qa("[data-panel-height-resizer]").forEach(handle => {
     handle.onpointerdown = event => {
       if (layoutLocked || event.button !== 0) return;
       event.preventDefault();
+      event.stopPropagation();
       remember();
       const key = handle.dataset.panelHeightResizer;
       const startY = event.clientY;
       const start = {...editorLayouts[editorLayoutMode]};
       const property = key === "media" ? "mediaHeight" : key === "canvas" ? "canvasHeight" : "inspectorHeight";
+      const pointerId = event.pointerId;
       handle.classList.add("dragging");
-      handle.setPointerCapture(event.pointerId);
+      capturePointerSafely(handle, pointerId);
       // Each upper panel owns its lower edge and grows down independently.
       handle.onpointermove = move => updateLayoutGeometry({[property]: start[property] + (move.clientY - startY)});
+      let finished = false;
       const finish = () => {
+        if (finished) return;
+        finished = true;
+        clearEditorPointerFinish(finish);
         handle.onpointermove = null;
         handle.onpointerup = null;
         handle.onpointercancel = null;
+        handle.onlostpointercapture = null;
+        releasePointerCaptureSafely(handle, pointerId);
         finishLayoutResize(handle);
       };
       handle.onpointerup = finish;
       handle.onpointercancel = finish;
+      handle.onlostpointercapture = finish;
+      registerEditorPointerFinish(finish);
     };
+  });
+  qa("[data-stage-resizer],[data-inspector-resizer],[data-timeline-height-resizer],[data-timeline-bottom-resizer]").forEach(handle => {
+    handle.addEventListener("dblclick", event => {
+      if (layoutLocked) {
+        flashLayoutLock();
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      widePanelGaps = !widePanelGaps;
+      localStorage.setItem(panelGapKey, widePanelGaps ? "wide" : "narrow");
+      applyPanelGapMode();
+      toast(widePanelGaps ? "Wide panel gaps" : "Compact panel gaps");
+    });
   });
 
   qa("[data-layout-mode]").forEach(button => {
@@ -4771,12 +5046,23 @@
   q("[data-movie-ratio]").value = root.dataset.aspectRatio || "16:9";
   q("[data-movie-resolution]").value = root.dataset.resolution || "1920x1080";
   q("[data-movie-fps]").value = root.dataset.fps || "25";
+  applyPanelGapMode();
   bindPanelDragging();
   applyLayoutLockState();
   applyEditorLayout(cloneLayoutState(), {persist: false, refresh: false});
   applyPreviewDock();
   normalizeTimeline(); applyCanvas(); renderBin(); renderTimeline(); renderInspector(); renderRenderJobs(); renderLibrary(); scheduleRenderPoll(); setPlayhead(0, true, true);
   savedSignature = signature(); updateDirty(); updateHistoryButtons(); refreshMedia();
+  const initialEditorFocusKey = `studio-movie-editor-focused-${timelineId}`;
+  if (sessionStorage.getItem(initialEditorFocusKey) !== "true") {
+    sessionStorage.setItem(initialEditorFocusKey, "true");
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      q('[data-panel-key="editorHeader"]')?.scrollIntoView({block: "start", behavior: "auto"});
+      applyPreviewZoom();
+      updatePreviewGeometry();
+      renderTimeline();
+    }));
+  }
   if ("ResizeObserver" in window && previewBody) {
     new ResizeObserver(() => {
       applyPreviewZoom();
