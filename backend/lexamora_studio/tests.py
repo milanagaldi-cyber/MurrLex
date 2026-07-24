@@ -3759,6 +3759,7 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertContains(page, "data-preview-zoom")
         self.assertContains(page, "data-media-view-cycle")
         self.assertContains(page, "data-track-width-restore")
+        self.assertContains(page, "data-editor-workspace-viewport")
         self.assertContains(page, "data-editor-layout")
         self.assertContains(page, 'data-layout-mode="columns"')
         self.assertContains(page, 'data-layout-mode="stacked"')

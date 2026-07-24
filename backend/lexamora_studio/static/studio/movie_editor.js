@@ -120,6 +120,7 @@
   const folderDialog = q("[data-media-folder-dialog]");
   const trackContext = q("[data-track-context]");
   const editorLayout = q("[data-editor-layout]");
+  const editorViewport = q("[data-editor-workspace-viewport]");
   const projectHeaderPanel = document.querySelector(".project-shell-header");
   if (projectHeaderPanel) {
     projectHeaderPanel.dataset.panelKey = "projectHeader";
@@ -287,6 +288,30 @@
     editorLayouts.columns = {...current, ...normalized};
     editorLayouts.stacked = {...editorLayouts.stacked, ...normalized};
     return normalized;
+  };
+  const centerTileWorkspaceView = () => {
+    if (!editorViewport) return;
+    const layout = ensureTileLayout();
+    const rects = tilePanelKeys.map(key => layout.tiles[key]).filter(Boolean);
+    if (!rects.length) return;
+    const left = Math.min(...rects.map(rect => rect.x));
+    const right = Math.max(...rects.map(rect => rect.x + rect.width));
+    const top = Math.min(...rects.map(rect => rect.y));
+    const viewportWidth = editorViewport.clientWidth;
+    const viewportHeight = editorViewport.clientHeight;
+    editorViewport.scrollLeft = clamp(
+      left + (right - left - viewportWidth) / 2,
+      0,
+      Math.max(0, layout.workspace.width - viewportWidth),
+    );
+    editorViewport.scrollTop = clamp(
+      top,
+      0,
+      Math.max(0, layout.workspace.height - viewportHeight),
+    );
+  };
+  const scheduleTileWorkspaceCenter = () => {
+    requestAnimationFrame(() => requestAnimationFrame(centerTileWorkspaceView));
   };
   const cloneLayoutState = () => ({mode: "columns", layouts: structuredClone(editorLayouts)});
   const panelUsesDefaultGeometry = key => {
@@ -5302,6 +5327,7 @@
     previewZoomManual = false;
     localStorage.removeItem(previewZoomStorageKey);
     applyEditorLayout(cloneLayoutState());
+    scheduleTileWorkspaceCenter();
     updateHistoryButtons();
     toast("Layout reset");
   });
@@ -5323,6 +5349,7 @@
       if (!saved?.layouts) return;
       remember();
       applyEditorLayout(saved);
+      scheduleTileWorkspaceCenter();
       updateHistoryButtons();
       toast("Saved layout loaded");
     } catch (_) {
@@ -5345,6 +5372,7 @@
   bindPanelDragging();
   applyLayoutLockState();
   applyEditorLayout(cloneLayoutState(), {persist: false, refresh: false});
+  scheduleTileWorkspaceCenter();
   applyPreviewDock();
   normalizeTimeline(); applyCanvas(); renderBin(); renderTimeline(); renderInspector(); renderRenderJobs(); renderLibrary(); scheduleRenderPoll(); setPlayhead(0, true, true);
   savedSignature = signature(); updateDirty(); updateHistoryButtons(); refreshMedia();

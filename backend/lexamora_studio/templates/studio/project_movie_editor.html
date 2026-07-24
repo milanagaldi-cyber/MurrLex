@@ -932,6 +932,18 @@ body.movie-layout-locked [data-timeline-edge-resizer]{pointer-events:none!import
 
 /* Bounded independent tile workspace. The work area is allocated once and never
    grows while a tile is moved or resized. */
+.movie-editor-viewport{
+  position:relative;
+  display:block;
+  box-sizing:border-box;
+  width:100%;
+  max-width:100%;
+  min-width:0;
+  margin:0 auto;
+  overflow:auto;
+  overscroll-behavior:contain;
+  scrollbar-gutter:stable;
+}
 .movie-editor-layout,
 .movie-editor-layout[data-layout="columns"],
 .movie-editor-layout[data-layout="stacked"]{
@@ -1144,6 +1156,7 @@ body.movie-panel-interacting *{
     <div class="movie-render-list" data-render-list><p class="muted">No exports yet</p></div>
     </div>
   </section>
+  <div class="movie-editor-viewport" data-editor-workspace-viewport>
   <div class="movie-editor-layout" data-editor-layout data-layout="columns">
   <div class="movie-workbench">
     <div class="movie-stage-column">
@@ -1172,6 +1185,7 @@ body.movie-panel-interacting *{
   </div>
   <aside class="movie-clip-context" data-clip-context hidden><div><span>Clip</span><strong data-clip-context-current></strong></div><div><span>Source</span><strong data-clip-context-source></strong></div><div class="movie-clip-context-actions"><button type="button" class="secondary" data-context-copy title="Copy (Ctrl+C)">Copy</button><button type="button" class="secondary" data-context-paste title="Paste (Ctrl+V)">Paste</button><button type="button" class="secondary" data-context-group title="Group selected clips">Group</button><button type="button" class="secondary" data-context-ungroup title="Ungroup selected clips">Ungroup</button><button type="button" class="secondary" data-clip-render-project title="Render the edited clip into workspace media">Render clip</button><a class="button secondary" data-clip-source-download title="Download original source">Download source</a></div></aside>
   <div class="movie-track-context" data-track-context hidden><strong data-track-context-title>Track</strong><button type="button" data-track-context-action="up">Move up</button><button type="button" data-track-context-action="down">Move down</button><button type="button" data-track-context-action="mute">Mute</button><button type="button" data-track-context-action="visibility">Hide</button><button type="button" data-track-context-action="lock">Lock</button><button type="button" data-track-context-action="display">Toggle display</button><button type="button" data-track-context-action="height-down">Decrease height</button><button type="button" data-track-context-action="height-up">Increase height</button><button type="button" data-track-context-action="delete">Delete empty track</button></div>
+  </div>
   {% if can_edit %}<dialog class="asset-picker movie-media-picker" data-media-library-dialog>
     <div class="toolbar image-picker-head"><div><h2>Project media <span class="media-count" data-media-library-count>0</span></h2><p>Choose existing video, audio or image media</p></div><button class="icon-button secondary" type="button" data-media-library-close aria-label="Close">&times;</button></div>
     <div class="movie-library-toolbar"><div class="image-source-switch"><button type="button" class="active" data-media-scope="project">Project</button><button type="button" class="secondary" data-media-scope="workspace">Workspace</button></div><div class="movie-library-filters"><label>Type<select data-media-kind><option value="ALL">All</option><option value="VIDEO">Video</option><option value="AUDIO">Audio</option><option value="IMAGE">Image</option></select></label><label>Sort<select data-media-sort><option value="latest">Latest</option><option value="alpha">A-Z</option></select></label></div></div>
@@ -1189,4 +1203,4 @@ body.movie-panel-interacting *{
 </section>
 {{ movie_timeline_data|json_script:"movie-timeline-data" }}{{ movie_assets|json_script:"movie-assets-data" }}{{ movie_library_assets|json_script:"movie-library-data" }}{{ movie_render_jobs|json_script:"movie-render-jobs-data" }}{{ movie_edits|json_script:"movie-edits-data" }}
 {% endblock %}
-{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260724-bounded-tiles"></script>{% endblock %}
+{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260724-centered-tiles"></script>{% endblock %}
