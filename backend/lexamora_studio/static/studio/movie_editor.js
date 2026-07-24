@@ -143,14 +143,24 @@
   const audioPlayers = new Map();
   const visualPlayers = new Map();
 
-  const layoutEngineVersion = "fixed-grid-v1";
+  const layoutEngineVersion = "bounded-tiles-v1";
   const layoutModeKey = `studio-movie-layout-mode-${layoutEngineVersion}-${timelineId}`;
   const layoutStateKey = mode => `studio-movie-layout-${layoutEngineVersion}-${timelineId}-${mode}`;
   const savedLayoutKey = `studio-movie-layout-saved-${layoutEngineVersion}-${timelineId}`;
-  const floatingPanelsKey = `studio-movie-floating-panels-${timelineId}`;
+  const floatingPanelsKey = `studio-movie-floating-panels-${layoutEngineVersion}-${timelineId}`;
   const layoutLockKey = `studio-movie-layout-locked-${layoutEngineVersion}-${timelineId}`;
   let layoutLocked = localStorage.getItem(layoutLockKey) === "true";
   let floatingPanels = {};
+  const tilePanelKeys = ["media", "preview", "inspector", "timeline"];
+  const tileMinimums = {
+    media: {width: 180, height: 150},
+    preview: {width: 300, height: 220},
+    inspector: {width: 220, height: 120},
+    timeline: {width: 420, height: 140},
+  };
+  const tileEdgeSize = 18;
+  const tileSnapDistance = 12;
+  let tileLayoutDefaults = null;
   const layoutDefaults = {
     columns: {mediaWidth: 250, inspectorWidth: 390, mediaHeight: 390, canvasHeight: 390, inspectorHeight: 390, timelineHeight: 320, timelineInsetLeft: 0, timelineInsetRight: 0},
     stacked: {mediaWidth: 250, inspectorWidth: 390, mediaHeight: 390, canvasHeight: 390, inspectorHeight: 390, timelineHeight: 320, timelineInsetLeft: 0, timelineInsetRight: 0},
@@ -205,18 +215,86 @@
     }
   };
 
+  const workspacePanel = key => tilePanelKeys.includes(key);
+  const tileRect = value => ({
+    x: Number(value?.x || 0),
+    y: Number(value?.y || 0),
+    width: Number(value?.width || 0),
+    height: Number(value?.height || 0),
+  });
+  const createDefaultTileLayout = () => {
+    const availableWidth = clamp(
+      Number(root.parentElement?.clientWidth || root.clientWidth || document.documentElement.clientWidth || 1240),
+      960,
+      1600,
+    );
+    const gap = 8;
+    const mediaWidth = clamp(Math.round(availableWidth * .2), 220, 300);
+    const inspectorWidth = clamp(Math.round(availableWidth * .27), 300, 430);
+    const previewWidth = Math.max(360, availableWidth - mediaWidth - inspectorWidth - gap * 2);
+    const upperHeight = 390;
+    const timelineHeight = 320;
+    const occupiedHeight = upperHeight + gap + timelineHeight;
+    const reserveX = Math.round(availableWidth / 2);
+    const defaults = {
+      workspace: {
+        width: Math.round(availableWidth * 2),
+        height: occupiedHeight + timelineHeight * 2,
+        baseWidth: availableWidth,
+        baseHeight: occupiedHeight,
+      },
+      tiles: {
+        media: {x: reserveX, y: 0, width: mediaWidth, height: upperHeight},
+        preview: {x: reserveX + mediaWidth + gap, y: 0, width: previewWidth, height: upperHeight},
+        inspector: {x: reserveX + mediaWidth + gap + previewWidth + gap, y: 0, width: inspectorWidth, height: upperHeight},
+        timeline: {x: reserveX, y: upperHeight + gap, width: availableWidth, height: timelineHeight},
+      },
+    };
+    tileLayoutDefaults = structuredClone(defaults);
+    return defaults;
+  };
+  const normalizeTileLayout = value => {
+    const defaults = tileLayoutDefaults || createDefaultTileLayout();
+    const source = value?.tiles && value?.workspace ? value : defaults;
+    const workspace = {
+      width: Number(source.workspace?.width || defaults.workspace.width),
+      height: Number(source.workspace?.height || defaults.workspace.height),
+      baseWidth: Number(source.workspace?.baseWidth || defaults.workspace.baseWidth),
+      baseHeight: Number(source.workspace?.baseHeight || defaults.workspace.baseHeight),
+    };
+    workspace.width = Math.max(defaults.workspace.width, workspace.width);
+    workspace.height = Math.max(defaults.workspace.height, workspace.height);
+    const tiles = {};
+    tilePanelKeys.forEach(key => {
+      const fallback = defaults.tiles[key];
+      const current = tileRect(source.tiles?.[key] || fallback);
+      const minimum = tileMinimums[key];
+      const width = clamp(current.width || fallback.width, minimum.width, Math.min(workspace.width, fallback.width * 2));
+      const height = clamp(current.height || fallback.height, minimum.height, Math.min(workspace.height, fallback.height * 2));
+      tiles[key] = {
+        x: clamp(current.x, 0, Math.max(0, workspace.width - width)),
+        y: clamp(current.y, 0, Math.max(0, workspace.height - height)),
+        width,
+        height,
+      };
+    });
+    return {workspace, tiles};
+  };
+  const ensureTileLayout = () => {
+    if (!tileLayoutDefaults) createDefaultTileLayout();
+    const current = editorLayouts.columns;
+    const normalized = normalizeTileLayout(current?.tiles && current?.workspace ? current : tileLayoutDefaults);
+    editorLayouts.columns = {...current, ...normalized};
+    editorLayouts.stacked = {...editorLayouts.stacked, ...normalized};
+    return normalized;
+  };
   const cloneLayoutState = () => ({mode: "columns", layouts: structuredClone(editorLayouts)});
-  const panelLayoutProperties = key => ({
-    media: ["mediaWidth", "mediaHeight"],
-    preview: ["canvasHeight"],
-    inspector: ["inspectorWidth", "inspectorHeight"],
-    timeline: ["timelineHeight", "timelineInsetLeft", "timelineInsetRight"],
-  }[key] || []);
   const panelUsesDefaultGeometry = key => {
-    const current = editorLayouts[editorLayoutMode] || {};
-    const defaults = layoutDefaults[editorLayoutMode] || {};
-    return panelLayoutProperties(key).every(property =>
-      Math.abs(Number(current[property] || 0) - Number(defaults[property] || 0)) < 1
+    if (!workspacePanel(key)) return true;
+    const current = ensureTileLayout().tiles[key];
+    const defaults = tileLayoutDefaults.tiles[key];
+    return ["x", "y", "width", "height"].every(property =>
+      Math.abs(Number(current[property]) - Number(defaults[property])) < 1
     );
   };
   const refreshPanelHomeButtons = () => {
@@ -227,14 +305,13 @@
     });
   };
   const resetPanelGeometry = key => {
-    const properties = panelLayoutProperties(key);
-    if (!properties.length) {
+    if (!workspacePanel(key)) {
       refreshPanelHomeButtons();
       return;
     }
-    const next = {...editorLayouts[editorLayoutMode]};
-    properties.forEach(property => { next[property] = layoutDefaults[editorLayoutMode][property]; });
-    editorLayouts[editorLayoutMode] = next;
+    const layout = ensureTileLayout();
+    layout.tiles[key] = structuredClone(tileLayoutDefaults.tiles[key]);
+    editorLayouts.columns = {...editorLayouts.columns, ...layout};
     applyEditorLayout(cloneLayoutState());
   };
   const persistLayout = mode => {
@@ -267,30 +344,30 @@
     }
     floatingPanels = {};
     editorLayoutMode = "columns";
-    const geometry = clampLayoutGeometry(editorLayoutMode, editorLayouts[editorLayoutMode]);
-    editorLayouts[editorLayoutMode] = geometry;
+    const layout = ensureTileLayout();
     editorLayout.dataset.layout = editorLayoutMode;
-    editorLayout.style.setProperty("--layout-media-width", `${geometry.mediaWidth}px`);
-    editorLayout.style.setProperty("--layout-inspector-width", `${geometry.inspectorWidth}px`);
-    editorLayout.style.setProperty("--layout-media-height", `${geometry.mediaHeight}px`);
-    editorLayout.style.setProperty("--layout-canvas-height", `${geometry.canvasHeight}px`);
-    editorLayout.style.setProperty("--layout-inspector-height", `${geometry.inspectorHeight}px`);
-    editorLayout.style.setProperty("--layout-timeline-height", `${geometry.timelineHeight}px`);
-    editorLayout.style.setProperty("--layout-timeline-inset-left", `${geometry.timelineInsetLeft}px`);
-    editorLayout.style.setProperty("--layout-timeline-inset-right", `${geometry.timelineInsetRight}px`);
-    editorLayout.style.width = "100%";
+    editorLayout.style.setProperty("--tile-workspace-width", `${layout.workspace.width}px`);
+    editorLayout.style.setProperty("--tile-workspace-height", `${layout.workspace.height}px`);
+    editorLayout.style.setProperty("--tile-edge-size", `${tileEdgeSize}px`);
+    editorLayout.style.setProperty("width", `${layout.workspace.width}px`, "important");
+    editorLayout.style.setProperty("height", `${layout.workspace.height}px`, "important");
     editorLayout.style.marginLeft = "0";
     editorLayout.style.marginRight = "0";
-    if (layoutPanels.media) layoutPanels.media.style.setProperty("height", `${geometry.mediaHeight}px`, "important");
-    if (layoutPanels.preview) layoutPanels.preview.style.setProperty("height", `${geometry.canvasHeight}px`, "important");
-    if (layoutPanels.inspector) layoutPanels.inspector.style.setProperty("height", `${geometry.inspectorHeight}px`, "important");
-    const timelinePanel = q('[data-panel-key="timeline"]');
+    tilePanelKeys.forEach(key => {
+      const panel = layoutPanels[key];
+      const rect = layout.tiles[key];
+      if (!panel || !rect) return;
+      panel.style.setProperty("left", `${rect.x}px`, "important");
+      panel.style.setProperty("top", `${rect.y}px`, "important");
+      panel.style.setProperty("width", `${rect.width}px`, "important");
+      panel.style.setProperty("height", `${rect.height}px`, "important");
+      panel.style.removeProperty("right");
+      panel.style.removeProperty("bottom");
+      panel.dataset.tileX = String(Math.round(rect.x));
+      panel.dataset.tileY = String(Math.round(rect.y));
+    });
     const timelineShell = q("[data-timeline-shell]");
-    if (timelinePanel) {
-      timelinePanel.style.marginLeft = `${geometry.timelineInsetLeft}px`;
-      timelinePanel.style.marginRight = `${geometry.timelineInsetRight}px`;
-    }
-    if (timelineShell) timelineShell.style.setProperty("height", `${geometry.timelineHeight}px`, "important");
+    if (timelineShell) timelineShell.style.setProperty("height", `${Math.max(100, layout.tiles.timeline.height - 46)}px`, "important");
     layoutPanels.media?.classList.remove("media-minimized");
     qa("[data-layout-mode]").forEach(button => {
       const active = button.dataset.layoutMode === editorLayoutMode;
@@ -298,10 +375,12 @@
       button.setAttribute("aria-pressed", active ? "true" : "false");
     });
     if (persist) persistLayout(editorLayoutMode);
-    Object.values(layoutPanels).forEach(panel => {
+    Object.entries(layoutPanels).forEach(([key, panel]) => {
       if (!panel) return;
       panel.classList.remove("movie-panel-floating", "movie-panel-dragging", "movie-panel-snapping");
-      ["position", "left", "right", "top", "bottom", "width", "z-index", "transform"].forEach(property => panel.style.removeProperty(property));
+      if (!workspacePanel(key)) {
+        ["position", "left", "right", "top", "bottom", "width", "z-index", "transform"].forEach(property => panel.style.removeProperty(property));
+      }
     });
     refreshPanelHomeButtons();
     if (refresh) requestAnimationFrame(() => {
@@ -819,7 +898,7 @@
     } else if (toggle.parentElement !== actions) {
       actions.appendChild(toggle);
     }
-    ensureWindowResizeHandles(key, panel);
+    if (!workspacePanel(key)) ensureWindowResizeHandles(key, panel);
   };
   const initializeFloatingToolbar = () => {
     const toolbar = layoutPanels.toolbar?.querySelector("[data-floating-toolbar]");
@@ -1009,167 +1088,382 @@
       actionHost.appendChild(popoutButton);
     }
   };
+  const rectanglesOverlap = (left, right, tolerance = .5) =>
+    left.x < right.x + right.width - tolerance
+    && left.x + left.width > right.x + tolerance
+    && left.y < right.y + right.height - tolerance
+    && left.y + left.height > right.y + tolerance;
+  const tileLayoutHasOverlap = (tiles, activeKey = null) => {
+    const keys = activeKey ? [activeKey] : tilePanelKeys;
+    return keys.some(key => tilePanelKeys.some(otherKey =>
+      key !== otherKey && rectanglesOverlap(tiles[key], tiles[otherKey])
+    ));
+  };
+  const cloneTiles = tiles => Object.fromEntries(tilePanelKeys.map(key => [key, tileRect(tiles[key])]));
+  const applyTileRects = tiles => {
+    tilePanelKeys.forEach(key => {
+      const panel = layoutPanels[key];
+      const rect = tiles[key];
+      if (!panel || !rect) return;
+      panel.style.setProperty("left", `${rect.x}px`, "important");
+      panel.style.setProperty("top", `${rect.y}px`, "important");
+      panel.style.setProperty("width", `${rect.width}px`, "important");
+      panel.style.setProperty("height", `${rect.height}px`, "important");
+    });
+    const timelineShell = q("[data-timeline-shell]");
+    if (timelineShell) timelineShell.style.setProperty("height", `${Math.max(100, tiles.timeline.height - 46)}px`, "important");
+  };
+  const nearestTileSnap = (value, candidates) => {
+    let nearest = null;
+    candidates.forEach(candidate => {
+      const distance = Math.abs(candidate.value - value);
+      if (distance > tileSnapDistance || (nearest && nearest.distance <= distance)) return;
+      nearest = {...candidate, distance};
+    });
+    return nearest;
+  };
+  const ensureTileGuides = () => {
+    if (!editorLayout) return {};
+    let vertical = editorLayout.querySelector(":scope > .movie-tile-snap-guide.vertical");
+    let horizontal = editorLayout.querySelector(":scope > .movie-tile-snap-guide.horizontal");
+    if (!vertical) {
+      vertical = document.createElement("i");
+      vertical.className = "movie-tile-snap-guide vertical";
+      editorLayout.appendChild(vertical);
+    }
+    if (!horizontal) {
+      horizontal = document.createElement("i");
+      horizontal.className = "movie-tile-snap-guide horizontal";
+      editorLayout.appendChild(horizontal);
+    }
+    return {vertical, horizontal};
+  };
+  const hideTileGuides = () => {
+    editorLayout?.querySelectorAll(":scope > .movie-tile-snap-guide").forEach(guide => {
+      guide.hidden = true;
+    });
+  };
+  const showTileGuides = ({x = null, y = null} = {}) => {
+    const {vertical, horizontal} = ensureTileGuides();
+    if (vertical) {
+      vertical.hidden = !Number.isFinite(x);
+      if (Number.isFinite(x)) vertical.style.left = `${x}px`;
+    }
+    if (horizontal) {
+      horizontal.hidden = !Number.isFinite(y);
+      if (Number.isFinite(y)) horizontal.style.top = `${y}px`;
+    }
+  };
+  const snapMovingTile = (key, rect, tiles, workspace) => {
+    const xCandidates = [
+      {value: 0, guide: 0},
+      {value: workspace.width - rect.width, guide: workspace.width},
+    ];
+    const yCandidates = [
+      {value: 0, guide: 0},
+      {value: workspace.height - rect.height, guide: workspace.height},
+    ];
+    tilePanelKeys.filter(otherKey => otherKey !== key).forEach(otherKey => {
+      const other = tiles[otherKey];
+      const right = other.x + other.width;
+      const bottom = other.y + other.height;
+      xCandidates.push(
+        {value: other.x, guide: other.x},
+        {value: right, guide: right},
+        {value: other.x - rect.width, guide: other.x},
+        {value: right - rect.width, guide: right},
+      );
+      yCandidates.push(
+        {value: other.y, guide: other.y},
+        {value: bottom, guide: bottom},
+        {value: other.y - rect.height, guide: other.y},
+        {value: bottom - rect.height, guide: bottom},
+      );
+    });
+    const xSnap = nearestTileSnap(rect.x, xCandidates);
+    const ySnap = nearestTileSnap(rect.y, yCandidates);
+    return {
+      rect: {
+        ...rect,
+        x: clamp(xSnap?.value ?? rect.x, 0, workspace.width - rect.width),
+        y: clamp(ySnap?.value ?? rect.y, 0, workspace.height - rect.height),
+      },
+      guide: {x: xSnap?.guide ?? null, y: ySnap?.guide ?? null},
+    };
+  };
+  const snapResizeEdge = (key, edge, value, tiles, workspace) => {
+    const horizontal = edge === "e" || edge === "w";
+    const candidates = horizontal
+      ? [{value: 0, guide: 0}, {value: workspace.width, guide: workspace.width}]
+      : [{value: 0, guide: 0}, {value: workspace.height, guide: workspace.height}];
+    tilePanelKeys.filter(otherKey => otherKey !== key).forEach(otherKey => {
+      const other = tiles[otherKey];
+      if (horizontal) {
+        candidates.push({value: other.x, guide: other.x}, {value: other.x + other.width, guide: other.x + other.width});
+      } else {
+        candidates.push({value: other.y, guide: other.y}, {value: other.y + other.height, guide: other.y + other.height});
+      }
+    });
+    return nearestTileSnap(value, candidates);
+  };
+  const pushTileFromObstacle = (rect, obstacle, edge, workspace, minimum) => {
+    const next = {...rect};
+    if (edge === "e") {
+      next.x = obstacle.x + obstacle.width;
+      if (next.x + next.width > workspace.width) next.width = workspace.width - next.x;
+    } else if (edge === "w") {
+      const right = obstacle.x;
+      next.x = Math.max(0, right - next.width);
+      next.width = right - next.x;
+    } else if (edge === "s") {
+      next.y = obstacle.y + obstacle.height;
+      if (next.y + next.height > workspace.height) next.height = workspace.height - next.y;
+    } else {
+      const bottom = obstacle.y;
+      next.y = Math.max(0, bottom - next.height);
+      next.height = bottom - next.y;
+    }
+    if (next.width < minimum.width || next.height < minimum.height) return null;
+    return next;
+  };
+  const resolveResizeCollisions = (activeKey, candidate, edge, sourceTiles, workspace) => {
+    const tiles = cloneTiles(sourceTiles);
+    tiles[activeKey] = candidate;
+    const queue = [activeKey];
+    const processed = new Set();
+    let attempts = 0;
+    while (queue.length && attempts < 64) {
+      const obstacleKey = queue.shift();
+      const obstacle = tiles[obstacleKey];
+      for (const otherKey of tilePanelKeys) {
+        attempts += 1;
+        if (otherKey === obstacleKey || otherKey === activeKey) continue;
+        const pair = `${obstacleKey}:${otherKey}`;
+        if (processed.has(pair) || !rectanglesOverlap(obstacle, tiles[otherKey])) continue;
+        processed.add(pair);
+        const pushed = pushTileFromObstacle(tiles[otherKey], obstacle, edge, workspace, tileMinimums[otherKey]);
+        if (!pushed) return null;
+        tiles[otherKey] = pushed;
+        queue.push(otherKey);
+      }
+    }
+    if (attempts >= 64 || tileLayoutHasOverlap(tiles)) return null;
+    return tiles;
+  };
+  const resizeTileCandidate = (key, edge, origin, dx, dy, tiles, workspace) => {
+    const minimum = tileMinimums[key];
+    const defaults = tileLayoutDefaults.tiles[key];
+    const maximumWidth = Math.min(workspace.width, defaults.width * 2);
+    const maximumHeight = Math.min(workspace.height, defaults.height * 2);
+    const next = {...origin};
+    let guide = {x: null, y: null};
+    if (edge === "e") {
+      const raw = clamp(origin.x + origin.width + dx, origin.x + minimum.width, Math.min(workspace.width, origin.x + maximumWidth));
+      const snap = snapResizeEdge(key, edge, raw, tiles, workspace);
+      const right = clamp(snap?.value ?? raw, origin.x + minimum.width, Math.min(workspace.width, origin.x + maximumWidth));
+      next.width = right - origin.x;
+      guide.x = snap?.guide ?? null;
+    } else if (edge === "w") {
+      const raw = clamp(origin.x + dx, Math.max(0, origin.x + origin.width - maximumWidth), origin.x + origin.width - minimum.width);
+      const snap = snapResizeEdge(key, edge, raw, tiles, workspace);
+      next.x = clamp(snap?.value ?? raw, Math.max(0, origin.x + origin.width - maximumWidth), origin.x + origin.width - minimum.width);
+      next.width = origin.x + origin.width - next.x;
+      guide.x = snap?.guide ?? null;
+    } else if (edge === "s") {
+      const raw = clamp(origin.y + origin.height + dy, origin.y + minimum.height, Math.min(workspace.height, origin.y + maximumHeight));
+      const snap = snapResizeEdge(key, edge, raw, tiles, workspace);
+      const bottom = clamp(snap?.value ?? raw, origin.y + minimum.height, Math.min(workspace.height, origin.y + maximumHeight));
+      next.height = bottom - origin.y;
+      guide.y = snap?.guide ?? null;
+    } else {
+      const raw = clamp(origin.y + dy, Math.max(0, origin.y + origin.height - maximumHeight), origin.y + origin.height - minimum.height);
+      const snap = snapResizeEdge(key, edge, raw, tiles, workspace);
+      next.y = clamp(snap?.value ?? raw, Math.max(0, origin.y + origin.height - maximumHeight), origin.y + origin.height - minimum.height);
+      next.height = origin.y + origin.height - next.y;
+      guide.y = snap?.guide ?? null;
+    }
+    return {rect: next, guide};
+  };
+  const ensureTileEdges = (key, panel) => {
+    if (!workspacePanel(key) || !panel) return;
+    panel.querySelectorAll(":scope > .movie-tile-edge").forEach(handle => handle.remove());
+    ["n", "e", "s", "w"].forEach(edge => {
+      const handle = document.createElement("i");
+      handle.className = `movie-tile-edge ${edge}`;
+      handle.dataset.tileEdge = edge;
+      handle.dataset.tileKey = key;
+      handle.title = `Resize ${key}`;
+      panel.appendChild(handle);
+    });
+  };
   const bindPanelDragging = () => {
     initializeProjectFullscreen();
     Object.entries(layoutPanels).forEach(([key, panel]) => {
       if (!panel) return;
       rememberPanelHome(key, panel);
       ensurePanelChrome(key, panel);
+      ensureTileEdges(key, panel);
     });
     initializeCanvasControls();
     window.refreshLexamoraIcons?.(root);
     if (projectHeaderPanel) window.refreshLexamoraIcons?.(projectHeaderPanel);
-    // Fixed-grid editor: panel headers are no longer drag surfaces.
     localStorage.removeItem(floatingPanelsKey);
-    return;
-    [...document.querySelectorAll("[data-panel-drag]")].forEach(handle => {
-      const key = handle.dataset.panelDrag;
+
+    tilePanelKeys.forEach(key => {
       const panel = layoutPanels[key];
-      if (!panel || handle.dataset.dragBound === "true") return;
-      handle.dataset.dragBound = "true";
-      handle.addEventListener("dblclick", event => {
-        if (event.target.closest("button,input,select,a")) return;
-        if (layoutLocked) {
-          flashLayoutLock();
-          return;
-        }
-        remember();
-        if (panel.classList.contains("movie-panel-floating")) {
-          dockFloatingPanel(key);
-        } else {
-          const rect = pageRect(panel);
-          floatPanel(key, {...rect, left: rect.left + 12, top: rect.top + 12});
-        }
-        historyRedo = [];
-        updateHistoryButtons();
-      });
+      const handle = panel?.querySelector(`[data-panel-drag="${key}"]`);
+      if (!panel || !handle || handle.dataset.tileDragBound === "true") return;
+      handle.dataset.tileDragBound = "true";
       handle.addEventListener("pointerdown", event => {
         if (!canEdit || event.button !== 0 || event.target.closest("button,input,select,a,label")) return;
         if (layoutLocked) {
           event.preventDefault();
-          event.stopPropagation();
           flashLayoutLock();
           return;
         }
         event.preventDefault();
         event.stopPropagation();
-        const origin = pageRect(panel);
-        const startClientX = event.clientX;
-        const startClientY = event.clientY;
-        let active = false;
-        let remembered = false;
-        let pendingHome = false;
-        let finished = false;
+        const layout = ensureTileLayout();
+        const startTiles = cloneTiles(layout.tiles);
+        const origin = {...startTiles[key]};
+        const startX = event.clientX;
+        const startY = event.clientY;
         const pointerId = event.pointerId;
+        let active = false;
+        let currentTiles = startTiles;
         capturePointerSafely(handle, pointerId);
         const move = next => {
-          const dx = next.clientX - startClientX;
-          const dy = next.clientY - startClientY;
-          const rawPointerLeft = origin.left + dx;
-          const rawPointerTop = origin.top + dy;
-          if (!active && Math.hypot(dx, dy) < 6) return;
-          if (!remembered) { remember(); remembered = true; }
-          if (!panel.classList.contains("movie-panel-floating")) floatPanel(key, origin, {persist: false, refresh: false});
+          const dx = next.clientX - startX;
+          const dy = next.clientY - startY;
+          if (!active && Math.hypot(dx, dy) < 4) return;
+          if (!active) remember();
           active = true;
-          panel.classList.add("movie-panel-moving");
+          const raw = {
+            ...origin,
+            x: clamp(origin.x + dx, 0, layout.workspace.width - origin.width),
+            y: clamp(origin.y + dy, 0, layout.workspace.height - origin.height),
+          };
+          const snapped = snapMovingTile(key, raw, startTiles, layout.workspace);
+          currentTiles = cloneTiles(startTiles);
+          currentTiles[key] = snapped.rect;
+          panel.classList.add("movie-tile-moving");
+          panel.classList.toggle("movie-tile-drop-invalid", tileLayoutHasOverlap(currentTiles, key));
           document.body.classList.add("movie-panel-interacting");
-          const width = panel.offsetWidth;
-          const height = panel.offsetHeight;
-          const targets = panelSnapTargets(key);
-          const rawLeft = rawPointerLeft;
-          const rawTop = rawPointerTop;
-          const home = panelHomes.get(key);
-          const homeX = home?.rect?.left;
-          const homeY = home?.rect?.top;
-          pendingHome = Number.isFinite(homeX) && Number.isFinite(homeY)
-            && Math.abs(rawLeft - homeX) <= 30
-            && Math.abs(rawTop - homeY) <= 30;
-          const xSnap = nearestPanelSnap(rawLeft, [
-            {value: 4},
-            ...targets.flatMap(target => [
-              {value: target.rect.left, target: target.panel},
-              {value: target.rect.right, target: target.panel},
-              {value: target.rect.left - width, target: target.panel},
-              {value: target.rect.right - width, target: target.panel},
-            ]),
-          ]);
-          const ySnap = nearestPanelSnap(rawTop, [
-            {value: 4},
-            ...targets.flatMap(target => [
-              {value: target.rect.top, target: target.panel},
-              {value: target.rect.bottom, target: target.panel},
-              {value: target.rect.top - height, target: target.panel},
-              {value: target.rect.bottom - height, target: target.panel},
-            ]),
-          ]);
-          const bounded = clampFloatingRect({
-            left: pendingHome ? homeX : xSnap.value,
-            top: pendingHome ? homeY : ySnap.value,
-            width,
-            height,
-          });
-          const left = bounded.left;
-          const top = bounded.top;
-          panel.style.setProperty("left", `${left}px`, "important");
-          panel.style.setProperty("top", `${top}px`, "important");
-          setPanelFloatingState(key, panel, {left, top, width, height});
-          showPanelSnapFeedback(panel, pendingHome
-            ? [{snapped: true, target: null}]
-            : [xSnap, ySnap], {home: pendingHome});
+          showTileGuides(snapped.guide);
+          applyTileRects(currentTiles);
         };
-        const finish = () => {
+        let finished = false;
+        const finish = finishEvent => {
+          if (finishEvent?.pointerId != null && finishEvent.pointerId !== pointerId) return;
           if (finished) return;
           finished = true;
           clearEditorPointerFinish(finish);
-          handle.onpointermove = null;
-          handle.onpointerup = null;
-          handle.onpointercancel = null;
-          handle.onlostpointercapture = null;
+          window.removeEventListener("pointermove", move, true);
+          window.removeEventListener("pointerup", finish, true);
+          window.removeEventListener("pointercancel", finish, true);
           releasePointerCaptureSafely(handle, pointerId);
-          panel.classList.remove("movie-panel-moving");
+          panel.classList.remove("movie-tile-moving", "movie-tile-drop-invalid");
           document.body.classList.remove("movie-panel-interacting");
-          clearPanelSnapFeedback();
-          if (active) {
-            if (pendingHome) dockFloatingPanel(key);
-            else {
-              const bounded = clampFloatingRect(pageRect(panel));
-              panel.style.setProperty("left", `${bounded.left}px`, "important");
-              panel.style.setProperty("top", `${bounded.top}px`, "important");
-              setPanelFloatingState(key, panel, bounded);
-              persistFloatingPanels();
-              refreshFloatingGeometry();
-            }
-            historyRedo = [];
-            updateHistoryButtons();
+          hideTileGuides();
+          if (!active) return;
+          if (tileLayoutHasOverlap(currentTiles, key)) {
+            applyTileRects(startTiles);
+            toast("This space is occupied");
+          } else {
+            editorLayouts.columns = {...editorLayouts.columns, workspace: layout.workspace, tiles: currentTiles};
+            persistLayout("columns");
           }
+          applyPreviewZoom();
+          updatePreviewGeometry();
+          renderTimeline();
+          historyRedo = [];
+          updateHistoryButtons();
         };
-        handle.onpointermove = move;
-        handle.onpointerup = finish;
-        handle.onpointercancel = finish;
-        handle.onlostpointercapture = finish;
+        window.addEventListener("pointermove", move, true);
+        window.addEventListener("pointerup", finish, true);
+        window.addEventListener("pointercancel", finish, true);
         registerEditorPointerFinish(finish);
       });
     });
+
+    editorLayout?.querySelectorAll(".movie-tile-edge").forEach(handle => {
+      if (handle.dataset.tileResizeBound === "true") return;
+      handle.dataset.tileResizeBound = "true";
+      handle.addEventListener("pointerdown", event => {
+        if (!canEdit || event.button !== 0) return;
+        if (layoutLocked) {
+          event.preventDefault();
+          flashLayoutLock();
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        const key = handle.dataset.tileKey;
+        const edge = handle.dataset.tileEdge;
+        const panel = layoutPanels[key];
+        const layout = ensureTileLayout();
+        const startTiles = cloneTiles(layout.tiles);
+        const origin = {...startTiles[key]};
+        const startX = event.clientX;
+        const startY = event.clientY;
+        const pointerId = event.pointerId;
+        let active = false;
+        let currentTiles = startTiles;
+        capturePointerSafely(handle, pointerId);
+        const move = next => {
+          const dx = next.clientX - startX;
+          const dy = next.clientY - startY;
+          if (!active && Math.hypot(dx, dy) < 2) return;
+          if (!active) remember();
+          active = true;
+          const resized = resizeTileCandidate(key, edge, origin, dx, dy, startTiles, layout.workspace);
+          const resolved = resolveResizeCollisions(key, resized.rect, edge, startTiles, layout.workspace);
+          if (!resolved) return;
+          currentTiles = resolved;
+          panel?.classList.add("movie-tile-resizing");
+          handle.classList.add("active");
+          document.body.classList.add("movie-panel-interacting");
+          showTileGuides(resized.guide);
+          applyTileRects(currentTiles);
+          applyPreviewZoom();
+          updatePreviewGeometry();
+        };
+        let finished = false;
+        const finish = finishEvent => {
+          if (finishEvent?.pointerId != null && finishEvent.pointerId !== pointerId) return;
+          if (finished) return;
+          finished = true;
+          clearEditorPointerFinish(finish);
+          window.removeEventListener("pointermove", move, true);
+          window.removeEventListener("pointerup", finish, true);
+          window.removeEventListener("pointercancel", finish, true);
+          releasePointerCaptureSafely(handle, pointerId);
+          panel?.classList.remove("movie-tile-resizing");
+          handle.classList.remove("active");
+          document.body.classList.remove("movie-panel-interacting");
+          hideTileGuides();
+          if (!active) return;
+          editorLayouts.columns = {...editorLayouts.columns, workspace: layout.workspace, tiles: currentTiles};
+          persistLayout("columns");
+          applyEditorLayout(cloneLayoutState(), {persist: false});
+          historyRedo = [];
+          updateHistoryButtons();
+        };
+        window.addEventListener("pointermove", move, true);
+        window.addEventListener("pointerup", finish, true);
+        window.addEventListener("pointercancel", finish, true);
+        registerEditorPointerFinish(finish);
+      });
+    });
+
     if (root.dataset.panelSnapCleanupBound !== "true") {
       root.dataset.panelSnapCleanupBound = "true";
       document.addEventListener("pointerup", finishActiveEditorPointer, true);
       document.addEventListener("pointercancel", finishActiveEditorPointer, true);
-      window.addEventListener("blur", () => {
-        finishActiveEditorPointer();
-        clearPanelSnapFeedback();
-        forceEditorPointerCleanup();
-      });
+      window.addEventListener("blur", finishActiveEditorPointer);
       document.addEventListener("visibilitychange", () => {
-        if (!document.hidden) return;
-        finishActiveEditorPointer();
-        clearPanelSnapFeedback();
-        forceEditorPointerCleanup();
+        if (document.hidden) finishActiveEditorPointer();
       });
-      window.addEventListener("resize", updateFloatingWorkspaceExtent);
-      document.addEventListener("pointerdown", event => {
-        if (!layoutLocked || !event.target.closest("[data-layout-resizer],[data-stage-resizer],[data-inspector-resizer],[data-panel-width-resizer],[data-panel-height-resizer],[data-timeline-edge-resizer],[data-timeline-height-resizer],[data-timeline-bottom-resizer]")) return;
-        flashLayoutLock();
-      }, true);
     }
   };
 
@@ -5001,7 +5295,10 @@
   q("[data-layout-reset]")?.addEventListener("click", () => {
     if (!canEdit) return;
     remember();
-    editorLayouts[editorLayoutMode] = {...layoutDefaults[editorLayoutMode]};
+    const resetLayout = structuredClone(tileLayoutDefaults || createDefaultTileLayout());
+    editorLayouts.columns = {...layoutDefaults.columns, ...resetLayout};
+    editorLayouts.stacked = {...layoutDefaults.stacked, ...resetLayout};
+    editorLayoutMode = "columns";
     previewZoomManual = false;
     localStorage.removeItem(previewZoomStorageKey);
     applyEditorLayout(cloneLayoutState());

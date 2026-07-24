@@ -929,6 +929,179 @@ body.movie-layout-locked [data-timeline-edge-resizer]{pointer-events:none!import
   .movie-editor-layout .movie-preview-panel,
   .movie-editor-layout .movie-inspector{width:auto!important;max-width:none!important}
 }
+
+/* Bounded independent tile workspace. The work area is allocated once and never
+   grows while a tile is moved or resized. */
+.movie-editor-layout,
+.movie-editor-layout[data-layout="columns"],
+.movie-editor-layout[data-layout="stacked"]{
+  position:relative!important;
+  display:block!important;
+  box-sizing:border-box!important;
+  width:var(--tile-workspace-width)!important;
+  min-width:var(--tile-workspace-width)!important;
+  max-width:none!important;
+  height:var(--tile-workspace-height)!important;
+  min-height:var(--tile-workspace-height)!important;
+  margin:0!important;
+  padding:0!important;
+  overflow:visible!important;
+  background:
+    linear-gradient(color-mix(in srgb,var(--line) 22%,transparent) 1px,transparent 1px),
+    linear-gradient(90deg,color-mix(in srgb,var(--line) 22%,transparent) 1px,transparent 1px);
+  background-size:32px 32px;
+  background-position:-1px -1px;
+}
+.movie-editor-layout .movie-workbench,
+.movie-editor-layout .movie-stage-column{
+  display:contents!important;
+}
+.movie-editor-layout [data-panel-key="media"],
+.movie-editor-layout [data-panel-key="preview"],
+.movie-editor-layout [data-panel-key="inspector"],
+.movie-editor-layout [data-panel-key="timeline"]{
+  position:absolute!important;
+  inset:auto!important;
+  box-sizing:border-box!important;
+  margin:0!important;
+  max-width:none!important;
+  align-self:auto!important;
+  transform:none!important;
+  z-index:2!important;
+  overflow:hidden!important;
+}
+.movie-editor-layout [data-panel-key="media"]{
+  min-width:180px!important;
+  min-height:150px!important;
+}
+.movie-editor-layout [data-panel-key="preview"]{
+  min-width:300px!important;
+  min-height:220px!important;
+}
+.movie-editor-layout [data-panel-key="inspector"]{
+  min-width:220px!important;
+  min-height:120px!important;
+}
+.movie-editor-layout [data-panel-key="timeline"]{
+  min-width:420px!important;
+  min-height:140px!important;
+}
+.movie-editor-layout [data-panel-drag]{
+  cursor:grab!important;
+  user-select:none;
+}
+.movie-editor-layout [data-panel-drag] button,
+.movie-editor-layout [data-panel-drag] input,
+.movie-editor-layout [data-panel-drag] select,
+.movie-editor-layout [data-panel-drag] a,
+.movie-editor-layout [data-panel-drag] label{
+  cursor:pointer!important;
+}
+body.movie-panel-interacting,
+body.movie-panel-interacting *{
+  cursor:grabbing!important;
+  user-select:none!important;
+}
+.movie-editor-layout .movie-stage-resizer,
+.movie-editor-layout .movie-inspector-resizer,
+.movie-editor-layout [data-panel-width-resizer],
+.movie-editor-layout .movie-panel-height-resizer,
+.movie-editor-layout [data-timeline-edge-resizer],
+.movie-editor-layout [data-timeline-height-resizer],
+.movie-editor-layout [data-timeline-bottom-resizer],
+.movie-editor-layout .movie-window-resize-handle,
+.movie-editor-layout .movie-panel-placeholder,
+.movie-editor-layout .movie-window-dock-preview{
+  display:none!important;
+  pointer-events:none!important;
+}
+.movie-tile-edge{
+  position:absolute;
+  z-index:30;
+  display:block;
+  margin:0;
+  padding:0;
+  border:0;
+  background:transparent;
+  touch-action:none;
+}
+.movie-tile-edge::after{
+  content:"";
+  position:absolute;
+  background:transparent;
+  pointer-events:none;
+  transition:background-color .12s ease,box-shadow .12s ease;
+}
+.movie-tile-edge.n,
+.movie-tile-edge.s{
+  left:0;
+  right:0;
+  height:var(--tile-edge-size,18px);
+  cursor:ns-resize;
+}
+.movie-tile-edge.n{top:calc(var(--tile-edge-size,18px) / -2)}
+.movie-tile-edge.s{bottom:calc(var(--tile-edge-size,18px) / -2)}
+.movie-tile-edge.n::after,
+.movie-tile-edge.s::after{
+  left:0;
+  right:0;
+  height:2px;
+  top:calc(50% - 1px);
+}
+.movie-tile-edge.e,
+.movie-tile-edge.w{
+  top:0;
+  bottom:0;
+  width:var(--tile-edge-size,18px);
+  cursor:ew-resize;
+}
+.movie-tile-edge.e{right:calc(var(--tile-edge-size,18px) / -2)}
+.movie-tile-edge.w{left:calc(var(--tile-edge-size,18px) / -2)}
+.movie-tile-edge.e::after,
+.movie-tile-edge.w::after{
+  top:0;
+  bottom:0;
+  width:2px;
+  left:calc(50% - 1px);
+}
+.movie-tile-edge:hover::after,
+.movie-tile-edge.active::after{
+  background:var(--accent);
+  box-shadow:0 0 8px color-mix(in srgb,var(--accent) 72%,transparent);
+}
+.movie-tile-moving,
+.movie-tile-resizing{
+  z-index:60!important;
+  box-shadow:0 14px 34px rgba(0,0,0,.32)!important;
+}
+.movie-tile-moving{
+  opacity:.92;
+}
+.movie-tile-drop-invalid{
+  outline:2px solid var(--danger)!important;
+  outline-offset:-2px;
+}
+.movie-tile-snap-guide{
+  position:absolute;
+  z-index:100;
+  display:block;
+  margin:0;
+  padding:0;
+  background:var(--accent);
+  box-shadow:0 0 9px color-mix(in srgb,var(--accent) 72%,transparent);
+  pointer-events:none;
+}
+.movie-tile-snap-guide[hidden]{display:none!important}
+.movie-tile-snap-guide.vertical{
+  top:0;
+  bottom:0;
+  width:2px;
+}
+.movie-tile-snap-guide.horizontal{
+  left:0;
+  right:0;
+  height:2px;
+}
 </style>{% endblock %}
 {% block content %}
 {% include "studio/_project_navigation.html" %}
@@ -1016,4 +1189,4 @@ body.movie-layout-locked [data-timeline-edge-resizer]{pointer-events:none!import
 </section>
 {{ movie_timeline_data|json_script:"movie-timeline-data" }}{{ movie_assets|json_script:"movie-assets-data" }}{{ movie_library_assets|json_script:"movie-library-data" }}{{ movie_render_jobs|json_script:"movie-render-jobs-data" }}{{ movie_edits|json_script:"movie-edits-data" }}
 {% endblock %}
-{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260724-edit-settings"></script>{% endblock %}
+{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260724-bounded-tiles"></script>{% endblock %}
