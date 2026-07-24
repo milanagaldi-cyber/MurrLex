@@ -1280,6 +1280,7 @@ class StudioWebEditingAndImagesTests(TestCase):
                 "dialogue_language": "PL", "prompt_language": "EN",
                 "translation_languages": "pl, en", "prompt_template": "No music.",
                 "default_translation_model": translation_model.id,
+                "editor_wallpaper": self.image_file("draft-editor-wallpaper.png"),
             },
         )
         self.assertRedirects(response, f"/studio/projects/{self.project.id}/settings/")
@@ -1287,6 +1288,7 @@ class StudioWebEditingAndImagesTests(TestCase):
         self.assertEqual((self.project.documentation_language, self.project.dialogue_language, self.project.prompt_language), ("RU", "PL", "EN"))
         self.assertEqual(self.project.prompt_template, "No music.")
         self.assertEqual(self.project.default_translation_model, translation_model)
+        self.assertTrue(self.project.editor_wallpaper.name.endswith("draft-editor-wallpaper.png"))
         edit = self.client.post(
             f"/studio/projects/{self.project.id}/edit/",
             {

@@ -64,7 +64,12 @@
   const mediaSortKey = `studio-movie-media-sort-${timelineId}`;
   const defaultTrackHeight = Math.max(21, Math.min(210, Number(localStorage.getItem("studio-movie-track-height")) || 84));
   let mediaView = ["list", "small", "large"].includes(localStorage.getItem("studio-movie-media-view")) ? localStorage.getItem("studio-movie-media-view") : "list";
-  let previewZoom = Math.max(.25, Math.min(2, Number(localStorage.getItem("studio-movie-preview-zoom")) || 1));
+  const previewZoomStorageKey = `studio-movie-preview-zoom-${timelineId}`;
+  const storedPreviewZoom = localStorage.getItem(previewZoomStorageKey);
+  let previewZoomManual = storedPreviewZoom !== null;
+  let previewZoom = previewZoomManual
+    ? Math.max(.05, Math.min(2, Number(storedPreviewZoom) || 1))
+    : 1;
   let inspectorTab = "VIDEO";
   let previewGeometry = null;
   let autosaveTimer = null;
@@ -148,8 +153,8 @@
     catch (_) { return {}; }
   })();
   const layoutDefaults = {
-    columns: {mediaWidth: 250, inspectorWidth: 390, mediaHeight: 390, canvasHeight: 390, inspectorHeight: 390, timelineHeight: 520, timelineInsetLeft: 0, timelineInsetRight: 0, workspaceExtraLeft: 0, workspaceExtraRight: 0},
-    stacked: {mediaWidth: 250, inspectorWidth: 390, mediaHeight: 390, canvasHeight: 390, inspectorHeight: 190, timelineHeight: 520, timelineInsetLeft: 0, timelineInsetRight: 0, workspaceExtraLeft: 0, workspaceExtraRight: 0},
+    columns: {mediaWidth: 250, inspectorWidth: 390, mediaHeight: 390, canvasHeight: 390, inspectorHeight: 390, timelineHeight: 360, timelineInsetLeft: 0, timelineInsetRight: 0, workspaceExtraLeft: 0, workspaceExtraRight: 0},
+    stacked: {mediaWidth: 250, inspectorWidth: 390, mediaHeight: 390, canvasHeight: 390, inspectorHeight: 190, timelineHeight: 360, timelineInsetLeft: 0, timelineInsetRight: 0, workspaceExtraLeft: 0, workspaceExtraRight: 0},
   };
   const readLayoutGeometry = mode => {
     try {
@@ -161,7 +166,7 @@
   };
   let editorLayoutMode = ["columns", "stacked"].includes(localStorage.getItem(layoutModeKey))
     ? localStorage.getItem(layoutModeKey)
-    : "stacked";
+    : "columns";
   let editorLayouts = {
     columns: readLayoutGeometry("columns"),
     stacked: readLayoutGeometry("stacked"),
@@ -171,7 +176,10 @@
   if (root.dataset.editorWallpaper) {
     const wallpaper = String(root.dataset.editorWallpaper).replace(/["\\\n\r]/g, "");
     root.classList.add("has-editor-wallpaper");
-    root.style.backgroundImage = `linear-gradient(rgba(5,14,23,.86),rgba(5,14,23,.86)),url("${wallpaper}")`;
+    root.style.setProperty("background-image", `linear-gradient(rgba(5,14,23,.86),rgba(5,14,23,.86)),url("${wallpaper}")`, "important");
+    root.style.setProperty("background-position", "center top", "important");
+    root.style.setProperty("background-repeat", "no-repeat", "important");
+    root.style.setProperty("background-size", "cover", "important");
   }
   const applyPreviewDock = () => {
     previewBody?.classList.toggle("dock-bottom", previewDockMode === "bottom");
@@ -220,7 +228,7 @@
       };
     }
     if (state.floatingPanels && typeof state.floatingPanels === "object") floatingPanels = structuredClone(state.floatingPanels);
-    editorLayoutMode = ["columns", "stacked"].includes(state.mode) ? state.mode : "stacked";
+    editorLayoutMode = ["columns", "stacked"].includes(state.mode) ? state.mode : "columns";
     const geometry = clampLayoutGeometry(editorLayoutMode, editorLayouts[editorLayoutMode]);
     editorLayouts[editorLayoutMode] = geometry;
     editorLayout.dataset.layout = editorLayoutMode;
@@ -269,7 +277,6 @@
   document.body.appendChild(floatingWorkspaceSpacer);
   document.documentElement.classList.add("movie-editor-windowing");
   document.body.classList.add("movie-editor-windowing");
-  const initialRootRect = root.getBoundingClientRect();
   const workspaceExtent = {width: 0, height: 0};
   const pageRect = node => {
     const rect = node.getBoundingClientRect();
@@ -284,31 +291,28 @@
   };
   const updateFloatingWorkspaceExtent = () => {
     const rootBounds = pageRect(root);
-    const timelineReserve = Math.max(
-      520,
-      Number(layoutPanels.timeline?.getBoundingClientRect().height || 0) * 2,
-    );
-    let right = Math.max(
-      document.documentElement.clientWidth,
-      rootBounds.left + root.scrollWidth + 48,
-    );
-    let bottom = Math.max(
-      document.documentElement.clientHeight,
-      rootBounds.top + root.scrollHeight + timelineReserve,
-    );
-    Object.values(layoutPanels).filter(panel => panel?.classList.contains("movie-panel-floating")).forEach(panel => {
-      const rect = pageRect(panel);
-      right = Math.max(right, rect.right + 48);
-      bottom = Math.max(bottom, rect.bottom + 48);
+    const viewportWidth = document.documentElement.clientWidth;
+    const viewportHeight = document.documentElement.clientHeight;
+    const timelineHeight = Number(layoutPanels.timeline?.getBoundingClientRect().height || 0);
+    const timelineReserve = clamp(timelineHeight * .5, 120, 320);
+    const floating = Object.values(layoutPanels).filter(panel => panel?.classList.contains("movie-panel-floating"));
+    const floatingRects = floating.map(pageRect);
+    const widestPanel = Math.max(rootBounds.width, ...floatingRects.map(rect => rect.width), 760);
+    const tallestPanel = Math.max(timelineHeight, ...floatingRects.map(rect => rect.height), 360);
+    const maximumRight = viewportWidth + widestPanel + 48;
+    const maximumBottom = viewportHeight + tallestPanel + timelineReserve;
+    let right = viewportWidth;
+    let bottom = Math.max(viewportHeight, rootBounds.bottom + timelineReserve);
+    floatingRects.forEach(rect => {
+      right = Math.max(right, Math.min(maximumRight, rect.right + 24));
+      bottom = Math.max(bottom, Math.min(maximumBottom, rect.bottom + 24));
     });
-    // Never shrink the detachable desktop while the editor is open. Shrinking
-    // changes page coordinates under the pointer and used to launch panels to
-    // the side or pin the Timeline against the browser bottom.
-    workspaceExtent.width = Math.ceil(Math.max(workspaceExtent.width, right));
-    workspaceExtent.height = Math.ceil(Math.max(workspaceExtent.height, bottom));
-    floatingWorkspaceSpacer.style.width = `${workspaceExtent.width}px`;
+    workspaceExtent.width = Math.ceil(right);
+    workspaceExtent.height = Math.ceil(bottom);
+    floatingWorkspaceSpacer.style.width = right > viewportWidth ? `${workspaceExtent.width}px` : "0px";
     floatingWorkspaceSpacer.style.height = `${workspaceExtent.height}px`;
-    document.body.style.setProperty("min-width", `${workspaceExtent.width}px`, "important");
+    if (right > viewportWidth) document.body.style.setProperty("min-width", `${workspaceExtent.width}px`, "important");
+    else document.body.style.removeProperty("min-width");
     document.body.style.setProperty("min-height", `${workspaceExtent.height}px`, "important");
   };
   // Moving the document while a panel is being dragged changes the pointer's
@@ -1163,13 +1167,12 @@
     const body = q(".movie-preview-body");
     if (!body || !previewStage) return;
     const output = outputDimensions();
-    const ratio = output.width / output.height;
-    const availableWidth = Math.max(90, body.clientWidth - 16);
-    const availableHeight = Math.max(90, body.clientHeight - 16);
-    const naturalWidth = Math.min(availableWidth, availableHeight * ratio);
-    const naturalHeight = naturalWidth / ratio;
-    previewStage.style.width = `${Math.max(90, naturalWidth * previewZoom)}px`;
-    previewStage.style.height = `${Math.max(90, naturalHeight * previewZoom)}px`;
+    const availableWidth = Math.max(40, body.clientWidth - 80);
+    const availableHeight = Math.max(40, body.clientHeight - 12);
+    const fitZoom = Math.min(availableWidth / output.width, availableHeight / output.height);
+    if (!previewZoomManual) previewZoom = clamp(fitZoom, .05, 2);
+    previewStage.style.width = `${Math.max(40, output.width * previewZoom)}px`;
+    previewStage.style.height = `${Math.max(40, output.height * previewZoom)}px`;
     previewStage.style.aspectRatio = `${output.width} / ${output.height}`;
     if (previewZoomInput) previewZoomInput.value = previewZoom;
     if (previewZoomValue && document.activeElement !== previewZoomValue) previewZoomValue.value = String(Math.round(previewZoom * 100));
@@ -3161,7 +3164,7 @@
     const sameKind = timeline.tracks.filter(item => item.kind === track.kind);
     code.textContent = `${track.kind === "AUDIO" ? "A" : "V"}${sameKind.indexOf(track) + 1}`;
     controls.className = "movie-track-controls";
-    head.style.height = `${Number(track.height || 84) * 2}px`;
+    head.style.height = `${Number(track.height || 84)}px`;
     title.textContent = track.name;
     kind.textContent = `${track.kind} / ${track.clips.length} clip${track.clips.length === 1 ? "" : "s"}`;
     nameWrap.append(code, title, kind);
@@ -3567,7 +3570,7 @@
     if (mediaKind === "VIDEO" && (asset?.filmstripUrl || asset?.thumbnailUrl)) {
       const interval = asset.filmstripIntervalMs || 2000;
       const total = asset.filmstripFrameCount || 1;
-      const frameSize = Math.max(32, track.height - (asset?.waveformUrl ? 30 : 8));
+      const frameSize = Math.max(16, Number(track.height || 84) - 4);
       const visible = Math.max(1, Math.ceil(clip.duration / interval));
       const first = Math.floor(clip.sourceStart / interval);
       node.style.setProperty("--movie-frame-height", `${frameSize}px`);
@@ -3639,7 +3642,7 @@
     timeline.tracks.forEach(track => {
       headsNode.append(makeTrackHead(track));
       const lane = document.createElement("div"); lane.className = `movie-track-lane${track.locked ? " locked" : ""}${track.hidden ? " hidden-track" : ""}${track.displayMode === "WAVEFORM" ? " waveform-mode" : ""}`; lane.dataset.trackId = track.id;
-      lane.style.height = `${Number(track.height || 84) * 2}px`;
+      lane.style.height = `${Number(track.height || 84)}px`;
       lane.onpointerenter = () => { pasteTargetTrackId = track.id; };
       lane.onpointermove = () => { pasteTargetTrackId = track.id; };
       lane.onpointerdown = event => {
@@ -4113,14 +4116,16 @@
   previewStage.addEventListener("wheel", () => {}, {passive: true});
   playheadNode.addEventListener("pointerdown", beginPlayheadGesture);
   previewZoomInput?.addEventListener("input", event => {
-    previewZoom = clamp(Number(event.target.value), .25, 2);
-    localStorage.setItem("studio-movie-preview-zoom", String(previewZoom));
+    previewZoomManual = true;
+    previewZoom = clamp(Number(event.target.value), .05, 2);
+    localStorage.setItem(previewZoomStorageKey, String(previewZoom));
     applyPreviewZoom();
     updatePreviewGeometry();
   });
   const setPreviewZoomPercent = value => {
-    previewZoom = clamp((Number(value) || 100) / 100, .25, 2);
-    localStorage.setItem("studio-movie-preview-zoom", String(previewZoom));
+    previewZoomManual = true;
+    previewZoom = clamp((Number(value) || 100) / 100, .05, 2);
+    localStorage.setItem(previewZoomStorageKey, String(previewZoom));
     applyPreviewZoom();
     updatePreviewGeometry();
   };
@@ -4427,14 +4432,22 @@
       handle.setPointerCapture(event.pointerId);
       handle.onpointermove = move => {
         const deltaX = move.clientX - startX;
-        if (panel === "media") updateLayoutGeometry({
-          mediaWidth: start.mediaWidth - deltaX,
-          workspaceExtraLeft: start.workspaceExtraLeft - deltaX,
-        });
-        if (panel === "inspector" && editorLayoutMode === "columns") updateLayoutGeometry({
-          inspectorWidth: start.inspectorWidth + deltaX,
-          workspaceExtraRight: start.workspaceExtraRight + deltaX,
-        });
+        if (panel === "media") {
+          const workspaceExtraLeft = Math.max(0, start.workspaceExtraLeft - deltaX);
+          const appliedDelta = workspaceExtraLeft - start.workspaceExtraLeft;
+          updateLayoutGeometry({
+            mediaWidth: start.mediaWidth + appliedDelta,
+            workspaceExtraLeft,
+          });
+        }
+        if (panel === "inspector" && editorLayoutMode === "columns") {
+          const workspaceExtraRight = Math.max(0, start.workspaceExtraRight + deltaX);
+          const appliedDelta = workspaceExtraRight - start.workspaceExtraRight;
+          updateLayoutGeometry({
+            inspectorWidth: start.inspectorWidth + appliedDelta,
+            workspaceExtraRight,
+          });
+        }
       };
       const finish = () => {
         handle.onpointermove = null;
@@ -4564,9 +4577,8 @@
       const property = key === "media" ? "mediaHeight" : key === "canvas" ? "canvasHeight" : "inspectorHeight";
       handle.classList.add("dragging");
       handle.setPointerCapture(event.pointerId);
-      // These handles sit on the top edge. Moving the handle down makes the
-      // panel shorter while its lower edge stays visually anchored.
-      handle.onpointermove = move => updateLayoutGeometry({[property]: start[property] - (move.clientY - startY)});
+      // Each upper panel owns its lower edge and grows down independently.
+      handle.onpointermove = move => updateLayoutGeometry({[property]: start[property] + (move.clientY - startY)});
       const finish = () => {
         handle.onpointermove = null;
         handle.onpointerup = null;
@@ -4599,6 +4611,8 @@
     if (!canEdit) return;
     remember();
     editorLayouts[editorLayoutMode] = {...layoutDefaults[editorLayoutMode]};
+    previewZoomManual = false;
+    localStorage.removeItem(previewZoomStorageKey);
     applyEditorLayout(cloneLayoutState());
     updateHistoryButtons();
     toast("Layout reset");

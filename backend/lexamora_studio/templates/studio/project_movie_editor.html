@@ -348,8 +348,160 @@ body.movie-panel-interacting{user-select:none!important}
 .movie-preview-panel>.movie-window-actions{top:7px!important;right:5px!important;display:flex!important;flex-direction:column!important;align-items:center!important;gap:4px!important}
 .movie-preview-panel>.movie-window-actions .icon-button{width:24px!important;height:24px!important;min-width:24px!important}
 .montage-card .icon-button,.montage-gallery-head .icon-button{display:inline-grid!important;place-items:center!important;width:28px!important;height:28px!important;min-width:28px!important;padding:3px!important;vertical-align:middle!important}
-.movie-editor{padding-bottom:max(520px,42vh)!important}
-.movie-floating-workspace-spacer{min-height:calc(100vh + 520px)!important}
+.movie-editor{
+  padding-bottom:24px!important;
+  overflow:visible!important;
+}
+.movie-floating-workspace-spacer{min-height:0!important}
+.movie-editor-layout{align-items:start!important}
+.movie-editor-layout[data-layout=columns]{
+  grid-template-columns:var(--layout-media-width) 7px minmax(300px,1fr) 7px var(--layout-inspector-width)!important;
+}
+.movie-editor-layout .movie-bin,
+.movie-editor-layout .movie-preview-panel,
+.movie-editor-layout .movie-inspector{align-self:start!important}
+.movie-preview-panel{overflow:hidden!important}
+.movie-preview-body{
+  position:relative!important;
+  display:grid!important;
+  grid-template-columns:34px minmax(0,1fr) 34px!important;
+  grid-template-rows:minmax(0,1fr)!important;
+  align-items:center!important;
+  justify-items:center!important;
+  gap:0!important;
+  min-width:0!important;
+  min-height:0!important;
+  padding:6px!important;
+  overflow:hidden!important;
+}
+.movie-preview-body .movie-preview-stage{
+  grid-column:2!important;
+  grid-row:1!important;
+  align-self:center!important;
+  justify-self:center!important;
+  flex:0 0 auto!important;
+  max-width:none!important;
+  max-height:none!important;
+  margin:0!important;
+}
+.movie-canvas-frame-controls{
+  position:absolute!important;
+  inset:6px 0!important;
+  z-index:55!important;
+  display:grid!important;
+  grid-template-columns:34px minmax(0,1fr) 34px!important;
+  grid-template-rows:repeat(3,minmax(24px,1fr))!important;
+  width:auto!important;
+  height:auto!important;
+  margin:0!important;
+  padding:0!important;
+  border:0!important;
+  background:transparent!important;
+  pointer-events:none!important;
+}
+.movie-canvas-frame-controls button{
+  display:grid!important;
+  place-items:center!important;
+  width:24px!important;
+  height:24px!important;
+  min-width:24px!important;
+  min-height:24px!important;
+  margin:0!important;
+  padding:0!important;
+  border:0!important;
+  background:transparent!important;
+  color:var(--accent)!important;
+  font:700 15px/1 "Segoe UI Symbol","Segoe UI",sans-serif!important;
+  pointer-events:auto!important;
+}
+.movie-canvas-frame-controls [data-canvas-frame=up]{grid-column:1!important;grid-row:1!important}
+.movie-canvas-frame-controls [data-canvas-frame=left]{grid-column:1!important;grid-row:2!important}
+.movie-canvas-frame-controls .reset{grid-column:1!important;grid-row:3!important}
+.movie-canvas-frame-controls [data-canvas-frame=right]{grid-column:3!important;grid-row:1!important}
+.movie-canvas-frame-controls [data-canvas-frame=down]{grid-column:3!important;grid-row:2!important}
+.movie-canvas-frame-controls .movie-play-toggle{grid-column:3!important;grid-row:3!important;font-size:14px!important}
+.movie-canvas-frame-controls [data-preview-dock]{display:none!important}
+.movie-layout-resizer{
+  position:relative!important;
+  width:7px!important;
+  min-width:7px!important;
+  border-radius:0!important;
+  background:transparent!important;
+}
+.movie-layout-resizer::after{
+  content:"";
+  position:absolute;
+  top:0;
+  bottom:0;
+  left:1px;
+  width:5px;
+  background:var(--accent);
+  opacity:0;
+  transition:opacity .1s ease;
+}
+.movie-layout-resizer:hover::after,
+.movie-layout-resizer.dragging::after{opacity:1}
+.movie-horizontal-layout-resizer{
+  position:relative!important;
+  height:7px!important;
+  min-height:7px!important;
+  background:transparent!important;
+}
+.movie-horizontal-layout-resizer::after{
+  content:"";
+  position:absolute;
+  left:0;
+  right:0;
+  top:1px;
+  height:5px;
+  background:var(--accent);
+  opacity:0;
+  transition:opacity .1s ease;
+}
+.movie-horizontal-layout-resizer:hover::after,
+.movie-horizontal-layout-resizer.dragging::after{opacity:1}
+.movie-panel-height-resizer{
+  top:auto!important;
+  bottom:0!important;
+  height:7px!important;
+  min-height:7px!important;
+  background:transparent!important;
+}
+.movie-panel-height-resizer::after{
+  content:"";
+  position:absolute;
+  left:0;
+  right:0;
+  bottom:1px;
+  height:5px;
+  background:var(--accent);
+  opacity:0;
+  transition:opacity .1s ease;
+}
+.movie-panel-height-resizer:hover::after,
+.movie-panel-height-resizer.dragging::after{opacity:1}
+.movie-panel-edge-snap{outline:1px solid var(--accent)!important;outline-offset:-1px!important}
+.movie-panel-home-snap{outline:6px solid var(--accent)!important;outline-offset:-6px!important}
+.movie-timeline-tools{
+  min-height:48px!important;
+  margin:0!important;
+  padding:6px 5px!important;
+  overflow:visible!important;
+}
+.movie-track-head,.movie-track-lane{box-sizing:border-box!important}
+.movie-clip{top:2px!important;height:calc(100% - 4px)!important}
+.movie-clip-body,.movie-clip-strip,.movie-clip-frame{height:100%!important;max-height:100%!important}
+.movie-clip-frame{object-fit:cover!important}
+.movie-layout-glyph.columns{
+  border:1.7px solid currentColor!important;
+  background:
+    linear-gradient(90deg,
+      transparent 29%,currentColor 29% 35%,
+      transparent 35% 65%,currentColor 65% 71%,
+      transparent 71%)!important;
+}
+.movie-layout-glyph.columns::before,
+.movie-layout-glyph.columns::after{display:none!important}
 </style>{% endblock %}
 {% block content %}
 {% include "studio/_project_navigation.html" %}
@@ -391,11 +543,11 @@ body.movie-panel-interacting{user-select:none!important}
     <div class="movie-render-list" data-render-list><p class="muted">No exports yet</p></div>
     </div>
   </section>
-  <div class="movie-editor-layout" data-editor-layout data-layout="stacked">
+  <div class="movie-editor-layout" data-editor-layout data-layout="columns">
   <div class="movie-workbench">
     <div class="movie-stage-column">
       <section class="panel movie-preview-panel movie-collapsible" data-panel-key="preview">
-        <div class="movie-preview-head" data-panel-drag="preview"><div class="movie-preview-controls"><label class="movie-preview-stepper" title="Preview zoom only; this does not change the rendered clip"><button class="icon-button secondary" type="button" data-preview-zoom-down data-business-command="circleMinus" aria-label="Decrease preview zoom"></button><input type="range" min="0.25" max="2" step="0.05" value="1" data-preview-zoom aria-label="Preview zoom"><button class="icon-button secondary" type="button" data-preview-zoom-up data-business-command="circlePlus" aria-label="Increase preview zoom"></button><input class="movie-preview-stepper-value" type="number" min="25" max="200" step="1" value="100" data-preview-zoom-value aria-label="Preview zoom percent"><span>%</span></label><label class="movie-preview-stepper movie-frame-size-stepper" title="Selected video width on the output canvas"><button class="icon-button secondary" type="button" data-frame-size-down data-business-command="circleMinus" aria-label="Decrease selected video width"></button><input type="range" min="16" max="4096" step="1" value="1080" data-frame-size aria-label="Selected video width in pixels"><button class="icon-button secondary" type="button" data-frame-size-up data-business-command="circlePlus" aria-label="Increase selected video width"></button><input class="movie-preview-stepper-value" type="number" min="16" max="16384" step="1" value="1080" data-frame-size-value aria-label="Selected video width in pixels"><span>px</span></label><select data-movie-ratio aria-label="Canvas ratio" title="Canvas ratio"><option>16:9</option><option>9:16</option><option>1:1</option></select><select data-movie-resolution aria-label="Resolution" title="Output resolution"><option>640x360</option><option>360x640</option><option>640x640</option><option>854x480</option><option>480x854</option><option>480x480</option><option>1280x720</option><option>720x1280</option><option>720x720</option><option>1920x1080</option><option>1080x1920</option><option>1080x1080</option><option>2560x1440</option><option>1440x2560</option><option>3840x2160</option><option>2160x3840</option></select><select data-movie-fps aria-label="Frames per second" title="Frames per second"><option>24</option><option selected>25</option><option>30</option><option>50</option><option>60</option><option>100</option></select></div><div class="movie-preview-status-group"><span class="movie-preview-status" data-preview-status>Ready</span><button class="icon-button secondary movie-panel-toggle" type="button" data-panel-toggle title="Collapse Player" aria-label="Collapse Player">&#8722;</button></div></div>
+        <div class="movie-preview-head" data-panel-drag="preview"><div class="movie-preview-controls"><label class="movie-preview-stepper" title="Preview zoom only; this does not change the rendered clip"><button class="icon-button secondary" type="button" data-preview-zoom-down data-business-command="circleMinus" aria-label="Decrease preview zoom"></button><input type="range" min="0.05" max="2" step="0.05" value="1" data-preview-zoom aria-label="Preview zoom"><button class="icon-button secondary" type="button" data-preview-zoom-up data-business-command="circlePlus" aria-label="Increase preview zoom"></button><input class="movie-preview-stepper-value" type="number" min="5" max="200" step="1" value="100" data-preview-zoom-value aria-label="Preview zoom percent"><span>%</span></label><label class="movie-preview-stepper movie-frame-size-stepper" title="Selected video width on the output canvas"><button class="icon-button secondary" type="button" data-frame-size-down data-business-command="circleMinus" aria-label="Decrease selected video width"></button><input type="range" min="16" max="4096" step="1" value="1080" data-frame-size aria-label="Selected video width in pixels"><button class="icon-button secondary" type="button" data-frame-size-up data-business-command="circlePlus" aria-label="Increase selected video width"></button><input class="movie-preview-stepper-value" type="number" min="16" max="16384" step="1" value="1080" data-frame-size-value aria-label="Selected video width in pixels"><span>px</span></label><select data-movie-ratio aria-label="Canvas ratio" title="Canvas ratio"><option>16:9</option><option>9:16</option><option>1:1</option></select><select data-movie-resolution aria-label="Resolution" title="Output resolution"><option>640x360</option><option>360x640</option><option>640x640</option><option>854x480</option><option>480x854</option><option>480x480</option><option>1280x720</option><option>720x1280</option><option>720x720</option><option>1920x1080</option><option>1080x1920</option><option>1080x1080</option><option>2560x1440</option><option>1440x2560</option><option>3840x2160</option><option>2160x3840</option></select><select data-movie-fps aria-label="Frames per second" title="Frames per second"><option>24</option><option selected>25</option><option>30</option><option>50</option><option>60</option><option>100</option></select></div><div class="movie-preview-status-group"><span class="movie-preview-status" data-preview-status>Ready</span><button class="icon-button secondary movie-panel-toggle" type="button" data-panel-toggle title="Collapse Player" aria-label="Collapse Player">&#8722;</button></div></div>
         <div class="movie-preview-body" data-panel-body><div class="movie-preview-stage" data-preview-stage><div class="movie-preview-layers" data-preview-layers></div><video playsinline preload="auto" data-movie-preview></video><img data-movie-preview-image hidden alt=""><i class="movie-preview-source-outline" data-preview-outline hidden><button class="movie-preview-resize-handle n" type="button" data-preview-resize="n" aria-label="Resize from top">&#8597;</button><button class="movie-preview-resize-handle w" type="button" data-preview-resize="w" aria-label="Resize from left">&#8596;</button><button class="movie-preview-resize-handle e" type="button" data-preview-resize="e" aria-label="Resize from right">&#8596;</button><button class="movie-preview-resize-handle s" type="button" data-preview-resize="s" aria-label="Resize from bottom">&#8597;</button></i><span class="movie-canvas-snap-edge top" data-canvas-snap-edge="top"></span><span class="movie-canvas-snap-edge right" data-canvas-snap-edge="right"></span><span class="movie-canvas-snap-edge bottom" data-canvas-snap-edge="bottom"></span><span class="movie-canvas-snap-edge left" data-canvas-snap-edge="left"></span><span class="movie-layer-snap-guide vertical" data-layer-snap-guide="vertical"></span><span class="movie-layer-snap-guide horizontal" data-layer-snap-guide="horizontal"></span><div class="movie-preview-empty" data-preview-empty>No media at the playhead</div></div><div class="movie-canvas-frame-controls" data-canvas-frame-controls aria-label="Canvas frame controls"><button type="button" data-canvas-frame="up" title="Move frame up">&#9650;</button><button type="button" data-canvas-frame="left" title="Move frame left">&#9664;</button><button class="reset" type="button" data-canvas-frame="reset" title="Reset frame position">&#9679;</button><button type="button" data-canvas-frame="right" title="Move frame right">&#9654;</button><button type="button" data-canvas-frame="down" title="Move frame down">&#9660;</button><button class="movie-play-toggle" type="button" data-preview-play title="Play or pause" aria-label="Play or pause">&#9654;</button><button type="button" data-preview-dock title="Dock canvas near timeline" aria-label="Toggle canvas dock">&#8869;</button></div></div>
         <i class="movie-panel-height-resizer" data-panel-height-resizer="canvas" title="Resize Canvas height"></i>
       </section>
