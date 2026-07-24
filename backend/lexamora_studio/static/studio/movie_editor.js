@@ -62,7 +62,7 @@
   let mediaContextFolderId = null;
   let pendingUploads = [];
   const mediaSortKey = `studio-movie-media-sort-${timelineId}`;
-  const defaultTrackHeight = Math.max(21, Math.min(210, Number(localStorage.getItem("studio-movie-track-height")) || 84));
+  const defaultTrackHeight = Math.max(21, Math.min(210, Number(localStorage.getItem("studio-movie-track-height")) || 63));
   let mediaView = ["list", "small", "large"].includes(localStorage.getItem("studio-movie-media-view")) ? localStorage.getItem("studio-movie-media-view") : "list";
   const previewZoomStorageKey = `studio-movie-preview-zoom-${timelineId}`;
   const storedPreviewZoom = localStorage.getItem(previewZoomStorageKey);
@@ -173,14 +173,19 @@
   };
   const previewDockKey = `studio-movie-preview-dock-${timelineId}`;
   let previewDockMode = localStorage.getItem(previewDockKey) === "bottom" ? "bottom" : "center";
-  if (root.dataset.editorWallpaper) {
-    const wallpaper = String(root.dataset.editorWallpaper).replace(/["\\\n\r]/g, "");
-    root.classList.add("has-editor-wallpaper");
+  const applyEditorWallpaper = value => {
+    const wallpaper = String(value || "").replace(/["\\\n\r]/g, "");
+    root.classList.toggle("has-editor-wallpaper", Boolean(wallpaper));
+    if (!wallpaper) {
+      ["background-image", "background-position", "background-repeat", "background-size"].forEach(property => root.style.removeProperty(property));
+      return;
+    }
     root.style.setProperty("background-image", `linear-gradient(rgba(5,14,23,.86),rgba(5,14,23,.86)),url("${wallpaper}")`, "important");
     root.style.setProperty("background-position", "center top", "important");
     root.style.setProperty("background-repeat", "no-repeat", "important");
     root.style.setProperty("background-size", "cover", "important");
-  }
+  };
+  applyEditorWallpaper(root.dataset.editorWallpaper);
   const applyPreviewDock = () => {
     previewBody?.classList.toggle("dock-bottom", previewDockMode === "bottom");
     const button = q("[data-preview-dock]");
@@ -192,6 +197,42 @@
   };
 
   const cloneLayoutState = () => ({mode: editorLayoutMode, layouts: structuredClone(editorLayouts), floatingPanels: structuredClone(floatingPanels)});
+  const panelLayoutProperties = key => ({
+    media: ["mediaWidth", "mediaHeight"],
+    preview: ["canvasHeight"],
+    inspector: ["inspectorWidth", "inspectorHeight"],
+    timeline: ["timelineHeight", "timelineInsetLeft", "timelineInsetRight"],
+  }[key] || []);
+  const panelUsesDefaultGeometry = key => {
+    if (floatingPanels[key]) return false;
+    const current = editorLayouts[editorLayoutMode] || {};
+    const defaults = layoutDefaults[editorLayoutMode] || {};
+    return panelLayoutProperties(key).every(property =>
+      Math.abs(Number(current[property] || 0) - Number(defaults[property] || 0)) < 1
+    );
+  };
+  const refreshPanelHomeButtons = () => {
+    Object.entries(layoutPanels).forEach(([key, panel]) => {
+      const button = panel?.querySelector(".movie-window-home");
+      if (!button) return;
+      button.disabled = panelUsesDefaultGeometry(key);
+    });
+  };
+  const resetPanelGeometry = key => {
+    if (floatingPanels[key]) {
+      dockFloatingPanel(key, {persist: false});
+    }
+    const properties = panelLayoutProperties(key);
+    if (!properties.length) {
+      persistFloatingPanels();
+      refreshPanelHomeButtons();
+      return;
+    }
+    const next = {...editorLayouts[editorLayoutMode]};
+    properties.forEach(property => { next[property] = layoutDefaults[editorLayoutMode][property]; });
+    editorLayouts[editorLayoutMode] = next;
+    applyEditorLayout(cloneLayoutState());
+  };
   const persistLayout = mode => {
     localStorage.setItem(layoutModeKey, editorLayoutMode);
     if (mode && editorLayouts[mode]) localStorage.setItem(layoutStateKey(mode), JSON.stringify(editorLayouts[mode]));
@@ -261,6 +302,7 @@
     });
     if (persist) persistLayout(editorLayoutMode);
     applyFloatingPanels();
+    refreshPanelHomeButtons();
     updateFloatingWorkspaceExtent();
     if (refresh) requestAnimationFrame(() => {
       applyPreviewZoom();
@@ -406,11 +448,12 @@
     const home = rememberPanelHome(key, panel);
     const fallback = pageRect(panel);
     if (!panel.classList.contains("movie-panel-floating")) home.rect = fallback;
+    const minimum = panelMinimumSize(key);
     const rect = {
       left: Number(geometry?.left ?? fallback.left),
       top: Number(geometry?.top ?? fallback.top),
-      width: Math.max(220, Number(geometry?.width ?? fallback.width)),
-      height: Math.max(120, Number(geometry?.height ?? fallback.height)),
+      width: Math.max(minimum.width, Number(geometry?.width ?? fallback.width)),
+      height: Math.max(minimum.height, Number(geometry?.height ?? fallback.height)),
     };
     rect.left = Math.max(4, rect.left);
     rect.top = Math.max(4, rect.top);
@@ -425,6 +468,7 @@
     panel.style.setProperty("height", `${rect.height}px`, "important");
     panel.querySelector(".movie-window-home")?.removeAttribute("disabled");
     setPanelFloatingState(key, panel, rect);
+    refreshPanelHomeButtons();
     updateFloatingWorkspaceExtent();
     if (persist) persistFloatingPanels();
   }
@@ -458,6 +502,17 @@
     panel.classList.add("movie-panel-snap-active", home ? "movie-panel-home-snap" : "movie-panel-edge-snap");
     snaps.forEach(snap => snap?.target?.classList.add("movie-panel-snap-target"));
   };
+  const panelMinimumSize = key => ({
+    media: {width: 180, height: 150},
+    preview: {width: 300, height: 220},
+    inspector: {width: 220, height: 120},
+    timeline: {width: 480, height: 180},
+    editorHeader: {width: 560, height: 48},
+    toolbar: {width: 220, height: 48},
+    history: {width: 320, height: 80},
+    exports: {width: 320, height: 80},
+    projectHeader: {width: 420, height: 80},
+  }[key] || {width: 240, height: 86});
   const ensureWindowResizeHandles = (key, panel) => {
     if (!panel || panel.querySelector(":scope > .movie-window-resize-handle")) return;
     ["n", "ne", "e", "se", "s", "sw", "w", "nw"].forEach(direction => {
@@ -481,8 +536,9 @@
         const origin = pageRect(panel);
         const startX = event.pageX;
         const startY = event.pageY;
-        const minimumWidth = key === "toolbar" ? 220 : 240;
-        const minimumHeight = panel.classList.contains("collapsed") ? panel.offsetHeight : 86;
+        const minimum = panelMinimumSize(key);
+        const minimumWidth = minimum.width;
+        const minimumHeight = panel.classList.contains("collapsed") ? panel.offsetHeight : minimum.height;
         panel.classList.add("movie-panel-resizing");
         document.body.classList.add("movie-panel-interacting");
         handle.setPointerCapture(event.pointerId);
@@ -607,7 +663,7 @@
           delete floatingPanels.toolbar;
           persistFloatingPanels();
         } else {
-          dockFloatingPanel(key);
+          resetPanelGeometry(key);
         }
         historyRedo = [];
         updateHistoryButtons();
@@ -3086,8 +3142,8 @@
       if (action === "visibility") track.hidden = !track.hidden;
       if (action === "lock") track.locked = !track.locked;
       if (action === "display") track.displayMode = track.displayMode === "WAVEFORM" ? "CLIPS" : "WAVEFORM";
-      if (action === "height-down") track.height = clamp(Math.round(Number(track.height || 84) / 21 - 1), 1, 10) * 21;
-      if (action === "height-up") track.height = clamp(Math.round(Number(track.height || 84) / 21 + 1), 1, 10) * 21;
+      if (action === "height-down") track.height = clamp(Math.round(Number(track.height || defaultTrackHeight) / 21 - 1), 1, 10) * 21;
+      if (action === "height-up") track.height = clamp(Math.round(Number(track.height || defaultTrackHeight) / 21 + 1), 1, 10) * 21;
     });
     renderTimeline();
     renderInspector();
@@ -3164,7 +3220,7 @@
     const sameKind = timeline.tracks.filter(item => item.kind === track.kind);
     code.textContent = `${track.kind === "AUDIO" ? "A" : "V"}${sameKind.indexOf(track) + 1}`;
     controls.className = "movie-track-controls";
-    head.style.height = `${Number(track.height || 84)}px`;
+    head.style.height = `${Number(track.height || defaultTrackHeight)}px`;
     title.textContent = track.name;
     kind.textContent = `${track.kind} / ${track.clips.length} clip${track.clips.length === 1 ? "" : "s"}`;
     nameWrap.append(code, title, kind);
@@ -3178,7 +3234,7 @@
     display.textContent = track.displayMode === "WAVEFORM" ? "\u224b" : "\u2261";
     display.classList.add("movie-track-display");
     display.title = track.displayMode === "WAVEFORM" ? "Show clips and frames" : "Show waveform and loudness guide";
-    const levelForHeight = value => clamp(Math.round(Number(value || 84) / 21), 1, 10);
+    const levelForHeight = value => clamp(Math.round(Number(value || defaultTrackHeight) / 21), 1, 10);
     const applyHeightLevel = (level, {commit = true} = {}) => {
       const nextLevel = clamp(Math.round(level), 1, 10);
       const nextHeight = nextLevel * 21;
@@ -3564,13 +3620,13 @@
     node.style.left = `${clip.start / 1000 * zoom}px`;
     node.style.width = `${Math.max(8, clip.duration / 1000 * zoom)}px`;
     node.style.height = `${Math.max(13, track.height - 4)}px`;
-    node.classList.add(`track-level-${clamp(Math.round(Number(track.height || 84) / 21), 1, 10)}`);
+    node.classList.add(`track-level-${clamp(Math.round(Number(track.height || defaultTrackHeight) / 21), 1, 10)}`);
     node.classList.toggle("compact-height", Number(track.height) <= 63);
     strip.className = "movie-clip-strip";
     if (mediaKind === "VIDEO" && (asset?.filmstripUrl || asset?.thumbnailUrl)) {
       const interval = asset.filmstripIntervalMs || 2000;
       const total = asset.filmstripFrameCount || 1;
-      const frameSize = Math.max(16, Number(track.height || 84) - 4);
+      const frameSize = Math.max(16, Number(track.height || defaultTrackHeight) - 4);
       const visible = Math.max(1, Math.ceil(clip.duration / interval));
       const first = Math.floor(clip.sourceStart / interval);
       node.style.setProperty("--movie-frame-height", `${frameSize}px`);
@@ -3642,7 +3698,7 @@
     timeline.tracks.forEach(track => {
       headsNode.append(makeTrackHead(track));
       const lane = document.createElement("div"); lane.className = `movie-track-lane${track.locked ? " locked" : ""}${track.hidden ? " hidden-track" : ""}${track.displayMode === "WAVEFORM" ? " waveform-mode" : ""}`; lane.dataset.trackId = track.id;
-      lane.style.height = `${Number(track.height || 84)}px`;
+      lane.style.height = `${Number(track.height || defaultTrackHeight)}px`;
       lane.onpointerenter = () => { pasteTargetTrackId = track.id; };
       lane.onpointermove = () => { pasteTargetTrackId = track.id; };
       lane.onpointerdown = event => {
@@ -3843,6 +3899,64 @@
     try { await montageAction("detach"); location.assign(root.dataset.saveUrl); }
     catch (error) { toast(error.message, "error"); }
   });
+  const editSettingsDialog = q("[data-edit-settings-dialog]");
+  const editSettingsForm = q("[data-edit-settings-form]");
+  const editWallpaperInput = q("[data-edit-wallpaper-input]");
+  const editWallpaperPreview = q("[data-edit-wallpaper-preview]");
+  let editWallpaperObjectUrl = "";
+  const renderEditWallpaperPreview = value => {
+    if (!editWallpaperPreview) return;
+    editWallpaperPreview.style.backgroundImage = value ? `url("${String(value).replace(/["\\\n\r]/g, "")}")` : "none";
+  };
+  const closeEditSettings = () => {
+    if (editWallpaperObjectUrl) URL.revokeObjectURL(editWallpaperObjectUrl);
+    editWallpaperObjectUrl = "";
+    if (editWallpaperInput) editWallpaperInput.value = "";
+    editSettingsDialog?.close();
+  };
+  q("[data-edit-settings-open]")?.addEventListener("click", () => {
+    renderEditWallpaperPreview(root.dataset.editorWallpaper || "");
+    editSettingsDialog?.showModal();
+  });
+  [q("[data-edit-settings-close]"), q("[data-edit-settings-cancel]")].forEach(button => button?.addEventListener("click", closeEditSettings));
+  editSettingsDialog?.addEventListener("click", event => {
+    if (event.target === editSettingsDialog) closeEditSettings();
+  });
+  editWallpaperInput?.addEventListener("change", () => {
+    if (editWallpaperObjectUrl) URL.revokeObjectURL(editWallpaperObjectUrl);
+    editWallpaperObjectUrl = editWallpaperInput.files?.[0] ? URL.createObjectURL(editWallpaperInput.files[0]) : "";
+    renderEditWallpaperPreview(editWallpaperObjectUrl || root.dataset.editorWallpaper || "");
+  });
+  editSettingsForm?.addEventListener("submit", async event => {
+    event.preventDefault();
+    const file = editWallpaperInput?.files?.[0];
+    if (!file) return toast("Choose a wallpaper image", "warning");
+    const form = new FormData();
+    form.append("action", "upload");
+    form.append("editor_wallpaper", file);
+    try {
+      const result = await requestJson(root.dataset.editSettingsUrl, {method: "POST", headers: {"X-CSRFToken": csrfToken()}, body: form});
+      root.dataset.editorWallpaper = result.editorWallpaper || "";
+      applyEditorWallpaper(root.dataset.editorWallpaper);
+      closeEditSettings();
+      toast("Edit project settings saved", "success");
+    } catch (error) {
+      toast(error.message, "error");
+    }
+  });
+  q("[data-edit-wallpaper-remove]")?.addEventListener("click", async () => {
+    const form = new FormData();
+    form.append("action", "remove");
+    try {
+      const result = await requestJson(root.dataset.editSettingsUrl, {method: "POST", headers: {"X-CSRFToken": csrfToken()}, body: form});
+      root.dataset.editorWallpaper = result.editorWallpaper || "";
+      applyEditorWallpaper(root.dataset.editorWallpaper);
+      closeEditSettings();
+      toast("Edit project wallpaper removed", "success");
+    } catch (error) {
+      toast(error.message, "error");
+    }
+  });
   let archiveArmedUntil = 0;
   q("[data-edit-archive]")?.addEventListener("click", async event => {
     if (Date.now() > archiveArmedUntil) {
@@ -3852,16 +3966,20 @@
     try { await montageAction("archive"); location.assign(root.dataset.saveUrl); }
     catch (error) { toast(error.message, "error"); }
   });
-  let deleteArmedUntil = 0;
-  q("[data-edit-delete]")?.addEventListener("click", async event => {
-    if (Date.now() > deleteArmedUntil) {
-      deleteArmedUntil = Date.now() + 5000;
-      event.currentTarget.classList.add("warning");
-      toast("Click Delete again within five seconds to confirm");
-      return;
+  const editDeleteDialog = q("[data-edit-delete-dialog]");
+  const closeEditDelete = () => editDeleteDialog?.close();
+  q("[data-edit-delete]")?.addEventListener("click", () => editDeleteDialog?.showModal());
+  [q("[data-edit-delete-close]"), q("[data-edit-delete-cancel]")].forEach(button => button?.addEventListener("click", closeEditDelete));
+  editDeleteDialog?.addEventListener("click", event => {
+    if (event.target === editDeleteDialog) closeEditDelete();
+  });
+  q("[data-edit-delete-confirm]")?.addEventListener("click", async () => {
+    try {
+      await montageAction("delete");
+      location.assign(root.dataset.saveUrl);
+    } catch (error) {
+      toast(error.message, "error");
     }
-    try { await montageAction("delete"); location.assign(root.dataset.saveUrl); }
-    catch (error) { toast(error.message, "error"); }
   });
 
   q("[data-media-library-open]")?.addEventListener("click", () => { libraryScope = "project"; qa("[data-media-scope]").forEach(button => button.classList.toggle("active", button.dataset.mediaScope === libraryScope)); renderLibrary(); libraryDialog.showModal(); });

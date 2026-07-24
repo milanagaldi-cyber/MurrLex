@@ -26,7 +26,7 @@ def default_movie_timeline():
                 "muted": False,
                 "locked": False,
                 "hidden": False,
-                "height": 84,
+                "height": 63,
                 "clips": [],
             },
             {
@@ -36,7 +36,7 @@ def default_movie_timeline():
                 "muted": False,
                 "locked": False,
                 "hidden": False,
-                "height": 84,
+                "height": 63,
                 "clips": [],
             },
         ],
@@ -148,7 +148,7 @@ def normalize_movie_timeline(value):
             "muted": bool(track.get("muted", False)),
             "locked": bool(track.get("locked", False)),
             "hidden": bool(track.get("hidden", False)),
-            "height": _number(track.get("height", 84), field="Track height", minimum=56, maximum=200),
+            "height": _number(track.get("height", 63), field="Track height", minimum=21, maximum=210),
             "displayMode": str(track.get("displayMode") or "CLIPS").upper()
             if str(track.get("displayMode") or "CLIPS").upper() in {"CLIPS", "WAVEFORM"} else "CLIPS",
             "loudnessGuide": _float_number(

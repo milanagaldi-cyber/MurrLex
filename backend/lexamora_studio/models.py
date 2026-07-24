@@ -899,11 +899,15 @@ class MovieTimeline(models.Model):
     project = models.ForeignKey(Project, on_delete=models.PROTECT, related_name="owned_movie_timelines")
     projects = models.ManyToManyField(Project, related_name="movie_timelines", blank=True)
     title = models.CharField(max_length=200, default="Main edit")
-    aspect_ratio = models.CharField(max_length=12, default="16:9")
-    resolution = models.CharField(max_length=20, default="1920x1080")
+    aspect_ratio = models.CharField(max_length=12, default="9:16")
+    resolution = models.CharField(max_length=20, default="1080x1920")
     fps = models.PositiveSmallIntegerField(default=25)
     schema_version = models.PositiveSmallIntegerField(default=MOVIE_TIMELINE_SCHEMA_VERSION)
     timeline = models.JSONField(default=default_movie_timeline, blank=True)
+    editor_wallpaper = models.ImageField(
+        upload_to="studio/movie-edit-wallpapers/",
+        blank=True,
+    )
     is_archived = models.BooleanField(default=False)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="created_movie_timelines",

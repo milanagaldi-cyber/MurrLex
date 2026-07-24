@@ -123,6 +123,7 @@ urlpatterns = [
     path("projects/<uuid:project_id>/image-generation/jobs/", views.project_image_jobs, name="project_image_jobs"),
     path("projects/<uuid:project_id>/movie-editor/", views.project_movie_editor, name="project_movie_editor"),
     path("projects/<uuid:project_id>/movie-editor/edits/", views.project_movie_edits, name="project_movie_edits"),
+    path("projects/<uuid:project_id>/movie-editor/edits/<uuid:timeline_id>/settings/", views.project_movie_edit_settings, name="project_movie_edit_settings"),
     path("projects/<uuid:project_id>/movie-editor/edits/<uuid:timeline_id>/export/", views.project_movie_edit_export, name="project_movie_edit_export"),
     path("projects/<uuid:project_id>/movie-editor/media/", views.project_movie_media, name="project_movie_media"),
     path("workspaces/<uuid:workspace_id>/media/direct/", views.workspace_media_upload, name="workspace_media_upload"),

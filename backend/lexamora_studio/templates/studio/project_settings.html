@@ -15,7 +15,6 @@
     </div>
   </section>
   <section class="panel settings-section"><h2>Project Prompt Template</h2><p class="muted">This text can be appended to prompts created in this project.</p>{{ form.prompt_template }}{{ form.prompt_template.errors }}</section>
-  <section class="panel settings-section"><h2>Draft Editor appearance</h2><p class="muted">Optional wallpaper behind the detachable editor panels.</p><label>{{ form.editor_wallpaper.label }}{{ form.editor_wallpaper }}{{ form.editor_wallpaper.errors }}</label>{% if project.editor_wallpaper %}<p><img src="{{ project.editor_wallpaper.url }}" alt="" style="display:block;max-width:240px;max-height:140px;object-fit:cover"></p>{% endif %}</section>
   <section class="panel settings-section"><h2>Visible blocks</h2><p class="muted">Selected blocks are completely hidden from General View. Other blocks can still be collapsed directly on the project screen.</p><label>{{ form.hidden_sections.label }}</label><div class="section-visibility-options">{{ form.hidden_sections }}{{ form.hidden_sections.errors }}</div></section>
   <div class="settings-form-actions"><a class="button secondary" href="{% url 'studio:project_detail' project.id %}">Cancel</a><button type="submit">Save settings</button></div>
 </form>

@@ -78,18 +78,16 @@ class ProjectSettingsForm(forms.ModelForm):
 
     class Meta:
         model = Project
-        fields = ["documentation_language", "dialogue_language", "prompt_language", "default_translation_model", "prompt_template", "editor_wallpaper", "hidden_sections"]
+        fields = ["documentation_language", "dialogue_language", "prompt_language", "default_translation_model", "prompt_template", "hidden_sections"]
         widgets = {
             "documentation_language": forms.Select(choices=PROMPT_LANGUAGES),
             "dialogue_language": forms.Select(choices=PROMPT_LANGUAGES),
             "prompt_language": forms.Select(choices=PROMPT_LANGUAGES),
             "prompt_template": forms.Textarea(attrs={"rows": 4, "placeholder": "Text appended to every new prompt in this project"}),
-            "editor_wallpaper": forms.FileInput(attrs={"accept": "image/*"}),
         }
         labels = {
             "default_translation_model": "Default translation model",
             "prompt_template": "Project Prompt Template",
-            "editor_wallpaper": "Draft Editor wallpaper",
         }
 
     def __init__(self, *args, **kwargs):

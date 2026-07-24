@@ -4577,6 +4577,7 @@ def _movie_timeline_json(timeline):
         "aspectRatio": timeline.aspect_ratio,
         "resolution": timeline.resolution,
         "fps": timeline.fps,
+        "editorWallpaper": timeline.editor_wallpaper.url if timeline.editor_wallpaper else "",
         "schemaVersion": timeline.schema_version,
         "updatedAt": timeline.updated_at.isoformat(),
     }
@@ -4817,8 +4818,8 @@ def project_movie_editor(request, project_id):
         with transaction.atomic():
             timeline = MovieTimeline.objects.select_for_update().get(id=timeline.id)
             next_title = str(payload.get("title") or timeline.title).strip()[:200] or "Main edit"
-            next_ratio = str(payload.get("aspectRatio") or "16:9")[:12]
-            next_resolution = str(payload.get("resolution") or "1920x1080")[:20]
+            next_ratio = str(payload.get("aspectRatio") or timeline.aspect_ratio or "9:16")[:12]
+            next_resolution = str(payload.get("resolution") or timeline.resolution or "1080x1920")[:20]
             next_fps = max(1, min(int(payload.get("fps") or 25), 120))
             current_data = normalize_movie_timeline(timeline.timeline or default_movie_timeline())
             changed = (
@@ -4881,6 +4882,10 @@ def project_movie_editor(request, project_id):
             current_project=project,
         ),
         "movie_edits_url": reverse("studio:project_movie_edits", kwargs={"project_id": project.id}),
+        "movie_edit_settings_url": reverse("studio:project_movie_edit_settings", kwargs={
+            "project_id": project.id,
+            "timeline_id": timeline.id,
+        }),
         "can_edit": can_edit,
         "can_export": has_project_capability(request.user, project, "export"),
         **_project_header_context(request.user, project),
@@ -4964,8 +4969,8 @@ def project_movie_edits(request, project_id):
         title = str(imported.get("title") or Path(uploaded.name).stem or "Imported edit")[:200]
         timeline = MovieTimeline.objects.create(
             workspace=project.workspace, project=project, title=title,
-            aspect_ratio=str(imported.get("aspectRatio") or "16:9")[:12],
-            resolution=str(imported.get("resolution") or "1920x1080")[:20],
+            aspect_ratio=str(imported.get("aspectRatio") or "9:16")[:12],
+            resolution=str(imported.get("resolution") or "1080x1920")[:20],
             fps=max(1, min(int(imported.get("fps") or 25), 120)),
             timeline=timeline_data, created_by=request.user, updated_by=request.user,
         )
@@ -5023,6 +5028,52 @@ def project_movie_edits(request, project_id):
         instance=project, metadata={"timelineId": str(timeline.id)},
     )
     return JsonResponse(_movie_edit_payload(timeline, project), status=201)
+
+
+@login_required
+def project_movie_edit_settings(request, project_id, timeline_id):
+    project = get_object_or_404(
+        accessible_projects(request.user).select_related("workspace"), id=project_id,
+    )
+    timeline = get_object_or_404(
+        _project_movie_timelines(request.user, project), id=timeline_id,
+    )
+    if request.method != "POST":
+        return JsonResponse({"error": "POST is required."}, status=405)
+    if not has_project_capability(request.user, project, "edit"):
+        return JsonResponse({"error": "Edit permission is required."}, status=403)
+
+    action = str(request.POST.get("action") or "upload").lower()
+    if action not in {"upload", "remove"}:
+        return JsonResponse({"error": "Choose upload or remove."}, status=400)
+    uploaded = request.FILES.get("editor_wallpaper")
+    if action == "upload":
+        if not uploaded:
+            return JsonResponse({"error": "Choose a wallpaper image."}, status=400)
+        if uploaded.size > 12 * 1024 * 1024:
+            return JsonResponse({"error": "Wallpaper must be no larger than 12 MB."}, status=400)
+        if not str(uploaded.content_type or "").startswith("image/"):
+            return JsonResponse({"error": "Wallpaper must be an image."}, status=400)
+
+    old_name = timeline.editor_wallpaper.name if timeline.editor_wallpaper else ""
+    storage = timeline.editor_wallpaper.storage
+    if action == "remove":
+        timeline.editor_wallpaper = None
+    else:
+        timeline.editor_wallpaper = uploaded
+    timeline.updated_by = request.user
+    timeline.save(update_fields=["editor_wallpaper", "updated_by", "updated_at"])
+    if old_name and old_name != (timeline.editor_wallpaper.name if timeline.editor_wallpaper else ""):
+        storage.delete(old_name)
+    wallpaper_url = timeline.editor_wallpaper.url if timeline.editor_wallpaper else ""
+    audit(
+        workspace=project.workspace,
+        actor=request.user,
+        action="MOVIE_EDIT_WALLPAPER_UPDATE",
+        instance=project,
+        metadata={"timelineId": str(timeline.id), "removed": action == "remove"},
+    )
+    return JsonResponse({"ok": True, "editorWallpaper": wallpaper_url})
 
 
 @login_required

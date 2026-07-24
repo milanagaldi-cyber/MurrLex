@@ -1280,7 +1280,6 @@ class StudioWebEditingAndImagesTests(TestCase):
                 "dialogue_language": "PL", "prompt_language": "EN",
                 "translation_languages": "pl, en", "prompt_template": "No music.",
                 "default_translation_model": translation_model.id,
-                "editor_wallpaper": self.image_file("draft-editor-wallpaper.png"),
             },
         )
         self.assertRedirects(response, f"/studio/projects/{self.project.id}/settings/")
@@ -1288,7 +1287,7 @@ class StudioWebEditingAndImagesTests(TestCase):
         self.assertEqual((self.project.documentation_language, self.project.dialogue_language, self.project.prompt_language), ("RU", "PL", "EN"))
         self.assertEqual(self.project.prompt_template, "No music.")
         self.assertEqual(self.project.default_translation_model, translation_model)
-        self.assertTrue(self.project.editor_wallpaper.name.endswith("draft-editor-wallpaper.png"))
+        self.assertFalse(self.project.editor_wallpaper)
         edit = self.client.post(
             f"/studio/projects/{self.project.id}/edit/",
             {
@@ -3782,11 +3781,38 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertContains(page, "data-clip-render-toolbar")
         self.assertContains(page, 'data-inspector-tab="VIDEO"')
         self.assertContains(page, "data-media-library-dialog")
+        self.assertContains(page, "data-edit-settings-dialog")
+        self.assertContains(page, "data-edit-settings-url")
         self.assertContains(page, "Export As")
         self.assertContains(page, "data-delete-track")
         self.assertContains(page, "data-clip-context")
         self.assertContains(page, "movie-timeline-position-pad")
         self.assertContains(page, "studio/movie_editor.js")
+        timeline = MovieTimeline.objects.get(project=self.project)
+        self.assertEqual(timeline.aspect_ratio, "9:16")
+        self.assertEqual(timeline.resolution, "1080x1920")
+        self.assertEqual([track["height"] for track in timeline.timeline["tracks"]], [63, 63])
+
+        wallpaper = self.client.post(
+            f"/studio/projects/{self.project.id}/movie-editor/edits/{timeline.id}/settings/",
+            {"action": "upload", "editor_wallpaper": self.image_file("edit-wallpaper.png")},
+        )
+        self.assertEqual(wallpaper.status_code, 200, wallpaper.content)
+        self.assertIn("edit-wallpaper", wallpaper.json()["editorWallpaper"])
+        timeline.refresh_from_db()
+        self.assertTrue(timeline.editor_wallpaper.name.endswith("edit-wallpaper.png"))
+        self.project.refresh_from_db()
+        self.assertFalse(self.project.editor_wallpaper)
+
+        removed_wallpaper = self.client.post(
+            f"/studio/projects/{self.project.id}/movie-editor/edits/{timeline.id}/settings/",
+            {"action": "remove"},
+        )
+        self.assertEqual(removed_wallpaper.status_code, 200, removed_wallpaper.content)
+        self.assertEqual(removed_wallpaper.json()["editorWallpaper"], "")
+        timeline.refresh_from_db()
+        self.assertFalse(timeline.editor_wallpaper)
+
         response = self.client.post(
             f"/studio/projects/{self.project.id}/movie-editor/",
             data=json.dumps({
