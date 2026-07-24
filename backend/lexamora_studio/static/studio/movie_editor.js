@@ -162,6 +162,8 @@
   const tileEdgeSize = 18;
   const tileWorkspaceInset = Math.ceil(tileEdgeSize / 2) + 2;
   const tileSnapDistance = 12;
+  const tileAutoPanThreshold = 72;
+  const tileAutoPanMaximumStep = 36;
   let tileLayoutDefaults = null;
   const layoutDefaults = {
     columns: {mediaWidth: 250, inspectorWidth: 390, mediaHeight: 390, canvasHeight: 390, inspectorHeight: 390, timelineHeight: 320, timelineInsetLeft: 0, timelineInsetRight: 0},
@@ -1139,6 +1141,50 @@
     const timelineShell = q("[data-timeline-shell]");
     if (timelineShell) timelineShell.style.setProperty("height", `${Math.max(100, tiles.timeline.height - 46)}px`, "important");
   };
+  const panTileViewportForPointer = pointer => {
+    if (!editorViewport || !pointer) return 0;
+    const bounds = editorViewport.getBoundingClientRect();
+    const maximumScroll = Math.max(0, editorViewport.scrollWidth - editorViewport.clientWidth);
+    if (!maximumScroll || bounds.width <= 0) return 0;
+    const edgeStep = distance => Math.ceil(
+      clamp(distance / tileAutoPanThreshold, 0, 1.75) * tileAutoPanMaximumStep
+    );
+    let step = 0;
+    if (pointer.clientX < bounds.left + tileAutoPanThreshold) {
+      step = -edgeStep(bounds.left + tileAutoPanThreshold - pointer.clientX);
+    } else if (pointer.clientX > bounds.right - tileAutoPanThreshold) {
+      step = edgeStep(pointer.clientX - (bounds.right - tileAutoPanThreshold));
+    }
+    if (!step) return 0;
+    const previous = editorViewport.scrollLeft;
+    editorViewport.scrollLeft = clamp(previous + step, 0, maximumScroll);
+    return editorViewport.scrollLeft - previous;
+  };
+  const revealTileHorizontally = (rect, edge = null) => {
+    if (!editorViewport || !rect) return;
+    const padding = Math.max(tileWorkspaceInset, 12);
+    const viewportLeft = editorViewport.scrollLeft;
+    const viewportRight = viewportLeft + editorViewport.clientWidth;
+    const tileLeft = rect.x - padding;
+    const tileRight = rect.x + rect.width + padding;
+    let next = viewportLeft;
+    if (edge === "w") {
+      if (tileLeft < viewportLeft || tileLeft > viewportRight - padding) next = tileLeft;
+    } else if (edge === "e") {
+      if (tileRight > viewportRight || tileRight < viewportLeft + padding) {
+        next = tileRight - editorViewport.clientWidth;
+      }
+    } else if (tileLeft < viewportLeft) {
+      next = tileLeft;
+    } else if (tileRight > viewportRight) {
+      next = tileRight - editorViewport.clientWidth;
+    }
+    editorViewport.scrollLeft = clamp(
+      next,
+      0,
+      Math.max(0, editorViewport.scrollWidth - editorViewport.clientWidth),
+    );
+  };
   const nearestTileSnap = (value, candidates) => {
     let nearest = null;
     candidates.forEach(candidate => {
@@ -1360,16 +1406,19 @@
         const origin = {...startTiles[key]};
         const startX = event.clientX;
         const startY = event.clientY;
+        const startScrollLeft = editorViewport?.scrollLeft || 0;
         const pointerId = event.pointerId;
         let active = false;
         let currentTiles = startTiles;
         capturePointerSafely(handle, pointerId);
         const move = next => {
-          const dx = next.clientX - startX;
+          const pointerDx = next.clientX - startX;
           const dy = next.clientY - startY;
-          if (!active && Math.hypot(dx, dy) < 4) return;
+          if (!active && Math.hypot(pointerDx, dy) < 4) return;
           if (!active) remember();
           active = true;
+          panTileViewportForPointer(next);
+          const dx = pointerDx + (editorViewport?.scrollLeft || 0) - startScrollLeft;
           const raw = {
             ...origin,
             x: clamp(origin.x + dx, tileWorkspaceInset, layout.workspace.width - origin.width - tileWorkspaceInset),
@@ -1400,10 +1449,12 @@
           if (!active) return;
           if (tileLayoutHasOverlap(currentTiles, key)) {
             applyTileRects(startTiles);
+            revealTileHorizontally(startTiles[key]);
             toast("This space is occupied");
           } else {
             editorLayouts.columns = {...editorLayouts.columns, workspace: layout.workspace, tiles: currentTiles};
             persistLayout("columns");
+            revealTileHorizontally(currentTiles[key]);
           }
           applyPreviewZoom();
           updatePreviewGeometry();
@@ -1438,16 +1489,19 @@
         const origin = {...startTiles[key]};
         const startX = event.clientX;
         const startY = event.clientY;
+        const startScrollLeft = editorViewport?.scrollLeft || 0;
         const pointerId = event.pointerId;
         let active = false;
         let currentTiles = startTiles;
         capturePointerSafely(handle, pointerId);
         const move = next => {
-          const dx = next.clientX - startX;
+          const pointerDx = next.clientX - startX;
           const dy = next.clientY - startY;
-          if (!active && Math.hypot(dx, dy) < 2) return;
+          if (!active && Math.hypot(pointerDx, dy) < 2) return;
           if (!active) remember();
           active = true;
+          if (edge === "e" || edge === "w") panTileViewportForPointer(next);
+          const dx = pointerDx + (editorViewport?.scrollLeft || 0) - startScrollLeft;
           const resized = resizeTileCandidate(key, edge, origin, dx, dy, startTiles, layout.workspace);
           const resolved = resolveResizeCollisions(key, resized.rect, edge, startTiles, layout.workspace);
           if (!resolved) return;
@@ -1477,6 +1531,7 @@
           if (!active) return;
           editorLayouts.columns = {...editorLayouts.columns, workspace: layout.workspace, tiles: currentTiles};
           persistLayout("columns");
+          revealTileHorizontally(currentTiles[key], edge);
           applyEditorLayout(cloneLayoutState(), {persist: false});
           historyRedo = [];
           updateHistoryButtons();
