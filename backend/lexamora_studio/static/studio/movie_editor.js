@@ -148,7 +148,7 @@
   const audioPlayers = new Map();
   const visualPlayers = new Map();
 
-  const layoutEngineVersion = "bounded-tiles-v3";
+  const layoutEngineVersion = "bounded-tiles-v6";
   const layoutModeKey = `studio-movie-layout-mode-${layoutEngineVersion}-${timelineId}`;
   const layoutStateKey = mode => `studio-movie-layout-${layoutEngineVersion}-${timelineId}-${mode}`;
   const savedLayoutKey = `studio-movie-layout-saved-${layoutEngineVersion}-${timelineId}`;
@@ -231,8 +231,10 @@
     height: Number(value?.height || 0),
   });
   const createDefaultTileLayout = () => {
+    const viewportWidth = Number(editorViewport?.clientWidth || document.documentElement.clientWidth || root.clientWidth || 1240);
+    const horizontalViewportGutter = viewportWidth >= 1080 ? 64 : 0;
     const availableWidth = clamp(
-      Number(root.parentElement?.clientWidth || root.clientWidth || document.documentElement.clientWidth || 1240),
+      viewportWidth - horizontalViewportGutter,
       960,
       1600,
     );
@@ -323,21 +325,38 @@
       Math.max(0, layout.workspace.height - viewportHeight),
     );
   };
+  let lastEditorViewportWidth = 0;
+  const ensureTileWorkspaceCoversViewport = () => {
+    if (!editorViewport || !editorLayout) return 0;
+    const layout = ensureTileLayout();
+    const viewportWidth = Math.max(1, editorViewport.clientWidth);
+    const requiredWidth = Math.ceil(viewportWidth * 2);
+    if (layout.workspace.width >= requiredWidth) return 0;
+    const shift = Math.ceil((requiredWidth - layout.workspace.width) / 2);
+    layout.workspace.width += shift * 2;
+    tilePanelKeys.forEach(key => {
+      if (layout.tiles[key]) layout.tiles[key].x += shift;
+    });
+    editorLayouts.columns = {...editorLayouts.columns, ...layout};
+    editorLayouts.stacked = {...editorLayouts.stacked, ...layout};
+    editorLayout.style.setProperty("--tile-workspace-width", `${layout.workspace.width}px`);
+    editorLayout.style.setProperty("width", `${layout.workspace.width}px`, "important");
+    return shift;
+  };
   const fitEditorViewportToWindow = () => {
     if (!editorViewport) return;
-    if (window.matchMedia("(max-width: 980px)").matches) {
-      editorViewport.style.removeProperty("--movie-editor-viewport-width");
-      return;
+    const viewportWidth = Math.max(1, document.documentElement.clientWidth);
+    const rootLeft = root.getBoundingClientRect().left;
+    editorViewport.style.setProperty("width", `${viewportWidth}px`, "important");
+    editorViewport.style.setProperty("max-width", "none", "important");
+    editorViewport.style.setProperty("margin-left", `${-rootLeft}px`, "important");
+    editorViewport.style.setProperty("margin-right", "0", "important");
+    const previousScrollLeft = editorViewport.scrollLeft;
+    const workspaceShift = ensureTileWorkspaceCoversViewport();
+    if (workspaceShift > 0 && lastEditorViewportWidth > 0) {
+      editorViewport.scrollLeft = previousScrollLeft + workspaceShift;
     }
-    const viewportLeft = Math.max(0, editorViewport.getBoundingClientRect().left);
-    const browserWidth = document.documentElement.clientWidth;
-    const rightInset = 12;
-    const availableWidth = Math.floor(browserWidth - viewportLeft - rightInset);
-    const parentWidth = Math.floor(editorViewport.parentElement?.clientWidth || 0);
-    editorViewport.style.setProperty(
-      "--movie-editor-viewport-width",
-      `${Math.max(parentWidth, availableWidth)}px`,
-    );
+    lastEditorViewportWidth = editorViewport.clientWidth;
   };
   const scheduleTileWorkspaceCenter = () => {
     requestAnimationFrame(() => requestAnimationFrame(centerTileWorkspaceView));
@@ -4930,7 +4949,16 @@
   addEventListener("resize", () => {
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => {
-      scheduleEditorViewportFit();
+      scheduleEditorViewportFit({center: true});
+      applyPreviewZoom();
+      updatePreviewGeometry();
+      renderTimeline();
+    }, 120);
+  });
+  window.visualViewport?.addEventListener("resize", () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      scheduleEditorViewportFit({center: true});
       applyPreviewZoom();
       updatePreviewGeometry();
       renderTimeline();
@@ -5430,22 +5458,27 @@
   applyPanelGapMode();
   bindPanelDragging();
   applyLayoutLockState();
-  fitEditorViewportToWindow();
   applyEditorLayout(cloneLayoutState(), {persist: false, refresh: false});
-  scheduleTileWorkspaceCenter();
+  scheduleEditorViewportFit({center: true});
   applyPreviewDock();
   normalizeTimeline(); applyCanvas(); renderBin(); renderTimeline(); renderInspector(); renderRenderJobs(); renderLibrary(); scheduleRenderPoll(); setPlayhead(0, true, true);
   savedSignature = signature(); updateDirty(); updateHistoryButtons(); refreshMedia();
-  const initialEditorFocusKey = `studio-movie-editor-focused-${timelineId}`;
-  if (sessionStorage.getItem(initialEditorFocusKey) !== "true") {
-    sessionStorage.setItem(initialEditorFocusKey, "true");
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      editorViewport?.scrollIntoView({block: "start", behavior: "auto"});
-      centerTileWorkspaceView();
-      applyPreviewZoom();
-      updatePreviewGeometry();
-      renderTimeline();
-    }));
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    editorViewport?.scrollIntoView({block: "start", behavior: "auto"});
+    fitEditorViewportToWindow();
+    centerTileWorkspaceView();
+    applyPreviewZoom();
+    updatePreviewGeometry();
+    renderTimeline();
+  }));
+  if ("ResizeObserver" in window && editorViewport) {
+    let observedViewportWidth = editorViewport.clientWidth;
+    new ResizeObserver(() => {
+      const nextWidth = editorViewport.clientWidth;
+      if (Math.abs(nextWidth - observedViewportWidth) < 1) return;
+      observedViewportWidth = nextWidth;
+      scheduleEditorViewportFit({center: true});
+    }).observe(editorViewport);
   }
   if ("ResizeObserver" in window && previewBody) {
     new ResizeObserver(() => {

@@ -936,13 +936,18 @@ body.movie-layout-locked [data-timeline-edge-resizer]{pointer-events:none!import
   position:relative;
   display:block;
   box-sizing:border-box;
-  width:var(--movie-editor-viewport-width,100%);
+  width:100%;
   max-width:none;
   min-width:0;
   margin:0;
   overflow:auto;
   overscroll-behavior:auto;
   scrollbar-gutter:stable;
+  background:
+    linear-gradient(color-mix(in srgb,var(--line) 22%,transparent) 1px,transparent 1px),
+    linear-gradient(90deg,color-mix(in srgb,var(--line) 22%,transparent) 1px,transparent 1px);
+  background-size:32px 32px;
+  background-position:-1px -1px;
 }
 .movie-editor-layout,
 .movie-editor-layout[data-layout="columns"],
@@ -1218,4 +1223,4 @@ body.movie-panel-interacting *{
 </section>
 {{ movie_timeline_data|json_script:"movie-timeline-data" }}{{ movie_assets|json_script:"movie-assets-data" }}{{ movie_library_assets|json_script:"movie-library-data" }}{{ movie_render_jobs|json_script:"movie-render-jobs-data" }}{{ movie_edits|json_script:"movie-edits-data" }}
 {% endblock %}
-{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260725-centered-header-tiles"></script>{% endblock %}
+{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260725-visible-workplane"></script>{% endblock %}
