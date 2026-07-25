@@ -315,13 +315,15 @@
     const layout = ensureTileLayout();
     const rects = tilePanelKeys.map(key => layout.tiles[key]).filter(Boolean);
     if (!rects.length) return;
+    const left = Math.min(...rects.map(rect => rect.x));
     const top = Math.min(...rects.map(rect => rect.y));
-    const viewportWidth = editorViewport.clientWidth;
+    const viewportRect = editorViewport.getBoundingClientRect();
+    const contentLeft = Math.max(0, root.getBoundingClientRect().left - viewportRect.left);
     const viewportHeight = editorViewport.clientHeight;
     editorViewport.scrollLeft = clamp(
-      (layout.workspace.width - viewportWidth) / 2,
+      left - contentLeft,
       0,
-      Math.max(0, layout.workspace.width - viewportWidth),
+      Math.max(0, layout.workspace.width - editorViewport.clientWidth),
     );
     editorViewport.scrollTop = clamp(
       top,
