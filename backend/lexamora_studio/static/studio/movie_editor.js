@@ -351,11 +351,9 @@
   };
   const fitEditorViewportToWindow = () => {
     if (!editorViewport) return;
-    const viewportWidth = Math.max(1, document.documentElement.clientWidth);
-    const rootLeft = root.getBoundingClientRect().left;
-    editorViewport.style.setProperty("width", `${viewportWidth}px`, "important");
-    editorViewport.style.setProperty("max-width", "none", "important");
-    editorViewport.style.setProperty("margin-left", `${-rootLeft}px`, "important");
+    editorViewport.style.setProperty("width", "100%", "important");
+    editorViewport.style.setProperty("max-width", "100%", "important");
+    editorViewport.style.setProperty("margin-left", "0", "important");
     editorViewport.style.setProperty("margin-right", "0", "important");
     const previousScrollLeft = editorViewport.scrollLeft;
     const workspaceShift = ensureTileWorkspaceCoversViewport();

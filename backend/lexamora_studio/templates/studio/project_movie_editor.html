@@ -937,10 +937,12 @@ body.movie-layout-locked [data-timeline-edge-resizer]{pointer-events:none!import
   display:block;
   box-sizing:border-box;
   width:100%;
-  max-width:none;
+  max-width:100%;
   min-width:0;
   margin:0;
   overflow:auto;
+  contain:layout paint;
+  isolation:isolate;
   overscroll-behavior:auto;
   scrollbar-gutter:stable;
   background:
