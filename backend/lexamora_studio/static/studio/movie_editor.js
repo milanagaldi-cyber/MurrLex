@@ -148,7 +148,7 @@
   const audioPlayers = new Map();
   const visualPlayers = new Map();
 
-  const layoutEngineVersion = "bounded-tiles-v2";
+  const layoutEngineVersion = "bounded-tiles-v3";
   const layoutModeKey = `studio-movie-layout-mode-${layoutEngineVersion}-${timelineId}`;
   const layoutStateKey = mode => `studio-movie-layout-${layoutEngineVersion}-${timelineId}-${mode}`;
   const savedLayoutKey = `studio-movie-layout-saved-${layoutEngineVersion}-${timelineId}`;
@@ -309,13 +309,11 @@
     const layout = ensureTileLayout();
     const rects = tilePanelKeys.map(key => layout.tiles[key]).filter(Boolean);
     if (!rects.length) return;
-    const left = Math.min(...rects.map(rect => rect.x));
-    const right = Math.max(...rects.map(rect => rect.x + rect.width));
     const top = Math.min(...rects.map(rect => rect.y));
     const viewportWidth = editorViewport.clientWidth;
     const viewportHeight = editorViewport.clientHeight;
     editorViewport.scrollLeft = clamp(
-      left + (right - left - viewportWidth) / 2,
+      (layout.workspace.width - viewportWidth) / 2,
       0,
       Math.max(0, layout.workspace.width - viewportWidth),
     );
@@ -1382,7 +1380,9 @@
 
     tilePanelKeys.forEach(key => {
       const panel = layoutPanels[key];
-      const handle = panel?.querySelector(`[data-panel-drag="${key}"]`);
+      const handle = panel?.matches(`[data-panel-drag="${key}"]`)
+        ? panel
+        : panel?.querySelector(`[data-panel-drag="${key}"]`);
       if (!panel || !handle || handle.dataset.tileDragBound === "true") return;
       handle.dataset.tileDragBound = "true";
       handle.addEventListener("pointerdown", event => {

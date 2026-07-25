@@ -1134,7 +1134,7 @@ body.movie-panel-interacting *{
 {% include "studio/_project_navigation.html" %}
 {% include "studio/_montage_gallery.html" with montage_gallery_key="draft-editor" montage_actions_url=movie_edits_url montage_can_edit=can_edit %}
 <section class="movie-editor" data-movie-editor data-can-edit="{{ can_edit|yesno:'true,false' }}" data-can-export="{{ can_export|yesno:'true,false' }}" data-timeline-id="{{ movie_timeline.id }}" data-edits-url="{{ movie_edits_url }}" data-edit-settings-url="{{ movie_edit_settings_url }}" data-aspect-ratio="{{ movie_timeline.aspect_ratio }}" data-resolution="{{ movie_timeline.resolution }}" data-fps="{{ movie_timeline.fps }}" data-save-url="{% url 'studio:project_movie_editor' project.id %}" data-history-url="{% url 'studio:project_movie_editor_revisions' project.id %}" data-media-url="{{ movie_media_url }}" data-render-url="{{ movie_render_url }}"{% if movie_timeline.editor_wallpaper %} data-editor-wallpaper="{{ movie_timeline.editor_wallpaper.url }}"{% endif %}>
-  <div class="panel movie-toolbar movie-collapsible" data-panel-key="editorHeader" data-panel-drag="editorHeader">
+  <div class="panel movie-toolbar movie-collapsible" data-panel-key="editorHeader" data-panel-drag="editorHeader" title="Drag empty header space to move this tile">
     <div class="movie-settings">
       <input data-movie-title value="{{ movie_timeline.title }}" aria-label="Timeline title" title="Timeline title">
     </div>
@@ -1218,4 +1218,4 @@ body.movie-panel-interacting *{
 </section>
 {{ movie_timeline_data|json_script:"movie-timeline-data" }}{{ movie_assets|json_script:"movie-assets-data" }}{{ movie_library_assets|json_script:"movie-library-data" }}{{ movie_render_jobs|json_script:"movie-render-jobs-data" }}{{ movie_edits|json_script:"movie-edits-data" }}
 {% endblock %}
-{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260725-header-tiles"></script>{% endblock %}
+{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260725-centered-header-tiles"></script>{% endblock %}
