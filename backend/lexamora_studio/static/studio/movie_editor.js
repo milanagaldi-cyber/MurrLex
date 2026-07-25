@@ -4954,7 +4954,7 @@
   addEventListener("resize", () => {
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => {
-      scheduleEditorViewportFit({center: true});
+      scheduleEditorViewportFit();
       applyPreviewZoom();
       updatePreviewGeometry();
       renderTimeline();
@@ -4963,7 +4963,7 @@
   window.visualViewport?.addEventListener("resize", () => {
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => {
-      scheduleEditorViewportFit({center: true});
+      scheduleEditorViewportFit();
       applyPreviewZoom();
       updatePreviewGeometry();
       renderTimeline();
@@ -5482,7 +5482,7 @@
       const nextWidth = editorViewport.clientWidth;
       if (Math.abs(nextWidth - observedViewportWidth) < 1) return;
       observedViewportWidth = nextWidth;
-      scheduleEditorViewportFit({center: true});
+      scheduleEditorViewportFit();
     }).observe(editorViewport);
   }
   if ("ResizeObserver" in window && previewBody) {
