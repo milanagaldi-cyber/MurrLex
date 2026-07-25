@@ -5,6 +5,16 @@ APP_DIR="/opt/MurrLex"
 BRANCH="Server_Main"
 BACKUP_DIR="/var/backups/murrlex"
 LOCK_FILE="/run/lock/murrlex-deploy.lock"
+MODE="${1:-}"
+
+case "${MODE}" in
+  fast-ui|backend|full)
+    ;;
+  *)
+    echo "Usage: murrlex-deploy fast-ui|backend|full" >&2
+    exit 1
+    ;;
+esac
 
 if [[ "${EUID}" -ne 0 ]]; then
   echo "murrlex-deploy must run through sudo." >&2
@@ -27,6 +37,10 @@ timed_stage() {
   "$@"
   elapsed=$(( $(date +%s) - started_at ))
   log "stage=${name} status=completed duration=${elapsed}s"
+}
+
+skip_stage() {
+  log "stage=$1 status=skipped mode=${MODE}"
 }
 
 update_source() {
@@ -71,12 +85,9 @@ collect_static() {
   ./.venv/bin/python manage.py collectstatic --noinput
 }
 
-run_tests() {
-  DEBUG=true GOOGLE_OAUTH_ENABLED=false GOOGLE_OAUTH_CLIENT_ID= GOOGLE_OAUTH_CLIENT_SECRET= \
-    ./.venv/bin/python manage.py test
-}
-
 install_infrastructure() {
+  install -o root -g root -m 0755 "${APP_DIR}/deploy/access/murrlex-deploy" /usr/local/sbin/murrlex-deploy
+  install -o root -g root -m 0755 "${APP_DIR}/deploy/access/murrlex-deploy-key" /usr/local/sbin/murrlex-deploy-key
   install -o root -g root -m 0644 "${APP_DIR}/deploy/systemd/murrlex-credit-refill.service" /etc/systemd/system/murrlex-credit-refill.service
   install -o root -g root -m 0644 "${APP_DIR}/deploy/systemd/murrlex-credit-refill.timer" /etc/systemd/system/murrlex-credit-refill.timer
   install -o root -g root -m 0644 "${APP_DIR}/deploy/systemd/murrlex-media-worker.service" /etc/systemd/system/murrlex-media-worker.service
@@ -120,18 +131,38 @@ current_branch="$(git branch --show-current)"
 old_revision="$(git rev-parse HEAD)"
 new_revision="${old_revision}"
 timed_stage source_update update_source
-timed_stage database_backup backup_database
+
+if [[ "${MODE}" == "fast-ui" ]]; then
+  skip_stage database_backup
+else
+  timed_stage database_backup backup_database
+fi
 
 cd backend
-timed_stage media_tools ensure_media_tools
-timed_stage dependencies install_dependencies
-timed_stage database_prepare prepare_database
+
+if [[ "${MODE}" == "fast-ui" ]]; then
+  skip_stage media_tools
+  skip_stage dependencies
+  skip_stage database_prepare
+else
+  timed_stage media_tools ensure_media_tools
+  timed_stage dependencies install_dependencies
+  timed_stage database_prepare prepare_database
+fi
+
 timed_stage static_files collect_static
-timed_stage tests run_tests
-timed_stage infrastructure install_infrastructure
+
+skip_stage tests
+
+if [[ "${MODE}" == "full" ]]; then
+  timed_stage infrastructure install_infrastructure
+else
+  skip_stage infrastructure
+fi
+
 timed_stage service_restart restart_services
 timed_stage health_check check_health
 
-logger -t murrlex-deploy "success actor=${SUDO_USER:-root} old=${old_revision} new=${new_revision}"
+logger -t murrlex-deploy "success actor=${SUDO_USER:-root} mode=${MODE} old=${old_revision} new=${new_revision}"
 deploy_elapsed=$(( $(date +%s) - deploy_started_at ))
-log "success ${old_revision:0:12} -> ${new_revision:0:12} duration=${deploy_elapsed}s"
+log "success mode=${MODE} ${old_revision:0:12} -> ${new_revision:0:12} duration=${deploy_elapsed}s"

@@ -1,9 +1,19 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-if [[ "${SSH_ORIGINAL_COMMAND:-}" != "deploy" ]]; then
-  echo "This SSH key only accepts: ssh USER@HOST deploy" >&2
+read -r command mode extra <<<"${SSH_ORIGINAL_COMMAND:-}"
+
+if [[ "${command}" != "deploy" ]] || [[ -n "${extra:-}" ]]; then
+  echo "This SSH key only accepts: ssh USER@HOST 'deploy fast-ui|backend|full'" >&2
   exit 1
 fi
 
-exec sudo -n /usr/local/sbin/murrlex-deploy
+case "${mode:-}" in
+  fast-ui|backend|full)
+    exec sudo -n /usr/local/sbin/murrlex-deploy "${mode}"
+    ;;
+  *)
+    echo "Deployment mode must be one of: fast-ui, backend, full." >&2
+    exit 1
+    ;;
+esac

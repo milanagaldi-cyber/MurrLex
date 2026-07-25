@@ -2,13 +2,63 @@ name: Deploy staging
 
 on:
   workflow_dispatch:
+    inputs:
+      deploy_mode:
+        description: Deployment mode
+        required: true
+        default: fast-ui
+        type: choice
+        options:
+          - fast-ui
+          - backend
+          - full
 
 concurrency:
   group: murrlex-staging-deploy
   cancel-in-progress: false
 
 jobs:
+  validate:
+    name: Validate ${{ inputs.deploy_mode }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Verify approved branch
+        shell: bash
+        run: test "${GITHUB_REF_NAME}" = "Server_Main"
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend dependencies
+        working-directory: backend
+        run: python -m pip install -r requirements.txt
+      - name: Run Django system checks
+        working-directory: backend
+        env:
+          DEBUG: "true"
+          GOOGLE_OAUTH_ENABLED: "false"
+          GOOGLE_OAUTH_CLIENT_ID: ""
+          GOOGLE_OAUTH_CLIENT_SECRET: ""
+        run: python manage.py check
+      - name: Run full test suite
+        if: inputs.deploy_mode != 'fast-ui'
+        working-directory: backend
+        env:
+          DEBUG: "true"
+          GOOGLE_OAUTH_ENABLED: "false"
+          GOOGLE_OAUTH_CLIENT_ID: ""
+          GOOGLE_OAUTH_CLIENT_SECRET: ""
+        run: python manage.py test
+
   deploy:
+    name: Deploy ${{ inputs.deploy_mode }}
+    needs: validate
     runs-on: ubuntu-latest
     environment: staging
     permissions:
@@ -33,4 +83,5 @@ jobs:
         env:
           SSH_HOST: ${{ secrets.STAGING_SSH_HOST }}
           SSH_USER: ${{ secrets.STAGING_SSH_USER }}
-        run: ssh -i ~/.ssh/murrlex_staging -o BatchMode=yes -o IdentitiesOnly=yes "${SSH_USER}@${SSH_HOST}" deploy
+          DEPLOY_MODE: ${{ inputs.deploy_mode }}
+        run: ssh -i ~/.ssh/murrlex_staging -o BatchMode=yes -o IdentitiesOnly=yes "${SSH_USER}@${SSH_HOST}" "deploy ${DEPLOY_MODE}"
