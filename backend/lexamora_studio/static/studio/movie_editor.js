@@ -121,17 +121,21 @@
   const trackContext = q("[data-track-context]");
   const editorLayout = q("[data-editor-layout]");
   const editorViewport = q("[data-editor-workspace-viewport]");
-  const projectHeaderPanel = document.querySelector(".project-shell-header");
-  if (projectHeaderPanel) {
-    projectHeaderPanel.dataset.panelKey = "projectHeader";
-    projectHeaderPanel.classList.add("movie-collapsible");
-    const projectHeaderDrag = projectHeaderPanel.querySelector(".project-shell-identity") || projectHeaderPanel;
-    projectHeaderDrag.dataset.panelDrag = "projectHeader";
-    projectHeaderDrag.classList.add("movie-project-window-header");
+  const editProjectsPanel = document.querySelector('[data-montage-gallery][data-gallery-key="draft-editor"]');
+  const editorHeaderPanel = q('[data-panel-key="editorHeader"]');
+  if (editProjectsPanel) {
+    editProjectsPanel.dataset.panelKey = "editProjects";
+    editProjectsPanel.classList.add("panel", "movie-collapsible", "movie-edit-projects-tile");
+    const editProjectsDrag = editProjectsPanel.querySelector(":scope > summary") || editProjectsPanel;
+    editProjectsDrag.dataset.panelDrag = "editProjects";
+  }
+  if (editorLayout) {
+    if (editProjectsPanel) editorLayout.appendChild(editProjectsPanel);
+    if (editorHeaderPanel) editorLayout.appendChild(editorHeaderPanel);
   }
   const layoutPanels = {
-    projectHeader: projectHeaderPanel,
-    editorHeader: q('[data-panel-key="editorHeader"]'),
+    editProjects: editProjectsPanel,
+    editorHeader: editorHeaderPanel,
     toolbar: q('[data-panel-key="toolbar"]'),
     history: historyPanel,
     exports: renderPanel,
@@ -144,7 +148,7 @@
   const audioPlayers = new Map();
   const visualPlayers = new Map();
 
-  const layoutEngineVersion = "bounded-tiles-v1";
+  const layoutEngineVersion = "bounded-tiles-v2";
   const layoutModeKey = `studio-movie-layout-mode-${layoutEngineVersion}-${timelineId}`;
   const layoutStateKey = mode => `studio-movie-layout-${layoutEngineVersion}-${timelineId}-${mode}`;
   const savedLayoutKey = `studio-movie-layout-saved-${layoutEngineVersion}-${timelineId}`;
@@ -152,8 +156,10 @@
   const layoutLockKey = `studio-movie-layout-locked-${layoutEngineVersion}-${timelineId}`;
   let layoutLocked = localStorage.getItem(layoutLockKey) === "true";
   let floatingPanels = {};
-  const tilePanelKeys = ["media", "preview", "inspector", "timeline"];
+  const tilePanelKeys = ["editProjects", "editorHeader", "media", "preview", "inspector", "timeline"];
   const tileMinimums = {
+    editProjects: {width: 560, height: 120},
+    editorHeader: {width: 560, height: 48},
     media: {width: 180, height: 150},
     preview: {width: 300, height: 220},
     inspector: {width: 220, height: 120},
@@ -234,9 +240,15 @@
     const mediaWidth = clamp(Math.round(availableWidth * .2), 220, 300);
     const inspectorWidth = clamp(Math.round(availableWidth * .27), 300, 430);
     const previewWidth = Math.max(360, availableWidth - mediaWidth - inspectorWidth - gap * 2);
+    const editProjectsHeight = 220;
+    const editorHeaderHeight = 58;
     const upperHeight = 390;
     const timelineHeight = 320;
-    const occupiedHeight = upperHeight + gap + timelineHeight;
+    const editProjectsY = tileWorkspaceInset;
+    const editorHeaderY = editProjectsY + editProjectsHeight + gap;
+    const upperY = editorHeaderY + editorHeaderHeight + gap;
+    const timelineY = upperY + upperHeight + gap;
+    const occupiedHeight = timelineY + timelineHeight + tileWorkspaceInset;
     const reserveX = Math.round(availableWidth / 2);
     const defaults = {
       workspace: {
@@ -246,10 +258,12 @@
         baseHeight: occupiedHeight,
       },
       tiles: {
-        media: {x: reserveX, y: 0, width: mediaWidth, height: upperHeight},
-        preview: {x: reserveX + mediaWidth + gap, y: 0, width: previewWidth, height: upperHeight},
-        inspector: {x: reserveX + mediaWidth + gap + previewWidth + gap, y: 0, width: inspectorWidth, height: upperHeight},
-        timeline: {x: reserveX, y: upperHeight + gap, width: availableWidth, height: timelineHeight},
+        editProjects: {x: reserveX, y: editProjectsY, width: availableWidth, height: editProjectsHeight},
+        editorHeader: {x: reserveX, y: editorHeaderY, width: availableWidth, height: editorHeaderHeight},
+        media: {x: reserveX, y: upperY, width: mediaWidth, height: upperHeight},
+        preview: {x: reserveX + mediaWidth + gap, y: upperY, width: previewWidth, height: upperHeight},
+        inspector: {x: reserveX + mediaWidth + gap + previewWidth + gap, y: upperY, width: inspectorWidth, height: upperHeight},
+        timeline: {x: reserveX, y: timelineY, width: availableWidth, height: timelineHeight},
       },
     };
     tileLayoutDefaults = structuredClone(defaults);
@@ -723,6 +737,8 @@
     snaps.forEach(snap => snap?.target?.classList.add("movie-panel-snap-target"));
   };
   const panelMinimumSize = key => ({
+    editProjects: {width: 560, height: 120},
+    editorHeader: {width: 560, height: 48},
     media: {width: 180, height: 150},
     preview: {width: 300, height: 220},
     inspector: {width: 220, height: 120},
@@ -731,7 +747,6 @@
     toolbar: {width: 220, height: 48},
     history: {width: 320, height: 80},
     exports: {width: 320, height: 80},
-    projectHeader: {width: 420, height: 80},
   }[key] || {width: 240, height: 86});
   const ensureWindowResizeHandles = (key, panel) => {
     if (!panel || panel.querySelector(":scope > .movie-window-resize-handle")) return;
@@ -877,7 +892,7 @@
       actions.className = "movie-window-actions";
       handle.appendChild(actions);
     }
-    if ((key === "projectHeader" || key === "preview") && actions.parentElement !== panel) {
+    if (key === "preview" && actions.parentElement !== panel) {
       panel.appendChild(actions);
     }
     let home = actions.querySelector(".movie-window-home");
@@ -1362,7 +1377,7 @@
     });
     initializeCanvasControls();
     window.refreshLexamoraIcons?.(root);
-    if (projectHeaderPanel) window.refreshLexamoraIcons?.(projectHeaderPanel);
+    if (editProjectsPanel) window.refreshLexamoraIcons?.(editProjectsPanel);
     localStorage.removeItem(floatingPanelsKey);
 
     tilePanelKeys.forEach(key => {
@@ -5425,7 +5440,8 @@
   if (sessionStorage.getItem(initialEditorFocusKey) !== "true") {
     sessionStorage.setItem(initialEditorFocusKey, "true");
     requestAnimationFrame(() => requestAnimationFrame(() => {
-      q('[data-panel-key="editorHeader"]')?.scrollIntoView({block: "start", behavior: "auto"});
+      editorViewport?.scrollIntoView({block: "start", behavior: "auto"});
+      centerTileWorkspaceView();
       applyPreviewZoom();
       updatePreviewGeometry();
       renderTimeline();
