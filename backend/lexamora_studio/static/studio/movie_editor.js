@@ -339,10 +339,16 @@
     if (!editorViewport || !editorLayout) return 0;
     const layout = ensureTileLayout();
     const viewportWidth = Math.max(1, editorViewport.clientWidth);
-    const requiredWidth = Math.ceil(viewportWidth * 2);
-    if (layout.workspace.width >= requiredWidth) return 0;
-    const shift = Math.ceil((requiredWidth - layout.workspace.width) / 2);
-    layout.workspace.width += shift * 2;
+    const rects = tilePanelKeys.map(key => layout.tiles[key]).filter(Boolean);
+    if (!rects.length) return 0;
+    const left = Math.min(...rects.map(rect => rect.x));
+    const right = Math.max(...rects.map(rect => rect.x + rect.width));
+    const minimumReserve = Math.max(640, Math.ceil(viewportWidth));
+    const shift = Math.max(0, Math.ceil(minimumReserve - left));
+    const rightReserve = Math.max(0, layout.workspace.width - right);
+    const rightGrowth = Math.max(0, Math.ceil(minimumReserve - rightReserve));
+    if (!shift && !rightGrowth) return 0;
+    layout.workspace.width += shift + rightGrowth;
     tilePanelKeys.forEach(key => {
       if (layout.tiles[key]) layout.tiles[key].x += shift;
     });
@@ -350,14 +356,14 @@
     editorLayouts.stacked = {...editorLayouts.stacked, ...layout};
     editorLayout.style.setProperty("--tile-workspace-width", `${layout.workspace.width}px`);
     editorLayout.style.setProperty("width", `${layout.workspace.width}px`, "important");
+    applyTileRects(layout.tiles);
     return shift;
   };
   const fitEditorViewportToWindow = () => {
     if (!editorViewport) return;
-    editorViewport.style.setProperty("width", "100%", "important");
-    editorViewport.style.setProperty("max-width", "100%", "important");
-    editorViewport.style.setProperty("margin-left", "0", "important");
-    editorViewport.style.setProperty("margin-right", "0", "important");
+    ["width", "max-width", "margin-left", "margin-right"].forEach(property =>
+      editorViewport.style.removeProperty(property)
+    );
     const previousScrollLeft = editorViewport.scrollLeft;
     const workspaceShift = ensureTileWorkspaceCoversViewport();
     if (workspaceShift > 0 && lastEditorViewportWidth > 0) {
@@ -1451,6 +1457,11 @@
         }
         event.preventDefault();
         event.stopPropagation();
+        const previousScrollLeft = editorViewport?.scrollLeft || 0;
+        const workspaceShift = ensureTileWorkspaceCoversViewport();
+        if (workspaceShift > 0 && editorViewport) {
+          editorViewport.scrollLeft = previousScrollLeft + workspaceShift;
+        }
         const layout = ensureTileLayout();
         const startTiles = cloneTiles(layout.tiles);
         const origin = {...startTiles[key]};

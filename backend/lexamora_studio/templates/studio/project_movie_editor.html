@@ -965,8 +965,15 @@ body.movie-editor-page-active main{
   transform:none;
 }
 body.movie-editor-page-active .movie-editor-viewport{
+  box-sizing:border-box!important;
+  width:100vw!important;
+  min-width:100vw!important;
+  max-width:none!important;
+  margin-left:calc(50% - 50vw)!important;
+  margin-right:calc(50% - 50vw)!important;
   overflow-x:auto!important;
   overflow-y:auto!important;
+  background-color:var(--bg)!important;
 }
 .movie-editor-layout,
 .movie-editor-layout[data-layout="columns"],
