@@ -951,6 +951,23 @@ body.movie-layout-locked [data-timeline-edge-resizer]{pointer-events:none!import
   background-size:32px 32px;
   background-position:-1px -1px;
 }
+html.movie-editor-page-active,
+body.movie-editor-page-active{
+  max-width:100%;
+  overflow-x:hidden!important;
+}
+body.movie-editor-page-active .site-header,
+body.movie-editor-page-active .topbar,
+body.movie-editor-page-active main{
+  position:relative;
+  left:auto;
+  right:auto;
+  transform:none;
+}
+body.movie-editor-page-active .movie-editor-viewport{
+  overflow-x:auto!important;
+  overflow-y:auto!important;
+}
 .movie-editor-layout,
 .movie-editor-layout[data-layout="columns"],
 .movie-editor-layout[data-layout="stacked"]{
@@ -1225,4 +1242,4 @@ body.movie-panel-interacting *{
 </section>
 {{ movie_timeline_data|json_script:"movie-timeline-data" }}{{ movie_assets|json_script:"movie-assets-data" }}{{ movie_library_assets|json_script:"movie-library-data" }}{{ movie_render_jobs|json_script:"movie-render-jobs-data" }}{{ movie_edits|json_script:"movie-edits-data" }}
 {% endblock %}
-{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260725-visible-workplane"></script>{% endblock %}
+{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260725-editor-scroll-isolation"></script>{% endblock %}

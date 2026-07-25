@@ -1,6 +1,8 @@
 (() => {
   const root = document.querySelector("[data-movie-editor]");
   if (!root) return;
+  document.documentElement.classList.add("movie-editor-page-active");
+  document.body.classList.add("movie-editor-page-active");
 
   const canEdit = root.dataset.canEdit === "true";
   const canExport = root.dataset.canExport === "true";
@@ -316,12 +318,13 @@
     const rects = tilePanelKeys.map(key => layout.tiles[key]).filter(Boolean);
     if (!rects.length) return;
     const left = Math.min(...rects.map(rect => rect.x));
+    const right = Math.max(...rects.map(rect => rect.x + rect.width));
     const top = Math.min(...rects.map(rect => rect.y));
-    const viewportRect = editorViewport.getBoundingClientRect();
-    const contentLeft = Math.max(0, root.getBoundingClientRect().left - viewportRect.left);
+    const clusterWidth = right - left;
+    const visibleGutter = Math.max(0, (editorViewport.clientWidth - clusterWidth) / 2);
     const viewportHeight = editorViewport.clientHeight;
     editorViewport.scrollLeft = clamp(
-      left - contentLeft,
+      left - visibleGutter,
       0,
       Math.max(0, layout.workspace.width - editorViewport.clientWidth),
     );
@@ -595,10 +598,9 @@
     });
     workspaceExtent.width = Math.ceil(right);
     workspaceExtent.height = Math.ceil(bottom);
-    floatingWorkspaceSpacer.style.width = right > viewportWidth ? `${workspaceExtent.width}px` : "0px";
+    floatingWorkspaceSpacer.style.width = "0px";
     floatingWorkspaceSpacer.style.height = bottom > viewportHeight ? `${workspaceExtent.height}px` : "0px";
-    if (right > viewportWidth) document.body.style.setProperty("min-width", `${workspaceExtent.width}px`, "important");
-    else document.body.style.removeProperty("min-width");
+    document.body.style.removeProperty("min-width");
     document.body.style.setProperty("min-height", `${workspaceExtent.height}px`, "important");
   };
   // Moving the document while a panel is being dragged changes the pointer's
