@@ -160,6 +160,7 @@
     timeline: {width: 420, height: 140},
   };
   const tileEdgeSize = 18;
+  const tileWorkspaceInset = Math.ceil(tileEdgeSize / 2) + 2;
   const tileSnapDistance = 12;
   let tileLayoutDefaults = null;
   const layoutDefaults = {
@@ -270,11 +271,11 @@
       const fallback = defaults.tiles[key];
       const current = tileRect(source.tiles?.[key] || fallback);
       const minimum = tileMinimums[key];
-      const width = clamp(current.width || fallback.width, minimum.width, Math.min(workspace.width, fallback.width * 2));
-      const height = clamp(current.height || fallback.height, minimum.height, Math.min(workspace.height, fallback.height * 2));
+      const width = clamp(current.width || fallback.width, minimum.width, Math.min(workspace.width - tileWorkspaceInset * 2, fallback.width * 2));
+      const height = clamp(current.height || fallback.height, minimum.height, Math.min(workspace.height - tileWorkspaceInset * 2, fallback.height * 2));
       tiles[key] = {
-        x: clamp(current.x, 0, Math.max(0, workspace.width - width)),
-        y: clamp(current.y, 0, Math.max(0, workspace.height - height)),
+        x: clamp(current.x, tileWorkspaceInset, Math.max(tileWorkspaceInset, workspace.width - width - tileWorkspaceInset)),
+        y: clamp(current.y, tileWorkspaceInset, Math.max(tileWorkspaceInset, workspace.height - height - tileWorkspaceInset)),
         width,
         height,
       };
@@ -1181,12 +1182,12 @@
   };
   const snapMovingTile = (key, rect, tiles, workspace) => {
     const xCandidates = [
-      {value: 0, guide: 0},
-      {value: workspace.width - rect.width, guide: workspace.width},
+      {value: tileWorkspaceInset, guide: tileWorkspaceInset},
+      {value: workspace.width - rect.width - tileWorkspaceInset, guide: workspace.width - tileWorkspaceInset},
     ];
     const yCandidates = [
-      {value: 0, guide: 0},
-      {value: workspace.height - rect.height, guide: workspace.height},
+      {value: tileWorkspaceInset, guide: tileWorkspaceInset},
+      {value: workspace.height - rect.height - tileWorkspaceInset, guide: workspace.height - tileWorkspaceInset},
     ];
     tilePanelKeys.filter(otherKey => otherKey !== key).forEach(otherKey => {
       const other = tiles[otherKey];
@@ -1210,8 +1211,8 @@
     return {
       rect: {
         ...rect,
-        x: clamp(xSnap?.value ?? rect.x, 0, workspace.width - rect.width),
-        y: clamp(ySnap?.value ?? rect.y, 0, workspace.height - rect.height),
+        x: clamp(xSnap?.value ?? rect.x, tileWorkspaceInset, workspace.width - rect.width - tileWorkspaceInset),
+        y: clamp(ySnap?.value ?? rect.y, tileWorkspaceInset, workspace.height - rect.height - tileWorkspaceInset),
       },
       guide: {x: xSnap?.guide ?? null, y: ySnap?.guide ?? null},
     };
@@ -1219,8 +1220,14 @@
   const snapResizeEdge = (key, edge, value, tiles, workspace) => {
     const horizontal = edge === "e" || edge === "w";
     const candidates = horizontal
-      ? [{value: 0, guide: 0}, {value: workspace.width, guide: workspace.width}]
-      : [{value: 0, guide: 0}, {value: workspace.height, guide: workspace.height}];
+      ? [
+          {value: tileWorkspaceInset, guide: tileWorkspaceInset},
+          {value: workspace.width - tileWorkspaceInset, guide: workspace.width - tileWorkspaceInset},
+        ]
+      : [
+          {value: tileWorkspaceInset, guide: tileWorkspaceInset},
+          {value: workspace.height - tileWorkspaceInset, guide: workspace.height - tileWorkspaceInset},
+        ];
     tilePanelKeys.filter(otherKey => otherKey !== key).forEach(otherKey => {
       const other = tiles[otherKey];
       if (horizontal) {
@@ -1235,17 +1242,17 @@
     const next = {...rect};
     if (edge === "e") {
       next.x = obstacle.x + obstacle.width;
-      if (next.x + next.width > workspace.width) next.width = workspace.width - next.x;
+      if (next.x + next.width > workspace.width - tileWorkspaceInset) next.width = workspace.width - tileWorkspaceInset - next.x;
     } else if (edge === "w") {
       const right = obstacle.x;
-      next.x = Math.max(0, right - next.width);
+      next.x = Math.max(tileWorkspaceInset, right - next.width);
       next.width = right - next.x;
     } else if (edge === "s") {
       next.y = obstacle.y + obstacle.height;
-      if (next.y + next.height > workspace.height) next.height = workspace.height - next.y;
+      if (next.y + next.height > workspace.height - tileWorkspaceInset) next.height = workspace.height - tileWorkspaceInset - next.y;
     } else {
       const bottom = obstacle.y;
-      next.y = Math.max(0, bottom - next.height);
+      next.y = Math.max(tileWorkspaceInset, bottom - next.height);
       next.height = bottom - next.y;
     }
     if (next.width < minimum.width || next.height < minimum.height) return null;
@@ -1283,27 +1290,27 @@
     const next = {...origin};
     let guide = {x: null, y: null};
     if (edge === "e") {
-      const raw = clamp(origin.x + origin.width + dx, origin.x + minimum.width, Math.min(workspace.width, origin.x + maximumWidth));
+      const raw = clamp(origin.x + origin.width + dx, origin.x + minimum.width, Math.min(workspace.width - tileWorkspaceInset, origin.x + maximumWidth));
       const snap = snapResizeEdge(key, edge, raw, tiles, workspace);
-      const right = clamp(snap?.value ?? raw, origin.x + minimum.width, Math.min(workspace.width, origin.x + maximumWidth));
+      const right = clamp(snap?.value ?? raw, origin.x + minimum.width, Math.min(workspace.width - tileWorkspaceInset, origin.x + maximumWidth));
       next.width = right - origin.x;
       guide.x = snap?.guide ?? null;
     } else if (edge === "w") {
-      const raw = clamp(origin.x + dx, Math.max(0, origin.x + origin.width - maximumWidth), origin.x + origin.width - minimum.width);
+      const raw = clamp(origin.x + dx, Math.max(tileWorkspaceInset, origin.x + origin.width - maximumWidth), origin.x + origin.width - minimum.width);
       const snap = snapResizeEdge(key, edge, raw, tiles, workspace);
-      next.x = clamp(snap?.value ?? raw, Math.max(0, origin.x + origin.width - maximumWidth), origin.x + origin.width - minimum.width);
+      next.x = clamp(snap?.value ?? raw, Math.max(tileWorkspaceInset, origin.x + origin.width - maximumWidth), origin.x + origin.width - minimum.width);
       next.width = origin.x + origin.width - next.x;
       guide.x = snap?.guide ?? null;
     } else if (edge === "s") {
-      const raw = clamp(origin.y + origin.height + dy, origin.y + minimum.height, Math.min(workspace.height, origin.y + maximumHeight));
+      const raw = clamp(origin.y + origin.height + dy, origin.y + minimum.height, Math.min(workspace.height - tileWorkspaceInset, origin.y + maximumHeight));
       const snap = snapResizeEdge(key, edge, raw, tiles, workspace);
-      const bottom = clamp(snap?.value ?? raw, origin.y + minimum.height, Math.min(workspace.height, origin.y + maximumHeight));
+      const bottom = clamp(snap?.value ?? raw, origin.y + minimum.height, Math.min(workspace.height - tileWorkspaceInset, origin.y + maximumHeight));
       next.height = bottom - origin.y;
       guide.y = snap?.guide ?? null;
     } else {
-      const raw = clamp(origin.y + dy, Math.max(0, origin.y + origin.height - maximumHeight), origin.y + origin.height - minimum.height);
+      const raw = clamp(origin.y + dy, Math.max(tileWorkspaceInset, origin.y + origin.height - maximumHeight), origin.y + origin.height - minimum.height);
       const snap = snapResizeEdge(key, edge, raw, tiles, workspace);
-      next.y = clamp(snap?.value ?? raw, Math.max(0, origin.y + origin.height - maximumHeight), origin.y + origin.height - minimum.height);
+      next.y = clamp(snap?.value ?? raw, Math.max(tileWorkspaceInset, origin.y + origin.height - maximumHeight), origin.y + origin.height - minimum.height);
       next.height = origin.y + origin.height - next.y;
       guide.y = snap?.guide ?? null;
     }
@@ -1365,8 +1372,8 @@
           active = true;
           const raw = {
             ...origin,
-            x: clamp(origin.x + dx, 0, layout.workspace.width - origin.width),
-            y: clamp(origin.y + dy, 0, layout.workspace.height - origin.height),
+            x: clamp(origin.x + dx, tileWorkspaceInset, layout.workspace.width - origin.width - tileWorkspaceInset),
+            y: clamp(origin.y + dy, tileWorkspaceInset, layout.workspace.height - origin.height - tileWorkspaceInset),
           };
           const snapped = snapMovingTile(key, raw, startTiles, layout.workspace);
           currentTiles = cloneTiles(startTiles);
@@ -4709,7 +4716,13 @@
   previewStage.addEventListener("pointerdown", beginPreviewPan);
   qa("[data-preview-resize]").forEach(handle => handle.addEventListener("pointerdown", beginPreviewResize));
   qa("[data-canvas-frame]").forEach(button => bindHold(button, () => nudgeCanvasFrame(button.dataset.canvasFrame), 210, 75));
-  previewStage.addEventListener("wheel", () => {}, {passive: true});
+  const forwardVerticalWheelToPage = event => {
+    if (event.ctrlKey || !event.deltaY || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return false;
+    event.preventDefault();
+    window.scrollBy({top: event.deltaY, left: 0, behavior: "auto"});
+    return true;
+  };
+  previewStage.addEventListener("wheel", forwardVerticalWheelToPage, {passive: false});
   playheadNode.addEventListener("pointerdown", beginPlayheadGesture);
   previewZoomInput?.addEventListener("input", event => {
     previewZoomManual = true;
@@ -4755,7 +4768,9 @@
     if (event.ctrlKey && Math.abs(event.deltaY) >= Math.abs(event.deltaX)) {
       event.preventDefault();
       changeZoom(zoom + (event.deltaY < 0 ? 4 : -4), event.clientX);
+      return;
     }
+    forwardVerticalWheelToPage(event);
   }, {passive: false});
   zoomInput.oninput = event => changeZoom(Number(event.target.value));
   q("[data-zoom-out]").onclick = () => changeZoom(zoom - 4);
