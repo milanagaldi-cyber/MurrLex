@@ -44,7 +44,7 @@
   let playheadMs = 0;
   let dirty = false;
   let snapping = true;
-  let zoom = Math.max(6, Math.min(160, Number(localStorage.getItem("studio-movie-zoom")) || 24));
+  let zoom = Math.max(1, Math.min(160, Number(localStorage.getItem("studio-movie-zoom")) || 24));
   let playing = false;
   let playbackFrame = 0;
   let playbackOrigin = 0;
@@ -165,6 +165,7 @@
     inspector: {width: 220, height: 120},
     timeline: {width: 420, height: 140},
   };
+  const tileMaximumScale = key => ["media", "preview", "inspector", "timeline"].includes(key) ? 4 : 2;
   const tileEdgeSize = 18;
   const tileWorkspaceInset = Math.ceil(tileEdgeSize / 2) + 2;
   const tileSnapDistance = 12;
@@ -250,23 +251,25 @@
     const editorHeaderY = editProjectsY + editProjectsHeight + gap;
     const upperY = editorHeaderY + editorHeaderHeight + gap;
     const timelineY = upperY + upperHeight + gap;
-    const occupiedHeight = timelineY + timelineHeight + tileWorkspaceInset;
     const reserveX = Math.round(availableWidth / 2);
+    const tiles = {
+      editProjects: {x: reserveX, y: editProjectsY, width: availableWidth, height: editProjectsHeight},
+      editorHeader: {x: reserveX, y: editorHeaderY, width: availableWidth, height: editorHeaderHeight},
+      media: {x: reserveX, y: upperY, width: mediaWidth, height: upperHeight},
+      preview: {x: reserveX + mediaWidth + gap, y: upperY, width: previewWidth, height: upperHeight},
+      inspector: {x: reserveX + mediaWidth + gap + previewWidth + gap, y: upperY, width: inspectorWidth, height: upperHeight},
+      timeline: {x: reserveX, y: timelineY, width: availableWidth, height: timelineHeight},
+    };
+    const workspaceWidth = Math.max(...Object.entries(tiles).map(([key, tile]) => tile.x + tile.width * tileMaximumScale(key))) + tileWorkspaceInset;
+    const workspaceHeight = Math.max(...Object.entries(tiles).map(([key, tile]) => tile.y + tile.height * tileMaximumScale(key))) + tileWorkspaceInset;
     const defaults = {
       workspace: {
-        width: Math.round(availableWidth * 2),
-        height: occupiedHeight + timelineHeight * 2,
+        width: Math.round(workspaceWidth),
+        height: Math.round(workspaceHeight),
         baseWidth: availableWidth,
-        baseHeight: occupiedHeight,
+        baseHeight: timelineY + timelineHeight + tileWorkspaceInset,
       },
-      tiles: {
-        editProjects: {x: reserveX, y: editProjectsY, width: availableWidth, height: editProjectsHeight},
-        editorHeader: {x: reserveX, y: editorHeaderY, width: availableWidth, height: editorHeaderHeight},
-        media: {x: reserveX, y: upperY, width: mediaWidth, height: upperHeight},
-        preview: {x: reserveX + mediaWidth + gap, y: upperY, width: previewWidth, height: upperHeight},
-        inspector: {x: reserveX + mediaWidth + gap + previewWidth + gap, y: upperY, width: inspectorWidth, height: upperHeight},
-        timeline: {x: reserveX, y: timelineY, width: availableWidth, height: timelineHeight},
-      },
+      tiles,
     };
     tileLayoutDefaults = structuredClone(defaults);
     return defaults;
@@ -287,8 +290,9 @@
       const fallback = defaults.tiles[key];
       const current = tileRect(source.tiles?.[key] || fallback);
       const minimum = tileMinimums[key];
-      const width = clamp(current.width || fallback.width, minimum.width, Math.min(workspace.width - tileWorkspaceInset * 2, fallback.width * 2));
-      const height = clamp(current.height || fallback.height, minimum.height, Math.min(workspace.height - tileWorkspaceInset * 2, fallback.height * 2));
+      const maximumScale = tileMaximumScale(key);
+      const width = clamp(current.width || fallback.width, minimum.width, Math.min(workspace.width - tileWorkspaceInset * 2, fallback.width * maximumScale));
+      const height = clamp(current.height || fallback.height, minimum.height, Math.min(workspace.height - tileWorkspaceInset * 2, fallback.height * maximumScale));
       tiles[key] = {
         x: clamp(current.x, tileWorkspaceInset, Math.max(tileWorkspaceInset, workspace.width - width - tileWorkspaceInset)),
         y: clamp(current.y, tileWorkspaceInset, Math.max(tileWorkspaceInset, workspace.height - height - tileWorkspaceInset)),
@@ -1341,8 +1345,9 @@
   const resizeTileCandidate = (key, edge, origin, dx, dy, tiles, workspace) => {
     const minimum = tileMinimums[key];
     const defaults = tileLayoutDefaults.tiles[key];
-    const maximumWidth = Math.min(workspace.width, defaults.width * 2);
-    const maximumHeight = Math.min(workspace.height, defaults.height * 2);
+    const maximumScale = tileMaximumScale(key);
+    const maximumWidth = Math.min(workspace.width, defaults.width * maximumScale);
+    const maximumHeight = Math.min(workspace.height, defaults.height * maximumScale);
     const next = {...origin};
     let guide = {x: null, y: null};
     if (edge === "e") {
@@ -4282,7 +4287,7 @@
     const bounds = timelineScroll.getBoundingClientRect();
     const anchor = anchorClientX == null ? timelineScroll.clientWidth / 2 : clamp(anchorClientX - bounds.left, 0, timelineScroll.clientWidth);
     const anchorMs = (timelineScroll.scrollLeft + anchor) / previous * 1000;
-    zoom = clamp(Math.round(next / 2) * 2, 6, 160);
+    zoom = clamp(Math.round(next), 1, 160);
     localStorage.setItem("studio-movie-zoom", String(zoom));
     renderTimeline();
     requestAnimationFrame(() => { timelineScroll.scrollLeft = Math.max(0, anchorMs / 1000 * zoom - anchor); });
