@@ -18,6 +18,99 @@ if ! flock -n 9; then
 fi
 
 log() { printf '[murrlex-deploy] %s\n' "$*"; }
+timed_stage() {
+  local name="$1"
+  shift
+  local started_at elapsed
+  started_at="$(date +%s)"
+  log "stage=${name} status=started"
+  "$@"
+  elapsed=$(( $(date +%s) - started_at ))
+  log "stage=${name} status=completed duration=${elapsed}s"
+}
+
+update_source() {
+  log "fetching ${BRANCH} (current ${old_revision:0:12})"
+  git fetch origin "${BRANCH}"
+  git merge --ff-only "origin/${BRANCH}"
+  new_revision="$(git rev-parse HEAD)"
+}
+
+backup_database() {
+  local backup
+  install -d -m 0700 "${BACKUP_DIR}"
+  if [[ -f backend/db.sqlite3 ]]; then
+    backup="${BACKUP_DIR}/db-$(date -u +%Y%m%dT%H%M%SZ)-${old_revision:0:12}.sqlite3"
+    if command -v sqlite3 >/dev/null 2>&1; then
+      sqlite3 backend/db.sqlite3 ".backup '${backup}'"
+    else
+      cp --preserve=mode,timestamps backend/db.sqlite3 "${backup}"
+    fi
+    log "database backup created"
+  fi
+}
+
+ensure_media_tools() {
+  if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
+    log "installing FFmpeg media tools"
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y ffmpeg
+  fi
+}
+
+install_dependencies() {
+  ./.venv/bin/python -m pip install -r requirements.txt
+}
+
+prepare_database() {
+  ./.venv/bin/python manage.py migrate --noinput
+  ./.venv/bin/python manage.py bootstrap_roles
+}
+
+collect_static() {
+  ./.venv/bin/python manage.py collectstatic --noinput
+}
+
+run_tests() {
+  DEBUG=true GOOGLE_OAUTH_ENABLED=false GOOGLE_OAUTH_CLIENT_ID= GOOGLE_OAUTH_CLIENT_SECRET= \
+    ./.venv/bin/python manage.py test
+}
+
+install_infrastructure() {
+  install -o root -g root -m 0644 "${APP_DIR}/deploy/systemd/murrlex-credit-refill.service" /etc/systemd/system/murrlex-credit-refill.service
+  install -o root -g root -m 0644 "${APP_DIR}/deploy/systemd/murrlex-credit-refill.timer" /etc/systemd/system/murrlex-credit-refill.timer
+  install -o root -g root -m 0644 "${APP_DIR}/deploy/systemd/murrlex-media-worker.service" /etc/systemd/system/murrlex-media-worker.service
+  systemctl daemon-reload
+  systemctl enable --now murrlex-credit-refill.timer
+  systemctl enable murrlex-media-worker.service
+
+  install -o root -g root -m 0644 "${APP_DIR}/deploy/nginx/ml-staging-api.lexaailabs.com" /etc/nginx/sites-available/ml-staging-api.lexaailabs.com
+  nginx -t
+  systemctl reload nginx
+}
+
+restart_services() {
+  systemctl restart murrlex-backend.service
+  systemctl is-active --quiet murrlex-backend.service
+  systemctl restart murrlex-image-worker.service
+  systemctl is-active --quiet murrlex-image-worker.service
+  systemctl restart murrlex-media-worker.service
+  systemctl is-active --quiet murrlex-media-worker.service
+}
+
+check_health() {
+  local attempt backend_ready=0
+  for attempt in {1..30}; do
+    if curl --fail --silent --max-time 3 http://127.0.0.1:8001/api/health >/dev/null; then
+      backend_ready=1
+      break
+    fi
+    sleep 1
+  done
+  [[ "${backend_ready}" -eq 1 ]] || { echo "Backend health check did not become ready." >&2; exit 1; }
+}
+
+deploy_started_at="$(date +%s)"
 cd "${APP_DIR}"
 
 current_branch="$(git branch --show-current)"
@@ -25,60 +118,20 @@ current_branch="$(git branch --show-current)"
 [[ -z "$(git status --porcelain --untracked-files=no)" ]] || { echo "Tracked server files have local changes." >&2; exit 1; }
 
 old_revision="$(git rev-parse HEAD)"
-log "fetching ${BRANCH} (current ${old_revision:0:12})"
-git fetch origin "${BRANCH}"
-git merge --ff-only "origin/${BRANCH}"
-new_revision="$(git rev-parse HEAD)"
-
-install -d -m 0700 "${BACKUP_DIR}"
-if [[ -f backend/db.sqlite3 ]]; then
-  backup="${BACKUP_DIR}/db-$(date -u +%Y%m%dT%H%M%SZ)-${old_revision:0:12}.sqlite3"
-  if command -v sqlite3 >/dev/null 2>&1; then
-    sqlite3 backend/db.sqlite3 ".backup '${backup}'"
-  else
-    cp --preserve=mode,timestamps backend/db.sqlite3 "${backup}"
-  fi
-  log "database backup created"
-fi
+new_revision="${old_revision}"
+timed_stage source_update update_source
+timed_stage database_backup backup_database
 
 cd backend
-if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
-  log "installing FFmpeg media tools"
-  apt-get update
-  DEBIAN_FRONTEND=noninteractive apt-get install -y ffmpeg
-fi
-./.venv/bin/python -m pip install -r requirements.txt
-./.venv/bin/python manage.py migrate --noinput
-./.venv/bin/python manage.py bootstrap_roles
-./.venv/bin/python manage.py collectstatic --noinput
-DEBUG=true GOOGLE_OAUTH_ENABLED=false GOOGLE_OAUTH_CLIENT_ID= GOOGLE_OAUTH_CLIENT_SECRET= \
-  ./.venv/bin/python manage.py test
-
-install -o root -g root -m 0644 "${APP_DIR}/deploy/systemd/murrlex-credit-refill.service" /etc/systemd/system/murrlex-credit-refill.service
-install -o root -g root -m 0644 "${APP_DIR}/deploy/systemd/murrlex-credit-refill.timer" /etc/systemd/system/murrlex-credit-refill.timer
-install -o root -g root -m 0644 "${APP_DIR}/deploy/systemd/murrlex-media-worker.service" /etc/systemd/system/murrlex-media-worker.service
-systemctl daemon-reload
-systemctl enable --now murrlex-credit-refill.timer
-systemctl enable murrlex-media-worker.service
-
-install -o root -g root -m 0644 "${APP_DIR}/deploy/nginx/ml-staging-api.lexaailabs.com" /etc/nginx/sites-available/ml-staging-api.lexaailabs.com
-nginx -t
-systemctl reload nginx
-
-systemctl restart murrlex-backend.service
-systemctl is-active --quiet murrlex-backend.service
-systemctl restart murrlex-image-worker.service
-systemctl is-active --quiet murrlex-image-worker.service
-systemctl restart murrlex-media-worker.service
-systemctl is-active --quiet murrlex-media-worker.service
-for attempt in {1..30}; do
-  if curl --fail --silent --max-time 3 http://127.0.0.1:8001/api/health >/dev/null; then
-    backend_ready=1
-    break
-  fi
-  sleep 1
-done
-[[ "${backend_ready:-0}" -eq 1 ]] || { echo "Backend health check did not become ready." >&2; exit 1; }
+timed_stage media_tools ensure_media_tools
+timed_stage dependencies install_dependencies
+timed_stage database_prepare prepare_database
+timed_stage static_files collect_static
+timed_stage tests run_tests
+timed_stage infrastructure install_infrastructure
+timed_stage service_restart restart_services
+timed_stage health_check check_health
 
 logger -t murrlex-deploy "success actor=${SUDO_USER:-root} old=${old_revision} new=${new_revision}"
-log "success ${old_revision:0:12} -> ${new_revision:0:12}"
+deploy_elapsed=$(( $(date +%s) - deploy_started_at ))
+log "success ${old_revision:0:12} -> ${new_revision:0:12} duration=${deploy_elapsed}s"
