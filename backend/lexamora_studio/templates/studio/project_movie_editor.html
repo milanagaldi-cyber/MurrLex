@@ -936,10 +936,10 @@ body.movie-layout-locked [data-timeline-edge-resizer]{pointer-events:none!import
   position:relative;
   display:block;
   box-sizing:border-box;
-  width:100%;
-  max-width:100%;
+  width:var(--movie-editor-viewport-width,100%);
+  max-width:none;
   min-width:0;
-  margin:0 auto;
+  margin:0;
   overflow:auto;
   overscroll-behavior:auto;
   scrollbar-gutter:stable;
@@ -1203,4 +1203,4 @@ body.movie-panel-interacting *{
 </section>
 {{ movie_timeline_data|json_script:"movie-timeline-data" }}{{ movie_assets|json_script:"movie-assets-data" }}{{ movie_library_assets|json_script:"movie-library-data" }}{{ movie_render_jobs|json_script:"movie-render-jobs-data" }}{{ movie_edits|json_script:"movie-edits-data" }}
 {% endblock %}
-{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260724-centered-tiles"></script>{% endblock %}
+{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260725-wide-viewport"></script>{% endblock %}

@@ -311,8 +311,32 @@
       Math.max(0, layout.workspace.height - viewportHeight),
     );
   };
+  const fitEditorViewportToWindow = () => {
+    if (!editorViewport) return;
+    if (window.matchMedia("(max-width: 980px)").matches) {
+      editorViewport.style.removeProperty("--movie-editor-viewport-width");
+      return;
+    }
+    const viewportLeft = Math.max(0, editorViewport.getBoundingClientRect().left);
+    const browserWidth = document.documentElement.clientWidth;
+    const rightInset = 12;
+    const availableWidth = Math.floor(browserWidth - viewportLeft - rightInset);
+    const parentWidth = Math.floor(editorViewport.parentElement?.clientWidth || 0);
+    editorViewport.style.setProperty(
+      "--movie-editor-viewport-width",
+      `${Math.max(parentWidth, availableWidth)}px`,
+    );
+  };
   const scheduleTileWorkspaceCenter = () => {
     requestAnimationFrame(() => requestAnimationFrame(centerTileWorkspaceView));
+  };
+  let editorViewportFitFrame = 0;
+  const scheduleEditorViewportFit = ({center = false} = {}) => {
+    cancelAnimationFrame(editorViewportFitFrame);
+    editorViewportFitFrame = requestAnimationFrame(() => {
+      fitEditorViewportToWindow();
+      if (center) requestAnimationFrame(centerTileWorkspaceView);
+    });
   };
   const cloneLayoutState = () => ({mode: "columns", layouts: structuredClone(editorLayouts)});
   const panelUsesDefaultGeometry = key => {
@@ -4890,7 +4914,12 @@
   let resizeTimer;
   addEventListener("resize", () => {
     clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(() => { applyPreviewZoom(); updatePreviewGeometry(); renderTimeline(); }, 120);
+    resizeTimer = setTimeout(() => {
+      scheduleEditorViewportFit();
+      applyPreviewZoom();
+      updatePreviewGeometry();
+      renderTimeline();
+    }, 120);
   });
 
   const mediaViewCycle = q("[data-media-view-cycle]");
@@ -5386,6 +5415,7 @@
   applyPanelGapMode();
   bindPanelDragging();
   applyLayoutLockState();
+  fitEditorViewportToWindow();
   applyEditorLayout(cloneLayoutState(), {persist: false, refresh: false});
   scheduleTileWorkspaceCenter();
   applyPreviewDock();
