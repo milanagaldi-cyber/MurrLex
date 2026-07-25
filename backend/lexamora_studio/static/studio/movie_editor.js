@@ -1402,6 +1402,37 @@
     if (editProjectsPanel) window.refreshLexamoraIcons?.(editProjectsPanel);
     localStorage.removeItem(floatingPanelsKey);
 
+    const scrollEditorViewportTowardPointer = pointer => {
+      if (!editorViewport || !pointer) return false;
+      const bounds = editorViewport.getBoundingClientRect();
+      const edgeZone = Math.min(72, Math.max(40, bounds.width * .05));
+      const maxStep = 28;
+      const axisStep = (position, start, end) => {
+        if (position < start + edgeZone) {
+          return -Math.ceil(maxStep * clamp((start + edgeZone - position) / edgeZone, 0, 1));
+        }
+        if (position > end - edgeZone) {
+          return Math.ceil(maxStep * clamp((position - (end - edgeZone)) / edgeZone, 0, 1));
+        }
+        return 0;
+      };
+      const beforeLeft = editorViewport.scrollLeft;
+      const beforeTop = editorViewport.scrollTop;
+      const maxLeft = Math.max(0, editorViewport.scrollWidth - editorViewport.clientWidth);
+      const maxTop = Math.max(0, editorViewport.scrollHeight - editorViewport.clientHeight);
+      editorViewport.scrollLeft = clamp(
+        beforeLeft + axisStep(pointer.clientX, bounds.left, bounds.right),
+        0,
+        maxLeft,
+      );
+      editorViewport.scrollTop = clamp(
+        beforeTop + axisStep(pointer.clientY, bounds.top, bounds.bottom),
+        0,
+        maxTop,
+      );
+      return editorViewport.scrollLeft !== beforeLeft || editorViewport.scrollTop !== beforeTop;
+    };
+
     tilePanelKeys.forEach(key => {
       const panel = layoutPanels[key];
       const handle = panel?.matches(`[data-panel-drag="${key}"]`)
@@ -1423,13 +1454,17 @@
         const origin = {...startTiles[key]};
         const startX = event.clientX;
         const startY = event.clientY;
+        const startScrollLeft = editorViewport?.scrollLeft || 0;
+        const startScrollTop = editorViewport?.scrollTop || 0;
         const pointerId = event.pointerId;
         let active = false;
         let currentTiles = startTiles;
+        let latestPointer = event;
+        let autoScrollFrame = 0;
         capturePointerSafely(handle, pointerId);
-        const move = next => {
-          const dx = next.clientX - startX;
-          const dy = next.clientY - startY;
+        const updatePosition = next => {
+          const dx = next.clientX - startX + (editorViewport?.scrollLeft || 0) - startScrollLeft;
+          const dy = next.clientY - startY + (editorViewport?.scrollTop || 0) - startScrollTop;
           if (!active && Math.hypot(dx, dy) < 4) return;
           if (!active) remember();
           active = true;
@@ -1447,6 +1482,17 @@
           showTileGuides(snapped.guide);
           applyTileRects(currentTiles);
         };
+        const continueAutoScroll = () => {
+          autoScrollFrame = 0;
+          if (!active || !latestPointer) return;
+          if (scrollEditorViewportTowardPointer(latestPointer)) updatePosition(latestPointer);
+          autoScrollFrame = requestAnimationFrame(continueAutoScroll);
+        };
+        const move = next => {
+          latestPointer = next;
+          updatePosition(next);
+          if (active && !autoScrollFrame) autoScrollFrame = requestAnimationFrame(continueAutoScroll);
+        };
         let finished = false;
         const finish = finishEvent => {
           if (finishEvent?.pointerId != null && finishEvent.pointerId !== pointerId) return;
@@ -1456,6 +1502,8 @@
           window.removeEventListener("pointermove", move, true);
           window.removeEventListener("pointerup", finish, true);
           window.removeEventListener("pointercancel", finish, true);
+          if (autoScrollFrame) cancelAnimationFrame(autoScrollFrame);
+          autoScrollFrame = 0;
           releasePointerCaptureSafely(handle, pointerId);
           panel.classList.remove("movie-tile-moving", "movie-tile-drop-invalid");
           document.body.classList.remove("movie-panel-interacting");
@@ -1501,13 +1549,17 @@
         const origin = {...startTiles[key]};
         const startX = event.clientX;
         const startY = event.clientY;
+        const startScrollLeft = editorViewport?.scrollLeft || 0;
+        const startScrollTop = editorViewport?.scrollTop || 0;
         const pointerId = event.pointerId;
         let active = false;
         let currentTiles = startTiles;
+        let latestPointer = event;
+        let autoScrollFrame = 0;
         capturePointerSafely(handle, pointerId);
-        const move = next => {
-          const dx = next.clientX - startX;
-          const dy = next.clientY - startY;
+        const updateSize = next => {
+          const dx = next.clientX - startX + (editorViewport?.scrollLeft || 0) - startScrollLeft;
+          const dy = next.clientY - startY + (editorViewport?.scrollTop || 0) - startScrollTop;
           if (!active && Math.hypot(dx, dy) < 2) return;
           if (!active) remember();
           active = true;
@@ -1523,6 +1575,17 @@
           applyPreviewZoom();
           updatePreviewGeometry();
         };
+        const continueAutoScroll = () => {
+          autoScrollFrame = 0;
+          if (!active || !latestPointer) return;
+          if (scrollEditorViewportTowardPointer(latestPointer)) updateSize(latestPointer);
+          autoScrollFrame = requestAnimationFrame(continueAutoScroll);
+        };
+        const move = next => {
+          latestPointer = next;
+          updateSize(next);
+          if (active && !autoScrollFrame) autoScrollFrame = requestAnimationFrame(continueAutoScroll);
+        };
         let finished = false;
         const finish = finishEvent => {
           if (finishEvent?.pointerId != null && finishEvent.pointerId !== pointerId) return;
@@ -1532,6 +1595,8 @@
           window.removeEventListener("pointermove", move, true);
           window.removeEventListener("pointerup", finish, true);
           window.removeEventListener("pointercancel", finish, true);
+          if (autoScrollFrame) cancelAnimationFrame(autoScrollFrame);
+          autoScrollFrame = 0;
           releasePointerCaptureSafely(handle, pointerId);
           panel?.classList.remove("movie-tile-resizing");
           handle.classList.remove("active");
