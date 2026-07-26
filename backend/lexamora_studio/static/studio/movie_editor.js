@@ -271,7 +271,8 @@
       inspector: {x: reserveX + mediaWidth + gap + previewWidth + gap, y: upperY, width: inspectorWidth, height: upperHeight},
       timeline: {x: reserveX, y: timelineY, width: availableWidth, height: timelineHeight},
     };
-    const baseHeight = timelineY + timelineHeight + tileWorkspaceInset;
+    const contentHeight = timelineY + timelineHeight + tileWorkspaceInset;
+    const baseHeight = Math.round(contentHeight * 1.5);
     const workspaceWidth = availableWidth * 3 + tileWorkspaceInset * 2;
     const workspaceHeight = baseHeight * 2;
     const defaults = {
@@ -293,7 +294,7 @@
       width: Number(source.workspace?.width || defaults.workspace.width),
       height: Number(source.workspace?.height || defaults.workspace.height),
       baseWidth: Number(source.workspace?.baseWidth || defaults.workspace.baseWidth),
-      baseHeight: Number(source.workspace?.baseHeight || defaults.workspace.baseHeight),
+      baseHeight: Math.max(Number(source.workspace?.baseHeight || 0), defaults.workspace.baseHeight),
     };
     workspace.width = Math.max(defaults.workspace.width, workspace.width);
     workspace.height = Math.max(defaults.workspace.height, workspace.height);
