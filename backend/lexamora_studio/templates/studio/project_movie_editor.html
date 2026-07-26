@@ -1154,6 +1154,11 @@ body.movie-panel-interacting *{
   z-index:60!important;
   box-shadow:0 14px 34px rgba(0,0,0,.32)!important;
 }
+.movie-tile-selected{
+  outline:2px solid color-mix(in srgb,var(--accent) 78%,#fff)!important;
+  outline-offset:2px;
+  box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 20%,transparent)!important;
+}
 .movie-tile-moving{
   opacity:.92;
 }
@@ -1181,6 +1186,16 @@ body.movie-panel-interacting *{
   left:0;
   right:0;
   height:2px;
+}
+.movie-tile-marquee{
+  position:absolute;
+  z-index:90;
+  display:block;
+  box-sizing:border-box;
+  border:1px solid var(--accent);
+  background:color-mix(in srgb,var(--accent) 16%,transparent);
+  box-shadow:0 0 18px color-mix(in srgb,var(--accent) 20%,transparent);
+  pointer-events:none;
 }
 </style>{% endblock %}
 {% block content %}

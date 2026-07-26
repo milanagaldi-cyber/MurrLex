@@ -177,6 +177,7 @@
   const tileWorkspaceInset = Math.ceil(tileEdgeSize / 2) + 2;
   const tileSnapDistance = 12;
   let tileLayoutDefaults = null;
+  let selectedTileKeys = new Set();
   const layoutDefaults = {
     columns: {mediaWidth: 250, inspectorWidth: 390, mediaHeight: 390, canvasHeight: 390, inspectorHeight: 390, timelineHeight: 320, timelineInsetLeft: 0, timelineInsetRight: 0},
     stacked: {mediaWidth: 250, inspectorWidth: 390, mediaHeight: 390, canvasHeight: 390, inspectorHeight: 390, timelineHeight: 320, timelineInsetLeft: 0, timelineInsetRight: 0},
@@ -1225,6 +1226,34 @@
     ));
   };
   const cloneTiles = tiles => Object.fromEntries(tilePanelKeys.map(key => [key, tileRect(tiles[key])]));
+  const syncTileSelectionClasses = () => {
+    tilePanelKeys.forEach(key => {
+      const panel = layoutPanels[key];
+      if (!panel) return;
+      const selected = selectedTileKeys.has(key);
+      panel.classList.toggle("movie-tile-selected", selected);
+      panel.setAttribute("aria-selected", selected ? "true" : "false");
+    });
+  };
+  const setSelectedTileKeys = keys => {
+    selectedTileKeys = new Set(keys.filter(key => workspacePanel(key)));
+    syncTileSelectionClasses();
+  };
+  const tileGroupBounds = (tiles, keys) => {
+    const rects = keys.map(key => tiles[key]).filter(Boolean);
+    if (!rects.length) return null;
+    const left = Math.min(...rects.map(rect => rect.x));
+    const top = Math.min(...rects.map(rect => rect.y));
+    const right = Math.max(...rects.map(rect => rect.x + rect.width));
+    const bottom = Math.max(...rects.map(rect => rect.y + rect.height));
+    return {x: left, y: top, width: right - left, height: bottom - top, right, bottom};
+  };
+  const tileLayoutHasSelectionOverlap = (tiles, keys) => {
+    const selected = new Set(keys);
+    return keys.some(key => tilePanelKeys.some(otherKey =>
+      key !== otherKey && !selected.has(otherKey) && rectanglesOverlap(tiles[key], tiles[otherKey])
+    ));
+  };
   const applyTileRects = (tiles, {preserveViewport = false} = {}) => {
     const layout = ensureTileLayout();
     const previousLogicalCenter = tileLogicalViewportCenter(tileViewportGeometry);
@@ -1247,6 +1276,7 @@
       panel.dataset.tileX = String(Math.round(rect.x));
       panel.dataset.tileY = String(Math.round(rect.y));
     });
+    syncTileSelectionClasses();
     const timelineShell = q("[data-timeline-shell]");
     if (timelineShell) timelineShell.style.setProperty("height", `${Math.max(100, tiles.timeline.height - 46)}px`, "important");
     if (preserveViewport) scrollTileViewportToLogicalCenter(previousLogicalCenter);
@@ -1328,6 +1358,45 @@
         x: clamp(xSnap?.value ?? rect.x, tileWorkspaceInset, workspace.width - rect.width - tileWorkspaceInset),
         y: clamp(ySnap?.value ?? rect.y, tileWorkspaceInset, workspace.height - rect.height - tileWorkspaceInset),
       },
+      guide: {x: xSnap?.guide ?? null, y: ySnap?.guide ?? null},
+    };
+  };
+  const snapMovingTileGroup = (keys, dx, dy, tiles, workspace) => {
+    const selected = new Set(keys);
+    const bounds = tileGroupBounds(tiles, keys);
+    if (!bounds) return {dx: 0, dy: 0, guide: {x: null, y: null}};
+    const clampedDx = clamp(dx, tileWorkspaceInset - bounds.x, workspace.width - tileWorkspaceInset - bounds.right);
+    const clampedDy = clamp(dy, tileWorkspaceInset - bounds.y, workspace.height - tileWorkspaceInset - bounds.bottom);
+    const xCandidates = [
+      {value: tileWorkspaceInset - bounds.x, guide: tileWorkspaceInset},
+      {value: workspace.width - tileWorkspaceInset - bounds.right, guide: workspace.width - tileWorkspaceInset},
+    ];
+    const yCandidates = [
+      {value: tileWorkspaceInset - bounds.y, guide: tileWorkspaceInset},
+      {value: workspace.height - tileWorkspaceInset - bounds.bottom, guide: workspace.height - tileWorkspaceInset},
+    ];
+    tilePanelKeys.filter(otherKey => !selected.has(otherKey)).forEach(otherKey => {
+      const other = tiles[otherKey];
+      const otherRight = other.x + other.width;
+      const otherBottom = other.y + other.height;
+      xCandidates.push(
+        {value: other.x - bounds.x, guide: other.x},
+        {value: otherRight - bounds.x, guide: otherRight},
+        {value: other.x - bounds.right, guide: other.x},
+        {value: otherRight - bounds.right, guide: otherRight},
+      );
+      yCandidates.push(
+        {value: other.y - bounds.y, guide: other.y},
+        {value: otherBottom - bounds.y, guide: otherBottom},
+        {value: other.y - bounds.bottom, guide: other.y},
+        {value: otherBottom - bounds.bottom, guide: otherBottom},
+      );
+    });
+    const xSnap = nearestTileSnap(clampedDx, xCandidates);
+    const ySnap = nearestTileSnap(clampedDy, yCandidates);
+    return {
+      dx: clamp(xSnap?.value ?? clampedDx, tileWorkspaceInset - bounds.x, workspace.width - tileWorkspaceInset - bounds.right),
+      dy: clamp(ySnap?.value ?? clampedDy, tileWorkspaceInset - bounds.y, workspace.height - tileWorkspaceInset - bounds.bottom),
       guide: {x: xSnap?.guide ?? null, y: ySnap?.guide ?? null},
     };
   };
@@ -1505,7 +1574,10 @@
         event.stopPropagation();
         const layout = ensureTileLayout();
         const startTiles = cloneTiles(layout.tiles);
-        const origin = {...startTiles[key]};
+        const additiveSelection = event.ctrlKey || event.metaKey || event.shiftKey;
+        if (additiveSelection && !selectedTileKeys.has(key)) setSelectedTileKeys([...selectedTileKeys, key]);
+        else if (!selectedTileKeys.has(key)) setSelectedTileKeys([key]);
+        const movingKeys = selectedTileKeys.has(key) ? [...selectedTileKeys] : [key];
         const startX = event.clientX;
         const startY = event.clientY;
         const startScrollLeft = editorViewport?.scrollLeft || 0;
@@ -1522,16 +1594,29 @@
           if (!active && Math.hypot(dx, dy) < 4) return;
           if (!active) remember();
           active = true;
-          const raw = {
-            ...origin,
-            x: clamp(origin.x + dx, tileWorkspaceInset, layout.workspace.width - origin.width - tileWorkspaceInset),
-            y: clamp(origin.y + dy, tileWorkspaceInset, layout.workspace.height - origin.height - tileWorkspaceInset),
-          };
-          const snapped = snapMovingTile(key, raw, startTiles, layout.workspace);
+          const snapped = movingKeys.length > 1
+            ? snapMovingTileGroup(movingKeys, dx, dy, startTiles, layout.workspace)
+            : (() => {
+                const origin = startTiles[key];
+                const raw = {
+                  ...origin,
+                  x: clamp(origin.x + dx, tileWorkspaceInset, layout.workspace.width - origin.width - tileWorkspaceInset),
+                  y: clamp(origin.y + dy, tileWorkspaceInset, layout.workspace.height - origin.height - tileWorkspaceInset),
+                };
+                const single = snapMovingTile(key, raw, startTiles, layout.workspace);
+                return {dx: single.rect.x - origin.x, dy: single.rect.y - origin.y, guide: single.guide};
+              })();
           currentTiles = cloneTiles(startTiles);
-          currentTiles[key] = snapped.rect;
-          panel.classList.add("movie-tile-moving");
-          panel.classList.toggle("movie-tile-drop-invalid", tileLayoutHasOverlap(currentTiles, key));
+          movingKeys.forEach(movingKey => {
+            currentTiles[movingKey] = {
+              ...currentTiles[movingKey],
+              x: startTiles[movingKey].x + snapped.dx,
+              y: startTiles[movingKey].y + snapped.dy,
+            };
+            layoutPanels[movingKey]?.classList.add("movie-tile-moving");
+          });
+          const invalidDrop = tileLayoutHasSelectionOverlap(currentTiles, movingKeys);
+          movingKeys.forEach(movingKey => layoutPanels[movingKey]?.classList.toggle("movie-tile-drop-invalid", invalidDrop));
           document.body.classList.add("movie-panel-interacting");
           showTileGuides(snapped.guide);
           applyTileRects(currentTiles);
@@ -1559,11 +1644,11 @@
           if (autoScrollFrame) cancelAnimationFrame(autoScrollFrame);
           autoScrollFrame = 0;
           releasePointerCaptureSafely(handle, pointerId);
-          panel.classList.remove("movie-tile-moving", "movie-tile-drop-invalid");
+          movingKeys.forEach(movingKey => layoutPanels[movingKey]?.classList.remove("movie-tile-moving", "movie-tile-drop-invalid"));
           document.body.classList.remove("movie-panel-interacting");
           hideTileGuides();
           if (!active) return;
-          if (tileLayoutHasOverlap(currentTiles, key)) {
+          if (tileLayoutHasSelectionOverlap(currentTiles, movingKeys)) {
             applyTileRects(startTiles);
             toast("This space is occupied");
           } else {
@@ -1582,6 +1667,67 @@
         registerEditorPointerFinish(finish);
       });
     });
+
+    if (editorLayout && editorLayout.dataset.tileMarqueeBound !== "true") {
+      editorLayout.dataset.tileMarqueeBound = "true";
+      const pointerToTilePoint = event => {
+        const bounds = editorLayout.getBoundingClientRect();
+        return {
+          x: event.clientX - bounds.left - (tileViewportGeometry?.offsetX || 0),
+          y: event.clientY - bounds.top - (tileViewportGeometry?.offsetY || 0),
+        };
+      };
+      editorLayout.addEventListener("pointerdown", event => {
+        if (!canEdit || event.button !== 0) return;
+        if (event.target.closest("[data-panel-key],.movie-tile-edge,.movie-tile-snap-guide")) return;
+        if (layoutLocked) {
+          event.preventDefault();
+          flashLayoutLock();
+          return;
+        }
+        event.preventDefault();
+        const layout = ensureTileLayout();
+        const start = pointerToTilePoint(event);
+        const preserved = event.ctrlKey || event.metaKey || event.shiftKey ? new Set(selectedTileKeys) : new Set();
+        const marquee = document.createElement("i");
+        marquee.className = "movie-tile-marquee";
+        editorLayout.appendChild(marquee);
+        const pointerId = event.pointerId;
+        let active = false;
+        capturePointerSafely(editorLayout, pointerId);
+        const update = next => {
+          const current = pointerToTilePoint(next);
+          const left = Math.min(start.x, current.x);
+          const top = Math.min(start.y, current.y);
+          const right = Math.max(start.x, current.x);
+          const bottom = Math.max(start.y, current.y);
+          if (!active && Math.hypot(current.x - start.x, current.y - start.y) < 4) return;
+          active = true;
+          marquee.style.left = `${left + (tileViewportGeometry?.offsetX || 0)}px`;
+          marquee.style.top = `${top + (tileViewportGeometry?.offsetY || 0)}px`;
+          marquee.style.width = `${right - left}px`;
+          marquee.style.height = `${bottom - top}px`;
+          const box = {x: left, y: top, width: right - left, height: bottom - top};
+          const nextSelection = new Set(preserved);
+          tilePanelKeys.forEach(tileKey => {
+            if (rectanglesOverlap(box, layout.tiles[tileKey], 0)) nextSelection.add(tileKey);
+          });
+          setSelectedTileKeys([...nextSelection]);
+        };
+        const finish = finishEvent => {
+          if (finishEvent?.pointerId != null && finishEvent.pointerId !== pointerId) return;
+          window.removeEventListener("pointermove", update, true);
+          window.removeEventListener("pointerup", finish, true);
+          window.removeEventListener("pointercancel", finish, true);
+          releasePointerCaptureSafely(editorLayout, pointerId);
+          marquee.remove();
+          if (!active && !preserved.size) setSelectedTileKeys([]);
+        };
+        window.addEventListener("pointermove", update, true);
+        window.addEventListener("pointerup", finish, true);
+        window.addEventListener("pointercancel", finish, true);
+      });
+    }
 
     editorLayout?.querySelectorAll(".movie-tile-edge").forEach(handle => {
       if (handle.dataset.tileResizeBound === "true") return;
