@@ -516,7 +516,7 @@ body.movie-layout-locked .movie-editor-layout .movie-window-resize-handle{displa
 .movie-canvas-frame-controls [data-canvas-frame="reset"]{grid-column:1!important;grid-row:3!important}
 .movie-canvas-frame-controls [data-canvas-frame="up"]{grid-column:3!important;grid-row:1!important}
 .movie-canvas-frame-controls [data-canvas-frame="left"]{grid-column:3!important;grid-row:2!important}
-.movie-edit-wallpaper-preview{min-height:120px;border:1px solid var(--border);background:var(--panel-2);background-position:center;background-repeat:no-repeat;background-size:cover}
+.movie-workspace-pattern-select{max-width:280px}
 .movie-edit-settings-dialog form{display:grid;gap:14px}
 .movie-edit-settings-dialog label{display:grid;gap:7px}
 /* Final editor geometry contract: narrow seams, generous hit targets, stable panels. */
@@ -682,11 +682,6 @@ body.movie-layout-locked .movie-editor-layout .movie-window-resize-handle{displa
   height:auto!important;
 }
 [data-edit-delete-cancel]::before,[data-edit-delete-cancel]::after{content:none!important}
-body.movie-editor-wallpaper-active,
-body.movie-editor-wallpaper-active main{
-  background-image:none!important;
-  background-attachment:scroll!important;
-}
 /* Fixed-grid layout engine. Panels resize by their edges and never become floating windows. */
 html.movie-editor-windowing,
 body.movie-editor-windowing{min-width:0!important;min-height:100%!important;overflow-x:hidden!important;overflow-y:auto!important}
@@ -949,11 +944,25 @@ body.movie-layout-locked [data-timeline-edge-resizer]{pointer-events:none!import
   background-size:32px 32px;
   background-position:-1px -1px;
 }
-.movie-editor.has-editor-wallpaper .movie-editor-viewport{
-  background-image:var(--movie-editor-wallpaper)!important;
-  background-position:center center!important;
-  background-repeat:no-repeat!important;
-  background-size:cover!important;
+.movie-editor[data-workspace-pattern="grid"] .movie-editor-viewport,
+.movie-editor[data-workspace-pattern="grid"] .movie-editor-layout{
+  background-image:
+    linear-gradient(color-mix(in srgb,var(--line) 22%,transparent) 1px,transparent 1px),
+    linear-gradient(90deg,color-mix(in srgb,var(--line) 22%,transparent) 1px,transparent 1px)!important;
+  background-size:32px 32px!important;
+  background-position:-1px -1px!important;
+}
+.movie-editor[data-workspace-pattern="dots"] .movie-editor-viewport,
+.movie-editor[data-workspace-pattern="dots"] .movie-editor-layout{
+  background-image:radial-gradient(circle,color-mix(in srgb,var(--accent) 42%,transparent) 1.6px,transparent 2px)!important;
+  background-size:24px 24px!important;
+  background-position:0 0!important;
+}
+.movie-editor[data-workspace-pattern="hearts"] .movie-editor-viewport,
+.movie-editor[data-workspace-pattern="hearts"] .movie-editor-layout{
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='42' height='42' viewBox='0 0 42 42'%3E%3Cpath fill='%232fc5ff' fill-opacity='.24' d='M21 31.5 9.9 21.2C4.1 15.8 7.9 6.5 15.5 6.5c2.7 0 4.4 1.4 5.5 3.1 1.1-1.7 2.8-3.1 5.5-3.1 7.6 0 11.4 9.3 5.6 14.7L21 31.5z'/%3E%3C/svg%3E")!important;
+  background-size:42px 42px!important;
+  background-position:0 0!important;
 }
 html.movie-editor-page-active,
 body.movie-editor-page-active{
@@ -1017,14 +1026,6 @@ body.movie-editor-page-active .movie-editor-viewport{
     linear-gradient(90deg,color-mix(in srgb,var(--line) 22%,transparent) 1px,transparent 1px);
   background-size:32px 32px;
   background-position:-1px -1px;
-}
-.movie-editor.has-editor-wallpaper .movie-editor-layout,
-.movie-editor.has-editor-wallpaper .movie-editor-layout[data-layout="columns"],
-.movie-editor.has-editor-wallpaper .movie-editor-layout[data-layout="stacked"]{
-  background-image:var(--movie-editor-wallpaper)!important;
-  background-position:center center!important;
-  background-repeat:no-repeat!important;
-  background-size:cover!important;
 }
 .movie-editor-layout .movie-workbench,
 .movie-editor-layout .movie-stage-column{
@@ -1210,7 +1211,7 @@ body.movie-panel-interacting *{
 {% block content %}
 {% include "studio/_project_navigation.html" %}
 {% include "studio/_montage_gallery.html" with montage_gallery_key="draft-editor" montage_actions_url=movie_edits_url montage_can_edit=can_edit %}
-<section class="movie-editor" data-movie-editor data-can-edit="{{ can_edit|yesno:'true,false' }}" data-can-export="{{ can_export|yesno:'true,false' }}" data-timeline-id="{{ movie_timeline.id }}" data-edits-url="{{ movie_edits_url }}" data-edit-settings-url="{{ movie_edit_settings_url }}" data-aspect-ratio="{{ movie_timeline.aspect_ratio }}" data-resolution="{{ movie_timeline.resolution }}" data-fps="{{ movie_timeline.fps }}" data-save-url="{% url 'studio:project_movie_editor' project.id %}" data-history-url="{% url 'studio:project_movie_editor_revisions' project.id %}" data-media-url="{{ movie_media_url }}" data-render-url="{{ movie_render_url }}"{% if movie_timeline.editor_wallpaper %} data-editor-wallpaper="{{ movie_timeline.editor_wallpaper.url }}"{% endif %}>
+<section class="movie-editor" data-movie-editor data-can-edit="{{ can_edit|yesno:'true,false' }}" data-can-export="{{ can_export|yesno:'true,false' }}" data-timeline-id="{{ movie_timeline.id }}" data-edits-url="{{ movie_edits_url }}" data-edit-settings-url="{{ movie_edit_settings_url }}" data-aspect-ratio="{{ movie_timeline.aspect_ratio }}" data-resolution="{{ movie_timeline.resolution }}" data-fps="{{ movie_timeline.fps }}" data-save-url="{% url 'studio:project_movie_editor' project.id %}" data-history-url="{% url 'studio:project_movie_editor_revisions' project.id %}" data-media-url="{{ movie_media_url }}" data-render-url="{{ movie_render_url }}">
   <div class="panel movie-toolbar movie-collapsible" data-panel-key="editorHeader" data-panel-drag="editorHeader" title="Drag empty header space to move this tile">
     <div class="movie-settings">
       <input data-movie-title value="{{ movie_timeline.title }}" aria-label="MC Project title" title="MC Project title">
@@ -1289,7 +1290,7 @@ body.movie-panel-interacting *{
   <dialog class="confirmation-dialog asset-properties-dialog" data-movie-media-properties><button class="dialog-close" type="button" data-movie-media-properties-close aria-label="Close">&times;</button><h2>Media properties</h2><div class="movie-media-properties-content" data-movie-media-properties-content></div></dialog>
   <dialog class="confirm-dialog" data-media-folder-dialog><button class="dialog-close" type="button" data-media-folder-cancel aria-label="Close">&times;</button><h2 data-media-folder-title>Media folder</h2><label data-media-folder-name-field>Folder name<input type="text" maxlength="100" data-media-folder-name></label><p data-media-folder-message hidden></p><div class="dialog-actions"><button class="secondary" type="button" data-media-folder-cancel>Cancel</button><button type="button" data-media-folder-save>Save</button></div></dialog>
   <dialog class="confirmation-dialog" data-media-remove-dialog><div class="image-picker-head"><h2>Remove media</h2><button class="icon-button secondary" type="button" data-media-remove-cancel aria-label="Close">&times;</button></div><p data-media-remove-message></p><div class="dialog-actions"><button class="secondary" type="button" data-media-remove-cancel>Cancel</button><button type="button" data-media-remove-confirm>Remove</button></div></dialog>
-  {% if can_edit %}<dialog class="confirmation-dialog movie-edit-settings-dialog" data-edit-settings-dialog><button class="dialog-close" type="button" data-edit-settings-close data-business-command="close" aria-label="Close"></button><h2>MC Project settings</h2><form data-edit-settings-form><label>MurrCut wallpaper<input type="file" accept="image/*" data-edit-wallpaper-input></label><div class="movie-edit-wallpaper-preview" data-edit-wallpaper-preview></div><div class="dialog-actions"><button class="secondary" type="button" data-edit-wallpaper-remove>Remove wallpaper</button><button class="secondary" type="button" data-edit-settings-cancel>Cancel</button><button type="submit">Save</button></div></form></dialog>{% endif %}
+  {% if can_edit %}<dialog class="confirmation-dialog movie-edit-settings-dialog" data-edit-settings-dialog><button class="dialog-close" type="button" data-edit-settings-close data-business-command="close" aria-label="Close"></button><h2>MC Project settings</h2><form data-edit-settings-form><label>Workspace background<select class="movie-workspace-pattern-select" data-edit-workspace-pattern><option value="grid">Grid</option><option value="dots">Dots</option><option value="hearts">Hearts</option></select></label><div class="dialog-actions"><button class="secondary" type="button" data-edit-settings-cancel>Cancel</button><button type="submit">Save</button></div></form></dialog>{% endif %}
   {% if can_edit %}<dialog class="confirmation-dialog" data-edit-delete-dialog><button class="dialog-close" type="button" data-edit-delete-close data-business-command="close" aria-label="Close"></button><h2>Delete MC Project?</h2><p>This removes the MC Project. Workspace media files are kept.</p><div class="dialog-actions"><button class="secondary" type="button" data-edit-delete-cancel>Cancel</button><button type="button" data-edit-delete-confirm>Delete</button></div></dialog>{% endif %}
   <div class="movie-media-context" data-movie-media-context hidden><button type="button" data-media-context-select-all>Select All</button><button type="button" data-media-context-cut>Cut</button><button type="button" data-media-context-copy>Copy</button><button type="button" data-media-context-paste>Paste</button><button type="button" data-media-context-root>Move to Media</button><hr><a data-media-context-download download>Download</a><button type="button" data-media-context-delete>Remove from MC Project</button><button type="button" data-media-context-properties>Properties</button></div>
 </section>

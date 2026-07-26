@@ -197,23 +197,26 @@
   };
   const previewDockKey = `studio-movie-preview-dock-${timelineId}`;
   const panelGapKey = `studio-movie-panel-gap-${timelineId}`;
+  const workspacePatternKey = `studio-movie-workspace-pattern-${timelineId}`;
   let previewDockMode = localStorage.getItem(previewDockKey) === "bottom" ? "bottom" : "center";
   let widePanelGaps = localStorage.getItem(panelGapKey) === "wide";
+  let workspacePattern = ["grid", "dots", "hearts"].includes(localStorage.getItem(workspacePatternKey))
+    ? localStorage.getItem(workspacePatternKey)
+    : "grid";
   const applyPanelGapMode = () => editorLayout?.classList.toggle("movie-wide-gaps", widePanelGaps);
+  const applyWorkspacePattern = value => {
+    workspacePattern = ["grid", "dots", "hearts"].includes(value) ? value : "grid";
+    root.dataset.workspacePattern = workspacePattern;
+  };
   const applyEditorWallpaper = value => {
-    const wallpaper = String(value || "").replace(/["\\\n\r]/g, "");
-    root.classList.toggle("has-editor-wallpaper", Boolean(wallpaper));
+    root.classList.remove("has-editor-wallpaper");
     document.body.classList.remove("movie-editor-wallpaper-active");
     ["background-image", "background-position", "background-repeat", "background-size"].forEach(property => root.style.removeProperty(property));
     ["--movie-editor-wallpaper", "background-image", "background-position", "background-repeat", "background-size", "background-attachment"].forEach(property => document.body.style.removeProperty(property));
-    if (!wallpaper) {
-      root.style.removeProperty("--movie-editor-wallpaper");
-      return;
-    }
-    const background = `linear-gradient(rgba(5,14,23,.42),rgba(5,14,23,.52)),url("${wallpaper}")`;
-    root.style.setProperty("--movie-editor-wallpaper", background);
+    root.style.removeProperty("--movie-editor-wallpaper");
   };
   applyEditorWallpaper(root.dataset.editorWallpaper);
+  applyWorkspacePattern(workspacePattern);
   const applyPreviewDock = () => {
     previewBody?.classList.toggle("dock-bottom", previewDockMode === "bottom");
     const button = q("[data-preview-dock]");
@@ -4707,61 +4710,24 @@
   });
   const editSettingsDialog = q("[data-edit-settings-dialog]");
   const editSettingsForm = q("[data-edit-settings-form]");
-  const editWallpaperInput = q("[data-edit-wallpaper-input]");
-  const editWallpaperPreview = q("[data-edit-wallpaper-preview]");
-  let editWallpaperObjectUrl = "";
-  const renderEditWallpaperPreview = value => {
-    if (!editWallpaperPreview) return;
-    editWallpaperPreview.style.backgroundImage = value ? `url("${String(value).replace(/["\\\n\r]/g, "")}")` : "none";
-  };
+  const editWorkspacePattern = q("[data-edit-workspace-pattern]");
   const closeEditSettings = () => {
-    if (editWallpaperObjectUrl) URL.revokeObjectURL(editWallpaperObjectUrl);
-    editWallpaperObjectUrl = "";
-    if (editWallpaperInput) editWallpaperInput.value = "";
     editSettingsDialog?.close();
   };
   q("[data-edit-settings-open]")?.addEventListener("click", () => {
-    renderEditWallpaperPreview(root.dataset.editorWallpaper || "");
+    if (editWorkspacePattern) editWorkspacePattern.value = workspacePattern;
     editSettingsDialog?.showModal();
   });
   [q("[data-edit-settings-close]"), q("[data-edit-settings-cancel]")].forEach(button => button?.addEventListener("click", closeEditSettings));
   editSettingsDialog?.addEventListener("click", event => {
     if (event.target === editSettingsDialog) closeEditSettings();
   });
-  editWallpaperInput?.addEventListener("change", () => {
-    if (editWallpaperObjectUrl) URL.revokeObjectURL(editWallpaperObjectUrl);
-    editWallpaperObjectUrl = editWallpaperInput.files?.[0] ? URL.createObjectURL(editWallpaperInput.files[0]) : "";
-    renderEditWallpaperPreview(editWallpaperObjectUrl || root.dataset.editorWallpaper || "");
-  });
   editSettingsForm?.addEventListener("submit", async event => {
     event.preventDefault();
-    const file = editWallpaperInput?.files?.[0];
-    if (!file) return toast("Choose a wallpaper image", "warning");
-    const form = new FormData();
-    form.append("action", "upload");
-    form.append("editor_wallpaper", file);
-    try {
-      const result = await requestJson(root.dataset.editSettingsUrl, {method: "POST", headers: {"X-CSRFToken": csrfToken()}, body: form});
-      root.dataset.editorWallpaper = result.editorWallpaper || "";
-      applyEditorWallpaper(root.dataset.editorWallpaper);
-      closeEditSettings();
-      toast("MC Project settings saved", "success");
-    } catch (error) {
-      toast(error.message, "error");
-    }
-  });
-  q("[data-edit-wallpaper-remove]")?.addEventListener("click", async () => {
-    const form = new FormData();
-    form.append("action", "remove");
-    try {
-      const result = await requestJson(root.dataset.editSettingsUrl, {method: "POST", headers: {"X-CSRFToken": csrfToken()}, body: form});
-      root.dataset.editorWallpaper = result.editorWallpaper || "";
-      applyEditorWallpaper(root.dataset.editorWallpaper);
-      closeEditSettings();
-      toast("MC Project wallpaper removed", "success");
-    } catch (error) {
-      toast(error.message, "error");
-    }
+    applyWorkspacePattern(editWorkspacePattern?.value || "grid");
+    localStorage.setItem(workspacePatternKey, workspacePattern);
+    closeEditSettings();
+    toast("MC Project settings saved", "success");
   });
   let archiveArmedUntil = 0;
   q("[data-edit-archive]")?.addEventListener("click", async event => {
