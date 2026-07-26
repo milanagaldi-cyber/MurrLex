@@ -947,7 +947,8 @@ body.movie-layout-locked [data-timeline-edge-resizer]{pointer-events:none!import
   isolation:isolate;
   overscroll-behavior:auto;
   scrollbar-gutter:stable;
-  min-height:calc(100dvh - 230px);
+  height:max(520px,calc(100dvh - 230px));
+  min-height:0;
   background:
     linear-gradient(color-mix(in srgb,var(--line) 22%,transparent) 1px,transparent 1px),
     linear-gradient(90deg,color-mix(in srgb,var(--line) 22%,transparent) 1px,transparent 1px);
