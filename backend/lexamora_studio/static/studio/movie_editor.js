@@ -203,23 +203,15 @@
   const applyEditorWallpaper = value => {
     const wallpaper = String(value || "").replace(/["\\\n\r]/g, "");
     root.classList.toggle("has-editor-wallpaper", Boolean(wallpaper));
-    document.body.classList.toggle("movie-editor-wallpaper-active", Boolean(wallpaper));
+    document.body.classList.remove("movie-editor-wallpaper-active");
+    ["background-image", "background-position", "background-repeat", "background-size"].forEach(property => root.style.removeProperty(property));
+    ["--movie-editor-wallpaper", "background-image", "background-position", "background-repeat", "background-size", "background-attachment"].forEach(property => document.body.style.removeProperty(property));
     if (!wallpaper) {
-      ["background-image", "background-position", "background-repeat", "background-size"].forEach(property => root.style.removeProperty(property));
-      ["--movie-editor-wallpaper", "background-image", "background-position", "background-repeat", "background-size", "background-attachment"].forEach(property => document.body.style.removeProperty(property));
+      root.style.removeProperty("--movie-editor-wallpaper");
       return;
     }
-    const background = `linear-gradient(rgba(5,14,23,.86),rgba(5,14,23,.86)),url("${wallpaper}")`;
-    root.style.setProperty("background-image", background, "important");
-    root.style.setProperty("background-position", "center top", "important");
-    root.style.setProperty("background-repeat", "no-repeat", "important");
-    root.style.setProperty("background-size", "cover", "important");
-    document.body.style.setProperty("--movie-editor-wallpaper", background);
-    document.body.style.setProperty("background-image", background, "important");
-    document.body.style.setProperty("background-position", "center top", "important");
-    document.body.style.setProperty("background-repeat", "no-repeat", "important");
-    document.body.style.setProperty("background-size", "cover", "important");
-    document.body.style.setProperty("background-attachment", "fixed", "important");
+    const background = `linear-gradient(rgba(5,14,23,.42),rgba(5,14,23,.52)),url("${wallpaper}")`;
+    root.style.setProperty("--movie-editor-wallpaper", background);
   };
   applyEditorWallpaper(root.dataset.editorWallpaper);
   const applyPreviewDock = () => {

@@ -684,14 +684,9 @@ body.movie-layout-locked .movie-editor-layout .movie-window-resize-handle{displa
 [data-edit-delete-cancel]::before,[data-edit-delete-cancel]::after{content:none!important}
 body.movie-editor-wallpaper-active,
 body.movie-editor-wallpaper-active main{
-  background-color:var(--bg);
-  background-image:var(--movie-editor-wallpaper)!important;
-  background-position:center!important;
-  background-repeat:no-repeat!important;
-  background-size:cover!important;
-  background-attachment:fixed!important;
+  background-image:none!important;
+  background-attachment:scroll!important;
 }
-body.movie-editor-wallpaper-active main{width:100%;padding-right:max(16px,calc((100% - 1240px)/2));padding-left:max(16px,calc((100% - 1240px)/2))}
 /* Fixed-grid layout engine. Panels resize by their edges and never become floating windows. */
 html.movie-editor-windowing,
 body.movie-editor-windowing{min-width:0!important;min-height:100%!important;overflow-x:hidden!important;overflow-y:auto!important}
@@ -954,6 +949,12 @@ body.movie-layout-locked [data-timeline-edge-resizer]{pointer-events:none!import
   background-size:32px 32px;
   background-position:-1px -1px;
 }
+.movie-editor.has-editor-wallpaper .movie-editor-viewport{
+  background-image:var(--movie-editor-wallpaper)!important;
+  background-position:center center!important;
+  background-repeat:no-repeat!important;
+  background-size:cover!important;
+}
 html.movie-editor-page-active,
 body.movie-editor-page-active{
   max-width:100%;
@@ -1016,6 +1017,14 @@ body.movie-editor-page-active .movie-editor-viewport{
     linear-gradient(90deg,color-mix(in srgb,var(--line) 22%,transparent) 1px,transparent 1px);
   background-size:32px 32px;
   background-position:-1px -1px;
+}
+.movie-editor.has-editor-wallpaper .movie-editor-layout,
+.movie-editor.has-editor-wallpaper .movie-editor-layout[data-layout="columns"],
+.movie-editor.has-editor-wallpaper .movie-editor-layout[data-layout="stacked"]{
+  background-image:var(--movie-editor-wallpaper)!important;
+  background-position:center center!important;
+  background-repeat:no-repeat!important;
+  background-size:cover!important;
 }
 .movie-editor-layout .movie-workbench,
 .movie-editor-layout .movie-stage-column{
