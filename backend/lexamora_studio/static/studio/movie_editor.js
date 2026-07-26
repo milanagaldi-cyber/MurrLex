@@ -266,7 +266,7 @@
       inspector: {x: reserveX + mediaWidth + gap + previewWidth + gap, y: upperY, width: inspectorWidth, height: upperHeight},
       timeline: {x: reserveX, y: timelineY, width: availableWidth, height: timelineHeight},
     };
-    const defaultBottomReserve = Math.round(timelineHeight * .35);
+    const defaultBottomReserve = reserveX;
     const baseHeight = timelineY + timelineHeight + tileWorkspaceInset + defaultBottomReserve;
     const workspaceWidth = availableWidth * 3 + tileWorkspaceInset * 2;
     const workspaceHeight = baseHeight * 2;
@@ -428,6 +428,24 @@
       fitEditorViewportToWindow();
     });
   };
+  const openedFromSiblingProjectView = () => {
+    try {
+      if (!document.referrer) return false;
+      const currentProject = location.pathname.match(/\/projects\/([^/]+)\/movie-editor\/?$/);
+      const referrer = new URL(document.referrer);
+      const referrerProject = referrer.pathname.match(/\/projects\/([^/]+)(?:\/|$)/);
+      return Boolean(
+        currentProject
+        && referrer.origin === location.origin
+        && referrerProject
+        && referrerProject[1] === currentProject[1]
+        && !referrer.pathname.includes("/movie-editor/")
+      );
+    } catch (_) {
+      return false;
+    }
+  };
+  const keepProjectHeaderFocusOnLoad = openedFromSiblingProjectView();
   const cloneLayoutState = () => ({mode: "columns", layouts: structuredClone(editorLayouts)});
   const panelUsesDefaultGeometry = key => {
     if (!workspacePanel(key)) return true;
@@ -5694,7 +5712,11 @@
   normalizeTimeline(); applyCanvas(); renderBin(); renderTimeline(); renderInspector(); renderRenderJobs(); renderLibrary(); scheduleRenderPoll(); setPlayhead(0, true, true);
   savedSignature = signature(); updateDirty(); updateHistoryButtons(); refreshMedia();
   requestAnimationFrame(() => requestAnimationFrame(() => {
-    editorViewport?.scrollIntoView({block: "start", behavior: "auto"});
+    if (keepProjectHeaderFocusOnLoad) {
+      window.scrollTo({left: 0, top: 0, behavior: "auto"});
+    } else {
+      editorViewport?.scrollIntoView({block: "start", behavior: "auto"});
+    }
     fitEditorViewportToWindow();
     applyPreviewZoom();
     updatePreviewGeometry();
