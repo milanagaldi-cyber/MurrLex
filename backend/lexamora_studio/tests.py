@@ -3746,7 +3746,7 @@ class StudioProductionPilotFeaturesTests(TestCase):
         page = self.client.get(f"/studio/projects/{self.project.id}/movie-editor/")
         self.assertEqual(page.status_code, 200)
         self.assertContains(page, "Auto rough cut")
-        self.assertContains(page, "Draft Editor")
+        self.assertContains(page, "MurrCut")
         self.assertNotContains(page, "Movie Editor 2")
         self.assertContains(page, "data-timeline-split")
         self.assertContains(page, "data-timeline-zoom")
@@ -3927,14 +3927,14 @@ class StudioProductionPilotFeaturesTests(TestCase):
         self.assertFalse(copy.projects.filter(id=self.project.id).exists())
 
         project_page = self.client.get(f"/studio/projects/{self.project.id}/")
-        self.assertNotContains(project_page, "Edit projects")
+        self.assertNotContains(project_page, "MurrCut Projects")
         editor_page = self.client.get(f"/studio/projects/{self.project.id}/movie-editor/")
-        self.assertContains(editor_page, "Edit projects")
+        self.assertContains(editor_page, "MurrCut Projects")
         self.assertContains(editor_page, "Second montage")
         self.assertContains(editor_page, str(second.id))
         self.assertContains(editor_page, str(copy.id))
         workspace_page = self.client.get(f"/studio/workspaces/{self.workspace.id}/")
-        self.assertContains(workspace_page, "Edit projects")
+        self.assertContains(workspace_page, "MurrCut Projects")
         self.assertContains(workspace_page, str(copy.id))
 
         exported = self.client.get(

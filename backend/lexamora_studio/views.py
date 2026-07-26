@@ -4803,7 +4803,7 @@ def project_movie_editor(request, project_id):
         request.user, project, requested_timeline_id, create=request.method == "GET" or can_edit,
     )
     if not timeline:
-        return JsonResponse({"error": "The edit project is not accessible."}, status=404)
+        return JsonResponse({"error": "The MC Project is not accessible."}, status=404)
     if request.method == "POST":
         try:
             timeline_data = normalize_movie_timeline(payload.get("timeline"))
@@ -4962,7 +4962,7 @@ def project_movie_edits(request, project_id):
                         clip["sourceAssetId"] = asset_id_map.get(original_source_id, clip["assetId"])
             timeline_data = normalize_movie_timeline(raw_timeline)
         except (KeyError, UnicodeDecodeError, ValueError, zipfile.BadZipFile, MovieTimelineValidationError) as exc:
-            return JsonResponse({"error": f"The edit project file is invalid: {exc}"}, status=400)
+            return JsonResponse({"error": f"The MC Project file is invalid: {exc}"}, status=400)
         media_error = _movie_timeline_media_error(request.user, project, timeline_data)
         if media_error:
             return JsonResponse({"error": media_error}, status=400)
@@ -4979,7 +4979,7 @@ def project_movie_edits(request, project_id):
         try:
             payload = json.loads(request.body or b"{}")
         except (TypeError, ValueError):
-            return JsonResponse({"error": "The edit project request is not valid JSON."}, status=400)
+            return JsonResponse({"error": "The MC Project request is not valid JSON."}, status=400)
         action = str(payload.get("action") or "create").lower()
         source = timelines.filter(id=payload.get("timelineId")).first() if payload.get("timelineId") else None
         if action == "create":
@@ -5250,7 +5250,7 @@ def project_movie_renders(request, project_id):
         return JsonResponse({"error": "Choose -14, -16, -18 or -23 LUFS."}, status=400)
     timeline = _select_movie_timeline(request.user, project, payload.get("timelineId"))
     if not timeline:
-        return JsonResponse({"error": "The edit project is not accessible."}, status=404)
+        return JsonResponse({"error": "The MC Project is not accessible."}, status=404)
     snapshot = normalize_movie_timeline(timeline.timeline or default_movie_timeline())
     try:
         snapshot = _selected_movie_clip_snapshot(snapshot, payload.get("clipIds") or [])
@@ -5376,7 +5376,7 @@ def project_movie_editor_revision_restore(request, project_id, revision_id):
     revision = get_object_or_404(MovieTimelineRevision.objects.select_related("timeline"), id=revision_id)
     timeline = revision.timeline
     if not _project_movie_timelines(request.user, project).filter(id=timeline.id).exists():
-        return JsonResponse({"error": "The edit project is not accessible."}, status=404)
+        return JsonResponse({"error": "The MC Project is not accessible."}, status=404)
     try:
         restored_data = normalize_movie_timeline(revision.snapshot)
     except MovieTimelineValidationError as exc:

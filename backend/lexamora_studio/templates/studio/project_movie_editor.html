@@ -1,6 +1,6 @@
 {% extends "studio/base.html" %}
 {% load static %}
-{% block title %}{{ project.title }} / Draft Editor{% endblock %}
+{% block title %}{{ project.title }} / MurrCut{% endblock %}
 {% block extra_head %}<style>
 .movie-editor{display:grid;gap:14px}.movie-toolbar{display:flex;align-items:end;justify-content:space-between;gap:14px;padding:14px}.movie-settings,.movie-actions,.movie-timeline-actions,.movie-transport,.movie-zoom{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.movie-settings{align-items:end}.movie-settings label{display:grid;gap:5px;margin:0}.movie-settings input,.movie-settings select{width:auto;min-width:92px}.movie-settings [data-movie-title]{min-width:210px}.movie-editor-state{color:var(--muted);font-size:12px}.movie-editor-state.error{color:var(--danger)}
 .movie-workbench{display:grid;grid-template-columns:260px minmax(0,1fr);gap:12px;align-items:start}.movie-bin,.movie-preview-panel,.movie-inspector{padding:13px}.movie-bin-head,.movie-timeline-head,.movie-history-head,.movie-history-row,.movie-render-head{display:flex;align-items:center;justify-content:space-between;gap:10px}.movie-bin-list{display:grid;gap:8px;max-height:520px;overflow:auto}.movie-bin-item{display:grid;grid-template-columns:86px minmax(0,1fr);gap:8px;align-items:center;padding:6px;border:1px solid var(--line);border-radius:6px;background:var(--panel-2)}.movie-bin-item[draggable=true]{cursor:grab}.movie-bin-visual{display:grid;place-items:center;width:86px;height:56px;overflow:hidden;border-radius:4px;background:#071018;color:var(--accent);font-weight:800}.movie-bin-visual img{width:100%;height:100%;object-fit:cover}.movie-bin-copy{display:grid;gap:3px;min-width:0}.movie-bin-copy strong,.movie-bin-copy span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.movie-bin-copy span{font-size:11px;color:var(--muted)}.movie-media-status{color:var(--accent)!important}.movie-media-status.failed{color:var(--danger)!important}.movie-retry{justify-self:start;padding:3px 7px;font-size:11px}.movie-stage-column{display:grid;gap:12px;min-width:0}
@@ -39,7 +39,7 @@
 .movie-clip-keyframe{position:absolute;z-index:8;bottom:3px;width:9px;height:9px;min-width:0;padding:0;translate:-50% 0;rotate:45deg;border:1px solid var(--panel);border-radius:1px;background:var(--warn)}.movie-clip-keyframe:focus{outline:2px solid var(--focus)}.movie-clip-wave{filter:contrast(2.4) saturate(1.4);opacity:.96}
 .movie-inspector-grid{display:flex;align-items:stretch;gap:8px;min-height:92px;overflow:auto}.movie-inspector-group{display:grid;grid-template-columns:repeat(auto-fit,minmax(78px,1fr));align-items:end;gap:7px;min-width:190px;padding:8px;border:1px solid var(--line);border-radius:6px;background:color-mix(in srgb,var(--panel-2) 76%,transparent)}.movie-inspector-group>strong{grid-column:1/-1;color:var(--accent);font-size:10px;text-transform:uppercase}.movie-inspector-group .movie-position-pad{align-self:end}.movie-inspector-group .movie-volume-automation{grid-column:1/-1}.movie-source-readout{align-self:end;min-width:180px;padding:8px}.movie-clip.selected{box-shadow:0 0 0 2px color-mix(in srgb,var(--warn) 68%,transparent);border-color:color-mix(in srgb,var(--warn) 72%,var(--accent))}.movie-clip-wave{pointer-events:none}.movie-save-as-dialog{width:min(520px,90vw)}.movie-save-as-dialog .dialog-actions{justify-content:flex-end}.montage-gallery[data-gallery-key="draft-editor"]{margin-bottom:12px}
 .movie-inspector-group:first-of-type{min-width:390px}.movie-inspector-group:last-of-type{min-width:310px}.movie-inspector-group select{min-width:220px}.movie-track-controls{overflow:visible}.movie-track-size{accent-color:var(--accent);min-width:76px!important}.movie-track-height-value{font-variant-numeric:tabular-nums}
-/* Draft Editor interaction pass: stable centered canvas, compact tracks and inspector. */
+/* MurrCut interaction pass: stable centered canvas, compact tracks and inspector. */
 .movie-preview-layers{position:absolute;inset:0;width:100%;height:100%;overflow:visible}.movie-preview-stage .movie-preview-layer,.movie-preview-stage>[data-movie-preview],.movie-preview-source-outline{right:auto!important;bottom:auto!important;max-width:none!important;max-height:none!important;object-fit:fill!important}
 .movie-playhead{z-index:50!important;width:12px!important;margin-left:-6px!important;background:transparent!important;overflow:visible!important}.movie-playhead::after{content:"";position:absolute;z-index:1;left:5px;top:0;bottom:0;width:2px;background:var(--danger);box-shadow:0 0 4px color-mix(in srgb,var(--danger) 45%,transparent);pointer-events:none}.movie-playhead::before{z-index:2;left:1px!important;top:0}
 .movie-preview-stage video,.movie-preview-source-outline{transition:none!important}
@@ -91,7 +91,7 @@
 .movie-clip.compact-height .movie-clip-body{padding-top:1px!important}
 .movie-track-head.height-1 .movie-track-name strong{font-size:8px!important;line-height:1!important}
 .movie-track-head.height-1 .movie-track-name{align-self:start!important}
-/* Draft Editor workspace geometry and compact timeline controls. */
+/* MurrCut workspace geometry and compact timeline controls. */
 .movie-editor{overflow:visible;padding-top:0}
 .movie-editor-layout{column-gap:2px!important;row-gap:5px!important;overflow:visible}
 .movie-editor-layout>.movie-timeline-panel{margin-top:0!important}
@@ -694,7 +694,7 @@ body.movie-editor-wallpaper-active main{
 body.movie-editor-wallpaper-active main{width:100%;padding-right:max(16px,calc((100% - 1240px)/2));padding-left:max(16px,calc((100% - 1240px)/2))}
 /* Fixed-grid layout engine. Panels resize by their edges and never become floating windows. */
 html.movie-editor-windowing,
-body.movie-editor-windowing{min-width:0!important;min-height:100%!important;overflow-x:auto!important;overflow-y:auto!important}
+body.movie-editor-windowing{min-width:0!important;min-height:100%!important;overflow-x:hidden!important;overflow-y:auto!important}
 .movie-floating-workspace-spacer{display:none!important}
 .movie-editor{
   width:100%!important;
@@ -930,21 +930,23 @@ body.movie-layout-locked [data-timeline-edge-resizer]{pointer-events:none!import
   .movie-editor-layout .movie-inspector{width:auto!important;max-width:none!important}
 }
 
-/* Bounded independent tile workspace. The work area is allocated once and never
-   grows while a tile is moved or resized. */
+/* Bounded independent MurrCut tile workspace. */
 .movie-editor-viewport{
   position:relative;
   display:block;
   box-sizing:border-box;
-  width:100%;
-  max-width:100%;
+  left:50%;
+  width:100dvw;
+  max-width:100dvw;
   min-width:0;
   margin:0;
+  transform:translateX(-50%);
   overflow:auto;
   contain:layout paint;
   isolation:isolate;
   overscroll-behavior:auto;
   scrollbar-gutter:stable;
+  min-height:calc(100dvh - 230px);
   background:
     linear-gradient(color-mix(in srgb,var(--line) 22%,transparent) 1px,transparent 1px),
     linear-gradient(90deg,color-mix(in srgb,var(--line) 22%,transparent) 1px,transparent 1px);
@@ -966,11 +968,13 @@ body.movie-editor-page-active main{
 }
 body.movie-editor-page-active .movie-editor-viewport{
   box-sizing:border-box!important;
-  width:100vw!important;
-  min-width:100vw!important;
-  max-width:none!important;
-  margin-left:calc(50% - 50vw)!important;
-  margin-right:calc(50% - 50vw)!important;
+  left:50%!important;
+  width:100dvw!important;
+  min-width:0!important;
+  max-width:100dvw!important;
+  margin-left:0!important;
+  margin-right:0!important;
+  transform:translateX(-50%)!important;
   overflow-x:auto!important;
   overflow-y:auto!important;
   background-color:var(--bg)!important;
@@ -1167,7 +1171,7 @@ body.movie-panel-interacting *{
 <section class="movie-editor" data-movie-editor data-can-edit="{{ can_edit|yesno:'true,false' }}" data-can-export="{{ can_export|yesno:'true,false' }}" data-timeline-id="{{ movie_timeline.id }}" data-edits-url="{{ movie_edits_url }}" data-edit-settings-url="{{ movie_edit_settings_url }}" data-aspect-ratio="{{ movie_timeline.aspect_ratio }}" data-resolution="{{ movie_timeline.resolution }}" data-fps="{{ movie_timeline.fps }}" data-save-url="{% url 'studio:project_movie_editor' project.id %}" data-history-url="{% url 'studio:project_movie_editor_revisions' project.id %}" data-media-url="{{ movie_media_url }}" data-render-url="{{ movie_render_url }}"{% if movie_timeline.editor_wallpaper %} data-editor-wallpaper="{{ movie_timeline.editor_wallpaper.url }}"{% endif %}>
   <div class="panel movie-toolbar movie-collapsible" data-panel-key="editorHeader" data-panel-drag="editorHeader" title="Drag empty header space to move this tile">
     <div class="movie-settings">
-      <input data-movie-title value="{{ movie_timeline.title }}" aria-label="Timeline title" title="Timeline title">
+      <input data-movie-title value="{{ movie_timeline.title }}" aria-label="MC Project title" title="MC Project title">
     </div>
     <div class="movie-actions">
       <span class="movie-editor-state" data-movie-state>Saved</span>
@@ -1175,8 +1179,8 @@ body.movie-panel-interacting *{
       <button class="icon-button secondary" type="button" data-editor-undo title="Undo (Ctrl+Z)" aria-label="Undo" disabled>&#8630;</button>
       <button class="icon-button secondary" type="button" data-editor-redo title="Redo (Ctrl+Y)" aria-label="Redo" disabled>&#8631;</button>
       <button class="icon-button secondary movie-save-as" type="button" data-export-timeline data-business-command="export" title="Export As" aria-label="Export As">&#8595;</button>
-      {% if can_edit %}<button class="icon-button secondary" type="button" data-edit-import data-business-command="import" title="Import edit project" aria-label="Import edit project">&#8682;</button><input type="file" accept="application/json,.json,application/zip,.zip" data-edit-import-file hidden data-no-drop-enhance><button class="icon-button secondary" type="button" data-edit-copy data-business-command="copy" title="Copy edit project" aria-label="Copy edit project">&#10697;</button><button class="icon-button secondary" type="button" data-edit-delete data-business-command="delete" title="Delete edit project" aria-label="Delete edit project">&#128465;</button><button class="icon-button secondary" type="button" data-edit-archive data-business-command="archive" title="Archive edit project" aria-label="Archive edit project">&#128451;</button><button class="icon-button secondary" type="button" data-edit-detach data-business-command="remove" title="Detach edit project" aria-label="Detach edit project">&minus;</button>{% endif %}
-      {% if can_edit %}<button class="icon-button secondary" type="button" data-edit-settings-open data-business-command="settings" title="Edit project settings" aria-label="Edit project settings"></button>{% endif %}
+      {% if can_edit %}<button class="icon-button secondary" type="button" data-edit-import data-business-command="import" title="Import MC Project" aria-label="Import MC Project">&#8682;</button><input type="file" accept="application/json,.json,application/zip,.zip" data-edit-import-file hidden data-no-drop-enhance><button class="icon-button secondary" type="button" data-edit-copy data-business-command="copy" title="Copy MC Project" aria-label="Copy MC Project">&#10697;</button><button class="icon-button secondary" type="button" data-edit-delete data-business-command="delete" title="Delete MC Project" aria-label="Delete MC Project">&#128465;</button><button class="icon-button secondary" type="button" data-edit-archive data-business-command="archive" title="Archive MC Project" aria-label="Archive MC Project">&#128451;</button><button class="icon-button secondary" type="button" data-edit-detach data-business-command="remove" title="Detach MC Project" aria-label="Detach MC Project">&minus;</button>{% endif %}
+      {% if can_edit %}<button class="icon-button secondary" type="button" data-edit-settings-open data-business-command="settings" title="MC Project settings" aria-label="MC Project settings"></button>{% endif %}
       <button class="secondary" type="button" data-movie-history-toggle>History</button>
       {% if can_edit %}<button type="button" data-save-movie>Save</button>{% endif %}
       {% if can_export %}<button type="button" data-render-toggle>Render MP4</button>{% endif %}
@@ -1238,14 +1242,14 @@ body.movie-panel-interacting *{
     <form class="movie-picker-upload" data-media-upload-form><label>Drop files here or choose media<input type="file" data-media-files accept="video/*,audio/*,image/*" multiple></label><button type="submit">Upload</button></form><div class="movie-upload-state" data-media-progress hidden><i></i></div>
     <div class="movie-library-grid" data-media-library-grid></div>
   </dialog>{% endif %}
-  <dialog class="confirm-dialog movie-save-as-dialog" data-save-as-dialog><button class="dialog-close" type="button" data-save-as-close aria-label="Close">&times;</button><h2>Export edit project</h2><p>Choose a portable project file or a bundle with every source media file used on the timeline.</p><div class="dialog-actions"><button type="button" class="secondary" data-save-as-json>Edit only</button><button type="button" data-save-as-bundle>Edit with media</button></div></dialog>
-  <dialog class="confirm-dialog movie-import-dialog" data-import-dialog><button class="dialog-close" type="button" data-import-close aria-label="Close">&times;</button><h2>Import edit project</h2><p data-import-file-name></p><label>Import mode<select data-import-mode><option value="project">Complete edit project</option><option value="track">One track into this edit</option></select></label><label data-import-track-field hidden>Track<select data-import-track></select></label><div class="dialog-actions"><button class="secondary" type="button" data-import-cancel>Cancel</button><button type="button" data-import-apply>Import</button></div></dialog>
+  <dialog class="confirm-dialog movie-save-as-dialog" data-save-as-dialog><button class="dialog-close" type="button" data-save-as-close aria-label="Close">&times;</button><h2>Export MC Project</h2><p>Choose a portable project file or a bundle with every source media file used on the timeline.</p><div class="dialog-actions"><button type="button" class="secondary" data-save-as-json>MC Project only</button><button type="button" data-save-as-bundle>MC Project with media</button></div></dialog>
+  <dialog class="confirm-dialog movie-import-dialog" data-import-dialog><button class="dialog-close" type="button" data-import-close aria-label="Close">&times;</button><h2>Import MC Project</h2><p data-import-file-name></p><label>Import mode<select data-import-mode><option value="project">Complete MC Project</option><option value="track">One track into this MC Project</option></select></label><label data-import-track-field hidden>Track<select data-import-track></select></label><div class="dialog-actions"><button class="secondary" type="button" data-import-cancel>Cancel</button><button type="button" data-import-apply>Import</button></div></dialog>
   <dialog class="confirmation-dialog asset-properties-dialog" data-movie-media-properties><button class="dialog-close" type="button" data-movie-media-properties-close aria-label="Close">&times;</button><h2>Media properties</h2><div class="movie-media-properties-content" data-movie-media-properties-content></div></dialog>
   <dialog class="confirm-dialog" data-media-folder-dialog><button class="dialog-close" type="button" data-media-folder-cancel aria-label="Close">&times;</button><h2 data-media-folder-title>Media folder</h2><label data-media-folder-name-field>Folder name<input type="text" maxlength="100" data-media-folder-name></label><p data-media-folder-message hidden></p><div class="dialog-actions"><button class="secondary" type="button" data-media-folder-cancel>Cancel</button><button type="button" data-media-folder-save>Save</button></div></dialog>
   <dialog class="confirmation-dialog" data-media-remove-dialog><div class="image-picker-head"><h2>Remove media</h2><button class="icon-button secondary" type="button" data-media-remove-cancel aria-label="Close">&times;</button></div><p data-media-remove-message></p><div class="dialog-actions"><button class="secondary" type="button" data-media-remove-cancel>Cancel</button><button type="button" data-media-remove-confirm>Remove</button></div></dialog>
-  {% if can_edit %}<dialog class="confirmation-dialog movie-edit-settings-dialog" data-edit-settings-dialog><button class="dialog-close" type="button" data-edit-settings-close data-business-command="close" aria-label="Close"></button><h2>Edit project settings</h2><form data-edit-settings-form><label>Editor wallpaper<input type="file" accept="image/*" data-edit-wallpaper-input></label><div class="movie-edit-wallpaper-preview" data-edit-wallpaper-preview></div><div class="dialog-actions"><button class="secondary" type="button" data-edit-wallpaper-remove>Remove wallpaper</button><button class="secondary" type="button" data-edit-settings-cancel>Cancel</button><button type="submit">Save</button></div></form></dialog>{% endif %}
-  {% if can_edit %}<dialog class="confirmation-dialog" data-edit-delete-dialog><button class="dialog-close" type="button" data-edit-delete-close data-business-command="close" aria-label="Close"></button><h2>Delete edit project?</h2><p>This removes the edit project. Workspace media files are kept.</p><div class="dialog-actions"><button class="secondary" type="button" data-edit-delete-cancel>Cancel</button><button type="button" data-edit-delete-confirm>Delete</button></div></dialog>{% endif %}
-  <div class="movie-media-context" data-movie-media-context hidden><button type="button" data-media-context-select-all>Select All</button><button type="button" data-media-context-cut>Cut</button><button type="button" data-media-context-copy>Copy</button><button type="button" data-media-context-paste>Paste</button><button type="button" data-media-context-root>Move to Media</button><hr><a data-media-context-download download>Download</a><button type="button" data-media-context-delete>Remove from edit project</button><button type="button" data-media-context-properties>Properties</button></div>
+  {% if can_edit %}<dialog class="confirmation-dialog movie-edit-settings-dialog" data-edit-settings-dialog><button class="dialog-close" type="button" data-edit-settings-close data-business-command="close" aria-label="Close"></button><h2>MC Project settings</h2><form data-edit-settings-form><label>MurrCut wallpaper<input type="file" accept="image/*" data-edit-wallpaper-input></label><div class="movie-edit-wallpaper-preview" data-edit-wallpaper-preview></div><div class="dialog-actions"><button class="secondary" type="button" data-edit-wallpaper-remove>Remove wallpaper</button><button class="secondary" type="button" data-edit-settings-cancel>Cancel</button><button type="submit">Save</button></div></form></dialog>{% endif %}
+  {% if can_edit %}<dialog class="confirmation-dialog" data-edit-delete-dialog><button class="dialog-close" type="button" data-edit-delete-close data-business-command="close" aria-label="Close"></button><h2>Delete MC Project?</h2><p>This removes the MC Project. Workspace media files are kept.</p><div class="dialog-actions"><button class="secondary" type="button" data-edit-delete-cancel>Cancel</button><button type="button" data-edit-delete-confirm>Delete</button></div></dialog>{% endif %}
+  <div class="movie-media-context" data-movie-media-context hidden><button type="button" data-media-context-select-all>Select All</button><button type="button" data-media-context-cut>Cut</button><button type="button" data-media-context-copy>Copy</button><button type="button" data-media-context-paste>Paste</button><button type="button" data-media-context-root>Move to Media</button><hr><a data-media-context-download download>Download</a><button type="button" data-media-context-delete>Remove from MC Project</button><button type="button" data-media-context-properties>Properties</button></div>
 </section>
 {{ movie_timeline_data|json_script:"movie-timeline-data" }}{{ movie_assets|json_script:"movie-assets-data" }}{{ movie_library_assets|json_script:"movie-library-data" }}{{ movie_render_jobs|json_script:"movie-render-jobs-data" }}{{ movie_edits|json_script:"movie-edits-data" }}
 {% endblock %}

@@ -150,7 +150,7 @@
   const audioPlayers = new Map();
   const visualPlayers = new Map();
 
-  const layoutEngineVersion = "bounded-tiles-v6";
+  const layoutEngineVersion = "murrcut-tiles-v1";
   const layoutModeKey = `studio-movie-layout-mode-${layoutEngineVersion}-${timelineId}`;
   const layoutStateKey = mode => `studio-movie-layout-${layoutEngineVersion}-${timelineId}-${mode}`;
   const savedLayoutKey = `studio-movie-layout-saved-${layoutEngineVersion}-${timelineId}`;
@@ -253,7 +253,10 @@
     const editorHeaderY = editProjectsY + editProjectsHeight + gap;
     const upperY = editorHeaderY + editorHeaderHeight + gap;
     const timelineY = upperY + upperHeight + gap;
-    const reserveX = Math.round(availableWidth / 2);
+    // Logical coordinates keep one full editor screen available on either side.
+    // The DOM workspace is derived separately, so this reserve does not create
+    // a scrollbar until a panel actually uses it.
+    const reserveX = availableWidth + tileWorkspaceInset;
     const tiles = {
       editProjects: {x: reserveX, y: editProjectsY, width: availableWidth, height: editProjectsHeight},
       editorHeader: {x: reserveX, y: editorHeaderY, width: availableWidth, height: editorHeaderHeight},
@@ -262,14 +265,15 @@
       inspector: {x: reserveX + mediaWidth + gap + previewWidth + gap, y: upperY, width: inspectorWidth, height: upperHeight},
       timeline: {x: reserveX, y: timelineY, width: availableWidth, height: timelineHeight},
     };
-    const workspaceWidth = Math.max(...Object.entries(tiles).map(([key, tile]) => tile.x + tile.width * tileMaximumScale(key))) + tileWorkspaceInset;
-    const workspaceHeight = Math.max(...Object.entries(tiles).map(([key, tile]) => tile.y + tile.height * tileMaximumScale(key))) + tileWorkspaceInset;
+    const baseHeight = timelineY + timelineHeight + tileWorkspaceInset;
+    const workspaceWidth = availableWidth * 3 + tileWorkspaceInset * 2;
+    const workspaceHeight = baseHeight * 2;
     const defaults = {
       workspace: {
         width: Math.round(workspaceWidth),
         height: Math.round(workspaceHeight),
         baseWidth: availableWidth,
-        baseHeight: timelineY + timelineHeight + tileWorkspaceInset,
+        baseHeight,
       },
       tiles,
     };
@@ -312,74 +316,100 @@
     editorLayouts.stacked = {...editorLayouts.stacked, ...normalized};
     return normalized;
   };
+  let tileViewportGeometry = null;
+  const tileBounds = tiles => {
+    const rects = tilePanelKeys.map(key => tiles[key]).filter(Boolean);
+    return {
+      left: Math.min(...rects.map(rect => rect.x)),
+      right: Math.max(...rects.map(rect => rect.x + rect.width)),
+      top: Math.min(...rects.map(rect => rect.y)),
+      bottom: Math.max(...rects.map(rect => rect.y + rect.height)),
+    };
+  };
+  const computeTileViewportGeometry = (tiles, workspace) => {
+    const defaults = tileLayoutDefaults || createDefaultTileLayout();
+    const bounds = tileBounds(tiles);
+    const baseLeft = defaults.tiles.editProjects.x;
+    const baseTop = defaults.tiles.editProjects.y;
+    const baseWidth = workspace.baseWidth || defaults.workspace.baseWidth;
+    const baseHeight = workspace.baseHeight || defaults.workspace.baseHeight;
+    const baseRight = baseLeft + baseWidth;
+    const baseBottom = baseTop + baseHeight;
+    const viewportWidth = Math.max(1, editorViewport?.clientWidth || baseWidth);
+    const viewportHeight = Math.max(1, editorViewport?.clientHeight || baseHeight);
+    const coreWidth = Math.max(baseWidth, viewportWidth);
+    const coreHeight = Math.max(baseHeight, viewportHeight);
+    const leftReserve = clamp(baseLeft - bounds.left, 0, baseWidth);
+    const rightReserve = clamp(bounds.right - baseRight, 0, baseWidth);
+    const bottomReserve = clamp(bounds.bottom - baseBottom, 0, baseHeight);
+    const centerX = Math.max(0, (coreWidth - baseWidth) / 2);
+    const baseDisplayLeft = Math.max(centerX, leftReserve);
+    return {
+      offsetX: baseDisplayLeft - baseLeft,
+      offsetY: -baseTop,
+      width: Math.ceil(Math.max(coreWidth, baseDisplayLeft + baseWidth + rightReserve)),
+      height: Math.ceil(Math.max(coreHeight, baseHeight + bottomReserve)),
+      bounds,
+      baseLeft,
+      baseTop,
+      baseWidth,
+      baseHeight,
+    };
+  };
+  const tileLogicalViewportCenter = geometry => editorViewport && geometry
+    ? {
+        x: editorViewport.scrollLeft + editorViewport.clientWidth / 2 - geometry.offsetX,
+        y: editorViewport.scrollTop + editorViewport.clientHeight / 2 - geometry.offsetY,
+      }
+    : null;
+  const scrollTileViewportToLogicalCenter = logicalCenter => {
+    if (!editorViewport || !tileViewportGeometry || !logicalCenter) return;
+    const geometry = tileViewportGeometry;
+    editorViewport.scrollLeft = clamp(
+      logicalCenter.x + geometry.offsetX - editorViewport.clientWidth / 2,
+      0,
+      Math.max(0, geometry.width - editorViewport.clientWidth),
+    );
+    editorViewport.scrollTop = clamp(
+      logicalCenter.y + geometry.offsetY - editorViewport.clientHeight / 2,
+      0,
+      Math.max(0, geometry.height - editorViewport.clientHeight),
+    );
+  };
   const centerTileWorkspaceView = () => {
     if (!editorViewport) return;
     const layout = ensureTileLayout();
-    const rects = tilePanelKeys.map(key => layout.tiles[key]).filter(Boolean);
-    if (!rects.length) return;
-    const left = Math.min(...rects.map(rect => rect.x));
-    const right = Math.max(...rects.map(rect => rect.x + rect.width));
-    const top = Math.min(...rects.map(rect => rect.y));
-    const clusterWidth = right - left;
-    const visibleGutter = Math.max(0, (editorViewport.clientWidth - clusterWidth) / 2);
-    const viewportHeight = editorViewport.clientHeight;
-    editorViewport.scrollLeft = clamp(
-      left - visibleGutter,
-      0,
-      Math.max(0, layout.workspace.width - editorViewport.clientWidth),
-    );
-    editorViewport.scrollTop = clamp(
-      top,
-      0,
-      Math.max(0, layout.workspace.height - viewportHeight),
-    );
+    const geometry = tileViewportGeometry || computeTileViewportGeometry(layout.tiles, layout.workspace);
+    tileViewportGeometry = geometry;
+    scrollTileViewportToLogicalCenter({
+      x: geometry.baseLeft + geometry.baseWidth / 2,
+      y: geometry.baseTop + Math.min(geometry.baseHeight, editorViewport.clientHeight) / 2,
+    });
   };
-  let lastEditorViewportWidth = 0;
   const ensureTileWorkspaceCoversViewport = () => {
     if (!editorViewport || !editorLayout) return 0;
     const layout = ensureTileLayout();
-    const viewportWidth = Math.max(1, editorViewport.clientWidth);
-    const rects = tilePanelKeys.map(key => layout.tiles[key]).filter(Boolean);
-    if (!rects.length) return 0;
-    const left = Math.min(...rects.map(rect => rect.x));
-    const right = Math.max(...rects.map(rect => rect.x + rect.width));
-    const minimumReserve = Math.max(640, Math.ceil(viewportWidth));
-    const shift = Math.max(0, Math.ceil(minimumReserve - left));
-    const rightReserve = Math.max(0, layout.workspace.width - right);
-    const rightGrowth = Math.max(0, Math.ceil(minimumReserve - rightReserve));
-    if (!shift && !rightGrowth) return 0;
-    layout.workspace.width += shift + rightGrowth;
-    tilePanelKeys.forEach(key => {
-      if (layout.tiles[key]) layout.tiles[key].x += shift;
-    });
-    editorLayouts.columns = {...editorLayouts.columns, ...layout};
-    editorLayouts.stacked = {...editorLayouts.stacked, ...layout};
-    editorLayout.style.setProperty("--tile-workspace-width", `${layout.workspace.width}px`);
-    editorLayout.style.setProperty("width", `${layout.workspace.width}px`, "important");
-    applyTileRects(layout.tiles);
-    return shift;
+    applyTileRects(layout.tiles, {preserveViewport: true});
+    return 0;
   };
   const fitEditorViewportToWindow = () => {
     if (!editorViewport) return;
     ["width", "max-width", "margin-left", "margin-right"].forEach(property =>
       editorViewport.style.removeProperty(property)
     );
-    const previousScrollLeft = editorViewport.scrollLeft;
-    const workspaceShift = ensureTileWorkspaceCoversViewport();
-    if (workspaceShift > 0 && lastEditorViewportWidth > 0) {
-      editorViewport.scrollLeft = previousScrollLeft + workspaceShift;
-    }
-    lastEditorViewportWidth = editorViewport.clientWidth;
+    ensureTileWorkspaceCoversViewport();
   };
-  const scheduleTileWorkspaceCenter = () => {
+  let initialTileWorkspaceCentered = false;
+  const scheduleTileWorkspaceCenter = ({force = false} = {}) => {
+    if (!force && initialTileWorkspaceCentered) return;
+    initialTileWorkspaceCentered = true;
     requestAnimationFrame(() => requestAnimationFrame(centerTileWorkspaceView));
   };
   let editorViewportFitFrame = 0;
-  const scheduleEditorViewportFit = ({center = false} = {}) => {
+  const scheduleEditorViewportFit = () => {
     cancelAnimationFrame(editorViewportFitFrame);
     editorViewportFitFrame = requestAnimationFrame(() => {
       fitEditorViewportToWindow();
-      if (center) requestAnimationFrame(centerTileWorkspaceView);
     });
   };
   const cloneLayoutState = () => ({mode: "columns", layouts: structuredClone(editorLayouts)});
@@ -440,28 +470,10 @@
     editorLayoutMode = "columns";
     const layout = ensureTileLayout();
     editorLayout.dataset.layout = editorLayoutMode;
-    editorLayout.style.setProperty("--tile-workspace-width", `${layout.workspace.width}px`);
-    editorLayout.style.setProperty("--tile-workspace-height", `${layout.workspace.height}px`);
     editorLayout.style.setProperty("--tile-edge-size", `${tileEdgeSize}px`);
-    editorLayout.style.setProperty("width", `${layout.workspace.width}px`, "important");
-    editorLayout.style.setProperty("height", `${layout.workspace.height}px`, "important");
     editorLayout.style.marginLeft = "0";
     editorLayout.style.marginRight = "0";
-    tilePanelKeys.forEach(key => {
-      const panel = layoutPanels[key];
-      const rect = layout.tiles[key];
-      if (!panel || !rect) return;
-      panel.style.setProperty("left", `${rect.x}px`, "important");
-      panel.style.setProperty("top", `${rect.y}px`, "important");
-      panel.style.setProperty("width", `${rect.width}px`, "important");
-      panel.style.setProperty("height", `${rect.height}px`, "important");
-      panel.style.removeProperty("right");
-      panel.style.removeProperty("bottom");
-      panel.dataset.tileX = String(Math.round(rect.x));
-      panel.dataset.tileY = String(Math.round(rect.y));
-    });
-    const timelineShell = q("[data-timeline-shell]");
-    if (timelineShell) timelineShell.style.setProperty("height", `${Math.max(100, layout.tiles.timeline.height - 46)}px`, "important");
+    applyTileRects(layout.tiles);
     layoutPanels.media?.classList.remove("media-minimized");
     qa("[data-layout-mode]").forEach(button => {
       const active = button.dataset.layoutMode === editorLayoutMode;
@@ -1194,18 +1206,31 @@
     ));
   };
   const cloneTiles = tiles => Object.fromEntries(tilePanelKeys.map(key => [key, tileRect(tiles[key])]));
-  const applyTileRects = tiles => {
+  const applyTileRects = (tiles, {preserveViewport = false} = {}) => {
+    const layout = ensureTileLayout();
+    const previousLogicalCenter = tileLogicalViewportCenter(tileViewportGeometry);
+    const geometry = computeTileViewportGeometry(tiles, layout.workspace);
+    tileViewportGeometry = geometry;
+    editorLayout.style.setProperty("--tile-workspace-width", `${geometry.width}px`);
+    editorLayout.style.setProperty("--tile-workspace-height", `${geometry.height}px`);
+    editorLayout.style.setProperty("width", `${geometry.width}px`, "important");
+    editorLayout.style.setProperty("height", `${geometry.height}px`, "important");
     tilePanelKeys.forEach(key => {
       const panel = layoutPanels[key];
       const rect = tiles[key];
       if (!panel || !rect) return;
-      panel.style.setProperty("left", `${rect.x}px`, "important");
-      panel.style.setProperty("top", `${rect.y}px`, "important");
+      panel.style.setProperty("left", `${rect.x + geometry.offsetX}px`, "important");
+      panel.style.setProperty("top", `${rect.y + geometry.offsetY}px`, "important");
       panel.style.setProperty("width", `${rect.width}px`, "important");
       panel.style.setProperty("height", `${rect.height}px`, "important");
+      panel.style.removeProperty("right");
+      panel.style.removeProperty("bottom");
+      panel.dataset.tileX = String(Math.round(rect.x));
+      panel.dataset.tileY = String(Math.round(rect.y));
     });
     const timelineShell = q("[data-timeline-shell]");
     if (timelineShell) timelineShell.style.setProperty("height", `${Math.max(100, tiles.timeline.height - 46)}px`, "important");
+    if (preserveViewport) scrollTileViewportToLogicalCenter(previousLogicalCenter);
   };
   const nearestTileSnap = (value, candidates) => {
     let nearest = null;
@@ -1239,13 +1264,15 @@
   };
   const showTileGuides = ({x = null, y = null} = {}) => {
     const {vertical, horizontal} = ensureTileGuides();
+    const offsetX = tileViewportGeometry?.offsetX || 0;
+    const offsetY = tileViewportGeometry?.offsetY || 0;
     if (vertical) {
       vertical.hidden = !Number.isFinite(x);
-      if (Number.isFinite(x)) vertical.style.left = `${x}px`;
+      if (Number.isFinite(x)) vertical.style.left = `${x + offsetX}px`;
     }
     if (horizontal) {
       horizontal.hidden = !Number.isFinite(y);
-      if (Number.isFinite(y)) horizontal.style.top = `${y}px`;
+      if (Number.isFinite(y)) horizontal.style.top = `${y + offsetY}px`;
     }
   };
   const snapMovingTile = (key, rect, tiles, workspace) => {
@@ -1457,11 +1484,6 @@
         }
         event.preventDefault();
         event.stopPropagation();
-        const previousScrollLeft = editorViewport?.scrollLeft || 0;
-        const workspaceShift = ensureTileWorkspaceCoversViewport();
-        if (workspaceShift > 0 && editorViewport) {
-          editorViewport.scrollLeft = previousScrollLeft + workspaceShift;
-        }
         const layout = ensureTileLayout();
         const startTiles = cloneTiles(layout.tiles);
         const origin = {...startTiles[key]};
@@ -2368,7 +2390,7 @@
     const message = folderDialog.querySelector("[data-media-folder-message]");
     field.hidden = mode === "delete";
     message.hidden = mode !== "delete";
-    message.textContent = mode === "delete" ? `Delete “${folder?.name || "folder"}”? Media files remain in this edit project.` : "";
+    message.textContent = mode === "delete" ? `Delete “${folder?.name || "folder"}”? Media files remain in this MC Project.` : "";
     input.value = mode === "rename" ? folder?.name || "" : "";
     folderDialog.showModal();
     if (mode !== "delete") requestAnimationFrame(() => input.focus());
@@ -4488,7 +4510,7 @@
       }
       const parsed = JSON.parse(await file.text());
       const importedTimeline = parsed.timeline || parsed;
-      if (!Array.isArray(importedTimeline.tracks)) throw new Error("The edit project file has no tracks");
+      if (!Array.isArray(importedTimeline.tracks)) throw new Error("The MC Project file has no tracks");
       pendingImport = {file, parsed, timeline: importedTimeline};
       q("[data-import-file-name]").textContent = file.name;
       const trackSelect = q("[data-import-track]"); trackSelect.replaceChildren();
@@ -4496,7 +4518,7 @@
       q("[data-import-mode]").value = "project"; q("[data-import-track-field]").hidden = true;
       q("[data-import-mode]").disabled = false;
       importDialog.showModal();
-    } catch (error) { toast(error.message || "The edit project file is invalid", "error"); }
+    } catch (error) { toast(error.message || "The MC Project file is invalid", "error"); }
     event.target.value = "";
   });
   q("[data-import-mode]")?.addEventListener("change", event => { q("[data-import-track-field]").hidden = event.target.value !== "track"; });
@@ -4565,7 +4587,7 @@
       root.dataset.editorWallpaper = result.editorWallpaper || "";
       applyEditorWallpaper(root.dataset.editorWallpaper);
       closeEditSettings();
-      toast("Edit project settings saved", "success");
+      toast("MC Project settings saved", "success");
     } catch (error) {
       toast(error.message, "error");
     }
@@ -4578,7 +4600,7 @@
       root.dataset.editorWallpaper = result.editorWallpaper || "";
       applyEditorWallpaper(root.dataset.editorWallpaper);
       closeEditSettings();
-      toast("Edit project wallpaper removed", "success");
+      toast("MC Project wallpaper removed", "success");
     } catch (error) {
       toast(error.message, "error");
     }
@@ -5497,7 +5519,7 @@
     previewZoomManual = false;
     localStorage.removeItem(previewZoomStorageKey);
     applyEditorLayout(cloneLayoutState());
-    scheduleTileWorkspaceCenter();
+    scheduleTileWorkspaceCenter({force: true});
     updateHistoryButtons();
     toast("Layout reset");
   });
@@ -5519,7 +5541,7 @@
       if (!saved?.layouts) return;
       remember();
       applyEditorLayout(saved);
-      scheduleTileWorkspaceCenter();
+      scheduleTileWorkspaceCenter({force: true});
       updateHistoryButtons();
       toast("Saved layout loaded");
     } catch (_) {
@@ -5542,14 +5564,14 @@
   bindPanelDragging();
   applyLayoutLockState();
   applyEditorLayout(cloneLayoutState(), {persist: false, refresh: false});
-  scheduleEditorViewportFit({center: true});
+  scheduleEditorViewportFit();
+  scheduleTileWorkspaceCenter();
   applyPreviewDock();
   normalizeTimeline(); applyCanvas(); renderBin(); renderTimeline(); renderInspector(); renderRenderJobs(); renderLibrary(); scheduleRenderPoll(); setPlayhead(0, true, true);
   savedSignature = signature(); updateDirty(); updateHistoryButtons(); refreshMedia();
   requestAnimationFrame(() => requestAnimationFrame(() => {
     editorViewport?.scrollIntoView({block: "start", behavior: "auto"});
     fitEditorViewportToWindow();
-    centerTileWorkspaceView();
     applyPreviewZoom();
     updatePreviewGeometry();
     renderTimeline();

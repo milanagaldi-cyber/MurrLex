@@ -9,7 +9,7 @@ from lexamora_studio.movie_rendering import process_movie_render
 
 
 class Command(BaseCommand):
-    help = "Render queued Draft Editor timelines to MP4 rough cuts."
+    help = "Render queued MurrCut timelines to MP4 rough cuts."
 
     def add_arguments(self, parser):
         parser.add_argument("--poll-interval", type=float, default=1.0)
