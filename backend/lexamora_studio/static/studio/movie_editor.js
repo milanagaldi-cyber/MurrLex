@@ -82,6 +82,11 @@
 
   const q = selector => root.querySelector(selector);
   const qa = selector => [...root.querySelectorAll(selector)];
+  const updateMurrCutPageAnchor = () => {
+    const main = root.closest("main");
+    const left = Math.max(0, Math.round(main?.getBoundingClientRect().left || 0));
+    root.style.setProperty("--murrcut-page-left", `${left}px`);
+  };
   const bin = q("[data-movie-bin]");
   const tracksNode = q("[data-movie-tracks]");
   const headsNode = q("[data-track-heads]");
@@ -388,8 +393,22 @@
   };
   const ensureTileWorkspaceCoversViewport = () => {
     if (!editorViewport || !editorLayout) return 0;
+    updateMurrCutPageAnchor();
     const layout = ensureTileLayout();
-    applyTileRects(layout.tiles, {preserveViewport: true});
+    const defaults = tileLayoutDefaults || createDefaultTileLayout();
+    const usesHomeGeometry = tilePanelKeys.every(key => {
+      const current = layout.tiles[key];
+      const home = defaults.tiles[key];
+      return current && home && ["x", "y", "width", "height"].every(property =>
+        Math.abs(Number(current[property]) - Number(home[property])) < 1
+      );
+    });
+    const preserveViewport = !usesHomeGeometry || editorViewport.scrollLeft > 2 || editorViewport.scrollTop > 2;
+    applyTileRects(layout.tiles, {preserveViewport});
+    if (!preserveViewport) {
+      editorViewport.scrollLeft = 0;
+      editorViewport.scrollTop = 0;
+    }
     return 0;
   };
   const fitEditorViewportToWindow = () => {
