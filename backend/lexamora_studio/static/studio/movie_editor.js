@@ -324,6 +324,7 @@
   let tileRenderedTiles = null;
   let tileExtentCleanupTimer = 0;
   let tileExtentCleanupSuppressedUntil = 0;
+  let tileHomeCollapseFrame = 0;
   const tileViewportMinimumReveal = 48;
   const tileExtentCleanupMargin = 32;
   const tileBounds = tiles => {
@@ -1405,6 +1406,47 @@
     if (tileExtentCleanupTimer) return;
     tileExtentCleanupTimer = setTimeout(cleanupTileWorkspaceExtent, delay);
   };
+  const cancelTileHomeCollapse = () => {
+    if (tileHomeCollapseFrame) cancelAnimationFrame(tileHomeCollapseFrame);
+    tileHomeCollapseFrame = 0;
+  };
+  const animateTileHomeHorizontalCollapse = (tiles, workspace, fallbackBottom) => {
+    if (!editorViewport) return;
+    cancelTileHomeCollapse();
+    const startLeft = editorViewport.scrollLeft;
+    const startedAt = performance.now();
+    const duration = 220;
+    const finish = () => {
+      tileHomeCollapseFrame = 0;
+      const homeGeometry = computeTileViewportGeometry(tiles, workspace);
+      tileAllocatedExtent = {
+        ...(tileAllocatedExtent || homeGeometry.requiredExtent),
+        left: homeGeometry.requiredExtent.left,
+        right: homeGeometry.requiredExtent.right,
+        bottom: Math.max(
+          homeGeometry.requiredExtent.bottom,
+          Number(tileAllocatedExtent?.bottom || fallbackBottom),
+        ),
+      };
+      applyTileRects(tiles, {scheduleCleanup: false});
+      editorViewport.scrollLeft = 0;
+    };
+    if (startLeft < 1) {
+      finish();
+      return;
+    }
+    const tick = now => {
+      const progress = clamp((now - startedAt) / duration, 0, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      editorViewport.scrollLeft = startLeft * (1 - eased);
+      if (progress < 1) {
+        tileHomeCollapseFrame = requestAnimationFrame(tick);
+      } else {
+        finish();
+      }
+    };
+    tileHomeCollapseFrame = requestAnimationFrame(tick);
+  };
   editorViewport?.addEventListener("scroll", () => {
     scheduleTileExtentCleanup(
       document.body.classList.contains("movie-panel-interacting") ? 90 : 180
@@ -1733,6 +1775,7 @@
             && bounds.right <= homeBounds.right + 1
           );
         };
+        cancelTileHomeCollapse();
         capturePointerSafely(handle, pointerId);
         const updatePosition = next => {
           const dx = next.clientX - startX + (editorViewport?.scrollLeft || 0) - startScrollLeft;
@@ -1761,6 +1804,24 @@
             };
             layoutPanels[movingKey]?.classList.add("movie-tile-moving");
           });
+          const visibleBounds = tileLogicalViewportBounds(tileViewportGeometry);
+          const movingBounds = tileGroupBounds(currentTiles, movingKeys);
+          if (visibleBounds && movingBounds) {
+            const rightmostMovingTile = movingKeys
+              .map(movingKey => currentTiles[movingKey])
+              .reduce(
+                (rightmost, tile) =>
+                  !rightmost || tile.x + tile.width > rightmost.x + rightmost.width ? tile : rightmost,
+                null,
+              );
+            const hiddenAllowance = Number(rightmostMovingTile?.width || movingBounds.width) * .05;
+            const rightOverflow = movingBounds.right - (visibleBounds.right + hiddenAllowance);
+            if (rightOverflow > 0) {
+              movingKeys.forEach(movingKey => {
+                currentTiles[movingKey].x -= rightOverflow;
+              });
+            }
+          }
           const invalidDrop = tileLayoutHasSelectionOverlap(currentTiles, movingKeys);
           movingKeys.forEach(movingKey => layoutPanels[movingKey]?.classList.toggle("movie-tile-drop-invalid", invalidDrop));
           document.body.classList.add("movie-panel-interacting");
@@ -1814,7 +1875,9 @@
           const beforeTop = editorViewport.scrollTop;
           const differenceX = cameraFollowTargetLeft - beforeLeft;
           const differenceY = cameraFollowTargetTop - beforeTop;
-          const stepX = Math.abs(differenceX) < .5 ? differenceX : differenceX * .34;
+          const returningHome = cameraFollowHorizontalActive && tilesUseHomeHorizontalExtent(currentTiles);
+          const horizontalEase = returningHome ? .14 : .34;
+          const stepX = Math.abs(differenceX) < .5 ? differenceX : differenceX * horizontalEase;
           const stepY = Math.abs(differenceY) < .5 ? differenceY : differenceY * .34;
           editorViewport.scrollLeft = clamp(
             beforeLeft + stepX,
@@ -1873,25 +1936,20 @@
           if (invalidDrop || returnedToStart || returnedHomeHorizontally) {
             if (tileExtentCleanupTimer) clearTimeout(tileExtentCleanupTimer);
             tileExtentCleanupTimer = 0;
-            tileExtentCleanupSuppressedUntil = Date.now() + 300;
+            tileExtentCleanupSuppressedUntil = Date.now() + (returnedHomeHorizontally ? 700 : 300);
             if (returnedHomeHorizontally) {
-              const homeGeometry = computeTileViewportGeometry(finalTiles, layout.workspace);
-              tileAllocatedExtent = {
-                ...startAllocatedExtent,
-                left: homeGeometry.requiredExtent.left,
-                right: homeGeometry.requiredExtent.right,
-                bottom: Math.max(
-                  homeGeometry.requiredExtent.bottom,
-                  Number(tileAllocatedExtent?.bottom || startAllocatedExtent.bottom),
-                ),
-              };
+              animateTileHomeHorizontalCollapse(
+                finalTiles,
+                layout.workspace,
+                startAllocatedExtent.bottom,
+              );
             } else {
               tileAllocatedExtent = {...startAllocatedExtent};
-            }
-            applyTileRects(finalTiles, {scheduleCleanup: false});
-            if (editorViewport) {
-              editorViewport.scrollLeft = returnedHomeHorizontally ? 0 : startScrollLeft;
-              if (!returnedHomeHorizontally) editorViewport.scrollTop = startScrollTop;
+              applyTileRects(finalTiles, {scheduleCleanup: false});
+              if (editorViewport) {
+                editorViewport.scrollLeft = startScrollLeft;
+                editorViewport.scrollTop = startScrollTop;
+              }
             }
           }
           applyPreviewZoom();
