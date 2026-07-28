@@ -430,11 +430,28 @@
     requestAnimationFrame(() => requestAnimationFrame(centerTileWorkspaceView));
   };
   let editorViewportFitFrame = 0;
+  let editorViewportFitPending = false;
   const scheduleEditorViewportFit = () => {
+    if (document.body.classList.contains("movie-panel-interacting")) {
+      editorViewportFitPending = true;
+      return;
+    }
     cancelAnimationFrame(editorViewportFitFrame);
     editorViewportFitFrame = requestAnimationFrame(() => {
+      editorViewportFitFrame = 0;
+      if (document.body.classList.contains("movie-panel-interacting")) {
+        editorViewportFitPending = true;
+        return;
+      }
+      editorViewportFitPending = false;
       fitEditorViewportToWindow();
     });
+  };
+  const finishEditorViewportInteraction = () => {
+    document.body.classList.remove("movie-panel-interacting");
+    if (!editorViewportFitPending) return;
+    editorViewportFitPending = false;
+    scheduleEditorViewportFit();
   };
   const openedFromSiblingProjectView = () => {
     try {
@@ -574,7 +591,7 @@
     }
   };
   const forceEditorPointerCleanup = () => {
-    document.body.classList.remove("movie-panel-interacting");
+    finishEditorViewportInteraction();
     document.querySelectorAll(".movie-panel-moving,.movie-panel-resizing,.dragging,.resizing").forEach(node =>
       node.classList.remove("movie-panel-moving", "movie-panel-resizing", "dragging", "resizing")
     );
@@ -952,7 +969,7 @@
           handle.onlostpointercapture = null;
           releasePointerCaptureSafely(handle, pointerId);
           panel.classList.remove("movie-panel-resizing");
-          document.body.classList.remove("movie-panel-interacting");
+          finishEditorViewportInteraction();
           clearPanelSnapFeedback();
           updateFloatingWorkspaceExtent();
           applyPreviewZoom();
@@ -1787,7 +1804,7 @@
           autoScrollFrame = 0;
           releasePointerCaptureSafely(handle, pointerId);
           movingKeys.forEach(movingKey => layoutPanels[movingKey]?.classList.remove("movie-tile-moving", "movie-tile-drop-invalid"));
-          document.body.classList.remove("movie-panel-interacting");
+          finishEditorViewportInteraction();
           hideTileGuides();
           if (!active) return;
           visibilityScrollX += placeMovingTilesWithinViewport(currentTiles, movingKeys);
@@ -1943,7 +1960,7 @@
           releasePointerCaptureSafely(handle, pointerId);
           panel?.classList.remove("movie-tile-resizing");
           handle.classList.remove("active");
-          document.body.classList.remove("movie-panel-interacting");
+          finishEditorViewportInteraction();
           hideTileGuides();
           if (!active) return;
           editorLayouts.columns = {...editorLayouts.columns, workspace: layout.workspace, tiles: currentTiles};
@@ -5686,7 +5703,7 @@
         timelineBottomResizer.onlostpointercapture = null;
         releasePointerCaptureSafely(timelineBottomResizer, pointerId);
         timelineBottomResizer.classList.remove("dragging");
-        document.body.classList.remove("movie-panel-interacting");
+        finishEditorViewportInteraction();
          const geometry = clampLayoutGeometry(editorLayoutMode, {
            ...editorLayouts[editorLayoutMode],
            timelineHeight: liveHeight,
