@@ -175,6 +175,7 @@
   const tileMaximumScale = key => ["media", "preview", "inspector", "timeline"].includes(key) ? 4 : 2;
   const tileEdgeSize = 18;
   const tileWorkspaceInset = Math.ceil(tileEdgeSize / 2) + 2;
+  const tileScrollbarClearance = 4;
   const tileSnapDistance = 12;
   let tileLayoutDefaults = null;
   let selectedTileKeys = new Set();
@@ -1564,7 +1565,7 @@
       );
       return {
         left: Math.max(bounds.left, browserLeft),
-        right: Math.min(bounds.left + editorViewport.clientWidth, browserRight),
+        right: Math.min(bounds.left + editorViewport.clientWidth, browserRight) - tileScrollbarClearance,
         top: bounds.top,
         bottom: bounds.bottom,
       };
