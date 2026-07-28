@@ -1209,6 +1209,26 @@ body.movie-panel-interacting *{
   right:0;
   height:2px;
 }
+.movie-tile-center-axis{
+  position:absolute;
+  z-index:102;
+  top:0;
+  bottom:0;
+  width:1px;
+  margin-left:-.5px;
+  background:color-mix(in srgb,var(--accent) 92%,#fff);
+  box-shadow:0 0 5px var(--accent),0 0 14px color-mix(in srgb,var(--accent) 72%,transparent);
+  opacity:0;
+  pointer-events:none;
+}
+.movie-tile-center-axis.active{
+  animation:movie-tile-center-flash .5s ease-out;
+}
+@keyframes movie-tile-center-flash{
+  0%{opacity:0}
+  22%{opacity:1}
+  100%{opacity:0}
+}
 .movie-tile-marquee{
   position:absolute;
   z-index:90;
@@ -1309,4 +1329,4 @@ body.movie-panel-interacting *{
 </section>
 {{ movie_timeline_data|json_script:"movie-timeline-data" }}{{ movie_assets|json_script:"movie-assets-data" }}{{ movie_library_assets|json_script:"movie-library-data" }}{{ movie_render_jobs|json_script:"movie-render-jobs-data" }}{{ movie_edits|json_script:"movie-edits-data" }}
 {% endblock %}
-{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260728-direct-drag-double-home"></script>{% endblock %}
+{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260728-home-axis-settle"></script>{% endblock %}

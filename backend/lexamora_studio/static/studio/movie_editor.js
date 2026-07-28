@@ -325,6 +325,8 @@
   let tileExtentCleanupTimer = 0;
   let tileExtentCleanupSuppressedUntil = 0;
   let tileMoveDragActive = false;
+  let tileHomeCenterFrame = 0;
+  let tileCenterAxisTimer = 0;
   const tileViewportMinimumReveal = 48;
   const tileExtentCleanupMargin = 32;
   const tileBounds = tiles => {
@@ -1029,6 +1031,7 @@
           persistFloatingPanels();
         } else {
           resetPanelGeometry(key);
+          requestAnimationFrame(() => settleTileViewportOnHomeAxis());
         }
         historyRedo = [];
         updateHistoryButtons();
@@ -1407,20 +1410,98 @@
     if (tileExtentCleanupTimer) return;
     tileExtentCleanupTimer = setTimeout(cleanupTileWorkspaceExtent, delay);
   };
-  const collapseTileHomeHorizontally = (tiles, workspace, fallbackBottom) => {
-    if (!editorViewport) return;
-    const homeGeometry = computeTileViewportGeometry(tiles, workspace);
-    tileAllocatedExtent = {
-      ...(tileAllocatedExtent || homeGeometry.requiredExtent),
-      left: homeGeometry.requiredExtent.left,
-      right: homeGeometry.requiredExtent.right,
-      bottom: Math.max(
-        homeGeometry.requiredExtent.bottom,
-        Number(tileAllocatedExtent?.bottom || fallbackBottom),
-      ),
+  const hideTileCenterAxis = () => {
+    if (tileCenterAxisTimer) clearTimeout(tileCenterAxisTimer);
+    tileCenterAxisTimer = 0;
+    const axis = editorLayout?.querySelector(":scope > .movie-tile-center-axis");
+    if (axis) {
+      axis.classList.remove("active");
+      axis.hidden = true;
+    }
+  };
+  const flashTileCenterAxis = logicalX => {
+    if (!editorLayout || !tileViewportGeometry) return;
+    let axis = editorLayout.querySelector(":scope > .movie-tile-center-axis");
+    if (!axis) {
+      axis = document.createElement("i");
+      axis.className = "movie-tile-center-axis";
+      axis.setAttribute("aria-hidden", "true");
+      editorLayout.appendChild(axis);
+    }
+    if (tileCenterAxisTimer) clearTimeout(tileCenterAxisTimer);
+    axis.style.left = `${logicalX + tileViewportGeometry.offsetX}px`;
+    axis.hidden = false;
+    axis.classList.remove("active");
+    void axis.offsetWidth;
+    axis.classList.add("active");
+    tileCenterAxisTimer = window.setTimeout(hideTileCenterAxis, 520);
+  };
+  const cancelTileHomeCenter = () => {
+    if (tileHomeCenterFrame) cancelAnimationFrame(tileHomeCenterFrame);
+    tileHomeCenterFrame = 0;
+    hideTileCenterAxis();
+  };
+  const settleTileViewportOnHomeAxis = ({
+    tiles = null,
+    workspace = null,
+    fallbackBottom = null,
+  } = {}) => {
+    if (!editorViewport || !tileViewportGeometry) return false;
+    const layout = ensureTileLayout();
+    const finalTiles = tiles || tileRenderedTiles || layout.tiles;
+    const finalWorkspace = workspace || layout.workspace;
+    const currentCenter = tileLogicalViewportCenter(tileViewportGeometry);
+    const homeAxis = tileViewportGeometry.baseLeft + tileViewportGeometry.baseWidth / 2;
+    const tolerance = Math.max(1, editorViewport.clientWidth * .1);
+    if (!currentCenter || Math.abs(currentCenter.x - homeAxis) > tolerance) {
+      const cleanupDelay = Math.max(
+        180,
+        tileExtentCleanupSuppressedUntil - Date.now() + 10,
+      );
+      window.setTimeout(() => scheduleTileExtentCleanup(0), cleanupDelay);
+      return false;
+    }
+    cancelTileHomeCenter();
+    if (tileExtentCleanupTimer) clearTimeout(tileExtentCleanupTimer);
+    tileExtentCleanupTimer = 0;
+    tileExtentCleanupSuppressedUntil = Date.now() + 700;
+    const startLeft = editorViewport.scrollLeft;
+    const origin = tileWorkspaceViewportOrigin();
+    const targetLeft = clamp(
+      homeAxis + origin.x + tileViewportGeometry.offsetX - editorViewport.clientWidth / 2,
+      0,
+      Math.max(0, editorViewport.scrollWidth - editorViewport.clientWidth),
+    );
+    const startedAt = performance.now();
+    const duration = 240;
+    const step = now => {
+      const progress = clamp((now - startedAt) / duration, 0, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      editorViewport.scrollLeft = startLeft + (targetLeft - startLeft) * eased;
+      if (progress < 1) {
+        tileHomeCenterFrame = requestAnimationFrame(step);
+        return;
+      }
+      tileHomeCenterFrame = 0;
+      const homeGeometry = computeTileViewportGeometry(finalTiles, finalWorkspace);
+      const verticalCenter = tileLogicalViewportCenter(tileViewportGeometry)?.y;
+      tileAllocatedExtent = {
+        ...(tileAllocatedExtent || homeGeometry.requiredExtent),
+        left: homeGeometry.requiredExtent.left,
+        right: homeGeometry.requiredExtent.right,
+        bottom: Math.max(
+          homeGeometry.requiredExtent.bottom,
+          Number(tileAllocatedExtent?.bottom || fallbackBottom || homeGeometry.requiredExtent.bottom),
+        ),
+      };
+      applyTileRects(finalTiles, {preserveViewport: true, scheduleCleanup: false});
+      scrollTileViewportToLogicalCenter({x: homeAxis, y: verticalCenter});
+      flashTileCenterAxis(homeAxis);
+      tileExtentCleanupSuppressedUntil = Date.now() + 120;
+      window.setTimeout(() => scheduleTileExtentCleanup(0), 130);
     };
-    applyTileRects(tiles, {scheduleCleanup: false});
-    editorViewport.scrollLeft = 0;
+    tileHomeCenterFrame = requestAnimationFrame(step);
+    return true;
   };
   editorViewport?.addEventListener("scroll", () => {
     scheduleTileExtentCleanup(
@@ -1799,6 +1880,15 @@
             && bounds.right <= homeBounds.right + 1
           );
         };
+        const tilesNearHomeHorizontalExtent = tiles => {
+          const bounds = tileBounds(tiles);
+          const tolerance = Math.min(64, Math.max(tileSnapDistance * 2, homeBounds.width * .05));
+          return (
+            bounds.left >= homeBounds.left - tolerance
+            && bounds.right <= homeBounds.right + tolerance
+          );
+        };
+        cancelTileHomeCenter();
         tileMoveDragActive = true;
         if (tileExtentCleanupTimer) clearTimeout(tileExtentCleanupTimer);
         tileExtentCleanupTimer = 0;
@@ -1975,23 +2065,23 @@
           const invalidDrop = tileLayoutHasSelectionOverlap(currentTiles, movingKeys);
           const returnedToStart = movingTilesMatchStart(["x", "y"]);
           const finalTiles = invalidDrop ? startTiles : currentTiles;
-          const returnedHomeHorizontally = !invalidDrop && tilesUseHomeHorizontalExtent(finalTiles);
+          const returnedNearHomeHorizontally = !invalidDrop && tilesNearHomeHorizontalExtent(finalTiles);
           if (invalidDrop) {
             toast("This space is occupied");
           } else {
             editorLayouts.columns = {...editorLayouts.columns, workspace: layout.workspace, tiles: currentTiles};
             persistLayout("columns");
           }
-          if (invalidDrop || returnedToStart || returnedHomeHorizontally) {
+          if (invalidDrop || returnedToStart || returnedNearHomeHorizontally) {
             if (tileExtentCleanupTimer) clearTimeout(tileExtentCleanupTimer);
             tileExtentCleanupTimer = 0;
             tileExtentCleanupSuppressedUntil = Date.now() + 300;
-            if (returnedHomeHorizontally) {
-              collapseTileHomeHorizontally(
-                finalTiles,
-                layout.workspace,
-                startAllocatedExtent.bottom,
-              );
+            if (returnedNearHomeHorizontally) {
+              settleTileViewportOnHomeAxis({
+                tiles: finalTiles,
+                workspace: layout.workspace,
+                fallbackBottom: startAllocatedExtent.bottom,
+              });
             } else {
               tileAllocatedExtent = {...startAllocatedExtent};
               applyTileRects(finalTiles, {scheduleCleanup: false});
@@ -2001,7 +2091,7 @@
               }
             }
           }
-          if (!returnedHomeHorizontally) scheduleTileExtentCleanup(180);
+          if (!returnedNearHomeHorizontally) scheduleTileExtentCleanup(180);
           applyPreviewZoom();
           updatePreviewGeometry();
           renderTimeline();
