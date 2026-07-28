@@ -328,6 +328,7 @@
   let tileHomeCenterFrame = 0;
   let tileCenterAxisTimer = 0;
   let tileViewportScrollSettleTimer = 0;
+  let tileViewportScrollCenterArmed = false;
   const tileViewportMinimumReveal = 48;
   const tileExtentCleanupMargin = 32;
   const tileBounds = tiles => {
@@ -1552,6 +1553,12 @@
     return true;
   };
   let tileViewportLastScrollLeft = editorViewport?.scrollLeft || 0;
+  editorViewport?.addEventListener("pointerdown", event => {
+    if (event.target === editorViewport) tileViewportScrollCenterArmed = true;
+  }, {passive: true});
+  editorViewport?.addEventListener("wheel", () => {
+    tileViewportScrollCenterArmed = true;
+  }, {passive: true});
   editorViewport?.addEventListener("scroll", () => {
     const currentLeft = editorViewport.scrollLeft;
     const horizontalChanged = Math.abs(currentLeft - tileViewportLastScrollLeft) >= .5;
@@ -1559,7 +1566,7 @@
     scheduleTileExtentCleanup(
       document.body.classList.contains("movie-panel-interacting") ? 90 : 180
     );
-    if (!horizontalChanged) return;
+    if (!horizontalChanged || !tileViewportScrollCenterArmed) return;
     if (tileViewportScrollSettleTimer) clearTimeout(tileViewportScrollSettleTimer);
     tileViewportScrollSettleTimer = window.setTimeout(() => {
       tileViewportScrollSettleTimer = 0;
@@ -1567,7 +1574,11 @@
         tileMoveDragActive
         || tileHomeCenterFrame
         || document.body.classList.contains("movie-panel-interacting")
-      ) return;
+      ) {
+        tileViewportScrollCenterArmed = false;
+        return;
+      }
+      tileViewportScrollCenterArmed = false;
       settleTileViewportOnHomeAxis({force: true, toleranceRatio: .05});
     }, 140);
   }, {passive: true});
@@ -1931,9 +1942,6 @@
         const homeBounds = tileBounds((tileLayoutDefaults || createDefaultTileLayout()).tiles);
         const startMovingBounds = tileGroupBounds(startTiles, movingKeys);
         const startViewportLogicalCenter = tileLogicalViewportCenter(tileViewportGeometry);
-        const startAllocatedExtent = tileAllocatedExtent
-          ? {...tileAllocatedExtent}
-          : computeTileViewportGeometry(startTiles, layout.workspace).extent;
         let active = false;
         let currentTiles = startTiles;
         let latestPointer = event;
@@ -1946,15 +1954,10 @@
         let cameraFollowReturningHome = false;
         let cameraFollowTargetLogicalX = startViewportLogicalCenter?.x || 0;
         let previousCameraPointerX = startX;
-        const movingTilesIntersectHomeZones = tiles => movingKeys.some(movingKey => {
-          const rect = tiles[movingKey];
-          const home = tileLayoutDefaults?.tiles?.[movingKey];
-          if (!rect || !home) return false;
-          const overlapWidth = Math.min(rect.x + rect.width, home.x + home.width) - Math.max(rect.x, home.x);
-          const overlapHeight = Math.min(rect.y + rect.height, home.y + home.height) - Math.max(rect.y, home.y);
-          return overlapWidth >= 1 && overlapHeight >= 1;
-        });
         cancelTileHomeCenter();
+        tileViewportScrollCenterArmed = false;
+        if (tileViewportScrollSettleTimer) clearTimeout(tileViewportScrollSettleTimer);
+        tileViewportScrollSettleTimer = 0;
         tileMoveDragActive = true;
         if (tileExtentCleanupTimer) clearTimeout(tileExtentCleanupTimer);
         tileExtentCleanupTimer = 0;
@@ -2150,34 +2153,24 @@
           }
           const invalidDrop = tileLayoutHasSelectionOverlap(currentTiles, movingKeys);
           const finalTiles = invalidDrop ? startTiles : currentTiles;
-          const releasedAcrossHomeZone = !invalidDrop && movingTilesIntersectHomeZones(finalTiles);
           if (invalidDrop) {
             toast("This space is occupied");
           } else {
             editorLayouts.columns = {...editorLayouts.columns, workspace: layout.workspace, tiles: currentTiles};
             persistLayout("columns");
           }
-          if (invalidDrop || releasedAcrossHomeZone) {
+          if (invalidDrop) {
             if (tileExtentCleanupTimer) clearTimeout(tileExtentCleanupTimer);
             tileExtentCleanupTimer = 0;
             tileExtentCleanupSuppressedUntil = Date.now() + 300;
-            if (releasedAcrossHomeZone) {
-              settleTileViewportOnHomeAxis({
-                tiles: finalTiles,
-                workspace: layout.workspace,
-                fallbackBottom: startAllocatedExtent.bottom,
-                toleranceRatio: .05,
-              });
-            } else {
-              applyTileRects(finalTiles, {preserveViewport: true, scheduleCleanup: false});
-              const cleanupDelay = Math.max(
-                180,
-                tileExtentCleanupSuppressedUntil - Date.now() + 10,
-              );
-              window.setTimeout(() => scheduleTileExtentCleanup(0), cleanupDelay);
-            }
+            applyTileRects(finalTiles, {preserveViewport: true, scheduleCleanup: false});
+            const cleanupDelay = Math.max(
+              180,
+              tileExtentCleanupSuppressedUntil - Date.now() + 10,
+            );
+            window.setTimeout(() => scheduleTileExtentCleanup(0), cleanupDelay);
           }
-          if (!releasedAcrossHomeZone) scheduleTileExtentCleanup(180);
+          scheduleTileExtentCleanup(180);
           applyPreviewZoom();
           updatePreviewGeometry();
           renderTimeline();
