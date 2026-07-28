@@ -1819,7 +1819,7 @@
     const scrollEditorViewportTowardPointer = (
       pointer,
       movingBounds = null,
-      {maxStep = 88, horizontal = true, vertical = true} = {},
+      {maxStep = 88} = {},
     ) => {
       if (!editorViewport || !pointer) return false;
       const bounds = editorViewport.getBoundingClientRect();
@@ -1850,20 +1850,16 @@
       }
       const maxLeft = Math.max(0, editorViewport.scrollWidth - editorViewport.clientWidth);
       const maxTop = Math.max(0, editorViewport.scrollHeight - editorViewport.clientHeight);
-      if (horizontal) {
-        editorViewport.scrollLeft = clamp(
-          beforeLeft + axisStep(horizontalPosition, bounds.left, bounds.right),
-          0,
-          maxLeft,
-        );
-      }
-      if (vertical) {
-        editorViewport.scrollTop = clamp(
-          beforeTop + axisStep(pointer.clientY, bounds.top, bounds.bottom),
-          0,
-          maxTop,
-        );
-      }
+      editorViewport.scrollLeft = clamp(
+        beforeLeft + axisStep(horizontalPosition, bounds.left, bounds.right),
+        0,
+        maxLeft,
+      );
+      editorViewport.scrollTop = clamp(
+        beforeTop + axisStep(pointer.clientY, bounds.top, bounds.bottom),
+        0,
+        maxTop,
+      );
       return editorViewport.scrollLeft !== beforeLeft || editorViewport.scrollTop !== beforeTop;
     };
 
@@ -1950,23 +1946,6 @@
         let cameraFollowReturningHome = false;
         let cameraFollowTargetLogicalX = startViewportLogicalCenter?.x || 0;
         let previousCameraPointerX = startX;
-        let dragReserveReady = false;
-        let dragMotionStartedAt = 0;
-        let dragIntentResolved = false;
-        let dragHorizontalIntent = false;
-        let dragVerticalLogicalAnchor = 0;
-        let dragVerticalScreenAnchor = 0;
-        const dragViewportGap = 4;
-        const pointerToLogicalPoint = pointer => {
-          const visible = tileLogicalViewportBounds(tileViewportGeometry);
-          const viewportBounds = editorViewport?.getBoundingClientRect();
-          if (!visible || !viewportBounds) return null;
-          return {
-            x: visible.left + pointer.clientX - viewportBounds.left,
-            y: visible.top + pointer.clientY - viewportBounds.top,
-          };
-        };
-        const startPointerLogical = pointerToLogicalPoint(event);
         const movingTilesIntersectHomeZones = tiles => movingKeys.some(movingKey => {
           const rect = tiles[movingKey];
           const home = tileLayoutDefaults?.tiles?.[movingKey];
@@ -1981,33 +1960,14 @@
         tileExtentCleanupTimer = 0;
         capturePointerSafely(handle, pointerId);
         const updatePosition = next => {
-          const pointerLogical = pointerToLogicalPoint(next);
-          if (!pointerLogical || !startPointerLogical) return;
-          const screenDx = next.clientX - startX;
-          const screenDy = next.clientY - startY;
-          const dx = pointerLogical.x - startPointerLogical.x;
-          const rawDy = pointerLogical.y - startPointerLogical.y;
-          if (!active && Math.hypot(screenDx, screenDy) < 4) return;
+          const dx = next.clientX - startX + (editorViewport?.scrollLeft || 0) - startScrollLeft;
+          const dy = next.clientY - startY + (editorViewport?.scrollTop || 0) - startScrollTop;
+          if (!active && Math.hypot(dx, dy) < 4) return;
           if (!active) {
             remember();
             window.getSelection()?.removeAllRanges();
-            dragMotionStartedAt = performance.now();
           }
           active = true;
-          if (
-            !dragIntentResolved
-            && performance.now() - dragMotionStartedAt >= 500
-          ) {
-            dragIntentResolved = true;
-            dragHorizontalIntent = Math.abs(screenDx) > Math.abs(screenDy) * 4;
-            if (dragHorizontalIntent) {
-              dragVerticalLogicalAnchor = rawDy;
-              dragVerticalScreenAnchor = screenDy;
-            }
-          }
-          const dy = dragHorizontalIntent
-            ? dragVerticalLogicalAnchor + (rawDy - dragVerticalLogicalAnchor) * .2
-            : rawDy;
           const snapped = movingKeys.length > 1
             ? snapMovingTileGroup(movingKeys, dx, dy, startTiles, layout.workspace)
             : (() => {
@@ -2032,17 +1992,28 @@
           const visibleBounds = tileLogicalViewportBounds(tileViewportGeometry);
           const movingBounds = tileGroupBounds(currentTiles, movingKeys);
           if (visibleBounds && movingBounds) {
-            const rightOverflow = dx > 0
-              ? movingBounds.right + dragViewportGap - visibleBounds.right
-              : 0;
+            const rightmostMovingTile = movingKeys
+              .map(movingKey => currentTiles[movingKey])
+              .reduce(
+                (rightmost, tile) =>
+                  !rightmost || tile.x + tile.width > rightmost.x + rightmost.width ? tile : rightmost,
+                null,
+              );
+            const leftmostMovingTile = movingKeys
+              .map(movingKey => currentTiles[movingKey])
+              .reduce(
+                (leftmost, tile) => !leftmost || tile.x < leftmost.x ? tile : leftmost,
+                null,
+              );
+            const rightAllowance = Number(rightmostMovingTile?.width || movingBounds.width) * .05;
+            const leftAllowance = Number(leftmostMovingTile?.width || movingBounds.width) * .05;
+            const rightOverflow = movingBounds.right - (visibleBounds.right + rightAllowance);
             if (rightOverflow > 0) {
               movingKeys.forEach(movingKey => {
                 currentTiles[movingKey].x -= rightOverflow;
               });
             }
-            const leftOverflow = dx < 0
-              ? visibleBounds.left + dragViewportGap - movingBounds.x
-              : 0;
+            const leftOverflow = visibleBounds.left - leftAllowance - movingBounds.x;
             if (leftOverflow > 0) {
               movingKeys.forEach(movingKey => {
                 currentTiles[movingKey].x += leftOverflow;
@@ -2053,7 +2024,7 @@
           movingKeys.forEach(movingKey => layoutPanels[movingKey]?.classList.toggle("movie-tile-drop-invalid", invalidDrop));
           document.body.classList.add("movie-panel-interacting");
           showTileGuides(snapped.guide);
-          applyTileRects(currentTiles, {preserveViewport: true});
+          applyTileRects(currentTiles);
         };
         const movingTilesMatchStart = axes => movingKeys.every(movingKey =>
           axes.every(axis =>
@@ -2065,10 +2036,15 @@
           if (!movingBounds || !startMovingBounds) return;
           const allBounds = tileBounds(currentTiles);
           const edgeTolerance = 2;
-          const pointerDeltaX = next.clientX - startX;
-          const nextCameraSide = Math.abs(pointerDeltaX) >= 1
-            ? Math.sign(pointerDeltaX)
-            : cameraFollowSide;
+          const beyondRight = (
+            movingBounds.right >= allBounds.right - edgeTolerance
+            && movingBounds.right > homeBounds.right + edgeTolerance
+          );
+          const beyondLeft = (
+            movingBounds.x <= allBounds.left + edgeTolerance
+            && movingBounds.x < homeBounds.left - edgeTolerance
+          );
+          const nextCameraSide = beyondRight ? 1 : beyondLeft ? -1 : cameraFollowSide;
           if (nextCameraSide !== cameraFollowSide) {
             cameraFollowSide = nextCameraSide;
             previousCameraPointerX = next.clientX;
@@ -2076,23 +2052,6 @@
           }
           if (cameraFollowSide) {
             cameraFollowHorizontalActive = true;
-            if (!dragReserveReady) {
-              dragReserveReady = true;
-              const baseLeft = tileViewportGeometry.baseLeft;
-              const baseRight = baseLeft + tileViewportGeometry.baseWidth;
-              const reserve = Math.min(
-                tileViewportGeometry.baseWidth,
-                Math.max(96, editorViewport.clientWidth * .55),
-              );
-              const currentExtent = tileAllocatedExtent
-                || computeTileViewportGeometry(currentTiles, layout.workspace).extent;
-              tileAllocatedExtent = {
-                ...currentExtent,
-                left: Math.min(currentExtent.left, baseLeft - reserve),
-                right: Math.max(currentExtent.right, baseRight + reserve),
-              };
-              applyTileRects(currentTiles, {preserveViewport: true, scheduleCleanup: false});
-            }
           }
           if (
             movingBounds.bottom >= allBounds.bottom - edgeTolerance
@@ -2104,19 +2063,14 @@
             cameraFollowReturningHome = (next.clientX - previousCameraPointerX) * cameraFollowSide < 0;
             cameraFollowTargetLogicalX = (
               (startViewportLogicalCenter?.x || 0)
-              + pointerDeltaX * .72
+              + (next.clientX - startX) * 1.35
             );
             previousCameraPointerX = next.clientX;
           }
           if (cameraFollowVerticalActive) {
-            const rawVerticalPointerDelta = next.clientY - startY;
-            const verticalPointerDelta = dragHorizontalIntent
-              ? dragVerticalScreenAnchor
-                + (rawVerticalPointerDelta - dragVerticalScreenAnchor) * .2
-              : rawVerticalPointerDelta;
             cameraFollowTargetTop = movingTilesMatchStart(["y"])
               ? startScrollTop
-              : startScrollTop + verticalPointerDelta * .65;
+              : startScrollTop + (next.clientY - startY) * .65;
           }
         };
         const applyCameraFollow = () => {
@@ -2158,10 +2112,6 @@
           const edgeMoved = scrollEditorViewportTowardPointer(
             latestPointer,
             tileGroupBounds(currentTiles, movingKeys),
-            {
-              horizontal: false,
-              maxStep: dragHorizontalIntent ? 18 : 88,
-            },
           );
           const followMoved = applyCameraFollow();
           if (edgeMoved || followMoved) updatePosition(latestPointer);
