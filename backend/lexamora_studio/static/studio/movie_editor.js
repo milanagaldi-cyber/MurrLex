@@ -1761,11 +1761,11 @@
         let pointerTravelX = 0;
         const virtualCursor = document.createElement("span");
         virtualCursor.className = "movie-tile-locked-cursor";
-        virtualCursor.dataset.businessCommand = "drag";
+        virtualCursor.dataset.businessCommand = "handGrab";
         virtualCursor.hidden = true;
         virtualCursor.setAttribute("aria-hidden", "true");
         document.body.appendChild(virtualCursor);
-        window.setLexamoraIcon?.(virtualCursor, "drag");
+        window.setLexamoraIcon?.(virtualCursor, "handGrab");
         const updateVirtualCursor = () => {
           virtualCursor.style.left = `${virtualPointerX}px`;
           virtualCursor.style.top = `${virtualPointerY}px`;
