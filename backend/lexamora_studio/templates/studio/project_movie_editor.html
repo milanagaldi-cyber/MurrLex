@@ -937,7 +937,8 @@ body.movie-layout-locked [data-timeline-edge-resizer]{pointer-events:none!import
   isolation:isolate;
   overscroll-behavior:auto;
   scrollbar-gutter:stable;
-  min-height:calc(100dvh - 230px);
+  height:calc(100dvh - 230px);
+  min-height:320px;
   background:var(--bg);
 }
 .movie-editor-world{
@@ -1306,4 +1307,4 @@ body.movie-panel-interacting *{
 </section>
 {{ movie_timeline_data|json_script:"movie-timeline-data" }}{{ movie_assets|json_script:"movie-assets-data" }}{{ movie_library_assets|json_script:"movie-library-data" }}{{ movie_render_jobs|json_script:"movie-render-jobs-data" }}{{ movie_edits|json_script:"movie-edits-data" }}
 {% endblock %}
-{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260728-common-scene-viewport"></script>{% endblock %}
+{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260728-stable-scene-height"></script>{% endblock %}

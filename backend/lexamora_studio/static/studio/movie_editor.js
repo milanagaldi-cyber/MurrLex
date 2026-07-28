@@ -339,7 +339,10 @@
     const baseRight = baseLeft + baseWidth;
     const baseBottom = baseTop + baseHeight;
     const viewportWidth = Math.max(1, editorViewport?.clientWidth || baseWidth);
-    const viewportHeight = Math.max(1, editorViewport?.clientHeight || baseHeight);
+    const viewportHeight = Math.max(
+      1,
+      (editorViewport?.clientHeight || baseHeight) - Number(editorLayout?.offsetTop || 0),
+    );
     const coreWidth = Math.max(baseWidth, viewportWidth);
     const coreHeight = Math.max(baseHeight, viewportHeight);
     const leftReserve = clamp(baseLeft - bounds.left, 0, baseWidth);
@@ -422,6 +425,17 @@
     if (!editorViewport) return;
     ["width", "max-width", "margin-left", "margin-right"].forEach(property =>
       editorViewport.style.removeProperty(property)
+    );
+    const visualViewport = window.visualViewport;
+    const browserTop = Math.max(0, Number(visualViewport?.offsetTop || 0));
+    const browserBottom = browserTop + Number(
+      visualViewport?.height || document.documentElement.clientHeight || window.innerHeight,
+    );
+    const viewportTop = Math.max(browserTop, editorViewport.getBoundingClientRect().top);
+    editorViewport.style.setProperty(
+      "height",
+      `${Math.max(320, Math.floor(browserBottom - viewportTop - 16))}px`,
+      "important",
     );
     ensureTileWorkspaceCoversViewport();
   };
