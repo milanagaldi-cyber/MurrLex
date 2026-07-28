@@ -321,6 +321,7 @@
   };
   let tileViewportGeometry = null;
   let tileAllocatedExtent = null;
+  let tileRenderedTiles = null;
   let tileExtentCleanupTimer = 0;
   const tileViewportMinimumReveal = 48;
   const tileExtentCleanupMargin = 32;
@@ -1304,8 +1305,9 @@
       key !== otherKey && !selected.has(otherKey) && rectanglesOverlap(tiles[key], tiles[otherKey])
     ));
   };
-  const applyTileRects = (tiles, {preserveViewport = false} = {}) => {
+  const applyTileRects = (tiles, {preserveViewport = false, scheduleCleanup = true} = {}) => {
     const layout = ensureTileLayout();
+    tileRenderedTiles = cloneTiles(tiles);
     const previousLogicalCenter = tileLogicalViewportCenter(tileViewportGeometry);
     const requiredGeometry = computeTileViewportGeometry(tiles, layout.workspace);
     const requiredExtent = requiredGeometry.requiredExtent;
@@ -1344,6 +1346,9 @@
     const timelineShell = q("[data-timeline-shell]");
     if (timelineShell) timelineShell.style.setProperty("height", `${Math.max(100, tiles.timeline.height - 46)}px`, "important");
     if (preserveViewport) scrollTileViewportToLogicalCenter(previousLogicalCenter);
+    if (scheduleCleanup && document.body.classList.contains("movie-panel-interacting")) {
+      scheduleTileExtentCleanup(90);
+    }
   };
   const tileLogicalViewportBounds = geometry => {
     if (!editorViewport || !geometry) return null;
@@ -1360,12 +1365,9 @@
   const cleanupTileWorkspaceExtent = () => {
     tileExtentCleanupTimer = 0;
     if (!editorViewport || !tileViewportGeometry || !tileAllocatedExtent) return;
-    if (document.body.classList.contains("movie-panel-interacting")) {
-      scheduleTileExtentCleanup();
-      return;
-    }
     const layout = ensureTileLayout();
-    const required = computeTileViewportGeometry(layout.tiles, layout.workspace).requiredExtent;
+    const renderedTiles = tileRenderedTiles || layout.tiles;
+    const required = computeTileViewportGeometry(renderedTiles, layout.workspace).requiredExtent;
     const visible = tileLogicalViewportBounds(tileViewportGeometry);
     if (!visible) return;
     const next = {...tileAllocatedExtent};
@@ -1375,21 +1377,37 @@
       required.bottom,
       visible.top + tileViewportMinimumReveal + tileExtentCleanupMargin,
     );
-    if (safeLeft > next.left) next.left = safeLeft;
-    if (safeRight < next.right) next.right = safeRight;
-    if (safeBottom < next.bottom) next.bottom = safeBottom;
+    const horizontalStep = Math.max(64, editorViewport.clientWidth * .12);
+    const verticalStep = Math.max(48, editorViewport.clientHeight * .12);
+    if (safeLeft > next.left) next.left = Math.min(safeLeft, next.left + horizontalStep);
+    if (safeRight < next.right) next.right = Math.max(safeRight, next.right - horizontalStep);
+    if (safeBottom < next.bottom) next.bottom = Math.max(safeBottom, next.bottom - verticalStep);
     const changed = ["left", "right", "bottom"].some(
       side => Math.abs(Number(next[side]) - Number(tileAllocatedExtent[side])) >= 1
     );
     if (!changed) return;
     tileAllocatedExtent = next;
-    applyTileRects(layout.tiles, {preserveViewport: true});
+    applyTileRects(renderedTiles, {preserveViewport: true, scheduleCleanup: false});
+    const hasMore = (
+      next.left < safeLeft - 1
+      || next.right > safeRight + 1
+      || next.bottom > safeBottom + 1
+    );
+    if (hasMore) {
+      scheduleTileExtentCleanup(
+        document.body.classList.contains("movie-panel-interacting") ? 90 : 140
+      );
+    }
   };
   const scheduleTileExtentCleanup = (delay = 160) => {
-    clearTimeout(tileExtentCleanupTimer);
+    if (tileExtentCleanupTimer) return;
     tileExtentCleanupTimer = setTimeout(cleanupTileWorkspaceExtent, delay);
   };
-  editorViewport?.addEventListener("scroll", () => scheduleTileExtentCleanup(180), {passive: true});
+  editorViewport?.addEventListener("scroll", () => {
+    scheduleTileExtentCleanup(
+      document.body.classList.contains("movie-panel-interacting") ? 90 : 180
+    );
+  }, {passive: true});
   window.addEventListener("pointerup", () => scheduleTileExtentCleanup(180), {passive: true});
   const nearestTileSnap = (value, candidates) => {
     let nearest = null;
