@@ -1890,13 +1890,6 @@
         let cameraFollowVerticalActive = false;
         let cameraFollowTargetLeft = startScrollLeft;
         let cameraFollowTargetTop = startScrollTop;
-        const tilesUseHomeHorizontalExtent = tiles => {
-          const bounds = tileBounds(tiles);
-          return (
-            bounds.left >= homeBounds.left - 1
-            && bounds.right <= homeBounds.right + 1
-          );
-        };
         const movingTilesIntersectHomeZones = tiles => movingKeys.some(movingKey => {
           const rect = tiles[movingKey];
           const home = tileLayoutDefaults?.tiles?.[movingKey];
@@ -1994,9 +1987,7 @@
           }
           if (cameraFollowHorizontalActive) {
             cameraFollowTargetLeft = clamp(
-              tilesUseHomeHorizontalExtent(currentTiles)
-                ? 0
-                : startScrollLeft + (next.clientX - startX) * 1.35,
+              startScrollLeft + (next.clientX - startX) * 1.35,
               0,
               Math.max(0, editorViewport.scrollWidth - editorViewport.clientWidth),
             );
@@ -2081,7 +2072,6 @@
             return;
           }
           const invalidDrop = tileLayoutHasSelectionOverlap(currentTiles, movingKeys);
-          const returnedToStart = movingTilesMatchStart(["x", "y"]);
           const finalTiles = invalidDrop ? startTiles : currentTiles;
           const releasedAcrossHomeZone = !invalidDrop && movingTilesIntersectHomeZones(finalTiles);
           if (invalidDrop) {
@@ -2090,7 +2080,7 @@
             editorLayouts.columns = {...editorLayouts.columns, workspace: layout.workspace, tiles: currentTiles};
             persistLayout("columns");
           }
-          if (invalidDrop || returnedToStart || releasedAcrossHomeZone) {
+          if (invalidDrop || releasedAcrossHomeZone) {
             if (tileExtentCleanupTimer) clearTimeout(tileExtentCleanupTimer);
             tileExtentCleanupTimer = 0;
             tileExtentCleanupSuppressedUntil = Date.now() + 300;
@@ -2102,12 +2092,12 @@
                 toleranceRatio: .15,
               });
             } else {
-              tileAllocatedExtent = {...startAllocatedExtent};
-              applyTileRects(finalTiles, {scheduleCleanup: false});
-              if (editorViewport) {
-                editorViewport.scrollLeft = startScrollLeft;
-                editorViewport.scrollTop = startScrollTop;
-              }
+              applyTileRects(finalTiles, {preserveViewport: true, scheduleCleanup: false});
+              const cleanupDelay = Math.max(
+                180,
+                tileExtentCleanupSuppressedUntil - Date.now() + 10,
+              );
+              window.setTimeout(() => scheduleTileExtentCleanup(0), cleanupDelay);
             }
           }
           if (!releasedAcrossHomeZone) scheduleTileExtentCleanup(180);
