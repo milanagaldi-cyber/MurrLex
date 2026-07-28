@@ -1280,7 +1280,6 @@
   };
   const cloneTiles = tiles => Object.fromEntries(tilePanelKeys.map(key => [key, tileRect(tiles[key])]));
   const syncTileSelectionClasses = () => {
-    editorLayout?.classList.toggle("movie-tile-group-selected", selectedTileKeys.size > 1);
     tilePanelKeys.forEach(key => {
       const panel = layoutPanels[key];
       if (!panel) return;
@@ -1715,7 +1714,7 @@
       return editorViewport.scrollLeft !== beforeLeft || editorViewport.scrollTop !== beforeTop;
     };
 
-    const tileHoldBlockedSelector = [
+    const tileDragBlockedSelector = [
       "button",
       "input",
       "select",
@@ -1756,18 +1755,18 @@
         : panel?.querySelector(`[data-panel-drag="${key}"]`);
       if (!panel || !handle || handle.dataset.tileDragBound === "true") return;
       handle.dataset.tileDragBound = "true";
-      const beginTileDrag = (event, {allowInteractive = false} = {}) => {
+      const beginTileDrag = event => {
         if (
           !canEdit
           || event.button !== 0
-          || (!allowInteractive && event.target.closest(tileHoldBlockedSelector))
+          || event.defaultPrevented
+          || event.target.closest(tileDragBlockedSelector)
         ) return false;
         if (layoutLocked) {
           event.preventDefault();
           flashLayoutLock();
           return false;
         }
-        event.preventDefault();
         event.stopPropagation();
         const layout = ensureTileLayout();
         const startTiles = cloneTiles(layout.tiles);
@@ -1808,7 +1807,10 @@
           const dx = next.clientX - startX + (editorViewport?.scrollLeft || 0) - startScrollLeft;
           const dy = next.clientY - startY + (editorViewport?.scrollTop || 0) - startScrollTop;
           if (!active && Math.hypot(dx, dy) < 4) return;
-          if (!active) remember();
+          if (!active) {
+            remember();
+            window.getSelection()?.removeAllRanges();
+          }
           active = true;
           const snapped = movingKeys.length > 1
             ? snapMovingTileGroup(movingKeys, dx, dy, startTiles, layout.workspace)
@@ -1944,6 +1946,7 @@
           latestPointer = next;
           updatePosition(next);
           if (active) {
+            next.preventDefault();
             updateCameraFollowTarget(next);
             if (applyCameraFollow()) updatePosition(next);
           }
@@ -2012,75 +2015,32 @@
         return true;
       };
 
-      if (panel.dataset.tileGroupDragBound !== "true") {
-        panel.dataset.tileGroupDragBound = "true";
-        panel.addEventListener("pointerdown", event => {
-          if (
-            selectedTileKeys.size <= 1
-            || !selectedTileKeys.has(key)
-            || !beginTileDrag(event, {allowInteractive: true})
-          ) return;
-          event.stopImmediatePropagation();
-          document.body.classList.add("movie-panel-interacting");
-          const suppressGroupClick = clickEvent => {
-            clickEvent.preventDefault();
-            clickEvent.stopImmediatePropagation();
-          };
-          const clearGroupClickGuard = () => {
-            window.removeEventListener("pointerup", clearGroupClickGuard, true);
-            window.removeEventListener("pointercancel", clearGroupClickGuard, true);
-            window.setTimeout(() => {
-              window.removeEventListener("click", suppressGroupClick, true);
-            }, 80);
-          };
-          window.addEventListener("click", suppressGroupClick, true);
-          window.addEventListener("pointerup", clearGroupClickGuard, {capture: true, once: true});
-          window.addEventListener("pointercancel", clearGroupClickGuard, {capture: true, once: true});
-        }, true);
-      }
-
-      if (panel.dataset.tileHoldDragBound !== "true") {
-        panel.dataset.tileHoldDragBound = "true";
+      if (panel.dataset.tileDirectDragBound !== "true") {
+        panel.dataset.tileDirectDragBound = "true";
         panel.addEventListener("pointerdown", event => {
           if (
             !canEdit
             || event.button !== 0
-            || event.target.closest(tileHoldBlockedSelector)
+            || event.defaultPrevented
+            || event.target.closest(tileDragBlockedSelector)
+            || pointerNearTileEdge(event, panel)
+          ) return;
+          beginTileDrag(event);
+        });
+      }
+
+      if (panel.dataset.tileHomeDblclickBound !== "true") {
+        panel.dataset.tileHomeDblclickBound = "true";
+        panel.addEventListener("dblclick", event => {
+          if (
+            !canEdit
+            || event.button !== 0
+            || event.target.closest(tileDragBlockedSelector)
             || pointerNearTileEdge(event, panel)
           ) return;
           event.preventDefault();
-          const pointerId = event.pointerId;
-          const startX = event.clientX;
-          const startY = event.clientY;
-          let holdTimer = 0;
-          const cleanupHold = releaseCapture => {
-            if (holdTimer) clearTimeout(holdTimer);
-            holdTimer = 0;
-            window.removeEventListener("pointermove", cancelOnMove, true);
-            window.removeEventListener("pointerup", cancelHold, true);
-            window.removeEventListener("pointercancel", cancelHold, true);
-            if (releaseCapture) releasePointerCaptureSafely(panel, pointerId);
-          };
-          const cancelOnMove = next => {
-            if (next.pointerId !== pointerId) return;
-            if (Math.hypot(next.clientX - startX, next.clientY - startY) > 6) cleanupHold(true);
-          };
-          const cancelHold = next => {
-            if (next.pointerId != null && next.pointerId !== pointerId) return;
-            cleanupHold(true);
-          };
-          capturePointerSafely(panel, pointerId);
-          window.addEventListener("pointermove", cancelOnMove, true);
-          window.addEventListener("pointerup", cancelHold, true);
-          window.addEventListener("pointercancel", cancelHold, true);
-          holdTimer = window.setTimeout(() => {
-            cleanupHold(false);
-            if (beginTileDrag(event)) {
-              document.body.classList.add("movie-panel-interacting");
-            } else {
-              releasePointerCaptureSafely(panel, pointerId);
-            }
-          }, 100);
+          event.stopPropagation();
+          panel.querySelector(".movie-window-home")?.click();
         });
       }
     });
