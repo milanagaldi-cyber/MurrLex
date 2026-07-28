@@ -325,6 +325,7 @@
   let tileExtentCleanupTimer = 0;
   let tileExtentCleanupSuppressedUntil = 0;
   let tileHomeCollapseFrame = 0;
+  let tileMoveDragActive = false;
   const tileViewportMinimumReveal = 48;
   const tileExtentCleanupMargin = 32;
   const tileBounds = tiles => {
@@ -1402,6 +1403,7 @@
     }
   };
   const scheduleTileExtentCleanup = (delay = 160) => {
+    if (tileMoveDragActive || tileHomeCollapseFrame) return;
     if (Date.now() < tileExtentCleanupSuppressedUntil) return;
     if (tileExtentCleanupTimer) return;
     tileExtentCleanupTimer = setTimeout(cleanupTileWorkspaceExtent, delay);
@@ -1413,9 +1415,6 @@
   const animateTileHomeHorizontalCollapse = (tiles, workspace, fallbackBottom) => {
     if (!editorViewport) return;
     cancelTileHomeCollapse();
-    const startLeft = editorViewport.scrollLeft;
-    const startedAt = performance.now();
-    const duration = 220;
     const finish = () => {
       tileHomeCollapseFrame = 0;
       const homeGeometry = computeTileViewportGeometry(tiles, workspace);
@@ -1431,19 +1430,19 @@
       applyTileRects(tiles, {scheduleCleanup: false});
       editorViewport.scrollLeft = 0;
     };
-    if (startLeft < 1) {
+    if (editorViewport.scrollLeft < 1) {
       finish();
       return;
     }
-    const tick = now => {
-      const progress = clamp((now - startedAt) / duration, 0, 1);
-      const eased = 1 - Math.pow(1 - progress, 3);
-      editorViewport.scrollLeft = startLeft * (1 - eased);
-      if (progress < 1) {
-        tileHomeCollapseFrame = requestAnimationFrame(tick);
-      } else {
+    const tick = () => {
+      const remaining = editorViewport.scrollLeft;
+      if (remaining < 1) {
         finish();
+        return;
       }
+      const step = clamp(remaining * .12, 2, 24);
+      editorViewport.scrollLeft = Math.max(0, remaining - step);
+      tileHomeCollapseFrame = requestAnimationFrame(tick);
     };
     tileHomeCollapseFrame = requestAnimationFrame(tick);
   };
@@ -1776,6 +1775,9 @@
           );
         };
         cancelTileHomeCollapse();
+        tileMoveDragActive = true;
+        if (tileExtentCleanupTimer) clearTimeout(tileExtentCleanupTimer);
+        tileExtentCleanupTimer = 0;
         capturePointerSafely(handle, pointerId);
         const updatePosition = next => {
           const dx = next.clientX - startX + (editorViewport?.scrollLeft || 0) - startScrollLeft;
@@ -1876,7 +1878,7 @@
           const differenceX = cameraFollowTargetLeft - beforeLeft;
           const differenceY = cameraFollowTargetTop - beforeTop;
           const returningHome = cameraFollowHorizontalActive && tilesUseHomeHorizontalExtent(currentTiles);
-          const horizontalEase = returningHome ? .14 : .34;
+          const horizontalEase = returningHome ? .18 : .34;
           const stepX = Math.abs(differenceX) < .5 ? differenceX : differenceX * horizontalEase;
           const stepY = Math.abs(differenceY) < .5 ? differenceY : differenceY * .34;
           editorViewport.scrollLeft = clamp(
@@ -1921,8 +1923,12 @@
           releasePointerCaptureSafely(handle, pointerId);
           movingKeys.forEach(movingKey => layoutPanels[movingKey]?.classList.remove("movie-tile-moving", "movie-tile-drop-invalid"));
           document.body.classList.remove("movie-panel-interacting");
+          tileMoveDragActive = false;
           hideTileGuides();
-          if (!active) return;
+          if (!active) {
+            scheduleTileExtentCleanup(180);
+            return;
+          }
           const invalidDrop = tileLayoutHasSelectionOverlap(currentTiles, movingKeys);
           const returnedToStart = movingTilesMatchStart(["x", "y"]);
           const finalTiles = invalidDrop ? startTiles : currentTiles;
@@ -1952,6 +1958,7 @@
               }
             }
           }
+          if (!returnedHomeHorizontally) scheduleTileExtentCleanup(180);
           applyPreviewZoom();
           updatePreviewGeometry();
           renderTimeline();
