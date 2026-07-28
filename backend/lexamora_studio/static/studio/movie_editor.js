@@ -128,6 +128,7 @@
   const trackContext = q("[data-track-context]");
   const editorLayout = q("[data-editor-layout]");
   const editorViewport = q("[data-editor-workspace-viewport]");
+  const editorWorld = q("[data-editor-workspace-world]");
   const editProjectsPanel = document.querySelector('[data-montage-gallery][data-gallery-key="draft-editor"]');
   const editorHeaderPanel = q('[data-panel-key="editorHeader"]');
   if (editProjectsPanel) {
@@ -358,24 +359,31 @@
       baseHeight,
     };
   };
-  const tileLogicalViewportCenter = geometry => editorViewport && geometry
-    ? {
-        x: editorViewport.scrollLeft + editorViewport.clientWidth / 2 - geometry.offsetX,
-        y: editorViewport.scrollTop + editorViewport.clientHeight / 2 - geometry.offsetY,
-      }
-    : null;
+  const tileWorkspaceViewportOrigin = () => ({
+    x: Number(editorLayout?.offsetLeft || 0),
+    y: Number(editorLayout?.offsetTop || 0),
+  });
+  const tileLogicalViewportCenter = geometry => {
+    if (!editorViewport || !geometry) return null;
+    const origin = tileWorkspaceViewportOrigin();
+    return {
+      x: editorViewport.scrollLeft + editorViewport.clientWidth / 2 - origin.x - geometry.offsetX,
+      y: editorViewport.scrollTop + editorViewport.clientHeight / 2 - origin.y - geometry.offsetY,
+    };
+  };
   const scrollTileViewportToLogicalCenter = logicalCenter => {
     if (!editorViewport || !tileViewportGeometry || !logicalCenter) return;
     const geometry = tileViewportGeometry;
+    const origin = tileWorkspaceViewportOrigin();
     editorViewport.scrollLeft = clamp(
-      logicalCenter.x + geometry.offsetX - editorViewport.clientWidth / 2,
+      logicalCenter.x + origin.x + geometry.offsetX - editorViewport.clientWidth / 2,
       0,
-      Math.max(0, geometry.width - editorViewport.clientWidth),
+      Math.max(0, editorViewport.scrollWidth - editorViewport.clientWidth),
     );
     editorViewport.scrollTop = clamp(
-      logicalCenter.y + geometry.offsetY - editorViewport.clientHeight / 2,
+      logicalCenter.y + origin.y + geometry.offsetY - editorViewport.clientHeight / 2,
       0,
-      Math.max(0, geometry.height - editorViewport.clientHeight),
+      Math.max(0, editorViewport.scrollHeight - editorViewport.clientHeight),
     );
   };
   const centerTileWorkspaceView = () => {
@@ -383,10 +391,12 @@
     const layout = ensureTileLayout();
     const geometry = tileViewportGeometry || computeTileViewportGeometry(layout.tiles, layout.workspace);
     tileViewportGeometry = geometry;
-    scrollTileViewportToLogicalCenter({
-      x: geometry.baseLeft + geometry.baseWidth / 2,
-      y: geometry.baseTop + Math.min(geometry.baseHeight, editorViewport.clientHeight) / 2,
-    });
+    const origin = tileWorkspaceViewportOrigin();
+    editorViewport.scrollLeft = clamp(
+      geometry.baseLeft + geometry.baseWidth / 2 + origin.x + geometry.offsetX - editorViewport.clientWidth / 2,
+      0,
+      Math.max(0, editorViewport.scrollWidth - editorViewport.clientWidth),
+    );
   };
   const ensureTileWorkspaceCoversViewport = () => {
     if (!editorViewport || !editorLayout) return 0;
@@ -1273,6 +1283,11 @@
     const previousLogicalCenter = tileLogicalViewportCenter(tileViewportGeometry);
     const geometry = computeTileViewportGeometry(tiles, layout.workspace);
     tileViewportGeometry = geometry;
+    if (editorWorld) {
+      editorWorld.style.setProperty("--murrcut-world-width", `${geometry.width}px`);
+      editorWorld.style.setProperty("--murrcut-world-anchor-x", `${geometry.baseLeft + geometry.offsetX}px`);
+      editorWorld.style.setProperty("--murrcut-base-width", `${geometry.baseWidth}px`);
+    }
     editorLayout.style.setProperty("--tile-workspace-width", `${geometry.width}px`);
     editorLayout.style.setProperty("--tile-workspace-height", `${geometry.height}px`);
     editorLayout.style.setProperty("width", `${geometry.width}px`, "important");

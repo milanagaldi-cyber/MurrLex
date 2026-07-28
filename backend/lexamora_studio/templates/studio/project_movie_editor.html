@@ -938,13 +938,24 @@ body.movie-layout-locked [data-timeline-edge-resizer]{pointer-events:none!import
   overscroll-behavior:auto;
   scrollbar-gutter:stable;
   min-height:calc(100dvh - 230px);
-  background:
-    linear-gradient(color-mix(in srgb,var(--line) 22%,transparent) 1px,transparent 1px),
-    linear-gradient(90deg,color-mix(in srgb,var(--line) 22%,transparent) 1px,transparent 1px);
-  background-size:32px 32px;
-  background-position:-1px -1px;
+  background:var(--bg);
 }
-.movie-editor[data-workspace-pattern="grid"] .movie-editor-viewport,
+.movie-editor-world{
+  position:relative;
+  display:block;
+  box-sizing:border-box;
+  width:var(--murrcut-world-width,100%);
+  min-width:100%;
+}
+.movie-editor-project-header{
+  box-sizing:border-box;
+  width:var(--murrcut-base-width,min(1600px,calc(100vw - 32px)));
+  margin-left:var(--murrcut-world-anchor-x,var(--murrcut-page-left,16px));
+  background:var(--bg);
+}
+.movie-editor-project-header .project-shell-header{
+  margin-bottom:22px;
+}
 .movie-editor[data-workspace-pattern="grid"] .movie-editor-layout{
   background-image:
     linear-gradient(color-mix(in srgb,var(--line) 22%,transparent) 1px,transparent 1px),
@@ -952,13 +963,11 @@ body.movie-layout-locked [data-timeline-edge-resizer]{pointer-events:none!import
   background-size:32px 32px!important;
   background-position:-1px -1px!important;
 }
-.movie-editor[data-workspace-pattern="dots"] .movie-editor-viewport,
 .movie-editor[data-workspace-pattern="dots"] .movie-editor-layout{
   background-image:radial-gradient(circle,color-mix(in srgb,var(--accent) 42%,transparent) 1.6px,transparent 2px)!important;
   background-size:24px 24px!important;
   background-position:0 0!important;
 }
-.movie-editor[data-workspace-pattern="hearts"] .movie-editor-viewport,
 .movie-editor[data-workspace-pattern="hearts"] .movie-editor-layout{
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='42' height='42' viewBox='0 0 42 42'%3E%3Cpath fill='%232fc5ff' fill-opacity='.24' d='M21 31.5 9.9 21.2C4.1 15.8 7.9 6.5 15.5 6.5c2.7 0 4.4 1.4 5.5 3.1 1.1-1.7 2.8-3.1 5.5-3.1 7.6 0 11.4 9.3 5.6 14.7L21 31.5z'/%3E%3C/svg%3E")!important;
   background-size:42px 42px!important;
@@ -1209,9 +1218,11 @@ body.movie-panel-interacting *{
 }
 </style>{% endblock %}
 {% block content %}
-{% include "studio/_project_navigation.html" %}
-{% include "studio/_montage_gallery.html" with montage_gallery_key="draft-editor" montage_actions_url=movie_edits_url montage_can_edit=can_edit %}
 <section class="movie-editor" data-movie-editor data-can-edit="{{ can_edit|yesno:'true,false' }}" data-can-export="{{ can_export|yesno:'true,false' }}" data-timeline-id="{{ movie_timeline.id }}" data-edits-url="{{ movie_edits_url }}" data-edit-settings-url="{{ movie_edit_settings_url }}" data-aspect-ratio="{{ movie_timeline.aspect_ratio }}" data-resolution="{{ movie_timeline.resolution }}" data-fps="{{ movie_timeline.fps }}" data-save-url="{% url 'studio:project_movie_editor' project.id %}" data-history-url="{% url 'studio:project_movie_editor_revisions' project.id %}" data-media-url="{{ movie_media_url }}" data-render-url="{{ movie_render_url }}">
+  <div class="movie-editor-viewport" data-editor-workspace-viewport>
+  <div class="movie-editor-world" data-editor-workspace-world>
+  <div class="movie-editor-project-header" data-editor-project-header>{% include "studio/_project_navigation.html" %}</div>
+  {% include "studio/_montage_gallery.html" with montage_gallery_key="draft-editor" montage_actions_url=movie_edits_url montage_can_edit=can_edit %}
   <div class="panel movie-toolbar movie-collapsible" data-panel-key="editorHeader" data-panel-drag="editorHeader" title="Drag empty header space to move this tile">
     <div class="movie-settings">
       <input data-movie-title value="{{ movie_timeline.title }}" aria-label="MC Project title" title="MC Project title">
@@ -1249,7 +1260,6 @@ body.movie-panel-interacting *{
     <div class="movie-render-list" data-render-list><p class="muted">No exports yet</p></div>
     </div>
   </section>
-  <div class="movie-editor-viewport" data-editor-workspace-viewport>
   <div class="movie-editor-layout" data-editor-layout data-layout="columns">
   <div class="movie-workbench">
     <div class="movie-stage-column">
@@ -1278,7 +1288,7 @@ body.movie-panel-interacting *{
   </div>
   <aside class="movie-clip-context" data-clip-context hidden><div><span>Clip</span><strong data-clip-context-current></strong></div><div><span>Source</span><strong data-clip-context-source></strong></div><div class="movie-clip-context-actions"><button type="button" class="secondary" data-context-copy title="Copy (Ctrl+C)">Copy</button><button type="button" class="secondary" data-context-paste title="Paste (Ctrl+V)">Paste</button><button type="button" class="secondary" data-context-group title="Group selected clips">Group</button><button type="button" class="secondary" data-context-ungroup title="Ungroup selected clips">Ungroup</button><button type="button" class="secondary" data-clip-render-project title="Render the edited clip into workspace media">Render clip</button><a class="button secondary" data-clip-source-download title="Download original source">Download source</a></div></aside>
   <div class="movie-track-context" data-track-context hidden><strong data-track-context-title>Track</strong><button type="button" data-track-context-action="up">Move up</button><button type="button" data-track-context-action="down">Move down</button><button type="button" data-track-context-action="mute">Mute</button><button type="button" data-track-context-action="visibility">Hide</button><button type="button" data-track-context-action="lock">Lock</button><button type="button" data-track-context-action="display">Toggle display</button><button type="button" data-track-context-action="height-down">Decrease height</button><button type="button" data-track-context-action="height-up">Increase height</button><button type="button" data-track-context-action="delete">Delete empty track</button></div>
-  </div>
+  </div></div>
   {% if can_edit %}<dialog class="asset-picker movie-media-picker" data-media-library-dialog>
     <div class="toolbar image-picker-head"><div><h2>Project media <span class="media-count" data-media-library-count>0</span></h2><p>Choose existing video, audio or image media</p></div><button class="icon-button secondary" type="button" data-media-library-close aria-label="Close">&times;</button></div>
     <div class="movie-library-toolbar"><div class="image-source-switch"><button type="button" class="active" data-media-scope="project">Project</button><button type="button" class="secondary" data-media-scope="workspace">Workspace</button></div><div class="movie-library-filters"><label>Type<select data-media-kind><option value="ALL">All</option><option value="VIDEO">Video</option><option value="AUDIO">Audio</option><option value="IMAGE">Image</option></select></label><label>Sort<select data-media-sort><option value="latest">Latest</option><option value="alpha">A-Z</option></select></label></div></div>
@@ -1296,4 +1306,4 @@ body.movie-panel-interacting *{
 </section>
 {{ movie_timeline_data|json_script:"movie-timeline-data" }}{{ movie_assets|json_script:"movie-assets-data" }}{{ movie_library_assets|json_script:"movie-library-data" }}{{ movie_render_jobs|json_script:"movie-render-jobs-data" }}{{ movie_edits|json_script:"movie-edits-data" }}
 {% endblock %}
-{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260726-bottom-reserve-header-focus"></script>{% endblock %}
+{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260728-common-scene-viewport"></script>{% endblock %}
