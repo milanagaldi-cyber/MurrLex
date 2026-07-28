@@ -1628,23 +1628,24 @@
           right: Math.max(...rects.map(rect => rect.right)),
         };
       };
-      let visible = groupBounds();
-      const scrollDelta = visible.left < safeLeft
-        ? visible.left - safeLeft
-        : visible.right > safeRight ? visible.right - safeRight : 0;
-      if (scrollDelta) {
+      for (let attempt = 0; attempt < 6; attempt += 1) {
+        let visible = groupBounds();
+        const scrollDelta = visible.left < safeLeft
+          ? visible.left - safeLeft
+          : visible.right > safeRight ? visible.right - safeRight : 0;
+        if (Math.abs(scrollDelta) < .5) break;
         const maxLeft = Math.max(0, editorViewport.scrollWidth - editorViewport.clientWidth);
         editorViewport.scrollLeft = clamp(editorViewport.scrollLeft + scrollDelta, 0, maxLeft);
         visible = groupBounds();
+        const correction = visible.left < safeLeft
+          ? safeLeft - visible.left
+          : visible.right > safeRight ? safeRight - visible.right : 0;
+        if (Math.abs(correction) < .5) continue;
+        keys.forEach(key => {
+          tiles[key].x += correction;
+        });
+        applyTileRects(tiles);
       }
-      const correction = visible.left < safeLeft
-        ? safeLeft - visible.left
-        : visible.right > safeRight ? safeRight - visible.right : 0;
-      if (Math.abs(correction) < .5) return editorViewport.scrollLeft - initialScrollLeft;
-      keys.forEach(key => {
-        tiles[key].x += correction;
-      });
-      applyTileRects(tiles);
       return editorViewport.scrollLeft - initialScrollLeft;
     };
 
@@ -1759,6 +1760,7 @@
           document.body.classList.remove("movie-panel-interacting");
           hideTileGuides();
           if (!active) return;
+          visibilityScrollX += keepMovingTilesVisible(currentTiles, movingKeys);
           if (tileLayoutHasSelectionOverlap(currentTiles, movingKeys)) {
             applyTileRects(startTiles);
             toast("This space is occupied");
