@@ -339,6 +339,18 @@
       bottom: Math.max(...rects.map(rect => rect.y + rect.height)),
     };
   };
+  const tilesFitDefaultDisplayZone = tiles => {
+    if (!tiles) return false;
+    const defaults = tileLayoutDefaults || createDefaultTileLayout();
+    const home = tileBounds(defaults.tiles);
+    const current = tileBounds(tiles);
+    return (
+      current.left >= home.left
+      && current.right <= home.right
+      && current.top >= home.top
+      && current.bottom <= home.bottom
+    );
+  };
   const computeTileViewportGeometry = (tiles, workspace, allocatedExtent = null) => {
     const defaults = tileLayoutDefaults || createDefaultTileLayout();
     const bounds = tileBounds(tiles);
@@ -1464,6 +1476,15 @@
     const layout = ensureTileLayout();
     const finalTiles = tiles || tileRenderedTiles || layout.tiles;
     const finalWorkspace = workspace || layout.workspace;
+    if (!tilesFitDefaultDisplayZone(finalTiles)) {
+      cancelTileHomeCenter();
+      const cleanupDelay = Math.max(
+        180,
+        tileExtentCleanupSuppressedUntil - Date.now() + 10,
+      );
+      window.setTimeout(() => scheduleTileExtentCleanup(0), cleanupDelay);
+      return false;
+    }
     const currentCenter = tileLogicalViewportCenter(tileViewportGeometry);
     const homeAxis = tileViewportGeometry.baseLeft + tileViewportGeometry.baseWidth / 2;
     const horizontalOverflow = Math.max(0, editorViewport.scrollWidth - editorViewport.clientWidth);
@@ -1547,7 +1568,7 @@
         || tileHomeCenterFrame
         || document.body.classList.contains("movie-panel-interacting")
       ) return;
-      settleTileViewportOnHomeAxis({toleranceRatio: .05});
+      settleTileViewportOnHomeAxis({force: true, toleranceRatio: .05});
     }, 140);
   }, {passive: true});
   window.addEventListener("pointerup", () => scheduleTileExtentCleanup(180), {passive: true});
@@ -2301,6 +2322,7 @@
           };
         };
         const startPointerLogical = pointerToLogicalPoint(event);
+        cancelTileHomeCenter();
         capturePointerSafely(handle, pointerId);
         const updateInwardFollowTarget = next => {
           if (!horizontalSide) return;
