@@ -1554,17 +1554,31 @@
     if (editProjectsPanel) window.refreshLexamoraIcons?.(editProjectsPanel);
     localStorage.removeItem(floatingPanelsKey);
 
+    const visibleEditorViewportBounds = () => {
+      const bounds = editorViewport.getBoundingClientRect();
+      const visualViewport = window.visualViewport;
+      const browserLeft = Math.max(0, visualViewport?.offsetLeft || 0);
+      const browserRight = Math.min(
+        document.documentElement.clientWidth,
+        browserLeft + (visualViewport?.width || document.documentElement.clientWidth),
+      );
+      return {
+        left: Math.max(bounds.left, browserLeft),
+        right: Math.min(bounds.left + editorViewport.clientWidth, browserRight),
+        top: bounds.top,
+        bottom: bounds.bottom,
+      };
+    };
     const horizontalEditorEdgeStep = pointer => {
       if (!editorViewport || !pointer) return 0;
-      const bounds = editorViewport.getBoundingClientRect();
-      const usableRight = bounds.left + editorViewport.clientWidth;
-      const edgeZone = Math.min(72, Math.max(40, bounds.width * .05));
+      const bounds = visibleEditorViewportBounds();
+      const edgeZone = Math.min(72, Math.max(40, (bounds.right - bounds.left) * .05));
       const maxStep = 28;
       if (pointer.clientX < bounds.left + edgeZone) {
         return -Math.ceil(maxStep * clamp((bounds.left + edgeZone - pointer.clientX) / edgeZone, 0, 1));
       }
-      if (pointer.clientX > usableRight - edgeZone) {
-        return Math.ceil(maxStep * clamp((pointer.clientX - (usableRight - edgeZone)) / edgeZone, 0, 1));
+      if (pointer.clientX > bounds.right - edgeZone) {
+        return Math.ceil(maxStep * clamp((pointer.clientX - (bounds.right - edgeZone)) / edgeZone, 0, 1));
       }
       return 0;
     };
@@ -1603,9 +1617,9 @@
       applyTileRects(tiles);
       const panels = keys.map(key => layoutPanels[key]).filter(Boolean);
       if (!editorViewport || !panels.length) return 0;
-      const viewportBounds = editorViewport.getBoundingClientRect();
+      const viewportBounds = visibleEditorViewportBounds();
       const safeLeft = viewportBounds.left + tileWorkspaceInset;
-      const safeRight = viewportBounds.left + editorViewport.clientWidth - tileWorkspaceInset;
+      const safeRight = viewportBounds.right - tileWorkspaceInset;
       const groupBounds = () => {
         const rects = panels.map(panel => panel.getBoundingClientRect());
         return {
