@@ -634,6 +634,15 @@
     const rootBounds = pageRect(root);
     const viewportWidth = document.documentElement.clientWidth;
     const viewportHeight = document.documentElement.clientHeight;
+    if (editorViewport && editorLayout) {
+      workspaceExtent.width = viewportWidth;
+      workspaceExtent.height = Math.max(viewportHeight, Math.ceil(rootBounds.bottom));
+      floatingWorkspaceSpacer.style.width = "0px";
+      floatingWorkspaceSpacer.style.height = "0px";
+      document.body.style.removeProperty("min-width");
+      document.body.style.removeProperty("min-height");
+      return;
+    }
     const timelineHeight = Number(layoutPanels.timeline?.getBoundingClientRect().height || 0);
     const timelineReserve = clamp(timelineHeight * .5, 120, 320);
     const floating = Object.values(layoutPanels).filter(panel => panel?.classList.contains("movie-panel-floating"));
