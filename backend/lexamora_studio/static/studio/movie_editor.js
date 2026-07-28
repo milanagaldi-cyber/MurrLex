@@ -1583,7 +1583,7 @@
       }
       return 0;
     };
-    const scrollEditorViewportTowardPointer = pointer => {
+    const scrollEditorViewportTowardPointer = (pointer, horizontalStep = null) => {
       if (!editorViewport || !pointer) return false;
       const bounds = editorViewport.getBoundingClientRect();
       const edgeZone = Math.min(72, Math.max(40, bounds.width * .05));
@@ -1602,7 +1602,7 @@
       const maxLeft = Math.max(0, editorViewport.scrollWidth - editorViewport.clientWidth);
       const maxTop = Math.max(0, editorViewport.scrollHeight - editorViewport.clientHeight);
       editorViewport.scrollLeft = clamp(
-        beforeLeft + horizontalEditorEdgeStep(pointer),
+        beforeLeft + (horizontalStep ?? horizontalEditorEdgeStep(pointer)),
         0,
         maxLeft,
       );
@@ -1628,7 +1628,7 @@
           right: Math.max(...rects.map(rect => rect.right)),
         };
       };
-      for (let attempt = 0; attempt < 6; attempt += 1) {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
         let visible = groupBounds();
         const scrollDelta = visible.left < safeLeft
           ? visible.left - safeLeft
@@ -1647,6 +1647,20 @@
         applyTileRects(tiles);
       }
       return editorViewport.scrollLeft - initialScrollLeft;
+    };
+    const movingTilesHorizontalEdgeStep = (keys, direction) => {
+      if (!editorViewport || !direction) return 0;
+      const panels = keys.map(key => layoutPanels[key]).filter(Boolean);
+      if (!panels.length) return 0;
+      const viewportBounds = visibleEditorViewportBounds();
+      const safeLeft = viewportBounds.left + tileWorkspaceInset;
+      const safeRight = viewportBounds.right - tileWorkspaceInset;
+      const rects = panels.map(panel => panel.getBoundingClientRect());
+      const left = Math.min(...rects.map(rect => rect.left));
+      const right = Math.max(...rects.map(rect => rect.right));
+      if (direction < 0 && left <= safeLeft + 1) return -8;
+      if (direction > 0 && right >= safeRight - 1) return 8;
+      return 0;
     };
 
     tilePanelKeys.forEach(key => {
@@ -1681,6 +1695,7 @@
         let latestPointer = event;
         let edgeExpansionX = 0;
         let visibilityScrollX = 0;
+        let horizontalIntent = 0;
         let autoScrollFrame = 0;
         const movingBounds = tileGroupBounds(startTiles, movingKeys);
         const minimumDx = tileWorkspaceInset - movingBounds.x;
@@ -1722,12 +1737,16 @@
         const continueAutoScroll = () => {
           autoScrollFrame = 0;
           if (!active || !latestPointer) return;
+          const tileEdgeStep = movingTilesHorizontalEdgeStep(movingKeys, horizontalIntent);
+          const pointerEdgeStep = horizontalEditorEdgeStep(latestPointer);
+          const horizontalStep = tileEdgeStep || (
+            horizontalIntent && Math.sign(pointerEdgeStep) !== horizontalIntent ? 0 : pointerEdgeStep
+          );
           const beforeLeft = editorViewport?.scrollLeft || 0;
-          const scrolled = scrollEditorViewportTowardPointer(latestPointer);
+          const scrolled = scrollEditorViewportTowardPointer(latestPointer, horizontalStep);
           let expanded = false;
           if (Math.abs((editorViewport?.scrollLeft || 0) - beforeLeft) < .5) {
-            const rawStep = horizontalEditorEdgeStep(latestPointer);
-            const edgeStep = Math.sign(rawStep) * Math.min(12, Math.abs(rawStep));
+            const edgeStep = Math.sign(horizontalStep) * Math.min(12, Math.abs(horizontalStep));
             if (edgeStep) {
               const baseDx = latestPointer.clientX - startX + (editorViewport?.scrollLeft || 0) - startScrollLeft - visibilityScrollX;
               const nextDx = clamp(baseDx + edgeExpansionX + edgeStep, minimumDx, maximumDx);
@@ -1740,6 +1759,8 @@
           autoScrollFrame = requestAnimationFrame(continueAutoScroll);
         };
         const move = next => {
+          const pointerDeltaX = next.clientX - latestPointer.clientX;
+          if (Math.abs(pointerDeltaX) >= .5) horizontalIntent = Math.sign(pointerDeltaX);
           latestPointer = next;
           updatePosition(next);
           if (active && !autoScrollFrame) autoScrollFrame = requestAnimationFrame(continueAutoScroll);
