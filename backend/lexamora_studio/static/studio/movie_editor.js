@@ -1751,6 +1751,9 @@
         const movingKeys = selectedTileKeys.has(key) ? [...selectedTileKeys] : [key];
         const startX = event.clientX;
         const startY = event.clientY;
+        const startPanelScreenRect = panel.getBoundingClientRect();
+        const grabOffsetX = startX - startPanelScreenRect.left;
+        const grabOffsetY = startY - startPanelScreenRect.top;
         const startScrollLeft = editorViewport?.scrollLeft || 0;
         const startScrollTop = editorViewport?.scrollTop || 0;
         const pointerId = event.pointerId;
@@ -1780,8 +1783,14 @@
         tileExtentCleanupTimer = 0;
         capturePointerSafely(handle, pointerId);
         const updatePosition = next => {
-          const dx = next.clientX - startX + (editorViewport?.scrollLeft || 0) - startScrollLeft;
-          const dy = next.clientY - startY + (editorViewport?.scrollTop || 0) - startScrollTop;
+          const viewportRect = editorViewport?.getBoundingClientRect();
+          const logicalViewport = tileLogicalViewportBounds(tileViewportGeometry);
+          const dx = viewportRect && logicalViewport
+            ? logicalViewport.left + next.clientX - viewportRect.left - grabOffsetX - startTiles[key].x
+            : next.clientX - startX + (editorViewport?.scrollLeft || 0) - startScrollLeft;
+          const dy = viewportRect && logicalViewport
+            ? logicalViewport.top + next.clientY - viewportRect.top - grabOffsetY - startTiles[key].y
+            : next.clientY - startY + (editorViewport?.scrollTop || 0) - startScrollTop;
           if (!active && Math.hypot(dx, dy) < 4) return;
           if (!active) remember();
           active = true;
@@ -1797,6 +1806,14 @@
                 const single = snapMovingTile(key, raw, startTiles, layout.workspace);
                 return {dx: single.rect.x - origin.x, dy: single.rect.y - origin.y, guide: single.guide};
               })();
+          if (cameraFollowHorizontalActive && startMovingBounds) {
+            snapped.dx = clamp(
+              dx,
+              tileWorkspaceInset - startMovingBounds.x,
+              layout.workspace.width - tileWorkspaceInset - startMovingBounds.right,
+            );
+            snapped.guide.x = null;
+          }
           currentTiles = cloneTiles(startTiles);
           movingKeys.forEach(movingKey => {
             currentTiles[movingKey] = {
