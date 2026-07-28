@@ -175,10 +175,6 @@
   const tileMaximumScale = key => ["media", "preview", "inspector", "timeline"].includes(key) ? 4 : 2;
   const tileEdgeSize = 18;
   const tileWorkspaceInset = Math.ceil(tileEdgeSize / 2) + 2;
-  const tileWorkspaceRightInset = () => tileWorkspaceInset + Math.max(
-    0,
-    Number(editorViewport?.offsetWidth || 0) - Number(editorViewport?.clientWidth || 0),
-  );
   const tileSnapDistance = 12;
   let tileLayoutDefaults = null;
   let selectedTileKeys = new Set();
@@ -303,10 +299,10 @@
       const current = tileRect(source.tiles?.[key] || fallback);
       const minimum = tileMinimums[key];
       const maximumScale = tileMaximumScale(key);
-      const width = clamp(current.width || fallback.width, minimum.width, Math.min(workspace.width - tileWorkspaceInset - tileWorkspaceRightInset(), fallback.width * maximumScale));
+      const width = clamp(current.width || fallback.width, minimum.width, Math.min(workspace.width - tileWorkspaceInset * 2, fallback.width * maximumScale));
       const height = clamp(current.height || fallback.height, minimum.height, Math.min(workspace.height - tileWorkspaceInset * 2, fallback.height * maximumScale));
       tiles[key] = {
-        x: clamp(current.x, tileWorkspaceInset, Math.max(tileWorkspaceInset, workspace.width - width - tileWorkspaceRightInset())),
+        x: clamp(current.x, tileWorkspaceInset, Math.max(tileWorkspaceInset, workspace.width - width - tileWorkspaceInset)),
         y: clamp(current.y, tileWorkspaceInset, Math.max(tileWorkspaceInset, workspace.height - height - tileWorkspaceInset)),
         width,
         height,
@@ -1352,10 +1348,9 @@
     }
   };
   const snapMovingTile = (key, rect, tiles, workspace) => {
-    const rightInset = tileWorkspaceRightInset();
     const xCandidates = [
       {value: tileWorkspaceInset, guide: tileWorkspaceInset},
-      {value: workspace.width - rect.width - rightInset, guide: workspace.width - rightInset},
+      {value: workspace.width - rect.width - tileWorkspaceInset, guide: workspace.width - tileWorkspaceInset},
     ];
     const yCandidates = [
       {value: tileWorkspaceInset, guide: tileWorkspaceInset},
@@ -1383,7 +1378,7 @@
     return {
       rect: {
         ...rect,
-        x: clamp(xSnap?.value ?? rect.x, tileWorkspaceInset, workspace.width - rect.width - rightInset),
+        x: clamp(xSnap?.value ?? rect.x, tileWorkspaceInset, workspace.width - rect.width - tileWorkspaceInset),
         y: clamp(ySnap?.value ?? rect.y, tileWorkspaceInset, workspace.height - rect.height - tileWorkspaceInset),
       },
       guide: {x: xSnap?.guide ?? null, y: ySnap?.guide ?? null},
@@ -1393,12 +1388,11 @@
     const selected = new Set(keys);
     const bounds = tileGroupBounds(tiles, keys);
     if (!bounds) return {dx: 0, dy: 0, guide: {x: null, y: null}};
-    const rightInset = tileWorkspaceRightInset();
-    const clampedDx = clamp(dx, tileWorkspaceInset - bounds.x, workspace.width - rightInset - bounds.right);
+    const clampedDx = clamp(dx, tileWorkspaceInset - bounds.x, workspace.width - tileWorkspaceInset - bounds.right);
     const clampedDy = clamp(dy, tileWorkspaceInset - bounds.y, workspace.height - tileWorkspaceInset - bounds.bottom);
     const xCandidates = [
       {value: tileWorkspaceInset - bounds.x, guide: tileWorkspaceInset},
-      {value: workspace.width - rightInset - bounds.right, guide: workspace.width - rightInset},
+      {value: workspace.width - tileWorkspaceInset - bounds.right, guide: workspace.width - tileWorkspaceInset},
     ];
     const yCandidates = [
       {value: tileWorkspaceInset - bounds.y, guide: tileWorkspaceInset},
@@ -1424,18 +1418,17 @@
     const xSnap = nearestTileSnap(clampedDx, xCandidates);
     const ySnap = nearestTileSnap(clampedDy, yCandidates);
     return {
-      dx: clamp(xSnap?.value ?? clampedDx, tileWorkspaceInset - bounds.x, workspace.width - rightInset - bounds.right),
+      dx: clamp(xSnap?.value ?? clampedDx, tileWorkspaceInset - bounds.x, workspace.width - tileWorkspaceInset - bounds.right),
       dy: clamp(ySnap?.value ?? clampedDy, tileWorkspaceInset - bounds.y, workspace.height - tileWorkspaceInset - bounds.bottom),
       guide: {x: xSnap?.guide ?? null, y: ySnap?.guide ?? null},
     };
   };
   const snapResizeEdge = (key, edge, value, tiles, workspace) => {
     const horizontal = edge === "e" || edge === "w";
-    const rightInset = tileWorkspaceRightInset();
     const candidates = horizontal
       ? [
           {value: tileWorkspaceInset, guide: tileWorkspaceInset},
-          {value: workspace.width - rightInset, guide: workspace.width - rightInset},
+          {value: workspace.width - tileWorkspaceInset, guide: workspace.width - tileWorkspaceInset},
         ]
       : [
           {value: tileWorkspaceInset, guide: tileWorkspaceInset},
@@ -1455,8 +1448,7 @@
     const next = {...rect};
     if (edge === "e") {
       next.x = obstacle.x + obstacle.width;
-      const rightBoundary = workspace.width - tileWorkspaceRightInset();
-      if (next.x + next.width > rightBoundary) next.width = rightBoundary - next.x;
+      if (next.x + next.width > workspace.width - tileWorkspaceInset) next.width = workspace.width - tileWorkspaceInset - next.x;
     } else if (edge === "w") {
       const right = obstacle.x;
       next.x = Math.max(tileWorkspaceInset, right - next.width);
@@ -1505,10 +1497,9 @@
     const next = {...origin};
     let guide = {x: null, y: null};
     if (edge === "e") {
-      const rightBoundary = workspace.width - tileWorkspaceRightInset();
-      const raw = clamp(origin.x + origin.width + dx, origin.x + minimum.width, Math.min(rightBoundary, origin.x + maximumWidth));
+      const raw = clamp(origin.x + origin.width + dx, origin.x + minimum.width, Math.min(workspace.width - tileWorkspaceInset, origin.x + maximumWidth));
       const snap = snapResizeEdge(key, edge, raw, tiles, workspace);
-      const right = clamp(snap?.value ?? raw, origin.x + minimum.width, Math.min(rightBoundary, origin.x + maximumWidth));
+      const right = clamp(snap?.value ?? raw, origin.x + minimum.width, Math.min(workspace.width - tileWorkspaceInset, origin.x + maximumWidth));
       next.width = right - origin.x;
       guide.x = snap?.guide ?? null;
     } else if (edge === "w") {
@@ -1632,7 +1623,7 @@
                 const origin = startTiles[key];
                 const raw = {
                   ...origin,
-                  x: clamp(origin.x + dx, tileWorkspaceInset, layout.workspace.width - origin.width - tileWorkspaceRightInset()),
+                  x: clamp(origin.x + dx, tileWorkspaceInset, layout.workspace.width - origin.width - tileWorkspaceInset),
                   y: clamp(origin.y + dy, tileWorkspaceInset, layout.workspace.height - origin.height - tileWorkspaceInset),
                 };
                 const single = snapMovingTile(key, raw, startTiles, layout.workspace);
