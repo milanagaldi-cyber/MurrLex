@@ -1104,6 +1104,27 @@ body.movie-panel-interacting *{
   cursor:grabbing!important;
   user-select:none!important;
 }
+body.movie-tile-pointer-locked,
+body.movie-tile-pointer-locked *{
+  cursor:none!important;
+}
+.movie-tile-locked-cursor{
+  position:fixed;
+  z-index:10000;
+  display:grid;
+  place-items:center;
+  width:24px;
+  height:24px;
+  border:1px solid var(--accent);
+  border-radius:4px;
+  background:var(--panel);
+  color:var(--accent);
+  box-shadow:0 3px 10px rgba(0,0,0,.38);
+  pointer-events:none;
+  transform:translate(-50%,-50%);
+}
+.movie-tile-locked-cursor[hidden]{display:none}
+.movie-tile-locked-cursor .business-command-icon{width:16px;height:16px}
 .movie-editor-layout .movie-stage-resizer,
 .movie-editor-layout .movie-inspector-resizer,
 .movie-editor-layout [data-panel-width-resizer],
@@ -1309,4 +1330,4 @@ body.movie-panel-interacting *{
 </section>
 {{ movie_timeline_data|json_script:"movie-timeline-data" }}{{ movie_assets|json_script:"movie-assets-data" }}{{ movie_library_assets|json_script:"movie-library-data" }}{{ movie_render_jobs|json_script:"movie-render-jobs-data" }}{{ movie_edits|json_script:"movie-edits-data" }}
 {% endblock %}
-{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260728-direct-camera-target"></script>{% endblock %}
+{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260728-pointer-lock-camera"></script>{% endblock %}

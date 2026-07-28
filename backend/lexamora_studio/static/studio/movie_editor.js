@@ -1675,8 +1675,8 @@
     const scrollEditorViewportTowardPointer = (pointer, movingBounds = null) => {
       if (!editorViewport || !pointer) return false;
       const bounds = editorViewport.getBoundingClientRect();
-      const edgeZone = Math.min(72, Math.max(40, bounds.width * .05));
-      const maxStep = 28;
+      const edgeZone = Math.min(112, Math.max(56, bounds.width * .08));
+      const maxStep = 44;
       const axisStep = (position, start, end) => {
         if (position < start + edgeZone) {
           return -Math.ceil(maxStep * clamp((start + edgeZone - position) / edgeZone, 0, 1));
@@ -1738,6 +1738,8 @@
         const movingKeys = selectedTileKeys.has(key) ? [...selectedTileKeys] : [key];
         const startX = event.clientX;
         const startY = event.clientY;
+        const startPanelScreenRect = panel.getBoundingClientRect();
+        const grabOffsetX = startX - startPanelScreenRect.left;
         const startScrollLeft = editorViewport?.scrollLeft || 0;
         const startScrollTop = editorViewport?.scrollTop || 0;
         const pointerId = event.pointerId;
@@ -1754,6 +1756,59 @@
         let cameraFollowVerticalActive = false;
         let cameraFollowTargetLeft = startScrollLeft;
         let cameraFollowTargetTop = startScrollTop;
+        let virtualPointerX = startX;
+        let virtualPointerY = startY;
+        let pointerTravelX = 0;
+        const virtualCursor = document.createElement("span");
+        virtualCursor.className = "movie-tile-locked-cursor";
+        virtualCursor.dataset.businessCommand = "drag";
+        virtualCursor.hidden = true;
+        virtualCursor.setAttribute("aria-hidden", "true");
+        document.body.appendChild(virtualCursor);
+        window.setLexamoraIcon?.(virtualCursor, "drag");
+        const updateVirtualCursor = () => {
+          virtualCursor.style.left = `${virtualPointerX}px`;
+          virtualCursor.style.top = `${virtualPointerY}px`;
+        };
+        const dragPointer = next => {
+          if (document.pointerLockElement !== handle) {
+            virtualPointerX = next.clientX;
+            virtualPointerY = next.clientY;
+            pointerTravelX = next.clientX - startX;
+            return {
+              clientX: next.clientX,
+              clientY: next.clientY,
+              pointerId: next.pointerId ?? pointerId,
+              cameraDeltaX: pointerTravelX,
+            };
+          }
+          const viewportBounds = editorViewport.getBoundingClientRect();
+          const hiddenAllowance = startPanelScreenRect.width * .05;
+          const rightLimit = viewportBounds.right - Math.max(
+            8,
+            startPanelScreenRect.width - grabOffsetX - hiddenAllowance,
+          );
+          const leftLimit = viewportBounds.left + Math.max(8, grabOffsetX - hiddenAllowance);
+          const movementX = Number(next.movementX || 0);
+          pointerTravelX += movementX;
+          virtualPointerX = clamp(
+            virtualPointerX + movementX,
+            Math.min(leftLimit, rightLimit),
+            Math.max(leftLimit, rightLimit),
+          );
+          virtualPointerY = clamp(
+            virtualPointerY + Number(next.movementY || 0),
+            viewportBounds.top + 8,
+            viewportBounds.bottom - 8,
+          );
+          updateVirtualCursor();
+          return {
+            clientX: virtualPointerX,
+            clientY: virtualPointerY,
+            pointerId: next.pointerId ?? pointerId,
+            cameraDeltaX: pointerTravelX,
+          };
+        };
         const tilesUseHomeHorizontalExtent = tiles => {
           const bounds = tileBounds(tiles);
           return (
@@ -1845,13 +1900,13 @@
             cameraFollowVerticalActive = true;
           }
           if (cameraFollowHorizontalActive) {
-            cameraFollowTargetLeft = tilesUseHomeHorizontalExtent(currentTiles)
-              ? 0
-              : clamp(
-                  startScrollLeft + (next.clientX - startX) * 1.15,
-                  0,
-                  Math.max(0, editorViewport.scrollWidth - editorViewport.clientWidth),
-                );
+            cameraFollowTargetLeft = clamp(
+              tilesUseHomeHorizontalExtent(currentTiles)
+                ? 0
+                : startScrollLeft + Number(next.cameraDeltaX ?? (next.clientX - startX)) * 1.35,
+              0,
+              Math.max(0, editorViewport.scrollWidth - editorViewport.clientWidth),
+            );
           }
           if (cameraFollowVerticalActive) {
             cameraFollowTargetTop = movingTilesMatchStart(["y"])
@@ -1866,8 +1921,8 @@
           const differenceX = cameraFollowTargetLeft - beforeLeft;
           const differenceY = cameraFollowTargetTop - beforeTop;
           const returningHome = cameraFollowHorizontalActive && differenceX < 0;
-          const horizontalEase = returningHome ? .55 : .34;
-          const horizontalLimit = returningHome ? 64 : 40;
+          const horizontalEase = returningHome ? .72 : .48;
+          const horizontalLimit = returningHome ? 96 : 58;
           const stepX = Math.abs(differenceX) < .5
             ? differenceX
             : Math.sign(differenceX) * Math.min(
@@ -1902,11 +1957,13 @@
           autoScrollFrame = requestAnimationFrame(continueAutoScroll);
         };
         const move = next => {
-          latestPointer = next;
-          updatePosition(next);
+          if (document.pointerLockElement === handle && next.type === "pointermove") return;
+          const normalizedPointer = dragPointer(next);
+          latestPointer = normalizedPointer;
+          updatePosition(normalizedPointer);
           if (active) {
-            updateCameraFollowTarget(next);
-            if (applyCameraFollow()) updatePosition(next);
+            updateCameraFollowTarget(normalizedPointer);
+            if (applyCameraFollow()) updatePosition(normalizedPointer);
           }
           if (active && !autoScrollFrame) autoScrollFrame = requestAnimationFrame(continueAutoScroll);
         };
@@ -1917,11 +1974,17 @@
           finished = true;
           clearEditorPointerFinish(finish);
           window.removeEventListener("pointermove", move, true);
+          window.removeEventListener("mousemove", move, true);
           window.removeEventListener("pointerup", finish, true);
+          window.removeEventListener("mouseup", finish, true);
           window.removeEventListener("pointercancel", finish, true);
+          document.removeEventListener("pointerlockchange", handlePointerLockChange);
           if (autoScrollFrame) cancelAnimationFrame(autoScrollFrame);
           autoScrollFrame = 0;
           releasePointerCaptureSafely(handle, pointerId);
+          if (document.pointerLockElement === handle) document.exitPointerLock?.();
+          document.body.classList.remove("movie-tile-pointer-locked");
+          virtualCursor.remove();
           movingKeys.forEach(movingKey => layoutPanels[movingKey]?.classList.remove("movie-tile-moving", "movie-tile-drop-invalid"));
           document.body.classList.remove("movie-panel-interacting");
           tileMoveDragActive = false;
@@ -1966,10 +2029,26 @@
           historyRedo = [];
           updateHistoryButtons();
         };
+        const handlePointerLockChange = () => {
+          const locked = document.pointerLockElement === handle;
+          document.body.classList.toggle("movie-tile-pointer-locked", locked);
+          virtualCursor.hidden = !locked;
+          if (locked) updateVirtualCursor();
+          else if (!finished && active) finish({pointerId});
+        };
         window.addEventListener("pointermove", move, true);
+        window.addEventListener("mousemove", move, true);
         window.addEventListener("pointerup", finish, true);
+        window.addEventListener("mouseup", finish, true);
         window.addEventListener("pointercancel", finish, true);
+        document.addEventListener("pointerlockchange", handlePointerLockChange);
         registerEditorPointerFinish(finish);
+        try {
+          const lockRequest = handle.requestPointerLock?.();
+          lockRequest?.catch?.(() => {});
+        } catch (_) {
+          // Normal pointer capture remains the fallback when Pointer Lock is unavailable.
+        }
       });
     });
 
