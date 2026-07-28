@@ -1456,8 +1456,21 @@
     const finalWorkspace = workspace || layout.workspace;
     const currentCenter = tileLogicalViewportCenter(tileViewportGeometry);
     const homeAxis = tileViewportGeometry.baseLeft + tileViewportGeometry.baseWidth / 2;
+    const horizontalOverflow = Math.max(0, editorViewport.scrollWidth - editorViewport.clientWidth);
+    const axisDistance = currentCenter ? Math.abs(currentCenter.x - homeAxis) : Infinity;
+    if (horizontalOverflow <= 1 || axisDistance <= 1) {
+      cancelTileHomeCenter();
+      if (horizontalOverflow > 1) {
+        const cleanupDelay = Math.max(
+          180,
+          tileExtentCleanupSuppressedUntil - Date.now() + 10,
+        );
+        window.setTimeout(() => scheduleTileExtentCleanup(0), cleanupDelay);
+      }
+      return false;
+    }
     const tolerance = Math.max(1, editorViewport.clientWidth * toleranceRatio);
-    if (!currentCenter || (!force && Math.abs(currentCenter.x - homeAxis) > tolerance)) {
+    if (!currentCenter || (!force && axisDistance > tolerance)) {
       const cleanupDelay = Math.max(
         180,
         tileExtentCleanupSuppressedUntil - Date.now() + 10,
