@@ -185,6 +185,11 @@
 .movie-window-actions{display:flex;align-items:center;gap:4px;margin-left:auto}
 .movie-window-actions .icon-button{width:28px;height:28px;min-width:28px;padding:3px}
 .movie-window-home[disabled]{opacity:.28;pointer-events:none}
+.movie-window-home:not([disabled]){
+  border-color:color-mix(in srgb,var(--accent) 72%,var(--line));
+  color:var(--accent);
+  box-shadow:0 0 7px color-mix(in srgb,var(--accent) 34%,transparent);
+}
 .movie-floating-toolbar{padding:7px 9px}
 .movie-floating-toolbar-head{display:flex;align-items:center;gap:10px;min-height:30px}
 .movie-floating-toolbar-body{display:flex;align-items:center;gap:5px;flex-wrap:wrap;padding-top:6px}
@@ -1329,4 +1334,4 @@ body.movie-panel-interacting *{
 </section>
 {{ movie_timeline_data|json_script:"movie-timeline-data" }}{{ movie_assets|json_script:"movie-assets-data" }}{{ movie_library_assets|json_script:"movie-library-data" }}{{ movie_render_jobs|json_script:"movie-render-jobs-data" }}{{ movie_edits|json_script:"movie-edits-data" }}
 {% endblock %}
-{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260728-home-axis-settle"></script>{% endblock %}
+{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260728-home-zone-release"></script>{% endblock %}

@@ -488,19 +488,19 @@
     });
   };
   const cloneLayoutState = () => ({mode: "columns", layouts: structuredClone(editorLayouts)});
-  const panelUsesDefaultGeometry = key => {
+  const panelUsesDefaultGeometry = (key, tiles = null) => {
     if (!workspacePanel(key)) return true;
-    const current = ensureTileLayout().tiles[key];
+    const current = tiles?.[key] || ensureTileLayout().tiles[key];
     const defaults = tileLayoutDefaults.tiles[key];
     return ["x", "y", "width", "height"].every(property =>
       Math.abs(Number(current[property]) - Number(defaults[property])) < 1
     );
   };
-  const refreshPanelHomeButtons = () => {
+  const refreshPanelHomeButtons = (tiles = null) => {
     Object.entries(layoutPanels).forEach(([key, panel]) => {
       const button = panel?.querySelector(".movie-window-home");
       if (!button) return;
-      button.disabled = panelUsesDefaultGeometry(key);
+      button.disabled = panelUsesDefaultGeometry(key, tiles);
     });
   };
   const resetPanelGeometry = key => {
@@ -1031,7 +1031,8 @@
           persistFloatingPanels();
         } else {
           resetPanelGeometry(key);
-          requestAnimationFrame(() => settleTileViewportOnHomeAxis());
+          setSelectedTileKeys([]);
+          requestAnimationFrame(() => settleTileViewportOnHomeAxis({force: true}));
         }
         historyRedo = [];
         updateHistoryButtons();
@@ -1348,6 +1349,7 @@
       panel.dataset.tileY = String(Math.round(rect.y));
     });
     syncTileSelectionClasses();
+    refreshPanelHomeButtons(tiles);
     const timelineShell = q("[data-timeline-shell]");
     if (timelineShell) timelineShell.style.setProperty("height", `${Math.max(100, tiles.timeline.height - 46)}px`, "important");
     if (preserveViewport) scrollTileViewportToLogicalCenter(previousLogicalCenter);
@@ -1445,6 +1447,8 @@
     tiles = null,
     workspace = null,
     fallbackBottom = null,
+    force = false,
+    toleranceRatio = .15,
   } = {}) => {
     if (!editorViewport || !tileViewportGeometry) return false;
     const layout = ensureTileLayout();
@@ -1452,8 +1456,8 @@
     const finalWorkspace = workspace || layout.workspace;
     const currentCenter = tileLogicalViewportCenter(tileViewportGeometry);
     const homeAxis = tileViewportGeometry.baseLeft + tileViewportGeometry.baseWidth / 2;
-    const tolerance = Math.max(1, editorViewport.clientWidth * .1);
-    if (!currentCenter || Math.abs(currentCenter.x - homeAxis) > tolerance) {
+    const tolerance = Math.max(1, editorViewport.clientWidth * toleranceRatio);
+    if (!currentCenter || (!force && Math.abs(currentCenter.x - homeAxis) > tolerance)) {
       const cleanupDelay = Math.max(
         180,
         tileExtentCleanupSuppressedUntil - Date.now() + 10,
@@ -1880,14 +1884,14 @@
             && bounds.right <= homeBounds.right + 1
           );
         };
-        const tilesNearHomeHorizontalExtent = tiles => {
-          const bounds = tileBounds(tiles);
-          const tolerance = Math.min(64, Math.max(tileSnapDistance * 2, homeBounds.width * .05));
-          return (
-            bounds.left >= homeBounds.left - tolerance
-            && bounds.right <= homeBounds.right + tolerance
-          );
-        };
+        const movingTilesIntersectHomeZones = tiles => movingKeys.some(movingKey => {
+          const rect = tiles[movingKey];
+          const home = tileLayoutDefaults?.tiles?.[movingKey];
+          if (!rect || !home) return false;
+          const overlapWidth = Math.min(rect.x + rect.width, home.x + home.width) - Math.max(rect.x, home.x);
+          const overlapHeight = Math.min(rect.y + rect.height, home.y + home.height) - Math.max(rect.y, home.y);
+          return overlapWidth >= 1 && overlapHeight >= 1;
+        });
         cancelTileHomeCenter();
         tileMoveDragActive = true;
         if (tileExtentCleanupTimer) clearTimeout(tileExtentCleanupTimer);
@@ -2058,6 +2062,7 @@
           document.body.classList.remove("movie-panel-interacting");
           tileMoveDragActive = false;
           hideTileGuides();
+          setSelectedTileKeys([]);
           if (!active) {
             scheduleTileExtentCleanup(180);
             return;
@@ -2065,22 +2070,23 @@
           const invalidDrop = tileLayoutHasSelectionOverlap(currentTiles, movingKeys);
           const returnedToStart = movingTilesMatchStart(["x", "y"]);
           const finalTiles = invalidDrop ? startTiles : currentTiles;
-          const returnedNearHomeHorizontally = !invalidDrop && tilesNearHomeHorizontalExtent(finalTiles);
+          const releasedAcrossHomeZone = !invalidDrop && movingTilesIntersectHomeZones(finalTiles);
           if (invalidDrop) {
             toast("This space is occupied");
           } else {
             editorLayouts.columns = {...editorLayouts.columns, workspace: layout.workspace, tiles: currentTiles};
             persistLayout("columns");
           }
-          if (invalidDrop || returnedToStart || returnedNearHomeHorizontally) {
+          if (invalidDrop || returnedToStart || releasedAcrossHomeZone) {
             if (tileExtentCleanupTimer) clearTimeout(tileExtentCleanupTimer);
             tileExtentCleanupTimer = 0;
             tileExtentCleanupSuppressedUntil = Date.now() + 300;
-            if (returnedNearHomeHorizontally) {
+            if (releasedAcrossHomeZone) {
               settleTileViewportOnHomeAxis({
                 tiles: finalTiles,
                 workspace: layout.workspace,
                 fallbackBottom: startAllocatedExtent.bottom,
+                toleranceRatio: .15,
               });
             } else {
               tileAllocatedExtent = {...startAllocatedExtent};
@@ -2091,7 +2097,7 @@
               }
             }
           }
-          if (!returnedNearHomeHorizontally) scheduleTileExtentCleanup(180);
+          if (!releasedAcrossHomeZone) scheduleTileExtentCleanup(180);
           applyPreviewZoom();
           updatePreviewGeometry();
           renderTimeline();
