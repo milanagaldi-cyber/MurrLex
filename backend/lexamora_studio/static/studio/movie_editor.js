@@ -1711,10 +1711,15 @@
         const startScrollLeft = editorViewport?.scrollLeft || 0;
         const startScrollTop = editorViewport?.scrollTop || 0;
         const pointerId = event.pointerId;
+        const homeBounds = tileBounds((tileLayoutDefaults || createDefaultTileLayout()).tiles);
         let active = false;
         let currentTiles = startTiles;
         let latestPointer = event;
         let autoScrollFrame = 0;
+        let lastPointerX = startX;
+        let lastPointerY = startY;
+        let cameraFollowX = 0;
+        let cameraFollowY = 0;
         capturePointerSafely(handle, pointerId);
         const updatePosition = next => {
           const dx = next.clientX - startX + (editorViewport?.scrollLeft || 0) - startScrollLeft;
@@ -1749,15 +1754,70 @@
           showTileGuides(snapped.guide);
           applyTileRects(currentTiles);
         };
+        const queueCameraFollow = (deltaX, deltaY) => {
+          const movingBounds = tileGroupBounds(currentTiles, movingKeys);
+          if (!movingBounds) return;
+          const allBounds = tileBounds(currentTiles);
+          const edgeTolerance = 2;
+          if (
+            deltaX < 0
+            && movingBounds.right >= allBounds.right - edgeTolerance
+            && movingBounds.right > homeBounds.right + edgeTolerance
+          ) {
+            cameraFollowX += deltaX * .65;
+          } else if (
+            deltaX > 0
+            && movingBounds.x <= allBounds.left + edgeTolerance
+            && movingBounds.x < homeBounds.left - edgeTolerance
+          ) {
+            cameraFollowX += deltaX * .65;
+          }
+          if (
+            deltaY < 0
+            && movingBounds.bottom >= allBounds.bottom - edgeTolerance
+            && movingBounds.bottom > homeBounds.bottom + edgeTolerance
+          ) {
+            cameraFollowY += deltaY * .65;
+          }
+        };
+        const applyCameraFollow = () => {
+          if (!editorViewport) return false;
+          const beforeLeft = editorViewport.scrollLeft;
+          const beforeTop = editorViewport.scrollTop;
+          const stepX = Math.abs(cameraFollowX) < .5 ? cameraFollowX : cameraFollowX * .34;
+          const stepY = Math.abs(cameraFollowY) < .5 ? cameraFollowY : cameraFollowY * .34;
+          editorViewport.scrollLeft = clamp(
+            beforeLeft + stepX,
+            0,
+            Math.max(0, editorViewport.scrollWidth - editorViewport.clientWidth),
+          );
+          editorViewport.scrollTop = clamp(
+            beforeTop + stepY,
+            0,
+            Math.max(0, editorViewport.scrollHeight - editorViewport.clientHeight),
+          );
+          const appliedX = editorViewport.scrollLeft - beforeLeft;
+          const appliedY = editorViewport.scrollTop - beforeTop;
+          cameraFollowX = Math.abs(appliedX - stepX) > .5 ? 0 : cameraFollowX - appliedX;
+          cameraFollowY = Math.abs(appliedY - stepY) > .5 ? 0 : cameraFollowY - appliedY;
+          return Math.abs(appliedX) >= .01 || Math.abs(appliedY) >= .01;
+        };
         const continueAutoScroll = () => {
           autoScrollFrame = 0;
           if (!active || !latestPointer) return;
-          if (scrollEditorViewportTowardPointer(latestPointer)) updatePosition(latestPointer);
+          const edgeMoved = scrollEditorViewportTowardPointer(latestPointer);
+          const followMoved = applyCameraFollow();
+          if (edgeMoved || followMoved) updatePosition(latestPointer);
           autoScrollFrame = requestAnimationFrame(continueAutoScroll);
         };
         const move = next => {
+          const pointerDeltaX = next.clientX - lastPointerX;
+          const pointerDeltaY = next.clientY - lastPointerY;
+          lastPointerX = next.clientX;
+          lastPointerY = next.clientY;
           latestPointer = next;
           updatePosition(next);
+          if (active) queueCameraFollow(pointerDeltaX, pointerDeltaY);
           if (active && !autoScrollFrame) autoScrollFrame = requestAnimationFrame(continueAutoScroll);
         };
         let finished = false;
@@ -1771,6 +1831,8 @@
           window.removeEventListener("pointercancel", finish, true);
           if (autoScrollFrame) cancelAnimationFrame(autoScrollFrame);
           autoScrollFrame = 0;
+          cameraFollowX = 0;
+          cameraFollowY = 0;
           releasePointerCaptureSafely(handle, pointerId);
           movingKeys.forEach(movingKey => layoutPanels[movingKey]?.classList.remove("movie-tile-moving", "movie-tile-drop-invalid"));
           document.body.classList.remove("movie-panel-interacting");
