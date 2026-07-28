@@ -327,6 +327,7 @@
   let tileMoveDragActive = false;
   let tileHomeCenterFrame = 0;
   let tileCenterAxisTimer = 0;
+  let tileViewportScrollSettleTimer = 0;
   const tileViewportMinimumReveal = 48;
   const tileExtentCleanupMargin = 32;
   const tileBounds = tiles => {
@@ -421,6 +422,15 @@
       logicalCenter.y + origin.y + geometry.offsetY - editorViewport.clientHeight / 2,
       0,
       Math.max(0, editorViewport.scrollHeight - editorViewport.clientHeight),
+    );
+  };
+  const tileScrollLeftForLogicalCenter = (logicalX, geometry = tileViewportGeometry) => {
+    if (!editorViewport || !geometry || !Number.isFinite(logicalX)) return 0;
+    const origin = tileWorkspaceViewportOrigin();
+    return clamp(
+      logicalX + origin.x + geometry.offsetX - editorViewport.clientWidth / 2,
+      0,
+      Math.max(0, editorViewport.scrollWidth - editorViewport.clientWidth),
     );
   };
   const centerTileWorkspaceView = () => {
@@ -1520,10 +1530,25 @@
     tileHomeCenterFrame = requestAnimationFrame(step);
     return true;
   };
+  let tileViewportLastScrollLeft = editorViewport?.scrollLeft || 0;
   editorViewport?.addEventListener("scroll", () => {
+    const currentLeft = editorViewport.scrollLeft;
+    const horizontalChanged = Math.abs(currentLeft - tileViewportLastScrollLeft) >= .5;
+    tileViewportLastScrollLeft = currentLeft;
     scheduleTileExtentCleanup(
       document.body.classList.contains("movie-panel-interacting") ? 90 : 180
     );
+    if (!horizontalChanged) return;
+    if (tileViewportScrollSettleTimer) clearTimeout(tileViewportScrollSettleTimer);
+    tileViewportScrollSettleTimer = window.setTimeout(() => {
+      tileViewportScrollSettleTimer = 0;
+      if (
+        tileMoveDragActive
+        || tileHomeCenterFrame
+        || document.body.classList.contains("movie-panel-interacting")
+      ) return;
+      settleTileViewportOnHomeAxis({toleranceRatio: .15});
+    }, 140);
   }, {passive: true});
   window.addEventListener("pointerup", () => scheduleTileExtentCleanup(180), {passive: true});
   const nearestTileSnap = (value, candidates) => {
@@ -1777,10 +1802,12 @@
       const maxStep = 88;
       const axisStep = (position, start, end) => {
         if (position < start + edgeZone) {
-          return -Math.ceil(maxStep * clamp((start + edgeZone - position) / edgeZone, 0, 1));
+          const pressure = clamp((start + edgeZone - position) / edgeZone, 0, 1);
+          return -Math.ceil(maxStep * pressure * pressure);
         }
         if (position > end - edgeZone) {
-          return Math.ceil(maxStep * clamp((position - (end - edgeZone)) / edgeZone, 0, 1));
+          const pressure = clamp((position - (end - edgeZone)) / edgeZone, 0, 1);
+          return Math.ceil(maxStep * pressure * pressure);
         }
         return 0;
       };
@@ -1879,6 +1906,7 @@
         const pointerId = event.pointerId;
         const homeBounds = tileBounds((tileLayoutDefaults || createDefaultTileLayout()).tiles);
         const startMovingBounds = tileGroupBounds(startTiles, movingKeys);
+        const startViewportLogicalCenter = tileLogicalViewportCenter(tileViewportGeometry);
         const startAllocatedExtent = tileAllocatedExtent
           ? {...tileAllocatedExtent}
           : computeTileViewportGeometry(startTiles, layout.workspace).extent;
@@ -1890,6 +1918,10 @@
         let cameraFollowVerticalActive = false;
         let cameraFollowTargetLeft = startScrollLeft;
         let cameraFollowTargetTop = startScrollTop;
+        let cameraFollowSide = 0;
+        let cameraFollowReturningHome = false;
+        let cameraFollowTargetLogicalX = startViewportLogicalCenter?.x || 0;
+        let previousCameraPointerX = startX;
         const movingTilesIntersectHomeZones = tiles => movingKeys.some(movingKey => {
           const rect = tiles[movingKey];
           const home = tileLayoutDefaults?.tiles?.[movingKey];
@@ -1943,11 +1975,24 @@
                   !rightmost || tile.x + tile.width > rightmost.x + rightmost.width ? tile : rightmost,
                 null,
               );
-            const hiddenAllowance = Number(rightmostMovingTile?.width || movingBounds.width) * .05;
-            const rightOverflow = movingBounds.right - (visibleBounds.right + hiddenAllowance);
+            const leftmostMovingTile = movingKeys
+              .map(movingKey => currentTiles[movingKey])
+              .reduce(
+                (leftmost, tile) => !leftmost || tile.x < leftmost.x ? tile : leftmost,
+                null,
+              );
+            const rightAllowance = Number(rightmostMovingTile?.width || movingBounds.width) * .05;
+            const leftAllowance = Number(leftmostMovingTile?.width || movingBounds.width) * .05;
+            const rightOverflow = movingBounds.right - (visibleBounds.right + rightAllowance);
             if (rightOverflow > 0) {
               movingKeys.forEach(movingKey => {
                 currentTiles[movingKey].x -= rightOverflow;
+              });
+            }
+            const leftOverflow = visibleBounds.left - leftAllowance - movingBounds.x;
+            if (leftOverflow > 0) {
+              movingKeys.forEach(movingKey => {
+                currentTiles[movingKey].x += leftOverflow;
               });
             }
           }
@@ -1967,16 +2012,21 @@
           if (!movingBounds || !startMovingBounds) return;
           const allBounds = tileBounds(currentTiles);
           const edgeTolerance = 2;
-          if (
-            (
-              movingBounds.right >= allBounds.right - edgeTolerance
-              && movingBounds.right > homeBounds.right + edgeTolerance
-            )
-            || (
-              movingBounds.x <= allBounds.left + edgeTolerance
-              && movingBounds.x < homeBounds.left - edgeTolerance
-            )
-          ) {
+          const beyondRight = (
+            movingBounds.right >= allBounds.right - edgeTolerance
+            && movingBounds.right > homeBounds.right + edgeTolerance
+          );
+          const beyondLeft = (
+            movingBounds.x <= allBounds.left + edgeTolerance
+            && movingBounds.x < homeBounds.left - edgeTolerance
+          );
+          const nextCameraSide = beyondRight ? 1 : beyondLeft ? -1 : cameraFollowSide;
+          if (nextCameraSide !== cameraFollowSide) {
+            cameraFollowSide = nextCameraSide;
+            previousCameraPointerX = next.clientX;
+            cameraFollowReturningHome = false;
+          }
+          if (cameraFollowSide) {
             cameraFollowHorizontalActive = true;
           }
           if (
@@ -1986,11 +2036,12 @@
             cameraFollowVerticalActive = true;
           }
           if (cameraFollowHorizontalActive) {
-            cameraFollowTargetLeft = clamp(
-              startScrollLeft + (next.clientX - startX) * 1.35,
-              0,
-              Math.max(0, editorViewport.scrollWidth - editorViewport.clientWidth),
+            cameraFollowReturningHome = (next.clientX - previousCameraPointerX) * cameraFollowSide < 0;
+            cameraFollowTargetLogicalX = (
+              (startViewportLogicalCenter?.x || 0)
+              + (next.clientX - startX) * 1.35
             );
+            previousCameraPointerX = next.clientX;
           }
           if (cameraFollowVerticalActive) {
             cameraFollowTargetTop = movingTilesMatchStart(["y"])
@@ -2002,11 +2053,13 @@
           if (!editorViewport) return false;
           const beforeLeft = editorViewport.scrollLeft;
           const beforeTop = editorViewport.scrollTop;
+          if (cameraFollowHorizontalActive) {
+            cameraFollowTargetLeft = tileScrollLeftForLogicalCenter(cameraFollowTargetLogicalX);
+          }
           const differenceX = cameraFollowTargetLeft - beforeLeft;
           const differenceY = cameraFollowTargetTop - beforeTop;
-          const returningHome = cameraFollowHorizontalActive && differenceX < 0;
-          const horizontalEase = returningHome ? .72 : .48;
-          const horizontalLimit = returningHome ? 96 : 58;
+          const horizontalEase = cameraFollowReturningHome ? .62 : .34;
+          const horizontalLimit = cameraFollowReturningHome ? 88 : 64;
           const stepX = Math.abs(differenceX) < .5
             ? differenceX
             : Math.sign(differenceX) * Math.min(
@@ -2227,12 +2280,65 @@
         const startY = event.clientY;
         const startScrollLeft = editorViewport?.scrollLeft || 0;
         const startScrollTop = editorViewport?.scrollTop || 0;
+        const startViewportLogicalCenter = tileLogicalViewportCenter(tileViewportGeometry);
+        const homeBounds = tileBounds((tileLayoutDefaults || createDefaultTileLayout()).tiles);
+        const horizontalSide = edge === "e" ? 1 : edge === "w" ? -1 : 0;
         const pointerId = event.pointerId;
         let active = false;
         let currentTiles = startTiles;
         let latestPointer = event;
         let autoScrollFrame = 0;
+        let cameraFollowHorizontalActive = false;
+        let cameraFollowTargetLogicalX = startViewportLogicalCenter?.x || 0;
+        let cameraFollowReturningHome = false;
+        let previousCameraPointerX = startX;
         capturePointerSafely(handle, pointerId);
+        const updateResizeCameraTarget = () => {
+          if (!horizontalSide) return;
+          const rect = currentTiles[key];
+          if (!rect) return;
+          const allBounds = tileBounds(currentTiles);
+          const currentEdge = horizontalSide > 0 ? rect.x + rect.width : rect.x;
+          const edgeTolerance = 2;
+          const beyondHome = horizontalSide > 0
+            ? (
+                currentEdge >= allBounds.right - edgeTolerance
+                && currentEdge > homeBounds.right + edgeTolerance
+              )
+            : (
+                currentEdge <= allBounds.left + edgeTolerance
+                && currentEdge < homeBounds.left - edgeTolerance
+              );
+          if (!cameraFollowHorizontalActive && beyondHome) cameraFollowHorizontalActive = true;
+          if (!cameraFollowHorizontalActive) return;
+          cameraFollowReturningHome = (latestPointer.clientX - previousCameraPointerX) * horizontalSide < 0;
+          cameraFollowTargetLogicalX = (
+            (startViewportLogicalCenter?.x || 0)
+            + (latestPointer.clientX - startX) * 1.35
+          );
+          previousCameraPointerX = latestPointer.clientX;
+        };
+        const applyResizeCameraFollow = () => {
+          if (!editorViewport || !cameraFollowHorizontalActive) return false;
+          const beforeLeft = editorViewport.scrollLeft;
+          const targetLeft = tileScrollLeftForLogicalCenter(cameraFollowTargetLogicalX);
+          const difference = targetLeft - beforeLeft;
+          const ease = cameraFollowReturningHome ? .62 : .30;
+          const limit = cameraFollowReturningHome ? 88 : 52;
+          const step = Math.abs(difference) < .5
+            ? difference
+            : Math.sign(difference) * Math.min(
+                Math.abs(difference),
+                limit,
+                Math.max(1, Math.abs(difference) * ease),
+              );
+          editorViewport.scrollLeft = clamp(
+            beforeLeft + step,
+            0,
+            Math.max(0, editorViewport.scrollWidth - editorViewport.clientWidth),
+          );
+          return Math.abs(editorViewport.scrollLeft - beforeLeft) >= .01;
+        };
         const updateSize = next => {
           const dx = next.clientX - startX + (editorViewport?.scrollLeft || 0) - startScrollLeft;
           const dy = next.clientY - startY + (editorViewport?.scrollTop || 0) - startScrollTop;
@@ -2248,18 +2354,25 @@
           document.body.classList.add("movie-panel-interacting");
           showTileGuides(resized.guide);
           applyTileRects(currentTiles);
+          updateResizeCameraTarget();
           applyPreviewZoom();
           updatePreviewGeometry();
         };
         const continueAutoScroll = () => {
           autoScrollFrame = 0;
           if (!active || !latestPointer) return;
-          if (scrollEditorViewportTowardPointer(latestPointer)) updateSize(latestPointer);
+          const edgeMoved = scrollEditorViewportTowardPointer(
+            latestPointer,
+            tileGroupBounds(currentTiles, [key]),
+          );
+          const followMoved = applyResizeCameraFollow();
+          if (edgeMoved || followMoved) updateSize(latestPointer);
           autoScrollFrame = requestAnimationFrame(continueAutoScroll);
         };
         const move = next => {
           latestPointer = next;
           updateSize(next);
+          if (active && applyResizeCameraFollow()) updateSize(next);
           if (active && !autoScrollFrame) autoScrollFrame = requestAnimationFrame(continueAutoScroll);
         };
         let finished = false;
@@ -2281,7 +2394,11 @@
           if (!active) return;
           editorLayouts.columns = {...editorLayouts.columns, workspace: layout.workspace, tiles: currentTiles};
           persistLayout("columns");
-          applyEditorLayout(cloneLayoutState(), {persist: false});
+          applyTileRects(currentTiles, {preserveViewport: true});
+          scheduleTileExtentCleanup(120);
+          applyPreviewZoom();
+          updatePreviewGeometry();
+          renderTimeline();
           historyRedo = [];
           updateHistoryButtons();
         };
