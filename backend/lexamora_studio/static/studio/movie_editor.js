@@ -324,7 +324,6 @@
   let tileRenderedTiles = null;
   let tileExtentCleanupTimer = 0;
   let tileExtentCleanupSuppressedUntil = 0;
-  let tileHomeCollapseFrame = 0;
   let tileMoveDragActive = false;
   const tileViewportMinimumReveal = 48;
   const tileExtentCleanupMargin = 32;
@@ -1403,48 +1402,25 @@
     }
   };
   const scheduleTileExtentCleanup = (delay = 160) => {
-    if (tileMoveDragActive || tileHomeCollapseFrame) return;
+    if (tileMoveDragActive) return;
     if (Date.now() < tileExtentCleanupSuppressedUntil) return;
     if (tileExtentCleanupTimer) return;
     tileExtentCleanupTimer = setTimeout(cleanupTileWorkspaceExtent, delay);
   };
-  const cancelTileHomeCollapse = () => {
-    if (tileHomeCollapseFrame) cancelAnimationFrame(tileHomeCollapseFrame);
-    tileHomeCollapseFrame = 0;
-  };
-  const animateTileHomeHorizontalCollapse = (tiles, workspace, fallbackBottom) => {
+  const collapseTileHomeHorizontally = (tiles, workspace, fallbackBottom) => {
     if (!editorViewport) return;
-    cancelTileHomeCollapse();
-    const finish = () => {
-      tileHomeCollapseFrame = 0;
-      const homeGeometry = computeTileViewportGeometry(tiles, workspace);
-      tileAllocatedExtent = {
-        ...(tileAllocatedExtent || homeGeometry.requiredExtent),
-        left: homeGeometry.requiredExtent.left,
-        right: homeGeometry.requiredExtent.right,
-        bottom: Math.max(
-          homeGeometry.requiredExtent.bottom,
-          Number(tileAllocatedExtent?.bottom || fallbackBottom),
-        ),
-      };
-      applyTileRects(tiles, {scheduleCleanup: false});
-      editorViewport.scrollLeft = 0;
+    const homeGeometry = computeTileViewportGeometry(tiles, workspace);
+    tileAllocatedExtent = {
+      ...(tileAllocatedExtent || homeGeometry.requiredExtent),
+      left: homeGeometry.requiredExtent.left,
+      right: homeGeometry.requiredExtent.right,
+      bottom: Math.max(
+        homeGeometry.requiredExtent.bottom,
+        Number(tileAllocatedExtent?.bottom || fallbackBottom),
+      ),
     };
-    if (editorViewport.scrollLeft < 1) {
-      finish();
-      return;
-    }
-    const tick = () => {
-      const remaining = editorViewport.scrollLeft;
-      if (remaining < 1) {
-        finish();
-        return;
-      }
-      const step = clamp(remaining * .12, 2, 24);
-      editorViewport.scrollLeft = Math.max(0, remaining - step);
-      tileHomeCollapseFrame = requestAnimationFrame(tick);
-    };
-    tileHomeCollapseFrame = requestAnimationFrame(tick);
+    applyTileRects(tiles, {scheduleCleanup: false});
+    editorViewport.scrollLeft = 0;
   };
   editorViewport?.addEventListener("scroll", () => {
     scheduleTileExtentCleanup(
@@ -1696,7 +1672,7 @@
     if (editProjectsPanel) window.refreshLexamoraIcons?.(editProjectsPanel);
     localStorage.removeItem(floatingPanelsKey);
 
-    const scrollEditorViewportTowardPointer = pointer => {
+    const scrollEditorViewportTowardPointer = (pointer, movingBounds = null) => {
       if (!editorViewport || !pointer) return false;
       const bounds = editorViewport.getBoundingClientRect();
       const edgeZone = Math.min(72, Math.max(40, bounds.width * .05));
@@ -1712,10 +1688,21 @@
       };
       const beforeLeft = editorViewport.scrollLeft;
       const beforeTop = editorViewport.scrollTop;
+      const logicalViewport = tileLogicalViewportBounds(tileViewportGeometry);
+      let horizontalPosition = pointer.clientX;
+      if (movingBounds && logicalViewport) {
+        const movingScreenLeft = bounds.left + movingBounds.x - logicalViewport.left;
+        const movingScreenRight = bounds.left + movingBounds.right - logicalViewport.left;
+        if (movingScreenRight > bounds.right - edgeZone) {
+          horizontalPosition = Math.max(horizontalPosition, movingScreenRight);
+        } else if (movingScreenLeft < bounds.left + edgeZone) {
+          horizontalPosition = Math.min(horizontalPosition, movingScreenLeft);
+        }
+      }
       const maxLeft = Math.max(0, editorViewport.scrollWidth - editorViewport.clientWidth);
       const maxTop = Math.max(0, editorViewport.scrollHeight - editorViewport.clientHeight);
       editorViewport.scrollLeft = clamp(
-        beforeLeft + axisStep(pointer.clientX, bounds.left, bounds.right),
+        beforeLeft + axisStep(horizontalPosition, bounds.left, bounds.right),
         0,
         maxLeft,
       );
@@ -1751,9 +1738,6 @@
         const movingKeys = selectedTileKeys.has(key) ? [...selectedTileKeys] : [key];
         const startX = event.clientX;
         const startY = event.clientY;
-        const startPanelScreenRect = panel.getBoundingClientRect();
-        const grabOffsetX = startX - startPanelScreenRect.left;
-        const grabOffsetY = startY - startPanelScreenRect.top;
         const startScrollLeft = editorViewport?.scrollLeft || 0;
         const startScrollTop = editorViewport?.scrollTop || 0;
         const pointerId = event.pointerId;
@@ -1777,20 +1761,13 @@
             && bounds.right <= homeBounds.right + 1
           );
         };
-        cancelTileHomeCollapse();
         tileMoveDragActive = true;
         if (tileExtentCleanupTimer) clearTimeout(tileExtentCleanupTimer);
         tileExtentCleanupTimer = 0;
         capturePointerSafely(handle, pointerId);
         const updatePosition = next => {
-          const viewportRect = editorViewport?.getBoundingClientRect();
-          const logicalViewport = tileLogicalViewportBounds(tileViewportGeometry);
-          const dx = viewportRect && logicalViewport
-            ? logicalViewport.left + next.clientX - viewportRect.left - grabOffsetX - startTiles[key].x
-            : next.clientX - startX + (editorViewport?.scrollLeft || 0) - startScrollLeft;
-          const dy = viewportRect && logicalViewport
-            ? logicalViewport.top + next.clientY - viewportRect.top - grabOffsetY - startTiles[key].y
-            : next.clientY - startY + (editorViewport?.scrollTop || 0) - startScrollTop;
+          const dx = next.clientX - startX + (editorViewport?.scrollLeft || 0) - startScrollLeft;
+          const dy = next.clientY - startY + (editorViewport?.scrollTop || 0) - startScrollTop;
           if (!active && Math.hypot(dx, dy) < 4) return;
           if (!active) remember();
           active = true;
@@ -1806,14 +1783,6 @@
                 const single = snapMovingTile(key, raw, startTiles, layout.workspace);
                 return {dx: single.rect.x - origin.x, dy: single.rect.y - origin.y, guide: single.guide};
               })();
-          if (cameraFollowHorizontalActive && startMovingBounds) {
-            snapped.dx = clamp(
-              dx,
-              tileWorkspaceInset - startMovingBounds.x,
-              layout.workspace.width - tileWorkspaceInset - startMovingBounds.right,
-            );
-            snapped.guide.x = null;
-          }
           currentTiles = cloneTiles(startTiles);
           movingKeys.forEach(movingKey => {
             currentTiles[movingKey] = {
@@ -1878,9 +1847,11 @@
           if (cameraFollowHorizontalActive) {
             cameraFollowTargetLeft = tilesUseHomeHorizontalExtent(currentTiles)
               ? 0
-              : movingTilesMatchStart(["x"])
-              ? startScrollLeft
-              : startScrollLeft + (next.clientX - startX) * .65;
+              : clamp(
+                  startScrollLeft + (next.clientX - startX) * 1.15,
+                  0,
+                  Math.max(0, editorViewport.scrollWidth - editorViewport.clientWidth),
+                );
           }
           if (cameraFollowVerticalActive) {
             cameraFollowTargetTop = movingTilesMatchStart(["y"])
@@ -1894,9 +1865,16 @@
           const beforeTop = editorViewport.scrollTop;
           const differenceX = cameraFollowTargetLeft - beforeLeft;
           const differenceY = cameraFollowTargetTop - beforeTop;
-          const returningHome = cameraFollowHorizontalActive && tilesUseHomeHorizontalExtent(currentTiles);
-          const horizontalEase = returningHome ? .18 : .34;
-          const stepX = Math.abs(differenceX) < .5 ? differenceX : differenceX * horizontalEase;
+          const returningHome = cameraFollowHorizontalActive && differenceX < 0;
+          const horizontalEase = returningHome ? .55 : .34;
+          const horizontalLimit = returningHome ? 64 : 40;
+          const stepX = Math.abs(differenceX) < .5
+            ? differenceX
+            : Math.sign(differenceX) * Math.min(
+                Math.abs(differenceX),
+                horizontalLimit,
+                Math.max(1, Math.abs(differenceX) * horizontalEase),
+              );
           const stepY = Math.abs(differenceY) < .5 ? differenceY : differenceY * .34;
           editorViewport.scrollLeft = clamp(
             beforeLeft + stepX,
@@ -1915,7 +1893,10 @@
         const continueAutoScroll = () => {
           autoScrollFrame = 0;
           if (!active || !latestPointer) return;
-          const edgeMoved = scrollEditorViewportTowardPointer(latestPointer);
+          const edgeMoved = scrollEditorViewportTowardPointer(
+            latestPointer,
+            tileGroupBounds(currentTiles, movingKeys),
+          );
           const followMoved = applyCameraFollow();
           if (edgeMoved || followMoved) updatePosition(latestPointer);
           autoScrollFrame = requestAnimationFrame(continueAutoScroll);
@@ -1923,7 +1904,10 @@
         const move = next => {
           latestPointer = next;
           updatePosition(next);
-          if (active) updateCameraFollowTarget(next);
+          if (active) {
+            updateCameraFollowTarget(next);
+            if (applyCameraFollow()) updatePosition(next);
+          }
           if (active && !autoScrollFrame) autoScrollFrame = requestAnimationFrame(continueAutoScroll);
         };
         let finished = false;
@@ -1959,9 +1943,9 @@
           if (invalidDrop || returnedToStart || returnedHomeHorizontally) {
             if (tileExtentCleanupTimer) clearTimeout(tileExtentCleanupTimer);
             tileExtentCleanupTimer = 0;
-            tileExtentCleanupSuppressedUntil = Date.now() + (returnedHomeHorizontally ? 700 : 300);
+            tileExtentCleanupSuppressedUntil = Date.now() + 300;
             if (returnedHomeHorizontally) {
-              animateTileHomeHorizontalCollapse(
+              collapseTileHomeHorizontally(
                 finalTiles,
                 layout.workspace,
                 startAllocatedExtent.bottom,
