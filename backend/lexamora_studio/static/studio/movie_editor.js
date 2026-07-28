@@ -1614,39 +1614,41 @@
       );
       return editorViewport.scrollLeft !== beforeLeft || editorViewport.scrollTop !== beforeTop;
     };
-    const keepMovingTilesVisible = (tiles, keys) => {
+    const placeMovingTilesWithinViewport = (tiles, keys, {rightLead = 0} = {}) => {
       const initialScrollLeft = editorViewport?.scrollLeft || 0;
-      applyTileRects(tiles);
-      const panels = keys.map(key => layoutPanels[key]).filter(Boolean);
-      if (!editorViewport || !panels.length) return 0;
+      if (!editorViewport || !keys.length) return 0;
       const viewportBounds = visibleEditorViewportBounds();
+      const contentLeft = editorViewport.getBoundingClientRect().left;
       const safeLeft = viewportBounds.left + tileWorkspaceInset;
-      const safeRight = viewportBounds.right - tileWorkspaceInset;
-      const groupBounds = () => {
-        const rects = panels.map(panel => panel.getBoundingClientRect());
-        return {
-          left: Math.min(...rects.map(rect => rect.left)),
-          right: Math.max(...rects.map(rect => rect.right)),
-        };
-      };
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        let visible = groupBounds();
-        const scrollDelta = visible.left < safeLeft
-          ? visible.left - safeLeft
-          : visible.right > safeRight ? visible.right - safeRight : 0;
+      const safeRight = viewportBounds.right - tileWorkspaceInset - Math.max(0, rightLead);
+      const layout = ensureTileLayout();
+      let targetScrollLeft = initialScrollLeft;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const geometry = computeTileViewportGeometry(tiles, layout.workspace);
+        const bounds = tileGroupBounds(tiles, keys);
+        if (!bounds) break;
+        const maxLeft = Math.max(0, geometry.width - editorViewport.clientWidth);
+        targetScrollLeft = clamp(targetScrollLeft, 0, maxLeft);
+        const visibleLeft = contentLeft + bounds.x + geometry.offsetX - targetScrollLeft;
+        const visibleRight = contentLeft + bounds.right + geometry.offsetX - targetScrollLeft;
+        const scrollDelta = visibleLeft < safeLeft
+          ? visibleLeft - safeLeft
+          : visibleRight > safeRight ? visibleRight - safeRight : 0;
         if (Math.abs(scrollDelta) < .5) break;
-        const maxLeft = Math.max(0, editorViewport.scrollWidth - editorViewport.clientWidth);
-        editorViewport.scrollLeft = clamp(editorViewport.scrollLeft + scrollDelta, 0, maxLeft);
-        visible = groupBounds();
-        const correction = visible.left < safeLeft
-          ? safeLeft - visible.left
-          : visible.right > safeRight ? safeRight - visible.right : 0;
-        if (Math.abs(correction) < .5) continue;
+        const nextScrollLeft = clamp(targetScrollLeft + scrollDelta, 0, maxLeft);
+        const remainder = scrollDelta - (nextScrollLeft - targetScrollLeft);
+        targetScrollLeft = nextScrollLeft;
+        if (Math.abs(remainder) < .5) continue;
         keys.forEach(key => {
-          tiles[key].x += correction;
+          tiles[key].x -= remainder;
         });
-        applyTileRects(tiles);
       }
+      applyTileRects(tiles);
+      editorViewport.scrollLeft = clamp(
+        targetScrollLeft,
+        0,
+        Math.max(0, editorViewport.scrollWidth - editorViewport.clientWidth),
+      );
       return editorViewport.scrollLeft - initialScrollLeft;
     };
     const movingTilesHorizontalEdgeStep = (keys, direction) => {
@@ -1702,7 +1704,7 @@
         const minimumDx = tileWorkspaceInset - movingBounds.x;
         const maximumDx = layout.workspace.width - tileWorkspaceInset - movingBounds.right;
         capturePointerSafely(handle, pointerId);
-        const updatePosition = next => {
+        const updatePosition = (next, {rightLead = 0} = {}) => {
           const dx = next.clientX - startX + (editorViewport?.scrollLeft || 0) - startScrollLeft - visibilityScrollX + edgeExpansionX;
           const dy = next.clientY - startY + (editorViewport?.scrollTop || 0) - startScrollTop;
           if (!active && Math.hypot(dx, dy) < 4) return;
@@ -1729,7 +1731,7 @@
             };
             layoutPanels[movingKey]?.classList.add("movie-tile-moving");
           });
-          visibilityScrollX += keepMovingTilesVisible(currentTiles, movingKeys);
+          visibilityScrollX += placeMovingTilesWithinViewport(currentTiles, movingKeys, {rightLead});
           const invalidDrop = tileLayoutHasSelectionOverlap(currentTiles, movingKeys);
           movingKeys.forEach(movingKey => layoutPanels[movingKey]?.classList.toggle("movie-tile-drop-invalid", invalidDrop));
           document.body.classList.add("movie-panel-interacting");
@@ -1756,22 +1758,20 @@
               edgeExpansionX = nextExpansion;
             }
           }
-          if (scrolled || expanded) {
-            updatePosition(latestPointer);
-            if (expanded && tileEdgeStep > 0) {
-              const beforeCatchUp = editorViewport.scrollLeft;
-              const maxLeft = Math.max(0, editorViewport.scrollWidth - editorViewport.clientWidth);
-              editorViewport.scrollLeft = clamp(beforeCatchUp + tileEdgeStep, 0, maxLeft);
-              visibilityScrollX += editorViewport.scrollLeft - beforeCatchUp;
-            }
-          }
+          if (scrolled || expanded) updatePosition(latestPointer, {
+            rightLead: tileEdgeStep > 0 ? tileRightAutoScrollLead : 0,
+          });
           autoScrollFrame = requestAnimationFrame(continueAutoScroll);
         };
         const move = next => {
           const pointerDeltaX = next.clientX - latestPointer.clientX;
           if (Math.abs(pointerDeltaX) >= .5) horizontalIntent = Math.sign(pointerDeltaX);
           latestPointer = next;
-          updatePosition(next);
+          updatePosition(next, {
+            rightLead: movingTilesHorizontalEdgeStep(movingKeys, horizontalIntent) > 0
+              ? tileRightAutoScrollLead
+              : 0,
+          });
           if (active && !autoScrollFrame) autoScrollFrame = requestAnimationFrame(continueAutoScroll);
         };
         let finished = false;
@@ -1790,7 +1790,7 @@
           document.body.classList.remove("movie-panel-interacting");
           hideTileGuides();
           if (!active) return;
-          visibilityScrollX += keepMovingTilesVisible(currentTiles, movingKeys);
+          visibilityScrollX += placeMovingTilesWithinViewport(currentTiles, movingKeys);
           if (tileLayoutHasSelectionOverlap(currentTiles, movingKeys)) {
             applyTileRects(startTiles);
             toast("This space is occupied");
