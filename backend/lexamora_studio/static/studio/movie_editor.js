@@ -1726,6 +1726,13 @@
         let cameraFollowVerticalActive = false;
         let cameraFollowTargetLeft = startScrollLeft;
         let cameraFollowTargetTop = startScrollTop;
+        const tilesUseHomeHorizontalExtent = tiles => {
+          const bounds = tileBounds(tiles);
+          return (
+            bounds.left >= homeBounds.left - 1
+            && bounds.right <= homeBounds.right + 1
+          );
+        };
         capturePointerSafely(handle, pointerId);
         const updatePosition = next => {
           const dx = next.clientX - startX + (editorViewport?.scrollLeft || 0) - startScrollLeft;
@@ -1789,7 +1796,9 @@
             cameraFollowVerticalActive = true;
           }
           if (cameraFollowHorizontalActive) {
-            cameraFollowTargetLeft = movingTilesMatchStart(["x"])
+            cameraFollowTargetLeft = tilesUseHomeHorizontalExtent(currentTiles)
+              ? 0
+              : movingTilesMatchStart(["x"])
               ? startScrollLeft
               : startScrollLeft + (next.clientX - startX) * .65;
           }
@@ -1854,21 +1863,35 @@
           const invalidDrop = tileLayoutHasSelectionOverlap(currentTiles, movingKeys);
           const returnedToStart = movingTilesMatchStart(["x", "y"]);
           const finalTiles = invalidDrop ? startTiles : currentTiles;
+          const returnedHomeHorizontally = !invalidDrop && tilesUseHomeHorizontalExtent(finalTiles);
           if (invalidDrop) {
             toast("This space is occupied");
           } else {
             editorLayouts.columns = {...editorLayouts.columns, workspace: layout.workspace, tiles: currentTiles};
             persistLayout("columns");
           }
-          if (invalidDrop || returnedToStart) {
+          if (invalidDrop || returnedToStart || returnedHomeHorizontally) {
             if (tileExtentCleanupTimer) clearTimeout(tileExtentCleanupTimer);
             tileExtentCleanupTimer = 0;
             tileExtentCleanupSuppressedUntil = Date.now() + 300;
-            tileAllocatedExtent = {...startAllocatedExtent};
+            if (returnedHomeHorizontally) {
+              const homeGeometry = computeTileViewportGeometry(finalTiles, layout.workspace);
+              tileAllocatedExtent = {
+                ...startAllocatedExtent,
+                left: homeGeometry.requiredExtent.left,
+                right: homeGeometry.requiredExtent.right,
+                bottom: Math.max(
+                  homeGeometry.requiredExtent.bottom,
+                  Number(tileAllocatedExtent?.bottom || startAllocatedExtent.bottom),
+                ),
+              };
+            } else {
+              tileAllocatedExtent = {...startAllocatedExtent};
+            }
             applyTileRects(finalTiles, {scheduleCleanup: false});
             if (editorViewport) {
-              editorViewport.scrollLeft = startScrollLeft;
-              editorViewport.scrollTop = startScrollTop;
+              editorViewport.scrollLeft = returnedHomeHorizontally ? 0 : startScrollLeft;
+              if (!returnedHomeHorizontally) editorViewport.scrollTop = startScrollTop;
             }
           }
           applyPreviewZoom();
