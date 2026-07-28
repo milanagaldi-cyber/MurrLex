@@ -389,6 +389,17 @@
       Math.max(0, editorViewport.scrollHeight - editorViewport.clientHeight),
     );
   };
+  const tileViewportMinimumReveal = 48;
+  const clampTileViewportScrollTop = () => {
+    if (!editorViewport || !editorLayout || !tileViewportGeometry) return;
+    const geometry = tileViewportGeometry;
+    const origin = tileWorkspaceViewportOrigin();
+    const contentBottom = origin.y + geometry.offsetY + geometry.bounds.bottom;
+    const scrollExtent = Math.max(0, editorViewport.scrollHeight - editorViewport.clientHeight);
+    const reveal = Math.min(tileViewportMinimumReveal, editorViewport.clientHeight);
+    const maximumTop = Math.min(scrollExtent, Math.max(0, contentBottom - reveal));
+    if (editorViewport.scrollTop > maximumTop) editorViewport.scrollTop = maximumTop;
+  };
   const centerTileWorkspaceView = () => {
     if (!editorViewport) return;
     const layout = ensureTileLayout();
@@ -438,6 +449,7 @@
       "important",
     );
     ensureTileWorkspaceCoversViewport();
+    clampTileViewportScrollTop();
   };
   let initialTileWorkspaceCentered = false;
   const scheduleTileWorkspaceCenter = ({force = false} = {}) => {
@@ -452,6 +464,11 @@
       fitEditorViewportToWindow();
     });
   };
+  let tileViewportScrollFrame = 0;
+  editorViewport?.addEventListener("scroll", () => {
+    cancelAnimationFrame(tileViewportScrollFrame);
+    tileViewportScrollFrame = requestAnimationFrame(clampTileViewportScrollTop);
+  }, {passive: true});
   const openedFromSiblingProjectView = () => {
     try {
       if (!document.referrer) return false;
@@ -1323,6 +1340,7 @@
     const timelineShell = q("[data-timeline-shell]");
     if (timelineShell) timelineShell.style.setProperty("height", `${Math.max(100, tiles.timeline.height - 46)}px`, "important");
     if (preserveViewport) scrollTileViewportToLogicalCenter(previousLogicalCenter);
+    clampTileViewportScrollTop();
   };
   const nearestTileSnap = (value, candidates) => {
     let nearest = null;
@@ -5050,13 +5068,16 @@
   previewStage.addEventListener("pointerdown", beginPreviewPan);
   qa("[data-preview-resize]").forEach(handle => handle.addEventListener("pointerdown", beginPreviewResize));
   qa("[data-canvas-frame]").forEach(button => bindHold(button, () => nudgeCanvasFrame(button.dataset.canvasFrame), 210, 75));
-  const forwardVerticalWheelToPage = event => {
+  const forwardVerticalWheelToWorkspace = event => {
     if (event.ctrlKey || !event.deltaY || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return false;
     event.preventDefault();
-    window.scrollBy({top: event.deltaY, left: 0, behavior: "auto"});
+    if (editorViewport) {
+      editorViewport.scrollTop += event.deltaY;
+      clampTileViewportScrollTop();
+    }
     return true;
   };
-  previewStage.addEventListener("wheel", forwardVerticalWheelToPage, {passive: false});
+  previewStage.addEventListener("wheel", forwardVerticalWheelToWorkspace, {passive: false});
   playheadNode.addEventListener("pointerdown", beginPlayheadGesture);
   previewZoomInput?.addEventListener("input", event => {
     previewZoomManual = true;
@@ -5104,7 +5125,7 @@
       changeZoom(zoom + (event.deltaY < 0 ? 4 : -4), event.clientX);
       return;
     }
-    forwardVerticalWheelToPage(event);
+    forwardVerticalWheelToWorkspace(event);
   }, {passive: false});
   zoomInput.oninput = event => changeZoom(Number(event.target.value));
   q("[data-zoom-out]").onclick = () => changeZoom(zoom - 4);

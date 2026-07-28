@@ -935,7 +935,7 @@ body.movie-layout-locked [data-timeline-edge-resizer]{pointer-events:none!import
   overflow:auto;
   contain:layout paint;
   isolation:isolate;
-  overscroll-behavior:auto;
+  overscroll-behavior:contain;
   scrollbar-gutter:stable;
   height:calc(100dvh - 230px);
   min-height:320px;
@@ -976,8 +976,10 @@ body.movie-layout-locked [data-timeline-edge-resizer]{pointer-events:none!import
 }
 html.movie-editor-page-active,
 body.movie-editor-page-active{
+  height:100%;
   max-width:100%;
   overflow-x:hidden!important;
+  overflow-y:hidden!important;
 }
 body.movie-editor-page-active .topbar,
 body.movie-editor-page-active main{
@@ -1307,4 +1309,4 @@ body.movie-panel-interacting *{
 </section>
 {{ movie_timeline_data|json_script:"movie-timeline-data" }}{{ movie_assets|json_script:"movie-assets-data" }}{{ movie_library_assets|json_script:"movie-library-data" }}{{ movie_render_jobs|json_script:"movie-render-jobs-data" }}{{ movie_edits|json_script:"movie-edits-data" }}
 {% endblock %}
-{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260728-stable-scene-height"></script>{% endblock %}
+{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260728-single-scroll-owner"></script>{% endblock %}
