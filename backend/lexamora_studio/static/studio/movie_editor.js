@@ -320,6 +320,7 @@
     return normalized;
   };
   let tileViewportGeometry = null;
+  const tileViewportMinimumReveal = 48;
   const tileBounds = tiles => {
     const rects = tilePanelKeys.map(key => tiles[key]).filter(Boolean);
     return {
@@ -337,24 +338,26 @@
     const baseWidth = workspace.baseWidth || defaults.workspace.baseWidth;
     const baseHeight = workspace.baseHeight || defaults.workspace.baseHeight;
     const baseRight = baseLeft + baseWidth;
-    const baseBottom = baseTop + baseHeight;
     const viewportWidth = Math.max(1, editorViewport?.clientWidth || baseWidth);
     const viewportHeight = Math.max(
       1,
       (editorViewport?.clientHeight || baseHeight) - Number(editorLayout?.offsetTop || 0),
     );
     const coreWidth = Math.max(baseWidth, viewportWidth);
-    const coreHeight = Math.max(baseHeight, viewportHeight);
     const leftReserve = clamp(baseLeft - bounds.left, 0, baseWidth);
     const rightReserve = clamp(bounds.right - baseRight, 0, baseWidth);
-    const bottomReserve = clamp(bounds.bottom - baseBottom, 0, baseHeight);
+    const occupiedHeight = Math.max(0, bounds.bottom - baseTop);
+    const bottomReserve = Math.max(
+      0,
+      (editorViewport?.clientHeight || viewportHeight) - tileViewportMinimumReveal,
+    );
     const centerX = Math.max(0, (coreWidth - baseWidth) / 2);
     const baseDisplayLeft = Math.max(centerX, leftReserve);
     return {
       offsetX: baseDisplayLeft - baseLeft,
       offsetY: -baseTop,
       width: Math.ceil(Math.max(coreWidth, baseDisplayLeft + baseWidth + rightReserve)),
-      height: Math.ceil(Math.max(coreHeight, baseHeight + bottomReserve)),
+      height: Math.ceil(Math.max(viewportHeight, occupiedHeight + bottomReserve)),
       bounds,
       baseLeft,
       baseTop,
@@ -388,17 +391,6 @@
       0,
       Math.max(0, editorViewport.scrollHeight - editorViewport.clientHeight),
     );
-  };
-  const tileViewportMinimumReveal = 48;
-  const clampTileViewportScrollTop = () => {
-    if (!editorViewport || !editorLayout || !tileViewportGeometry) return;
-    const geometry = tileViewportGeometry;
-    const origin = tileWorkspaceViewportOrigin();
-    const contentBottom = origin.y + geometry.offsetY + geometry.bounds.bottom;
-    const scrollExtent = Math.max(0, editorViewport.scrollHeight - editorViewport.clientHeight);
-    const reveal = Math.min(tileViewportMinimumReveal, editorViewport.clientHeight);
-    const maximumTop = Math.min(scrollExtent, Math.max(0, contentBottom - reveal));
-    if (editorViewport.scrollTop > maximumTop) editorViewport.scrollTop = maximumTop;
   };
   const centerTileWorkspaceView = () => {
     if (!editorViewport) return;
@@ -449,7 +441,6 @@
       "important",
     );
     ensureTileWorkspaceCoversViewport();
-    clampTileViewportScrollTop();
   };
   let initialTileWorkspaceCentered = false;
   const scheduleTileWorkspaceCenter = ({force = false} = {}) => {
@@ -464,29 +455,6 @@
       fitEditorViewportToWindow();
     });
   };
-  let tileViewportScrollFrame = 0;
-  editorViewport?.addEventListener("scroll", () => {
-    cancelAnimationFrame(tileViewportScrollFrame);
-    tileViewportScrollFrame = requestAnimationFrame(clampTileViewportScrollTop);
-  }, {passive: true});
-  const openedFromSiblingProjectView = () => {
-    try {
-      if (!document.referrer) return false;
-      const currentProject = location.pathname.match(/\/projects\/([^/]+)\/movie-editor\/?$/);
-      const referrer = new URL(document.referrer);
-      const referrerProject = referrer.pathname.match(/\/projects\/([^/]+)(?:\/|$)/);
-      return Boolean(
-        currentProject
-        && referrer.origin === location.origin
-        && referrerProject
-        && referrerProject[1] === currentProject[1]
-        && !referrer.pathname.includes("/movie-editor/")
-      );
-    } catch (_) {
-      return false;
-    }
-  };
-  const keepProjectHeaderFocusOnLoad = openedFromSiblingProjectView();
   const cloneLayoutState = () => ({mode: "columns", layouts: structuredClone(editorLayouts)});
   const panelUsesDefaultGeometry = key => {
     if (!workspacePanel(key)) return true;
@@ -1340,7 +1308,6 @@
     const timelineShell = q("[data-timeline-shell]");
     if (timelineShell) timelineShell.style.setProperty("height", `${Math.max(100, tiles.timeline.height - 46)}px`, "important");
     if (preserveViewport) scrollTileViewportToLogicalCenter(previousLogicalCenter);
-    clampTileViewportScrollTop();
   };
   const nearestTileSnap = (value, candidates) => {
     let nearest = null;
@@ -5073,7 +5040,6 @@
     event.preventDefault();
     if (editorViewport) {
       editorViewport.scrollTop += event.deltaY;
-      clampTileViewportScrollTop();
     }
     return true;
   };
@@ -5762,11 +5728,8 @@
   normalizeTimeline(); applyCanvas(); renderBin(); renderTimeline(); renderInspector(); renderRenderJobs(); renderLibrary(); scheduleRenderPoll(); setPlayhead(0, true, true);
   savedSignature = signature(); updateDirty(); updateHistoryButtons(); refreshMedia();
   requestAnimationFrame(() => requestAnimationFrame(() => {
-    if (keepProjectHeaderFocusOnLoad) {
-      window.scrollTo({left: 0, top: 0, behavior: "auto"});
-    } else {
-      editorViewport?.scrollIntoView({block: "start", behavior: "auto"});
-    }
+    window.scrollTo({left: 0, top: 0, behavior: "auto"});
+    if (editorViewport) editorViewport.scrollTop = 0;
     fitEditorViewportToWindow();
     applyPreviewZoom();
     updatePreviewGeometry();
