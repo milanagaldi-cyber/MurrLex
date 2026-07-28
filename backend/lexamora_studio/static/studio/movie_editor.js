@@ -1950,7 +1950,8 @@
         let cameraFollowReturningHome = false;
         let cameraFollowTargetLogicalX = startViewportLogicalCenter?.x || 0;
         let previousCameraPointerX = startX;
-        const dragViewportGap = 16;
+        let dragReserveReady = false;
+        const dragViewportGap = 4;
         const pointerToLogicalPoint = pointer => {
           const visible = tileLogicalViewportBounds(tileViewportGeometry);
           const viewportBounds = editorViewport?.getBoundingClientRect();
@@ -2053,26 +2054,21 @@
           }
           if (cameraFollowSide) {
             cameraFollowHorizontalActive = true;
-            const baseLeft = tileViewportGeometry.baseLeft;
-            const baseRight = baseLeft + tileViewportGeometry.baseWidth;
-            const reserve = clamp(
-              Math.abs(pointerDeltaX) * .9 + dragViewportGap * 2,
-              dragViewportGap * 2,
-              tileViewportGeometry.baseWidth,
-            );
-            const currentExtent = tileAllocatedExtent
-              || computeTileViewportGeometry(currentTiles, layout.workspace).extent;
-            const nextExtent = {
-              ...currentExtent,
-              left: Math.min(currentExtent.left, baseLeft - reserve),
-              right: Math.max(currentExtent.right, baseRight + reserve),
-            };
-            const reserveChanged = (
-              Math.abs(nextExtent.left - currentExtent.left) >= .5
-              || Math.abs(nextExtent.right - currentExtent.right) >= .5
-            );
-            if (reserveChanged) {
-              tileAllocatedExtent = nextExtent;
+            if (!dragReserveReady) {
+              dragReserveReady = true;
+              const baseLeft = tileViewportGeometry.baseLeft;
+              const baseRight = baseLeft + tileViewportGeometry.baseWidth;
+              const reserve = Math.min(
+                tileViewportGeometry.baseWidth,
+                Math.max(96, editorViewport.clientWidth * .55),
+              );
+              const currentExtent = tileAllocatedExtent
+                || computeTileViewportGeometry(currentTiles, layout.workspace).extent;
+              tileAllocatedExtent = {
+                ...currentExtent,
+                left: Math.min(currentExtent.left, baseLeft - reserve),
+                right: Math.max(currentExtent.right, baseRight + reserve),
+              };
               applyTileRects(currentTiles, {preserveViewport: true, scheduleCleanup: false});
             }
           }
