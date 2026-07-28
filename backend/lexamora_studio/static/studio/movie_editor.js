@@ -1280,6 +1280,7 @@
   };
   const cloneTiles = tiles => Object.fromEntries(tilePanelKeys.map(key => [key, tileRect(tiles[key])]));
   const syncTileSelectionClasses = () => {
+    editorLayout?.classList.toggle("movie-tile-group-selected", selectedTileKeys.size > 1);
     tilePanelKeys.forEach(key => {
       const panel = layoutPanels[key];
       if (!panel) return;
@@ -1755,8 +1756,12 @@
         : panel?.querySelector(`[data-panel-drag="${key}"]`);
       if (!panel || !handle || handle.dataset.tileDragBound === "true") return;
       handle.dataset.tileDragBound = "true";
-      const beginTileDrag = event => {
-        if (!canEdit || event.button !== 0 || event.target.closest(tileHoldBlockedSelector)) return false;
+      const beginTileDrag = (event, {allowInteractive = false} = {}) => {
+        if (
+          !canEdit
+          || event.button !== 0
+          || (!allowInteractive && event.target.closest(tileHoldBlockedSelector))
+        ) return false;
         if (layoutLocked) {
           event.preventDefault();
           flashLayoutLock();
@@ -2006,16 +2011,41 @@
         registerEditorPointerFinish(finish);
         return true;
       };
-      handle.addEventListener("pointerdown", beginTileDrag);
 
-      if (panel !== handle && panel.dataset.tileHoldDragBound !== "true") {
+      if (panel.dataset.tileGroupDragBound !== "true") {
+        panel.dataset.tileGroupDragBound = "true";
+        panel.addEventListener("pointerdown", event => {
+          if (
+            selectedTileKeys.size <= 1
+            || !selectedTileKeys.has(key)
+            || !beginTileDrag(event, {allowInteractive: true})
+          ) return;
+          event.stopImmediatePropagation();
+          document.body.classList.add("movie-panel-interacting");
+          const suppressGroupClick = clickEvent => {
+            clickEvent.preventDefault();
+            clickEvent.stopImmediatePropagation();
+          };
+          const clearGroupClickGuard = () => {
+            window.removeEventListener("pointerup", clearGroupClickGuard, true);
+            window.removeEventListener("pointercancel", clearGroupClickGuard, true);
+            window.setTimeout(() => {
+              window.removeEventListener("click", suppressGroupClick, true);
+            }, 80);
+          };
+          window.addEventListener("click", suppressGroupClick, true);
+          window.addEventListener("pointerup", clearGroupClickGuard, {capture: true, once: true});
+          window.addEventListener("pointercancel", clearGroupClickGuard, {capture: true, once: true});
+        }, true);
+      }
+
+      if (panel.dataset.tileHoldDragBound !== "true") {
         panel.dataset.tileHoldDragBound = "true";
         panel.addEventListener("pointerdown", event => {
           if (
             !canEdit
             || event.button !== 0
             || event.target.closest(tileHoldBlockedSelector)
-            || event.target.closest("[data-panel-drag]")
             || pointerNearTileEdge(event, panel)
           ) return;
           event.preventDefault();
@@ -2050,7 +2080,7 @@
             } else {
               releasePointerCaptureSafely(panel, pointerId);
             }
-          }, 500);
+          }, 100);
         });
       }
     });

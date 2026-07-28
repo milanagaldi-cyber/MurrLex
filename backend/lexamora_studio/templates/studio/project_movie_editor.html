@@ -1089,7 +1089,7 @@ body.movie-editor-page-active .movie-editor-viewport{
   min-height:140px!important;
 }
 .movie-editor-layout [data-panel-drag]{
-  cursor:grab!important;
+  cursor:default!important;
   user-select:none;
 }
 .movie-editor-layout [data-panel-drag] button,
@@ -1180,6 +1180,14 @@ body.movie-panel-interacting *{
   outline:2px solid color-mix(in srgb,var(--accent) 78%,#fff)!important;
   outline-offset:2px;
   box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 20%,transparent)!important;
+}
+.movie-editor-layout.movie-tile-group-selected .movie-tile-selected,
+.movie-editor-layout.movie-tile-group-selected .movie-tile-selected *{
+  cursor:grab!important;
+}
+body.movie-panel-interacting .movie-editor-layout.movie-tile-group-selected .movie-tile-selected,
+body.movie-panel-interacting .movie-editor-layout.movie-tile-group-selected .movie-tile-selected *{
+  cursor:grabbing!important;
 }
 .movie-tile-moving{
   opacity:.92;
@@ -1309,4 +1317,4 @@ body.movie-panel-interacting *{
 </section>
 {{ movie_timeline_data|json_script:"movie-timeline-data" }}{{ movie_assets|json_script:"movie-assets-data" }}{{ movie_library_assets|json_script:"movie-library-data" }}{{ movie_render_jobs|json_script:"movie-render-jobs-data" }}{{ movie_edits|json_script:"movie-edits-data" }}
 {% endblock %}
-{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260728-long-press-edge-speed"></script>{% endblock %}
+{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260728-group-grab-fast-hold"></script>{% endblock %}
