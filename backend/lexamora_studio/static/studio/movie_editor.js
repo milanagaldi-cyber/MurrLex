@@ -320,7 +320,10 @@
     return normalized;
   };
   let tileViewportGeometry = null;
+  let tileAllocatedExtent = null;
+  let tileExtentCleanupTimer = 0;
   const tileViewportMinimumReveal = 48;
+  const tileExtentCleanupMargin = 32;
   const tileBounds = tiles => {
     const rects = tilePanelKeys.map(key => tiles[key]).filter(Boolean);
     return {
@@ -330,7 +333,7 @@
       bottom: Math.max(...rects.map(rect => rect.y + rect.height)),
     };
   };
-  const computeTileViewportGeometry = (tiles, workspace) => {
+  const computeTileViewportGeometry = (tiles, workspace, allocatedExtent = null) => {
     const defaults = tileLayoutDefaults || createDefaultTileLayout();
     const bounds = tileBounds(tiles);
     const baseLeft = defaults.tiles.editProjects.x;
@@ -344,9 +347,30 @@
       (editorViewport?.clientHeight || baseHeight) - Number(editorLayout?.offsetTop || 0),
     );
     const coreWidth = Math.max(baseWidth, viewportWidth);
-    const leftReserve = clamp(baseLeft - bounds.left, 0, baseWidth);
-    const rightReserve = clamp(bounds.right - baseRight, 0, baseWidth);
-    const occupiedHeight = Math.max(0, bounds.bottom - baseTop);
+    const requiredExtent = {
+      left: Math.min(baseLeft, bounds.left),
+      right: Math.max(baseRight, bounds.right),
+      bottom: Math.max(baseTop, bounds.bottom),
+    };
+    const extent = {
+      left: clamp(
+        Math.min(requiredExtent.left, Number(allocatedExtent?.left ?? requiredExtent.left)),
+        baseLeft - baseWidth,
+        baseLeft,
+      ),
+      right: clamp(
+        Math.max(requiredExtent.right, Number(allocatedExtent?.right ?? requiredExtent.right)),
+        baseRight,
+        baseRight + baseWidth,
+      ),
+      bottom: Math.max(
+        requiredExtent.bottom,
+        Number(allocatedExtent?.bottom ?? requiredExtent.bottom),
+      ),
+    };
+    const leftReserve = baseLeft - extent.left;
+    const rightReserve = extent.right - baseRight;
+    const occupiedHeight = Math.max(0, extent.bottom - baseTop);
     const bottomReserve = Math.max(
       0,
       (editorViewport?.clientHeight || viewportHeight) - tileViewportMinimumReveal,
@@ -363,6 +387,8 @@
       baseTop,
       baseWidth,
       baseHeight,
+      requiredExtent,
+      extent,
     };
   };
   const tileWorkspaceViewportOrigin = () => ({
@@ -441,6 +467,7 @@
       "important",
     );
     ensureTileWorkspaceCoversViewport();
+    scheduleTileExtentCleanup(220);
   };
   let initialTileWorkspaceCentered = false;
   const scheduleTileWorkspaceCenter = ({force = false} = {}) => {
@@ -1280,7 +1307,16 @@
   const applyTileRects = (tiles, {preserveViewport = false} = {}) => {
     const layout = ensureTileLayout();
     const previousLogicalCenter = tileLogicalViewportCenter(tileViewportGeometry);
-    const geometry = computeTileViewportGeometry(tiles, layout.workspace);
+    const requiredGeometry = computeTileViewportGeometry(tiles, layout.workspace);
+    const requiredExtent = requiredGeometry.requiredExtent;
+    const previousExtent = tileAllocatedExtent || requiredExtent;
+    tileAllocatedExtent = {
+      left: Math.min(previousExtent.left, requiredExtent.left),
+      right: Math.max(previousExtent.right, requiredExtent.right),
+      bottom: Math.max(previousExtent.bottom, requiredExtent.bottom),
+    };
+    const geometry = computeTileViewportGeometry(tiles, layout.workspace, tileAllocatedExtent);
+    tileAllocatedExtent = geometry.extent;
     tileViewportGeometry = geometry;
     if (editorWorld) {
       editorWorld.style.setProperty("--murrcut-world-width", `${geometry.width}px`);
@@ -1309,6 +1345,52 @@
     if (timelineShell) timelineShell.style.setProperty("height", `${Math.max(100, tiles.timeline.height - 46)}px`, "important");
     if (preserveViewport) scrollTileViewportToLogicalCenter(previousLogicalCenter);
   };
+  const tileLogicalViewportBounds = geometry => {
+    if (!editorViewport || !geometry) return null;
+    const origin = tileWorkspaceViewportOrigin();
+    const left = editorViewport.scrollLeft - origin.x - geometry.offsetX;
+    const top = editorViewport.scrollTop - origin.y - geometry.offsetY;
+    return {
+      left,
+      right: left + editorViewport.clientWidth,
+      top,
+      bottom: top + editorViewport.clientHeight,
+    };
+  };
+  const cleanupTileWorkspaceExtent = () => {
+    tileExtentCleanupTimer = 0;
+    if (!editorViewport || !tileViewportGeometry || !tileAllocatedExtent) return;
+    if (document.body.classList.contains("movie-panel-interacting")) {
+      scheduleTileExtentCleanup();
+      return;
+    }
+    const layout = ensureTileLayout();
+    const required = computeTileViewportGeometry(layout.tiles, layout.workspace).requiredExtent;
+    const visible = tileLogicalViewportBounds(tileViewportGeometry);
+    if (!visible) return;
+    const next = {...tileAllocatedExtent};
+    const safeLeft = Math.min(required.left, visible.left - tileExtentCleanupMargin);
+    const safeRight = Math.max(required.right, visible.right + tileExtentCleanupMargin);
+    const safeBottom = Math.max(
+      required.bottom,
+      visible.top + tileViewportMinimumReveal + tileExtentCleanupMargin,
+    );
+    if (safeLeft > next.left) next.left = safeLeft;
+    if (safeRight < next.right) next.right = safeRight;
+    if (safeBottom < next.bottom) next.bottom = safeBottom;
+    const changed = ["left", "right", "bottom"].some(
+      side => Math.abs(Number(next[side]) - Number(tileAllocatedExtent[side])) >= 1
+    );
+    if (!changed) return;
+    tileAllocatedExtent = next;
+    applyTileRects(layout.tiles, {preserveViewport: true});
+  };
+  const scheduleTileExtentCleanup = (delay = 160) => {
+    clearTimeout(tileExtentCleanupTimer);
+    tileExtentCleanupTimer = setTimeout(cleanupTileWorkspaceExtent, delay);
+  };
+  editorViewport?.addEventListener("scroll", () => scheduleTileExtentCleanup(180), {passive: true});
+  window.addEventListener("pointerup", () => scheduleTileExtentCleanup(180), {passive: true});
   const nearestTileSnap = (value, candidates) => {
     let nearest = null;
     candidates.forEach(candidate => {
