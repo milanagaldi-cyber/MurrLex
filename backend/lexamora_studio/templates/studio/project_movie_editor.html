@@ -1104,30 +1104,6 @@ body.movie-panel-interacting *{
   cursor:grabbing!important;
   user-select:none!important;
 }
-body.movie-tile-pointer-locked,
-body.movie-tile-pointer-locked *{
-  cursor:none!important;
-}
-.movie-tile-locked-cursor{
-  position:fixed;
-  z-index:10000;
-  display:grid;
-  place-items:center;
-  width:28px;
-  height:28px;
-  border:0;
-  background:transparent;
-  color:#fff;
-  filter:drop-shadow(0 1px 1px #000) drop-shadow(0 0 1px #000);
-  pointer-events:none;
-  transform:translate(-50%,-50%);
-}
-.movie-tile-locked-cursor[hidden]{display:none}
-.movie-tile-locked-cursor .business-command-icon{
-  width:25px;
-  height:25px;
-  stroke-width:2.35;
-}
 .movie-editor-layout .movie-stage-resizer,
 .movie-editor-layout .movie-inspector-resizer,
 .movie-editor-layout [data-panel-width-resizer],
@@ -1333,4 +1309,4 @@ body.movie-tile-pointer-locked *{
 </section>
 {{ movie_timeline_data|json_script:"movie-timeline-data" }}{{ movie_assets|json_script:"movie-assets-data" }}{{ movie_library_assets|json_script:"movie-library-data" }}{{ movie_render_jobs|json_script:"movie-render-jobs-data" }}{{ movie_edits|json_script:"movie-edits-data" }}
 {% endblock %}
-{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260728-white-grab-cursor"></script>{% endblock %}
+{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260728-native-grab-cursor"></script>{% endblock %}
