@@ -1819,7 +1819,7 @@
     const scrollEditorViewportTowardPointer = (
       pointer,
       movingBounds = null,
-      {maxStep = 88} = {},
+      {maxStep = 88, horizontal = true, vertical = true} = {},
     ) => {
       if (!editorViewport || !pointer) return false;
       const bounds = editorViewport.getBoundingClientRect();
@@ -1850,16 +1850,20 @@
       }
       const maxLeft = Math.max(0, editorViewport.scrollWidth - editorViewport.clientWidth);
       const maxTop = Math.max(0, editorViewport.scrollHeight - editorViewport.clientHeight);
-      editorViewport.scrollLeft = clamp(
-        beforeLeft + axisStep(horizontalPosition, bounds.left, bounds.right),
-        0,
-        maxLeft,
-      );
-      editorViewport.scrollTop = clamp(
-        beforeTop + axisStep(pointer.clientY, bounds.top, bounds.bottom),
-        0,
-        maxTop,
-      );
+      if (horizontal) {
+        editorViewport.scrollLeft = clamp(
+          beforeLeft + axisStep(horizontalPosition, bounds.left, bounds.right),
+          0,
+          maxLeft,
+        );
+      }
+      if (vertical) {
+        editorViewport.scrollTop = clamp(
+          beforeTop + axisStep(pointer.clientY, bounds.top, bounds.bottom),
+          0,
+          maxTop,
+        );
+      }
       return editorViewport.scrollLeft !== beforeLeft || editorViewport.scrollTop !== beforeTop;
     };
 
@@ -1946,6 +1950,17 @@
         let cameraFollowReturningHome = false;
         let cameraFollowTargetLogicalX = startViewportLogicalCenter?.x || 0;
         let previousCameraPointerX = startX;
+        const dragViewportGap = 16;
+        const pointerToLogicalPoint = pointer => {
+          const visible = tileLogicalViewportBounds(tileViewportGeometry);
+          const viewportBounds = editorViewport?.getBoundingClientRect();
+          if (!visible || !viewportBounds) return null;
+          return {
+            x: visible.left + pointer.clientX - viewportBounds.left,
+            y: visible.top + pointer.clientY - viewportBounds.top,
+          };
+        };
+        const startPointerLogical = pointerToLogicalPoint(event);
         const movingTilesIntersectHomeZones = tiles => movingKeys.some(movingKey => {
           const rect = tiles[movingKey];
           const home = tileLayoutDefaults?.tiles?.[movingKey];
@@ -1960,9 +1975,11 @@
         tileExtentCleanupTimer = 0;
         capturePointerSafely(handle, pointerId);
         const updatePosition = next => {
-          const dx = next.clientX - startX + (editorViewport?.scrollLeft || 0) - startScrollLeft;
-          const dy = next.clientY - startY + (editorViewport?.scrollTop || 0) - startScrollTop;
-          if (!active && Math.hypot(dx, dy) < 4) return;
+          const pointerLogical = pointerToLogicalPoint(next);
+          if (!pointerLogical || !startPointerLogical) return;
+          const dx = pointerLogical.x - startPointerLogical.x;
+          const dy = pointerLogical.y - startPointerLogical.y;
+          if (!active && Math.hypot(next.clientX - startX, next.clientY - startY) < 4) return;
           if (!active) {
             remember();
             window.getSelection()?.removeAllRanges();
@@ -1992,28 +2009,17 @@
           const visibleBounds = tileLogicalViewportBounds(tileViewportGeometry);
           const movingBounds = tileGroupBounds(currentTiles, movingKeys);
           if (visibleBounds && movingBounds) {
-            const rightmostMovingTile = movingKeys
-              .map(movingKey => currentTiles[movingKey])
-              .reduce(
-                (rightmost, tile) =>
-                  !rightmost || tile.x + tile.width > rightmost.x + rightmost.width ? tile : rightmost,
-                null,
-              );
-            const leftmostMovingTile = movingKeys
-              .map(movingKey => currentTiles[movingKey])
-              .reduce(
-                (leftmost, tile) => !leftmost || tile.x < leftmost.x ? tile : leftmost,
-                null,
-              );
-            const rightAllowance = Number(rightmostMovingTile?.width || movingBounds.width) * .05;
-            const leftAllowance = Number(leftmostMovingTile?.width || movingBounds.width) * .05;
-            const rightOverflow = movingBounds.right - (visibleBounds.right + rightAllowance);
+            const rightOverflow = dx > 0
+              ? movingBounds.right + dragViewportGap - visibleBounds.right
+              : 0;
             if (rightOverflow > 0) {
               movingKeys.forEach(movingKey => {
                 currentTiles[movingKey].x -= rightOverflow;
               });
             }
-            const leftOverflow = visibleBounds.left - leftAllowance - movingBounds.x;
+            const leftOverflow = dx < 0
+              ? visibleBounds.left + dragViewportGap - movingBounds.x
+              : 0;
             if (leftOverflow > 0) {
               movingKeys.forEach(movingKey => {
                 currentTiles[movingKey].x += leftOverflow;
@@ -2024,7 +2030,7 @@
           movingKeys.forEach(movingKey => layoutPanels[movingKey]?.classList.toggle("movie-tile-drop-invalid", invalidDrop));
           document.body.classList.add("movie-panel-interacting");
           showTileGuides(snapped.guide);
-          applyTileRects(currentTiles);
+          applyTileRects(currentTiles, {preserveViewport: true});
         };
         const movingTilesMatchStart = axes => movingKeys.every(movingKey =>
           axes.every(axis =>
@@ -2036,15 +2042,10 @@
           if (!movingBounds || !startMovingBounds) return;
           const allBounds = tileBounds(currentTiles);
           const edgeTolerance = 2;
-          const beyondRight = (
-            movingBounds.right >= allBounds.right - edgeTolerance
-            && movingBounds.right > homeBounds.right + edgeTolerance
-          );
-          const beyondLeft = (
-            movingBounds.x <= allBounds.left + edgeTolerance
-            && movingBounds.x < homeBounds.left - edgeTolerance
-          );
-          const nextCameraSide = beyondRight ? 1 : beyondLeft ? -1 : cameraFollowSide;
+          const pointerDeltaX = next.clientX - startX;
+          const nextCameraSide = Math.abs(pointerDeltaX) >= 1
+            ? Math.sign(pointerDeltaX)
+            : cameraFollowSide;
           if (nextCameraSide !== cameraFollowSide) {
             cameraFollowSide = nextCameraSide;
             previousCameraPointerX = next.clientX;
@@ -2052,6 +2053,28 @@
           }
           if (cameraFollowSide) {
             cameraFollowHorizontalActive = true;
+            const baseLeft = tileViewportGeometry.baseLeft;
+            const baseRight = baseLeft + tileViewportGeometry.baseWidth;
+            const reserve = clamp(
+              Math.abs(pointerDeltaX) * .9 + dragViewportGap * 2,
+              dragViewportGap * 2,
+              tileViewportGeometry.baseWidth,
+            );
+            const currentExtent = tileAllocatedExtent
+              || computeTileViewportGeometry(currentTiles, layout.workspace).extent;
+            const nextExtent = {
+              ...currentExtent,
+              left: Math.min(currentExtent.left, baseLeft - reserve),
+              right: Math.max(currentExtent.right, baseRight + reserve),
+            };
+            const reserveChanged = (
+              Math.abs(nextExtent.left - currentExtent.left) >= .5
+              || Math.abs(nextExtent.right - currentExtent.right) >= .5
+            );
+            if (reserveChanged) {
+              tileAllocatedExtent = nextExtent;
+              applyTileRects(currentTiles, {preserveViewport: true, scheduleCleanup: false});
+            }
           }
           if (
             movingBounds.bottom >= allBounds.bottom - edgeTolerance
@@ -2063,7 +2086,7 @@
             cameraFollowReturningHome = (next.clientX - previousCameraPointerX) * cameraFollowSide < 0;
             cameraFollowTargetLogicalX = (
               (startViewportLogicalCenter?.x || 0)
-              + (next.clientX - startX) * 1.35
+              + pointerDeltaX * .72
             );
             previousCameraPointerX = next.clientX;
           }
@@ -2112,6 +2135,7 @@
           const edgeMoved = scrollEditorViewportTowardPointer(
             latestPointer,
             tileGroupBounds(currentTiles, movingKeys),
+            {horizontal: false},
           );
           const followMoved = applyCameraFollow();
           if (edgeMoved || followMoved) updatePosition(latestPointer);
