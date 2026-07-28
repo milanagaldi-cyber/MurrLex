@@ -266,7 +266,7 @@
       inspector: {x: reserveX + mediaWidth + gap + previewWidth + gap, y: upperY, width: inspectorWidth, height: upperHeight},
       timeline: {x: reserveX, y: timelineY, width: availableWidth, height: timelineHeight},
     };
-    const defaultBottomReserve = reserveX;
+    const defaultBottomReserve = reserveX / 2;
     const baseHeight = timelineY + timelineHeight + tileWorkspaceInset + defaultBottomReserve;
     const workspaceWidth = availableWidth * 3 + tileWorkspaceInset * 2;
     const workspaceHeight = baseHeight * 2;
