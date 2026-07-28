@@ -1676,7 +1676,7 @@
       if (!editorViewport || !pointer) return false;
       const bounds = editorViewport.getBoundingClientRect();
       const edgeZone = Math.min(112, Math.max(56, bounds.width * .08));
-      const maxStep = 44;
+      const maxStep = 88;
       const axisStep = (position, start, end) => {
         if (position < start + edgeZone) {
           return -Math.ceil(maxStep * clamp((start + edgeZone - position) / edgeZone, 0, 1));
@@ -1714,6 +1714,40 @@
       return editorViewport.scrollLeft !== beforeLeft || editorViewport.scrollTop !== beforeTop;
     };
 
+    const tileHoldBlockedSelector = [
+      "button",
+      "input",
+      "select",
+      "textarea",
+      "a",
+      "label",
+      "summary",
+      "[role='button']",
+      "[contenteditable='true']",
+      "[data-business-command]",
+      "[data-business-icon]",
+      ".icon-button",
+      ".icon-tool",
+      ".business-command-icon",
+      "svg",
+      ".movie-tile-edge",
+      ".movie-window-resize-handle",
+      "[data-panel-width-resizer]",
+      "[data-panel-height-resizer]",
+      "[data-timeline-edge-resizer]",
+      "[data-timeline-height-resizer]",
+      "[data-timeline-bottom-resizer]",
+    ].join(",");
+    const pointerNearTileEdge = (event, panel, inset = 14) => {
+      const bounds = panel.getBoundingClientRect();
+      return (
+        event.clientX <= bounds.left + inset
+        || event.clientX >= bounds.right - inset
+        || event.clientY <= bounds.top + inset
+        || event.clientY >= bounds.bottom - inset
+      );
+    };
+
     tilePanelKeys.forEach(key => {
       const panel = layoutPanels[key];
       const handle = panel?.matches(`[data-panel-drag="${key}"]`)
@@ -1721,12 +1755,12 @@
         : panel?.querySelector(`[data-panel-drag="${key}"]`);
       if (!panel || !handle || handle.dataset.tileDragBound === "true") return;
       handle.dataset.tileDragBound = "true";
-      handle.addEventListener("pointerdown", event => {
-        if (!canEdit || event.button !== 0 || event.target.closest("button,input,select,a,label")) return;
+      const beginTileDrag = event => {
+        if (!canEdit || event.button !== 0 || event.target.closest(tileHoldBlockedSelector)) return false;
         if (layoutLocked) {
           event.preventDefault();
           flashLayoutLock();
-          return;
+          return false;
         }
         event.preventDefault();
         event.stopPropagation();
@@ -1970,7 +2004,55 @@
         window.addEventListener("pointerup", finish, true);
         window.addEventListener("pointercancel", finish, true);
         registerEditorPointerFinish(finish);
-      });
+        return true;
+      };
+      handle.addEventListener("pointerdown", beginTileDrag);
+
+      if (panel !== handle && panel.dataset.tileHoldDragBound !== "true") {
+        panel.dataset.tileHoldDragBound = "true";
+        panel.addEventListener("pointerdown", event => {
+          if (
+            !canEdit
+            || event.button !== 0
+            || event.target.closest(tileHoldBlockedSelector)
+            || event.target.closest("[data-panel-drag]")
+            || pointerNearTileEdge(event, panel)
+          ) return;
+          event.preventDefault();
+          const pointerId = event.pointerId;
+          const startX = event.clientX;
+          const startY = event.clientY;
+          let holdTimer = 0;
+          const cleanupHold = releaseCapture => {
+            if (holdTimer) clearTimeout(holdTimer);
+            holdTimer = 0;
+            window.removeEventListener("pointermove", cancelOnMove, true);
+            window.removeEventListener("pointerup", cancelHold, true);
+            window.removeEventListener("pointercancel", cancelHold, true);
+            if (releaseCapture) releasePointerCaptureSafely(panel, pointerId);
+          };
+          const cancelOnMove = next => {
+            if (next.pointerId !== pointerId) return;
+            if (Math.hypot(next.clientX - startX, next.clientY - startY) > 6) cleanupHold(true);
+          };
+          const cancelHold = next => {
+            if (next.pointerId != null && next.pointerId !== pointerId) return;
+            cleanupHold(true);
+          };
+          capturePointerSafely(panel, pointerId);
+          window.addEventListener("pointermove", cancelOnMove, true);
+          window.addEventListener("pointerup", cancelHold, true);
+          window.addEventListener("pointercancel", cancelHold, true);
+          holdTimer = window.setTimeout(() => {
+            cleanupHold(false);
+            if (beginTileDrag(event)) {
+              document.body.classList.add("movie-panel-interacting");
+            } else {
+              releasePointerCaptureSafely(panel, pointerId);
+            }
+          }, 500);
+        });
+      }
     });
 
     if (editorLayout && editorLayout.dataset.tileMarqueeBound !== "true") {
