@@ -176,6 +176,7 @@
   const tileEdgeSize = 18;
   const tileWorkspaceInset = Math.ceil(tileEdgeSize / 2) + 2;
   const tileScrollbarClearance = 8;
+  const tileRightAutoScrollLead = 14;
   const tileSnapDistance = 12;
   let tileLayoutDefaults = null;
   let selectedTileKeys = new Set();
@@ -1659,7 +1660,7 @@
       const left = Math.min(...rects.map(rect => rect.left));
       const right = Math.max(...rects.map(rect => rect.right));
       if (direction < 0 && left <= safeLeft + 1) return -8;
-      if (direction > 0 && right >= safeRight - 1) return 8;
+      if (direction > 0 && right + tileRightAutoScrollLead >= safeRight) return 8;
       return 0;
     };
 
@@ -1755,7 +1756,15 @@
               edgeExpansionX = nextExpansion;
             }
           }
-          if (scrolled || expanded) updatePosition(latestPointer);
+          if (scrolled || expanded) {
+            updatePosition(latestPointer);
+            if (expanded && tileEdgeStep > 0) {
+              const beforeCatchUp = editorViewport.scrollLeft;
+              const maxLeft = Math.max(0, editorViewport.scrollWidth - editorViewport.clientWidth);
+              editorViewport.scrollLeft = clamp(beforeCatchUp + tileEdgeStep, 0, maxLeft);
+              visibilityScrollX += editorViewport.scrollLeft - beforeCatchUp;
+            }
+          }
           autoScrollFrame = requestAnimationFrame(continueAutoScroll);
         };
         const move = next => {
