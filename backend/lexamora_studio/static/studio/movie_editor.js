@@ -1458,7 +1458,7 @@
     workspace = null,
     fallbackBottom = null,
     force = false,
-    toleranceRatio = .15,
+    toleranceRatio = .05,
   } = {}) => {
     if (!editorViewport || !tileViewportGeometry) return false;
     const layout = ensureTileLayout();
@@ -1547,7 +1547,7 @@
         || tileHomeCenterFrame
         || document.body.classList.contains("movie-panel-interacting")
       ) return;
-      settleTileViewportOnHomeAxis({toleranceRatio: .15});
+      settleTileViewportOnHomeAxis({toleranceRatio: .05});
     }, 140);
   }, {passive: true});
   window.addEventListener("pointerup", () => scheduleTileExtentCleanup(180), {passive: true});
@@ -1795,11 +1795,14 @@
     if (editProjectsPanel) window.refreshLexamoraIcons?.(editProjectsPanel);
     localStorage.removeItem(floatingPanelsKey);
 
-    const scrollEditorViewportTowardPointer = (pointer, movingBounds = null) => {
+    const scrollEditorViewportTowardPointer = (
+      pointer,
+      movingBounds = null,
+      {maxStep = 88} = {},
+    ) => {
       if (!editorViewport || !pointer) return false;
       const bounds = editorViewport.getBoundingClientRect();
       const edgeZone = Math.min(112, Math.max(56, bounds.width * .08));
-      const maxStep = 88;
       const axisStep = (position, start, end) => {
         if (position < start + edgeZone) {
           const pressure = clamp((start + edgeZone - position) / edgeZone, 0, 1);
@@ -2142,7 +2145,7 @@
                 tiles: finalTiles,
                 workspace: layout.workspace,
                 fallbackBottom: startAllocatedExtent.bottom,
-                toleranceRatio: .15,
+                toleranceRatio: .05,
               });
             } else {
               applyTileRects(finalTiles, {preserveViewport: true, scheduleCleanup: false});
@@ -2278,59 +2281,52 @@
         const origin = {...startTiles[key]};
         const startX = event.clientX;
         const startY = event.clientY;
-        const startScrollLeft = editorViewport?.scrollLeft || 0;
-        const startScrollTop = editorViewport?.scrollTop || 0;
         const startViewportLogicalCenter = tileLogicalViewportCenter(tileViewportGeometry);
-        const homeBounds = tileBounds((tileLayoutDefaults || createDefaultTileLayout()).tiles);
         const horizontalSide = edge === "e" ? 1 : edge === "w" ? -1 : 0;
         const pointerId = event.pointerId;
         let active = false;
         let currentTiles = startTiles;
         let latestPointer = event;
         let autoScrollFrame = 0;
-        let cameraFollowHorizontalActive = false;
-        let cameraFollowTargetLogicalX = startViewportLogicalCenter?.x || 0;
-        let cameraFollowReturningHome = false;
-        let previousCameraPointerX = startX;
-        capturePointerSafely(handle, pointerId);
-        const updateResizeCameraTarget = () => {
-          if (!horizontalSide) return;
-          const rect = currentTiles[key];
-          if (!rect) return;
-          const allBounds = tileBounds(currentTiles);
-          const currentEdge = horizontalSide > 0 ? rect.x + rect.width : rect.x;
-          const edgeTolerance = 2;
-          const beyondHome = horizontalSide > 0
-            ? (
-                currentEdge >= allBounds.right - edgeTolerance
-                && currentEdge > homeBounds.right + edgeTolerance
-              )
-            : (
-                currentEdge <= allBounds.left + edgeTolerance
-                && currentEdge < homeBounds.left - edgeTolerance
-              );
-          if (!cameraFollowHorizontalActive && beyondHome) cameraFollowHorizontalActive = true;
-          if (!cameraFollowHorizontalActive) return;
-          cameraFollowReturningHome = (latestPointer.clientX - previousCameraPointerX) * horizontalSide < 0;
-          cameraFollowTargetLogicalX = (
-            (startViewportLogicalCenter?.x || 0)
-            + (latestPointer.clientX - startX) * 1.35
-          );
-          previousCameraPointerX = latestPointer.clientX;
+        let inwardFollowActive = false;
+        let inwardFollowTargetLogicalX = startViewportLogicalCenter?.x || 0;
+        let previousPointerX = startX;
+        const pointerToLogicalPoint = pointer => {
+          const visible = tileLogicalViewportBounds(tileViewportGeometry);
+          const viewportBounds = editorViewport?.getBoundingClientRect();
+          if (!visible || !viewportBounds) return null;
+          return {
+            x: visible.left + pointer.clientX - viewportBounds.left,
+            y: visible.top + pointer.clientY - viewportBounds.top,
+          };
         };
-        const applyResizeCameraFollow = () => {
-          if (!editorViewport || !cameraFollowHorizontalActive) return false;
+        const startPointerLogical = pointerToLogicalPoint(event);
+        capturePointerSafely(handle, pointerId);
+        const updateInwardFollowTarget = next => {
+          if (!horizontalSide) return;
+          const pointerDelta = next.clientX - previousPointerX;
+          if (Math.abs(pointerDelta) >= .1) {
+            inwardFollowActive = pointerDelta * horizontalSide < 0;
+          }
+          if (inwardFollowActive && Math.abs(pointerDelta) >= .1) {
+            inwardFollowTargetLogicalX = (
+              (startViewportLogicalCenter?.x || 0)
+              + (next.clientX - startX) * .9
+            );
+          }
+          previousPointerX = next.clientX;
+        };
+        const applyInwardResizeFollow = () => {
+          if (!editorViewport || !inwardFollowActive) return false;
           const beforeLeft = editorViewport.scrollLeft;
-          const targetLeft = tileScrollLeftForLogicalCenter(cameraFollowTargetLogicalX);
+          const targetLeft = tileScrollLeftForLogicalCenter(inwardFollowTargetLogicalX);
           const difference = targetLeft - beforeLeft;
-          const ease = cameraFollowReturningHome ? .62 : .30;
-          const limit = cameraFollowReturningHome ? 88 : 52;
           const step = Math.abs(difference) < .5
             ? difference
             : Math.sign(difference) * Math.min(
                 Math.abs(difference),
-                limit,
-                Math.max(1, Math.abs(difference) * ease),
+                36,
+                Math.max(1, Math.abs(difference) * .28),
               );
           editorViewport.scrollLeft = clamp(
             beforeLeft + step,
@@ -2340,9 +2336,11 @@
           return Math.abs(editorViewport.scrollLeft - beforeLeft) >= .01;
         };
         const updateSize = next => {
-          const dx = next.clientX - startX + (editorViewport?.scrollLeft || 0) - startScrollLeft;
-          const dy = next.clientY - startY + (editorViewport?.scrollTop || 0) - startScrollTop;
-          if (!active && Math.hypot(dx, dy) < 2) return;
+          const pointerLogical = pointerToLogicalPoint(next);
+          if (!pointerLogical || !startPointerLogical) return;
+          const dx = pointerLogical.x - startPointerLogical.x;
+          const dy = pointerLogical.y - startPointerLogical.y;
+          if (!active && Math.hypot(next.clientX - startX, next.clientY - startY) < 2) return;
           if (!active) remember();
           active = true;
           const resized = resizeTileCandidate(key, edge, origin, dx, dy, startTiles, layout.workspace);
@@ -2353,8 +2351,7 @@
           handle.classList.add("active");
           document.body.classList.add("movie-panel-interacting");
           showTileGuides(resized.guide);
-          applyTileRects(currentTiles);
-          updateResizeCameraTarget();
+          applyTileRects(currentTiles, {preserveViewport: true});
           applyPreviewZoom();
           updatePreviewGeometry();
         };
@@ -2364,15 +2361,17 @@
           const edgeMoved = scrollEditorViewportTowardPointer(
             latestPointer,
             tileGroupBounds(currentTiles, [key]),
+            {maxStep: 36},
           );
-          const followMoved = applyResizeCameraFollow();
+          const followMoved = applyInwardResizeFollow();
           if (edgeMoved || followMoved) updateSize(latestPointer);
           autoScrollFrame = requestAnimationFrame(continueAutoScroll);
         };
         const move = next => {
           latestPointer = next;
+          updateInwardFollowTarget(next);
           updateSize(next);
-          if (active && applyResizeCameraFollow()) updateSize(next);
+          if (active && applyInwardResizeFollow()) updateSize(next);
           if (active && !autoScrollFrame) autoScrollFrame = requestAnimationFrame(continueAutoScroll);
         };
         let finished = false;
