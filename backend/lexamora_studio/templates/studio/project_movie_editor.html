@@ -1027,6 +1027,15 @@ body.movie-editor-page-active .movie-editor-viewport{
 body.movie-editor-page-active .movie-editor-viewport.movie-workspace-horizontal-active{
   overflow-x:auto!important;
 }
+body.movie-editor-page-active .movie-editor-viewport.movie-scrollbars-idle{
+  scrollbar-color:transparent transparent!important;
+}
+body.movie-editor-page-active .movie-editor-viewport.movie-scrollbars-idle::-webkit-scrollbar-thumb,
+body.movie-editor-page-active .movie-editor-viewport.movie-scrollbars-idle::-webkit-scrollbar-track,
+body.movie-editor-page-active .movie-editor-viewport.movie-scrollbars-idle::-webkit-scrollbar-corner{
+  background:transparent!important;
+  border-color:transparent!important;
+}
 .movie-editor-layout,
 .movie-editor-layout[data-layout="columns"],
 .movie-editor-layout[data-layout="stacked"]{
@@ -1337,4 +1346,4 @@ body.movie-panel-interacting *{
 </section>
 {{ movie_timeline_data|json_script:"movie-timeline-data" }}{{ movie_assets|json_script:"movie-assets-data" }}{{ movie_library_assets|json_script:"movie-library-data" }}{{ movie_render_jobs|json_script:"movie-render-jobs-data" }}{{ movie_edits|json_script:"movie-edits-data" }}
 {% endblock %}
-{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260729-horizontal-overscan"></script>{% endblock %}
+{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260729-auto-center-idle-scrollbars"></script>{% endblock %}
