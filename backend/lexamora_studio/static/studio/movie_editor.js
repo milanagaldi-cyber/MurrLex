@@ -331,6 +331,7 @@
   let tileViewportScrollCenterArmed = false;
   let tileViewportScrollbarDragPointerId = null;
   let tileViewportScrollbarDragChanged = false;
+  let tileViewportInitialCenterComplete = false;
   const tileViewportMinimumReveal = 48;
   const tileExtentCleanupMargin = 32;
   const tileBounds = tiles => {
@@ -424,6 +425,29 @@
       y: editorViewport.scrollTop + editorViewport.clientHeight / 2 - origin.y - geometry.offsetY,
     };
   };
+  const fullTileHorizontalOverscanExtent = (geometry = tileViewportGeometry) => {
+    if (!geometry) return null;
+    return {
+      left: geometry.baseLeft - geometry.baseWidth,
+      right: geometry.baseLeft + geometry.baseWidth * 2,
+    };
+  };
+  const syncTileViewportHorizontalAccess = (tiles = tileRenderedTiles) => {
+    if (!editorViewport || !tileViewportGeometry) return;
+    const currentTiles = tiles || ensureTileLayout().tiles;
+    const currentCenter = tileLogicalViewportCenter(tileViewportGeometry);
+    const homeAxis = tileViewportGeometry.baseLeft + tileViewportGeometry.baseWidth / 2;
+    const centered = currentCenter && Math.abs(currentCenter.x - homeAxis) <= 1;
+    const active = (
+      tileMoveDragActive
+      || document.body.classList.contains("movie-panel-interacting")
+      || (
+        tileViewportInitialCenterComplete
+        && (!tilesFitDefaultDisplayZone(currentTiles) || !centered)
+      )
+    );
+    editorViewport.classList.toggle("movie-workspace-horizontal-active", Boolean(active));
+  };
   const scrollTileViewportToLogicalCenter = logicalCenter => {
     if (!editorViewport || !tileViewportGeometry || !logicalCenter) return;
     const geometry = tileViewportGeometry;
@@ -459,6 +483,8 @@
       0,
       Math.max(0, editorViewport.scrollWidth - editorViewport.clientWidth),
     );
+    tileViewportInitialCenterComplete = true;
+    syncTileViewportHorizontalAccess(layout.tiles);
   };
   const ensureTileWorkspaceCoversViewport = () => {
     if (!editorViewport || !editorLayout) return 0;
@@ -1342,10 +1368,15 @@
     const previousLogicalCenter = tileLogicalViewportCenter(tileViewportGeometry);
     const requiredGeometry = computeTileViewportGeometry(tiles, layout.workspace);
     const requiredExtent = requiredGeometry.requiredExtent;
-    const previousExtent = tileAllocatedExtent || requiredExtent;
+    const overscanExtent = fullTileHorizontalOverscanExtent(requiredGeometry);
+    const previousExtent = tileAllocatedExtent || {
+      ...requiredExtent,
+      left: Math.min(requiredExtent.left, overscanExtent.left),
+      right: Math.max(requiredExtent.right, overscanExtent.right),
+    };
     tileAllocatedExtent = {
-      left: Math.min(previousExtent.left, requiredExtent.left),
-      right: Math.max(previousExtent.right, requiredExtent.right),
+      left: Math.min(previousExtent.left, requiredExtent.left, overscanExtent.left),
+      right: Math.max(previousExtent.right, requiredExtent.right, overscanExtent.right),
       bottom: Math.max(previousExtent.bottom, requiredExtent.bottom),
     };
     const geometry = computeTileViewportGeometry(tiles, layout.workspace, tileAllocatedExtent);
@@ -1378,6 +1409,7 @@
     const timelineShell = q("[data-timeline-shell]");
     if (timelineShell) timelineShell.style.setProperty("height", `${Math.max(100, tiles.timeline.height - 46)}px`, "important");
     if (preserveViewport) scrollTileViewportToLogicalCenter(previousLogicalCenter);
+    syncTileViewportHorizontalAccess(tiles);
     if (scheduleCleanup && document.body.classList.contains("movie-panel-interacting")) {
       scheduleTileExtentCleanup(90);
     }
@@ -1403,16 +1435,16 @@
     const visible = tileLogicalViewportBounds(tileViewportGeometry);
     if (!visible) return;
     const next = {...tileAllocatedExtent};
-    const safeLeft = Math.min(required.left, visible.left - tileExtentCleanupMargin);
-    const safeRight = Math.max(required.right, visible.right + tileExtentCleanupMargin);
+    const overscanExtent = fullTileHorizontalOverscanExtent(tileViewportGeometry);
+    const safeLeft = Math.min(required.left, overscanExtent.left);
+    const safeRight = Math.max(required.right, overscanExtent.right);
     const safeBottom = Math.max(
       required.bottom,
       visible.top + tileViewportMinimumReveal + tileExtentCleanupMargin,
     );
-    const horizontalStep = Math.max(64, editorViewport.clientWidth * .12);
     const verticalStep = Math.max(48, editorViewport.clientHeight * .12);
-    if (safeLeft > next.left) next.left = Math.min(safeLeft, next.left + horizontalStep);
-    if (safeRight < next.right) next.right = Math.max(safeRight, next.right - horizontalStep);
+    next.left = safeLeft;
+    next.right = safeRight;
     if (safeBottom < next.bottom) next.bottom = Math.max(safeBottom, next.bottom - verticalStep);
     const changed = ["left", "right", "bottom"].some(
       side => Math.abs(Number(next[side]) - Number(tileAllocatedExtent[side])) >= 1
@@ -1547,6 +1579,7 @@
       };
       applyTileRects(finalTiles, {preserveViewport: true, scheduleCleanup: false});
       scrollTileViewportToLogicalCenter({x: homeAxis, y: verticalCenter});
+      syncTileViewportHorizontalAccess(finalTiles);
       flashTileCenterAxis(homeAxis);
       tileExtentCleanupSuppressedUntil = Date.now() + 120;
       window.setTimeout(() => scheduleTileExtentCleanup(0), 130);
@@ -2005,6 +2038,7 @@
         if (tileViewportScrollSettleTimer) clearTimeout(tileViewportScrollSettleTimer);
         tileViewportScrollSettleTimer = 0;
         tileMoveDragActive = true;
+        syncTileViewportHorizontalAccess(startTiles);
         if (tileExtentCleanupTimer) clearTimeout(tileExtentCleanupTimer);
         tileExtentCleanupTimer = 0;
         capturePointerSafely(handle, pointerId);
@@ -2194,6 +2228,7 @@
           hideTileGuides();
           setSelectedTileKeys([]);
           if (!active) {
+            syncTileViewportHorizontalAccess(startTiles);
             scheduleTileExtentCleanup(180);
             return;
           }
@@ -2216,6 +2251,7 @@
             );
             window.setTimeout(() => scheduleTileExtentCleanup(0), cleanupDelay);
           }
+          syncTileViewportHorizontalAccess(finalTiles);
           scheduleTileExtentCleanup(180);
           applyPreviewZoom();
           updatePreviewGeometry();

@@ -1020,9 +1020,12 @@ body.movie-editor-page-active .movie-editor-viewport{
   margin-left:calc(var(--murrcut-page-left, 0px) * -1)!important;
   margin-right:0!important;
   transform:none!important;
-  overflow-x:auto!important;
+  overflow-x:hidden!important;
   overflow-y:auto!important;
   background-color:var(--bg)!important;
+}
+body.movie-editor-page-active .movie-editor-viewport.movie-workspace-horizontal-active{
+  overflow-x:auto!important;
 }
 .movie-editor-layout,
 .movie-editor-layout[data-layout="columns"],
@@ -1334,4 +1337,4 @@ body.movie-panel-interacting *{
 </section>
 {{ movie_timeline_data|json_script:"movie-timeline-data" }}{{ movie_assets|json_script:"movie-assets-data" }}{{ movie_library_assets|json_script:"movie-library-data" }}{{ movie_render_jobs|json_script:"movie-render-jobs-data" }}{{ movie_edits|json_script:"movie-edits-data" }}
 {% endblock %}
-{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260729-first-scroll-centering"></script>{% endblock %}
+{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260729-horizontal-overscan"></script>{% endblock %}
