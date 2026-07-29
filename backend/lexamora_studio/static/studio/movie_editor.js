@@ -629,7 +629,7 @@
     const viewportTop = Math.max(browserTop, editorViewport.getBoundingClientRect().top);
     editorViewport.style.setProperty(
       "height",
-      `${Math.max(320, Math.floor(browserBottom - viewportTop - 16))}px`,
+      `${Math.max(320, Math.floor(browserBottom - viewportTop))}px`,
       "important",
     );
     positionTileCameraScrollbar();
@@ -1720,22 +1720,12 @@
     editorViewport.classList.remove("movie-scrollbars-idle");
     tileCameraScrollbar?.classList.remove("movie-scrollbars-idle");
   };
-  const scheduleTileViewportScrollbarIdle = (delay = 500) => {
+  const scheduleTileViewportScrollbarIdle = () => {
     if (!editorViewport) return;
     if (tileViewportScrollbarIdleTimer) clearTimeout(tileViewportScrollbarIdleTimer);
-    tileViewportScrollbarIdleTimer = window.setTimeout(() => {
-      tileViewportScrollbarIdleTimer = 0;
-      if (
-        tileMoveDragActive
-        || tileViewportScrollbarDragPointerId != null
-        || document.body.classList.contains("movie-panel-interacting")
-      ) {
-        scheduleTileViewportScrollbarIdle();
-        return;
-      }
-      editorViewport.classList.add("movie-scrollbars-idle");
-      tileCameraScrollbar?.classList.add("movie-scrollbars-idle");
-    }, delay);
+    tileViewportScrollbarIdleTimer = 0;
+    editorViewport.classList.remove("movie-scrollbars-idle");
+    tileCameraScrollbar?.classList.remove("movie-scrollbars-idle");
   };
   const settleTileViewportAfterScroll = (delay = 140) => {
     if (tileViewportScrollSettleTimer) clearTimeout(tileViewportScrollSettleTimer);
@@ -2079,7 +2069,7 @@
     ) => {
       if (!editorViewport || !pointer) return false;
       const bounds = editorViewport.getBoundingClientRect();
-      const edgeZone = Math.min(112, Math.max(56, bounds.width * .08));
+      const edgeZone = 10;
       const axisStep = (position, start, end) => {
         if (position < start + edgeZone) {
           const pressure = clamp((start + edgeZone - position) / edgeZone, 0, 1);
@@ -2192,6 +2182,8 @@
         let latestPointer = event;
         let autoScrollFrame = 0;
         let observedCameraX = tileCameraX;
+        let cameraEdgeSide = 0;
+        let previousCameraPointerX = startX;
         cancelTileHomeCenter();
         tileViewportScrollbarDragPointerId = null;
         tileViewportScrollbarDragChanged = false;
@@ -2236,28 +2228,13 @@
           const visibleBounds = tileLogicalViewportBounds(tileViewportGeometry);
           const movingBounds = tileGroupBounds(currentTiles, movingKeys);
           if (visibleBounds && movingBounds) {
-            const rightmostMovingTile = movingKeys
-              .map(movingKey => currentTiles[movingKey])
-              .reduce(
-                (rightmost, tile) =>
-                  !rightmost || tile.x + tile.width > rightmost.x + rightmost.width ? tile : rightmost,
-                null,
-              );
-            const leftmostMovingTile = movingKeys
-              .map(movingKey => currentTiles[movingKey])
-              .reduce(
-                (leftmost, tile) => !leftmost || tile.x < leftmost.x ? tile : leftmost,
-                null,
-              );
-            const rightAllowance = Number(rightmostMovingTile?.width || movingBounds.width) * .05;
-            const leftAllowance = Number(leftmostMovingTile?.width || movingBounds.width) * .05;
-            const rightOverflow = movingBounds.right - (visibleBounds.right + rightAllowance);
+            const rightOverflow = movingBounds.right - visibleBounds.right;
             if (rightOverflow > 0) {
               movingKeys.forEach(movingKey => {
                 currentTiles[movingKey].x -= rightOverflow;
               });
             }
-            const leftOverflow = visibleBounds.left - leftAllowance - movingBounds.x;
+            const leftOverflow = visibleBounds.left - movingBounds.x;
             if (leftOverflow > 0) {
               movingKeys.forEach(movingKey => {
                 currentTiles[movingKey].x += leftOverflow;
@@ -2275,9 +2252,11 @@
           const movingBounds = tileGroupBounds(currentTiles, movingKeys);
           const visibleBounds = tileLogicalViewportBounds(tileViewportGeometry);
           if (!movingBounds || !visibleBounds) return;
-          const triggerDistance = clamp(editorViewport.clientWidth * .04, 30, 58);
+          const triggerDistance = 10;
           const rightGap = visibleBounds.right - movingBounds.right;
           const leftGap = movingBounds.x - visibleBounds.left;
+          const pointerDelta = latestPointer.clientX - previousCameraPointerX;
+          previousCameraPointerX = latestPointer.clientX;
           let pressure = 0;
           if (rightGap < triggerDistance) {
             pressure = clamp((triggerDistance - rightGap) / triggerDistance, 0, 1);
@@ -2287,7 +2266,13 @@
           const magnitude = Math.abs(pressure);
           const smoothPressure = magnitude * magnitude * (3 - 2 * magnitude);
           if (pressure) {
+            cameraEdgeSide = Math.sign(pressure);
             shiftTileCameraTarget(Math.sign(pressure) * 12 * smoothPressure);
+          } else if (
+            cameraEdgeSide
+            && pointerDelta * cameraEdgeSide < 0
+          ) {
+            shiftTileCameraTarget(pointerDelta * .82);
           } else if (Math.abs(tileCameraTargetX - tileCameraX) > .25) {
             setTileCameraX(tileCameraX, {immediate: false});
           }
@@ -2535,7 +2520,7 @@
           const movingBounds = tileGroupBounds(currentTiles, [key]);
           const visibleBounds = tileLogicalViewportBounds(tileViewportGeometry);
           if (!movingBounds || !visibleBounds) return;
-          const triggerDistance = clamp(editorViewport.clientWidth * .04, 30, 58);
+          const triggerDistance = 10;
           const gap = horizontalSide > 0
             ? visibleBounds.right - movingBounds.right
             : movingBounds.x - visibleBounds.left;

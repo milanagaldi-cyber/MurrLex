@@ -954,6 +954,7 @@ body.movie-layout-locked [data-timeline-edge-resizer]{pointer-events:none!import
   min-width:100%;
 }
 .movie-editor-project-header{
+  display:flow-root;
   box-sizing:border-box;
   width:min(1600px,calc(100vw - 32px));
   margin-left:auto;
@@ -961,7 +962,7 @@ body.movie-layout-locked [data-timeline-edge-resizer]{pointer-events:none!import
   background:var(--bg);
 }
 .movie-editor-project-header .project-shell-header{
-  margin-bottom:22px;
+  margin-bottom:0;
 }
 .movie-editor[data-workspace-pattern="grid"] .movie-editor-layout{
   background-image:
@@ -1049,7 +1050,7 @@ body.movie-editor-page-active .movie-editor-layout{
   transition:opacity .12s linear,visibility 0s linear .12s;
 }
 .movie-camera-scrollbar.is-active{
-  opacity:.8;
+  opacity:1;
   visibility:visible;
   pointer-events:auto;
   transition:opacity .12s linear,visibility 0s linear;
@@ -1071,33 +1072,33 @@ body.movie-editor-page-active .movie-editor-layout{
   height:6px;
   min-width:48px;
   border-radius:3px;
-  background:color-mix(in srgb,var(--muted) 80%,transparent);
+  background:color-mix(in srgb,var(--muted) 60%,transparent);
   cursor:ew-resize;
   transform:translate3d(var(--murrcut-camera-thumb-x,0px),0,0);
   will-change:transform;
 }
-.movie-camera-scrollbar.movie-scrollbars-idle{
-  opacity:0;
-  transition-duration:1s;
+body.movie-editor-page-active .movie-editor-viewport{
+  scrollbar-width:thin;
+  scrollbar-color:
+    color-mix(in srgb,var(--muted) 60%,transparent)
+    color-mix(in srgb,var(--bg) 78%,var(--line));
+}
+body.movie-editor-page-active .movie-editor-viewport::-webkit-scrollbar{
+  width:12px;
+  height:0;
 }
 body.movie-editor-page-active .movie-editor-viewport::-webkit-scrollbar-thumb{
-  background-color:color-mix(in srgb,var(--muted) 80%,transparent)!important;
+  min-height:48px;
+  border:3px solid transparent!important;
+  border-radius:6px!important;
+  background-color:color-mix(in srgb,var(--muted) 60%,transparent)!important;
+  background-clip:padding-box!important;
   transition:background-color .12s linear,border-color .12s linear;
 }
 body.movie-editor-page-active .movie-editor-viewport::-webkit-scrollbar-track,
 body.movie-editor-page-active .movie-editor-viewport::-webkit-scrollbar-corner{
-  background-color:color-mix(in srgb,var(--bg) 80%,transparent)!important;
+  background-color:color-mix(in srgb,var(--bg) 78%,var(--line))!important;
   transition:background-color .12s linear,border-color .12s linear;
-}
-body.movie-editor-page-active .movie-editor-viewport.movie-scrollbars-idle{
-  scrollbar-color:transparent transparent!important;
-}
-body.movie-editor-page-active .movie-editor-viewport.movie-scrollbars-idle::-webkit-scrollbar-thumb,
-body.movie-editor-page-active .movie-editor-viewport.movie-scrollbars-idle::-webkit-scrollbar-track,
-body.movie-editor-page-active .movie-editor-viewport.movie-scrollbars-idle::-webkit-scrollbar-corner{
-  background-color:transparent!important;
-  border-color:transparent!important;
-  transition-duration:1s;
 }
 .movie-editor-layout,
 .movie-editor-layout[data-layout="columns"],
@@ -1409,4 +1410,4 @@ body.movie-panel-interacting *{
 </section>
 {{ movie_timeline_data|json_script:"movie-timeline-data" }}{{ movie_assets|json_script:"movie-assets-data" }}{{ movie_library_assets|json_script:"movie-library-data" }}{{ movie_render_jobs|json_script:"movie-render-jobs-data" }}{{ movie_edits|json_script:"movie-edits-data" }}
 {% endblock %}
-{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260729-virtual-camera"></script>{% endblock %}
+{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260729-virtual-camera-polish"></script>{% endblock %}
