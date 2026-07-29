@@ -329,6 +329,8 @@
   let tileCenterAxisTimer = 0;
   let tileViewportScrollSettleTimer = 0;
   let tileViewportScrollCenterArmed = false;
+  let tileViewportScrollbarDragPointerId = null;
+  let tileViewportScrollbarDragChanged = false;
   const tileViewportMinimumReveal = 48;
   const tileExtentCleanupMargin = 32;
   const tileBounds = tiles => {
@@ -1553,20 +1555,21 @@
     return true;
   };
   let tileViewportLastScrollLeft = editorViewport?.scrollLeft || 0;
-  editorViewport?.addEventListener("pointerdown", event => {
-    if (event.target === editorViewport) tileViewportScrollCenterArmed = true;
-  }, {passive: true});
-  editorViewport?.addEventListener("wheel", () => {
-    tileViewportScrollCenterArmed = true;
-  }, {passive: true});
-  editorViewport?.addEventListener("scroll", () => {
-    const currentLeft = editorViewport.scrollLeft;
-    const horizontalChanged = Math.abs(currentLeft - tileViewportLastScrollLeft) >= .5;
-    tileViewportLastScrollLeft = currentLeft;
-    scheduleTileExtentCleanup(
-      document.body.classList.contains("movie-panel-interacting") ? 90 : 180
+  const pointerOnTileViewportHorizontalScrollbar = event => {
+    if (!editorViewport) return false;
+    const bounds = editorViewport.getBoundingClientRect();
+    const scrollbarHeight = Math.max(
+      12,
+      editorViewport.offsetHeight - editorViewport.clientHeight,
     );
-    if (!horizontalChanged || !tileViewportScrollCenterArmed) return;
+    return (
+      event.clientX >= bounds.left
+      && event.clientX <= bounds.right
+      && event.clientY >= bounds.bottom - scrollbarHeight - 2
+      && event.clientY <= bounds.bottom
+    );
+  };
+  const settleTileViewportAfterManualScroll = (delay = 140) => {
     if (tileViewportScrollSettleTimer) clearTimeout(tileViewportScrollSettleTimer);
     tileViewportScrollSettleTimer = window.setTimeout(() => {
       tileViewportScrollSettleTimer = 0;
@@ -1580,8 +1583,49 @@
       }
       tileViewportScrollCenterArmed = false;
       settleTileViewportOnHomeAxis({force: true, toleranceRatio: .05});
-    }, 140);
+    }, delay);
+  };
+  window.addEventListener("pointerdown", event => {
+    if (!pointerOnTileViewportHorizontalScrollbar(event)) return;
+    tileViewportScrollbarDragPointerId = event.pointerId;
+    tileViewportScrollbarDragChanged = false;
+    tileViewportScrollCenterArmed = true;
+    if (tileViewportScrollSettleTimer) clearTimeout(tileViewportScrollSettleTimer);
+    tileViewportScrollSettleTimer = 0;
+  }, {capture: true, passive: true});
+  editorViewport?.addEventListener("wheel", () => {
+    tileViewportScrollCenterArmed = true;
   }, {passive: true});
+  editorViewport?.addEventListener("scroll", () => {
+    const currentLeft = editorViewport.scrollLeft;
+    const horizontalChanged = Math.abs(currentLeft - tileViewportLastScrollLeft) >= .5;
+    tileViewportLastScrollLeft = currentLeft;
+    scheduleTileExtentCleanup(
+      document.body.classList.contains("movie-panel-interacting") ? 90 : 180
+    );
+    if (!horizontalChanged || !tileViewportScrollCenterArmed) return;
+    if (tileViewportScrollbarDragPointerId != null) {
+      tileViewportScrollbarDragChanged = true;
+      return;
+    }
+    settleTileViewportAfterManualScroll();
+  }, {passive: true});
+  const finishTileViewportScrollbarDrag = event => {
+    if (
+      tileViewportScrollbarDragPointerId == null
+      || (
+        event?.pointerId != null
+        && event.pointerId !== tileViewportScrollbarDragPointerId
+      )
+    ) return;
+    const changed = tileViewportScrollbarDragChanged;
+    tileViewportScrollbarDragPointerId = null;
+    tileViewportScrollbarDragChanged = false;
+    if (changed) settleTileViewportAfterManualScroll(0);
+    else tileViewportScrollCenterArmed = false;
+  };
+  window.addEventListener("pointerup", finishTileViewportScrollbarDrag, {capture: true, passive: true});
+  window.addEventListener("pointercancel", finishTileViewportScrollbarDrag, {capture: true, passive: true});
   window.addEventListener("pointerup", () => scheduleTileExtentCleanup(180), {passive: true});
   const nearestTileSnap = (value, candidates) => {
     let nearest = null;
@@ -1956,6 +2000,8 @@
         let previousCameraPointerX = startX;
         cancelTileHomeCenter();
         tileViewportScrollCenterArmed = false;
+        tileViewportScrollbarDragPointerId = null;
+        tileViewportScrollbarDragChanged = false;
         if (tileViewportScrollSettleTimer) clearTimeout(tileViewportScrollSettleTimer);
         tileViewportScrollSettleTimer = 0;
         tileMoveDragActive = true;
