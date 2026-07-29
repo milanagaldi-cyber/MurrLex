@@ -1603,7 +1603,7 @@
     tileViewportScrollbarIdleTimer = 0;
     editorViewport.classList.remove("movie-scrollbars-idle");
   };
-  const scheduleTileViewportScrollbarIdle = (delay = 2000) => {
+  const scheduleTileViewportScrollbarIdle = (delay = 500) => {
     if (!editorViewport) return;
     if (tileViewportScrollbarIdleTimer) clearTimeout(tileViewportScrollbarIdleTimer);
     tileViewportScrollbarIdleTimer = window.setTimeout(() => {
@@ -1962,7 +1962,7 @@
     const scrollEditorViewportTowardPointer = (
       pointer,
       movingBounds = null,
-      {maxStep = 44} = {},
+      {maxStep = 44, horizontal = true, vertical = true} = {},
     ) => {
       if (!editorViewport || !pointer) return false;
       const bounds = editorViewport.getBoundingClientRect();
@@ -1993,16 +1993,20 @@
       }
       const maxLeft = Math.max(0, editorViewport.scrollWidth - editorViewport.clientWidth);
       const maxTop = Math.max(0, editorViewport.scrollHeight - editorViewport.clientHeight);
-      editorViewport.scrollLeft = clamp(
-        beforeLeft + axisStep(horizontalPosition, bounds.left, bounds.right),
-        0,
-        maxLeft,
-      );
-      editorViewport.scrollTop = clamp(
-        beforeTop + axisStep(pointer.clientY, bounds.top, bounds.bottom),
-        0,
-        maxTop,
-      );
+      if (horizontal) {
+        editorViewport.scrollLeft = clamp(
+          beforeLeft + axisStep(horizontalPosition, bounds.left, bounds.right),
+          0,
+          maxLeft,
+        );
+      }
+      if (vertical) {
+        editorViewport.scrollTop = clamp(
+          beforeTop + axisStep(pointer.clientY, bounds.top, bounds.bottom),
+          0,
+          maxTop,
+        );
+      }
       return editorViewport.scrollLeft !== beforeLeft || editorViewport.scrollTop !== beforeTop;
     };
 
@@ -2071,21 +2075,11 @@
         const startScrollLeft = editorViewport?.scrollLeft || 0;
         const startScrollTop = editorViewport?.scrollTop || 0;
         const pointerId = event.pointerId;
-        const homeBounds = tileBounds((tileLayoutDefaults || createDefaultTileLayout()).tiles);
-        const startMovingBounds = tileGroupBounds(startTiles, movingKeys);
-        const startViewportLogicalCenter = tileLogicalViewportCenter(tileViewportGeometry);
         let active = false;
         let currentTiles = startTiles;
         let latestPointer = event;
         let autoScrollFrame = 0;
-        let cameraFollowHorizontalActive = false;
-        let cameraFollowVerticalActive = false;
-        let cameraFollowTargetLeft = startScrollLeft;
-        let cameraFollowTargetTop = startScrollTop;
-        let cameraFollowSide = 0;
-        let cameraFollowReturningHome = false;
-        let cameraFollowTargetLogicalX = startViewportLogicalCenter?.x || 0;
-        let previousCameraPointerX = startX;
+        let horizontalCameraVelocity = 0;
         cancelTileHomeCenter();
         tileViewportScrollbarDragPointerId = null;
         tileViewportScrollbarDragChanged = false;
@@ -2164,95 +2158,55 @@
           showTileGuides(snapped.guide);
           applyTileRects(currentTiles);
         };
-        const movingTilesMatchStart = axes => movingKeys.every(movingKey =>
-          axes.every(axis =>
-            Math.abs(Number(currentTiles[movingKey]?.[axis]) - Number(startTiles[movingKey]?.[axis])) < 1
-          )
-        );
-        const updateCameraFollowTarget = next => {
+        const applyUnifiedHorizontalCamera = () => {
+          if (!editorViewport || !tileViewportGeometry) return false;
           const movingBounds = tileGroupBounds(currentTiles, movingKeys);
-          if (!movingBounds || !startMovingBounds) return;
-          const allBounds = tileBounds(currentTiles);
-          const edgeTolerance = 2;
-          const beyondRight = (
-            movingBounds.right >= allBounds.right - edgeTolerance
-            && movingBounds.right > homeBounds.right + edgeTolerance
+          const visibleBounds = tileLogicalViewportBounds(tileViewportGeometry);
+          if (!movingBounds || !visibleBounds) return false;
+          const triggerDistance = clamp(editorViewport.clientWidth * .045, 32, 64);
+          const rightGap = visibleBounds.right - movingBounds.right;
+          const leftGap = movingBounds.x - visibleBounds.left;
+          let pressure = 0;
+          if (rightGap < triggerDistance) {
+            pressure = clamp((triggerDistance - rightGap) / triggerDistance, 0, 1);
+          } else if (leftGap < triggerDistance) {
+            pressure = -clamp((triggerDistance - leftGap) / triggerDistance, 0, 1);
+          }
+          const magnitude = Math.abs(pressure);
+          const smoothPressure = magnitude * magnitude * (3 - 2 * magnitude);
+          const desiredVelocity = Math.sign(pressure) * 22 * smoothPressure;
+          const reversing = (
+            desiredVelocity
+            && horizontalCameraVelocity
+            && Math.sign(desiredVelocity) !== Math.sign(horizontalCameraVelocity)
           );
-          const beyondLeft = (
-            movingBounds.x <= allBounds.left + edgeTolerance
-            && movingBounds.x < homeBounds.left - edgeTolerance
-          );
-          const nextCameraSide = beyondRight ? 1 : beyondLeft ? -1 : cameraFollowSide;
-          if (nextCameraSide !== cameraFollowSide) {
-            cameraFollowSide = nextCameraSide;
-            previousCameraPointerX = next.clientX;
-            cameraFollowReturningHome = false;
+          const response = reversing ? .24 : desiredVelocity ? .14 : .2;
+          horizontalCameraVelocity += (desiredVelocity - horizontalCameraVelocity) * response;
+          if (!desiredVelocity && Math.abs(horizontalCameraVelocity) < .08) {
+            horizontalCameraVelocity = 0;
           }
-          if (cameraFollowSide) {
-            cameraFollowHorizontalActive = true;
-          }
-          if (
-            movingBounds.bottom >= allBounds.bottom - edgeTolerance
-            && movingBounds.bottom > homeBounds.bottom + edgeTolerance
-          ) {
-            cameraFollowVerticalActive = true;
-          }
-          if (cameraFollowHorizontalActive) {
-            cameraFollowReturningHome = (next.clientX - previousCameraPointerX) * cameraFollowSide < 0;
-            cameraFollowTargetLogicalX = (
-              (startViewportLogicalCenter?.x || 0)
-              + (next.clientX - startX) * 1.35
-            );
-            previousCameraPointerX = next.clientX;
-          }
-          if (cameraFollowVerticalActive) {
-            cameraFollowTargetTop = movingTilesMatchStart(["y"])
-              ? startScrollTop
-              : startScrollTop + (next.clientY - startY) * .65;
-          }
-        };
-        const applyCameraFollow = () => {
-          if (!editorViewport) return false;
           const beforeLeft = editorViewport.scrollLeft;
-          const beforeTop = editorViewport.scrollTop;
-          if (cameraFollowHorizontalActive) {
-            cameraFollowTargetLeft = tileScrollLeftForLogicalCenter(cameraFollowTargetLogicalX);
-          }
-          const differenceX = cameraFollowTargetLeft - beforeLeft;
-          const differenceY = cameraFollowTargetTop - beforeTop;
-          const horizontalEase = cameraFollowReturningHome ? .31 : .17;
-          const horizontalLimit = cameraFollowReturningHome ? 44 : 32;
-          const stepX = Math.abs(differenceX) < .5
-            ? differenceX
-            : Math.sign(differenceX) * Math.min(
-                Math.abs(differenceX),
-                horizontalLimit,
-                Math.max(1, Math.abs(differenceX) * horizontalEase),
-              );
-          const stepY = Math.abs(differenceY) < .5 ? differenceY : differenceY * .34;
           editorViewport.scrollLeft = clamp(
-            beforeLeft + stepX,
+            beforeLeft + horizontalCameraVelocity,
             0,
             Math.max(0, editorViewport.scrollWidth - editorViewport.clientWidth),
           );
-          editorViewport.scrollTop = clamp(
-            beforeTop + stepY,
-            0,
-            Math.max(0, editorViewport.scrollHeight - editorViewport.clientHeight),
-          );
           const appliedX = editorViewport.scrollLeft - beforeLeft;
-          const appliedY = editorViewport.scrollTop - beforeTop;
-          return Math.abs(appliedX) >= .01 || Math.abs(appliedY) >= .01;
+          if (Math.abs(appliedX) < .01 && Math.abs(horizontalCameraVelocity) > .01) {
+            horizontalCameraVelocity = 0;
+          }
+          return Math.abs(appliedX) >= .01;
         };
         const continueAutoScroll = () => {
           autoScrollFrame = 0;
           if (!active || !latestPointer) return;
-          const edgeMoved = scrollEditorViewportTowardPointer(
+          const horizontalMoved = applyUnifiedHorizontalCamera();
+          const verticalMoved = scrollEditorViewportTowardPointer(
             latestPointer,
             tileGroupBounds(currentTiles, movingKeys),
+            {maxStep: 44, horizontal: false},
           );
-          const followMoved = applyCameraFollow();
-          if (edgeMoved || followMoved) updatePosition(latestPointer);
+          if (horizontalMoved || verticalMoved) updatePosition(latestPointer);
           autoScrollFrame = requestAnimationFrame(continueAutoScroll);
         };
         const move = next => {
@@ -2260,8 +2214,6 @@
           updatePosition(next);
           if (active) {
             next.preventDefault();
-            updateCameraFollowTarget(next);
-            if (applyCameraFollow()) updatePosition(next);
           }
           if (active && !autoScrollFrame) autoScrollFrame = requestAnimationFrame(continueAutoScroll);
         };
