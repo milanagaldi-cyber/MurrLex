@@ -273,18 +273,11 @@
       timeline: {x: reserveX, y: timelineY, width: availableWidth, height: timelineHeight},
     };
     const defaultContentHeight = timelineY + timelineHeight + tileWorkspaceInset;
-    const initialScreenHeight = Math.max(
-      320,
-      Number(
-        editorViewport?.clientHeight
-        || window.visualViewport?.height
-        || document.documentElement.clientHeight
-        || 720
-      ),
-    );
+    const defaultFrameHeight = timelineY + timelineHeight - editProjectsY;
     const workspaceWidth = availableWidth * 3 + tileWorkspaceInset * 2;
-    // Keep one and a half viewport heights free below the complete home layout.
-    const workspaceHeight = defaultContentHeight + Math.round(initialScreenHeight * 1.5);
+    // The permanent lower reserve is two logical home-frame heights. It is
+    // independent of browser viewport height, so browser zoom cannot resize it.
+    const workspaceHeight = defaultContentHeight + Math.round(defaultFrameHeight * 2);
     const baseHeight = workspaceHeight;
     const defaults = {
       workspace: {
@@ -356,7 +349,6 @@
   let tileCameraAnimationMaximumVelocity = 28;
   let tileCameraFrame = 0;
   let tileCameraTrackWidth = 1;
-  let tileProjectHeaderHomeLeft = null;
   let tileViewportHorizontalHotZoneHovered = false;
   let tileViewportVerticalHotZoneHovered = false;
   let tileViewportHorizontalRevealRequested = false;
@@ -366,6 +358,8 @@
   const tileViewportTileFocusMargin = 18;
   const tileViewportHorizontalActivationRatio = .12;
   const tileViewportReturnMarginRatio = .10;
+  const tileViewportHorizontalOverscanRatio = 1;
+  const tileViewportScrollbarIdleDelay = 3000;
   const tileWorkspaceTopReveal = 32;
   const tileBounds = tiles => {
     const rects = tilePanelKeys.map(key => tiles[key]).filter(Boolean);
@@ -402,22 +396,26 @@
       (editorViewport?.clientHeight || baseHeight) - Number(editorLayout?.offsetTop || 0),
     );
     const coreWidth = Math.max(baseWidth, viewportWidth);
+    const horizontalReserveLimit = Math.max(
+      baseWidth,
+      viewportWidth * tileViewportHorizontalOverscanRatio,
+    );
     const requiredExtent = {
       left: Math.min(baseLeft, bounds.left),
       right: Math.max(baseRight, bounds.right),
-      // Vertical space is fixed: the home layout plus its permanent 1.5-screen reserve.
+      // Vertical space is fixed: the home layout plus two home-frame heights.
       bottom: Math.max(baseTop, Number(workspace.height || 0), bounds.bottom),
     };
     const extent = {
       left: clamp(
         Math.min(requiredExtent.left, Number(allocatedExtent?.left ?? requiredExtent.left)),
-        baseLeft - baseWidth,
+        baseLeft - horizontalReserveLimit,
         baseLeft,
       ),
       right: clamp(
         Math.max(requiredExtent.right, Number(allocatedExtent?.right ?? requiredExtent.right)),
         baseRight,
-        baseRight + baseWidth,
+        baseRight + horizontalReserveLimit,
       ),
       bottom: Math.max(
         requiredExtent.bottom,
@@ -458,19 +456,15 @@
   const tileHomeCameraX = (geometry = tileViewportGeometry) => {
     if (!editorViewport || !geometry) return 0;
     const origin = tileWorkspaceViewportOrigin();
-    const headerLeft = Number.isFinite(tileProjectHeaderHomeLeft)
-      ? tileProjectHeaderHomeLeft
-      : Math.max(0, (editorViewport.clientWidth - geometry.baseWidth) / 2);
+    const centeredMargin = Math.max(
+      0,
+      (editorViewport.clientWidth - geometry.baseWidth) / 2,
+    );
     return clamp(
-      origin.x + geometry.baseLeft + geometry.offsetX - headerLeft,
+      origin.x + geometry.baseLeft + geometry.offsetX - centeredMargin,
       0,
       tileCameraMaximumX(geometry),
     );
-  };
-  const refreshTileProjectHeaderHomeLeft = () => {
-    tileProjectHeaderHomeLeft = editorProjectHeader
-      ? Math.max(0, Number(editorProjectHeader.offsetLeft || 0))
-      : null;
   };
   const renderTileCameraScrollbar = () => {
     if (!tileCameraTrack || !tileCameraThumb || !editorViewport) return;
@@ -582,9 +576,14 @@
   };
   const fullTileHorizontalOverscanExtent = (geometry = tileViewportGeometry) => {
     if (!geometry) return null;
+    const reserve = Math.max(
+      geometry.baseWidth,
+      Number(editorViewport?.clientWidth || geometry.baseWidth)
+        * tileViewportHorizontalOverscanRatio,
+    );
     return {
-      left: geometry.baseLeft - geometry.baseWidth,
-      right: geometry.baseLeft + geometry.baseWidth * 2,
+      left: geometry.baseLeft - reserve,
+      right: geometry.baseLeft + geometry.baseWidth + reserve,
     };
   };
   const syncTileViewportHorizontalAccess = (tiles = tileRenderedTiles) => {
@@ -737,7 +736,6 @@
       `${Math.max(320, Math.floor(browserBottom - viewportTop))}px`,
       "important",
     );
-    refreshTileProjectHeaderHomeLeft();
     positionTileCameraScrollbar();
     ensureTileWorkspaceCoversViewport();
     scheduleTileExtentCleanup(220);
@@ -1304,7 +1302,7 @@
         } else {
           resetPanelGeometry(key);
           setSelectedTileKeys([]);
-          requestAnimationFrame(() => settleTileViewportOnHomeAxis({force: true}));
+          requestAnimationFrame(() => focusTileOnHomePosition(key));
         }
         historyRedo = [];
         updateHistoryButtons();
@@ -1684,14 +1682,22 @@
     const requiredGeometry = computeTileViewportGeometry(tiles, layout.workspace);
     const requiredExtent = requiredGeometry.requiredExtent;
     const overscanExtent = fullTileHorizontalOverscanExtent(requiredGeometry);
+    const baseRight = requiredGeometry.baseLeft + requiredGeometry.baseWidth;
     const previousExtent = tileAllocatedExtent || {
       ...requiredExtent,
       left: Math.min(requiredExtent.left, overscanExtent.left),
       right: Math.max(requiredExtent.right, overscanExtent.right),
     };
+    const symmetricHorizontalReserve = Math.max(
+      requiredGeometry.baseLeft - overscanExtent.left,
+      requiredGeometry.baseLeft - requiredExtent.left,
+      requiredExtent.right - baseRight,
+      requiredGeometry.baseLeft - previousExtent.left,
+      previousExtent.right - baseRight,
+    );
     tileAllocatedExtent = {
-      left: Math.min(previousExtent.left, requiredExtent.left, overscanExtent.left),
-      right: Math.max(previousExtent.right, requiredExtent.right, overscanExtent.right),
+      left: requiredGeometry.baseLeft - symmetricHorizontalReserve,
+      right: baseRight + symmetricHorizontalReserve,
       bottom: Math.max(previousExtent.bottom, requiredExtent.bottom),
     };
     const geometry = computeTileViewportGeometry(tiles, layout.workspace, tileAllocatedExtent);
@@ -1757,8 +1763,14 @@
     if (!visible) return;
     const next = {...tileAllocatedExtent};
     const overscanExtent = fullTileHorizontalOverscanExtent(tileViewportGeometry);
-    const safeLeft = Math.min(required.left, overscanExtent.left);
-    const safeRight = Math.max(required.right, overscanExtent.right);
+    const baseRight = tileViewportGeometry.baseLeft + tileViewportGeometry.baseWidth;
+    const symmetricHorizontalReserve = Math.max(
+      tileViewportGeometry.baseLeft - overscanExtent.left,
+      tileViewportGeometry.baseLeft - required.left,
+      required.right - baseRight,
+    );
+    const safeLeft = tileViewportGeometry.baseLeft - symmetricHorizontalReserve;
+    const safeRight = baseRight + symmetricHorizontalReserve;
     const safeBottom = Math.max(
       required.bottom,
       visible.top + tileViewportMinimumReveal + tileExtentCleanupMargin,
@@ -1923,18 +1935,64 @@
     tileHomeCenterFrame = requestAnimationFrame(step);
     return true;
   };
+  const focusTileOnHomePosition = key => {
+    if (!editorViewport || !tileViewportGeometry || !workspacePanel(key)) return false;
+    const layout = ensureTileLayout();
+    const rect = layout.tiles[key];
+    if (!rect) return false;
+    cancelTileHomeCenter();
+    if (tileExtentCleanupTimer) clearTimeout(tileExtentCleanupTimer);
+    tileExtentCleanupTimer = 0;
+    tileExtentCleanupSuppressedUntil = Date.now() + 700;
+    const geometry = tileViewportGeometry;
+    const origin = tileWorkspaceViewportOrigin();
+    const homeAxis = geometry.baseLeft + geometry.baseWidth / 2;
+    const startLeft = tileCameraX;
+    const targetLeft = tileHomeCameraX(geometry);
+    const startTop = editorViewport.scrollTop;
+    const targetTop = clamp(
+      rect.y + rect.height / 2 + origin.y + geometry.offsetY - editorViewport.clientHeight / 2,
+      0,
+      Math.max(0, editorViewport.scrollHeight - editorViewport.clientHeight),
+    );
+    const startedAt = performance.now();
+    const duration = 240;
+    revealTileViewportScrollbars();
+    const step = now => {
+      const progress = clamp((now - startedAt) / duration, 0, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setTileCameraX(startLeft + (targetLeft - startLeft) * eased);
+      editorViewport.scrollTop = startTop + (targetTop - startTop) * eased;
+      if (progress < 1) {
+        tileHomeCenterFrame = requestAnimationFrame(step);
+        return;
+      }
+      tileHomeCenterFrame = 0;
+      setTileCameraX(targetLeft);
+      editorViewport.scrollTop = targetTop;
+      syncTileViewportHorizontalAccess(layout.tiles);
+      flashTileCenterAxis(homeAxis);
+      tileExtentCleanupSuppressedUntil = Date.now() + 120;
+      window.setTimeout(() => scheduleTileExtentCleanup(0), 130);
+      scheduleTileViewportScrollbarIdle();
+    };
+    tileHomeCenterFrame = requestAnimationFrame(step);
+    return true;
+  };
   const revealTileViewportHorizontalScrollbar = () => {
     if (tileViewportHorizontalIdleTimer) clearTimeout(tileViewportHorizontalIdleTimer);
     tileViewportHorizontalIdleTimer = 0;
     tileViewportHorizontalRevealRequested = true;
     tileCameraScrollbar?.classList.remove("movie-scrollbars-idle");
     syncTileViewportHorizontalAccess(tileRenderedTiles);
+    scheduleTileViewportHorizontalIdle();
   };
   const revealTileViewportVerticalScrollbar = () => {
     if (!editorViewport) return;
     if (tileViewportVerticalIdleTimer) clearTimeout(tileViewportVerticalIdleTimer);
     tileViewportVerticalIdleTimer = 0;
     editorViewport.classList.remove("movie-scrollbars-idle");
+    scheduleTileViewportVerticalIdle();
   };
   const revealTileViewportScrollbars = () => {
     revealTileViewportHorizontalScrollbar();
@@ -1957,7 +2015,7 @@
       tileViewportHorizontalRevealRequested = false;
       tileCameraScrollbar?.classList.add("movie-scrollbars-idle");
       syncTileViewportHorizontalAccess(tileRenderedTiles);
-    }, 3000);
+    }, tileViewportScrollbarIdleDelay);
   };
   const scheduleTileViewportVerticalIdle = () => {
     if (!editorViewport) return;
@@ -1973,7 +2031,7 @@
         return;
       }
       editorViewport.classList.add("movie-scrollbars-idle");
-    }, 3000);
+    }, tileViewportScrollbarIdleDelay);
   };
   const scheduleTileViewportScrollbarIdle = () => {
     scheduleTileViewportHorizontalIdle();

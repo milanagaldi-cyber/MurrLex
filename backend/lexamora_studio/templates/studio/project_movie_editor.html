@@ -524,6 +524,17 @@ body.movie-layout-locked .movie-editor-layout .movie-window-resize-handle{displa
 .movie-workspace-pattern-select{max-width:280px}
 .movie-edit-settings-dialog form{display:grid;gap:14px}
 .movie-edit-settings-dialog label{display:grid;gap:7px}
+.movie-editor .movie-edit-settings-dialog [data-edit-settings-cancel]{
+  position:static!important;
+  inset:auto!important;
+  width:auto!important;
+  height:auto!important;
+  min-height:38px!important;
+  padding:8px 14px!important;
+  border:1px solid var(--accent)!important;
+  background:transparent!important;
+  box-shadow:none!important;
+}
 /* Final editor geometry contract: narrow seams, generous hit targets, stable panels. */
 .movie-editor-layout{
   --movie-panel-gap:2px;
@@ -986,18 +997,18 @@ body.movie-layout-locked [data-timeline-edge-resizer]{pointer-events:none!import
   background-position:0 0!important;
 }
 .movie-editor[data-workspace-pattern="stars"] .movie-editor-layout{
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'%3E%3Cpath fill='%232fc5ff' fill-opacity='.26' d='m14 6.8 2.05 4.16 4.59.67-3.32 3.23.78 4.57L14 17.27l-4.1 2.16.78-4.57-3.32-3.23 4.59-.67L14 6.8z'/%3E%3C/svg%3E")!important;
-  background-size:28px 28px!important;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cpath fill='%232fc5ff' fill-opacity='.32' d='m12 9.2.9 1.9 2.1.3-1.5 1.5.36 2.1-1.86-1-1.86 1 .36-2.1L9 11.4l2.1-.3.9-1.9z'/%3E%3C/svg%3E")!important;
+  background-size:24px 24px!important;
   background-position:0 0!important;
 }
 .movie-editor[data-workspace-pattern="hearts"] .movie-editor-layout{
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'%3E%3Cpath fill='%232fc5ff' fill-opacity='.25' d='M14 21.2 6.6 14.4C2.7 10.8 5.2 4.6 10.3 4.6c1.8 0 2.9.9 3.7 2.1.8-1.2 1.9-2.1 3.7-2.1 5.1 0 7.6 6.2 3.7 9.8L14 21.2z'/%3E%3C/svg%3E")!important;
-  background-size:28px 28px!important;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cpath fill='%232fc5ff' fill-opacity='.32' d='M12 15.3 9.1 12.6c-1.55-1.43-.54-3.9 1.43-3.9.7 0 1.15.35 1.47.83.32-.48.77-.83 1.47-.83 1.97 0 2.98 2.47 1.43 3.9L12 15.3z'/%3E%3C/svg%3E")!important;
+  background-size:24px 24px!important;
   background-position:0 0!important;
 }
 .movie-editor[data-workspace-pattern="cats"] .movie-editor-layout{
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='30' height='30' viewBox='0 0 30 30'%3E%3Cg fill='none' stroke='%232fc5ff' stroke-opacity='.28' stroke-width='1.25' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m8.7 11-.6-5 4.1 2.6a9.5 9.5 0 0 1 5.6 0L21.9 6l-.6 5c1.2 1.3 1.7 3 1.4 4.8-.6 3.7-3.8 6.2-7.7 6.2s-7.1-2.5-7.7-6.2c-.3-1.8.2-3.5 1.4-4.8Z'/%3E%3Cpath d='M11.4 14.2h.1m7 0h.1M15 15.5v1.4m0 0-1.6 1m1.6-1 1.6 1M10.8 17l-3.3-.4m3.5 2-3.2.6m11.4-2.2 3.3-.4m-3.5 2 3.2.6'/%3E%3C/g%3E%3C/svg%3E")!important;
-  background-size:30px 30px!important;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Cg fill='none' stroke='%232fc5ff' stroke-opacity='.34' stroke-width='.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m9.2 11-.3-2.6 2.1 1.3a4.8 4.8 0 0 1 2.8 0l2.1-1.3-.3 2.6c.6.7.8 1.5.7 2.4-.3 1.9-1.9 3.1-3.7 3.1s-3.4-1.2-3.7-3.1c-.1-.9.1-1.7.7-2.4Z'/%3E%3Cpath d='M10.7 12.4h.1m3.6 0h.1m-1.9.7v.7m0 0-.8.5m.8-.5.8.5'/%3E%3C/g%3E%3C/svg%3E")!important;
+  background-size:24px 24px!important;
   background-position:0 0!important;
 }
 html.movie-editor-page-active,
@@ -1518,4 +1529,4 @@ body.movie-panel-interacting *{
 </section>
 {{ movie_timeline_data|json_script:"movie-timeline-data" }}{{ movie_assets|json_script:"movie-assets-data" }}{{ movie_library_assets|json_script:"movie-library-data" }}{{ movie_render_jobs|json_script:"movie-render-jobs-data" }}{{ movie_edits|json_script:"movie-edits-data" }}
 {% endblock %}
-{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260730-pressed-selection-workspace-patterns"></script>{% endblock %}
+{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260730-symmetric-camera-home-focus"></script>{% endblock %}
