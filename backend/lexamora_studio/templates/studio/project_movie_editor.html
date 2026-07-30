@@ -293,7 +293,8 @@ body.movie-editor-windowing{position:relative!important;min-width:100%!important
 .movie-window-action-flash{animation:movie-window-action-flash .48s ease}
 @keyframes movie-window-action-flash{0%,100%{color:var(--accent);filter:none}45%{color:#ffd335;filter:drop-shadow(0 0 7px #ffd335)}}
 .movie-layout-lock-warning{
-  animation:movie-layout-lock-warning 1s ease-out!important;
+  transform-origin:50% 45%!important;
+  animation:movie-layout-lock-warning 1s linear!important;
 }
 @keyframes movie-layout-lock-warning{
   0%,100%{
@@ -301,12 +302,21 @@ body.movie-editor-windowing{position:relative!important;min-width:100%!important
     background:transparent;
     box-shadow:none;
     filter:none;
+    transform:translateX(0) rotate(0deg) scale(1);
   }
-  12%,68%{
-    color:#ffe44d;
-    background:color-mix(in srgb,#ffe44d 24%,var(--panel));
-    box-shadow:0 0 0 2px #ffe44d,0 0 18px 7px rgba(255,228,77,.9);
-    filter:drop-shadow(0 0 7px #ffe44d);
+  8%,24%,40%,56%,72%,88%{
+    color:#351500;
+    background:#ff8a00;
+    box-shadow:0 0 0 3px #ff6a00,0 0 24px 10px rgba(255,106,0,.96);
+    filter:drop-shadow(0 0 9px #ff6a00);
+    transform:translateX(-4px) rotate(-10deg) scale(1.09);
+  }
+  16%,32%,48%,64%,80%{
+    color:#351500;
+    background:#ff9d00;
+    box-shadow:0 0 0 3px #ff6a00,0 0 24px 10px rgba(255,106,0,.96);
+    filter:drop-shadow(0 0 9px #ff6a00);
+    transform:translateX(4px) rotate(10deg) scale(1.09);
   }
 }
 .movie-preview-panel>.movie-window-actions{position:absolute!important;z-index:36!important;top:8px!important;right:7px!important;display:flex!important;flex-direction:column!important;align-items:center!important;gap:5px!important;margin:0!important}
@@ -1576,4 +1586,4 @@ body.movie-panel-interacting *{
 </section>
 {{ movie_timeline_data|json_script:"movie-timeline-data" }}{{ movie_assets|json_script:"movie-assets-data" }}{{ movie_library_assets|json_script:"movie-library-data" }}{{ movie_render_jobs|json_script:"movie-render-jobs-data" }}{{ movie_edits|json_script:"movie-edits-data" }}
 {% endblock %}
-{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260730-projects-toggle-boundary-lock"></script>{% endblock %}
+{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260730-drop-fit-selection-focus"></script>{% endblock %}

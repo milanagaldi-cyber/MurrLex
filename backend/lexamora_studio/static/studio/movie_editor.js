@@ -390,6 +390,7 @@
   let tileCameraVelocityX = 0;
   let tileCameraAnimationMaximumVelocity = 28;
   let tileCameraFrame = 0;
+  let tileSelectionFocusActive = false;
   let tileCameraTrackWidth = 1;
   let tileViewportHorizontalHotZoneHovered = false;
   let tileViewportVerticalHotZoneHovered = false;
@@ -1743,6 +1744,122 @@
     const sourceBounds = tileGroupBounds(sourceTiles, movingKeys);
     const desiredBounds = tileGroupBounds(desiredTiles, movingKeys);
     if (!sourceBounds || !desiredBounds) return null;
+    if (movingKeys.length === 1) {
+      const movingKey = movingKeys[0];
+      const source = sourceTiles[movingKey];
+      const desired = desiredTiles[movingKey];
+      const minimum = tileMinimums[movingKey];
+      const desiredCenterX = desired.x + desired.width / 2;
+      const desiredCenterY = desired.y + desired.height / 2;
+      const horizontalLeft = Number(horizontalExtent?.left ?? tileWorkspaceInset);
+      const horizontalRight = Number(
+        horizontalExtent?.right ?? workspace.width - tileWorkspaceInset,
+      );
+      const sizeFactors = [1, .95, .9, .85, .8];
+      const variants = [];
+      sizeFactors.forEach(widthFactor => sizeFactors.forEach(heightFactor => {
+        const width = Math.max(
+          minimum.width,
+          Math.round(source.width * widthFactor),
+        );
+        const height = Math.max(
+          minimum.height,
+          Math.round(source.height * heightFactor),
+        );
+        if (variants.some(variant =>
+          variant.width === width && variant.height === height
+        )) return;
+        variants.push({
+          width,
+          height,
+          shrink: (
+            (source.width - width) / Math.max(1, source.width)
+            + (source.height - height) / Math.max(1, source.height)
+          ),
+        });
+      }));
+      let nearest = null;
+      variants.forEach(variant => {
+        const maximumX = horizontalRight - variant.width;
+        const maximumY = workspace.height - tileWorkspaceInset - variant.height;
+        if (
+          maximumX < horizontalLeft
+          || maximumY < tileWorkspaceInset
+        ) return;
+        const desiredX = clamp(
+          desiredCenterX - variant.width / 2,
+          horizontalLeft,
+          maximumX,
+        );
+        const desiredY = clamp(
+          desiredCenterY - variant.height / 2,
+          tileWorkspaceInset,
+          maximumY,
+        );
+        const xCandidates = new Set([desiredX, horizontalLeft, maximumX]);
+        const yCandidates = new Set([desiredY, tileWorkspaceInset, maximumY]);
+        tilePanelKeys.filter(otherKey => !selected.has(otherKey)).forEach(otherKey => {
+          const obstacle = sourceTiles[otherKey];
+          xCandidates.add(clamp(
+            obstacle.x - variant.width,
+            horizontalLeft,
+            maximumX,
+          ));
+          xCandidates.add(clamp(
+            obstacle.x + obstacle.width,
+            horizontalLeft,
+            maximumX,
+          ));
+          yCandidates.add(clamp(
+            obstacle.y - variant.height,
+            tileWorkspaceInset,
+            maximumY,
+          ));
+          yCandidates.add(clamp(
+            obstacle.y + obstacle.height,
+            tileWorkspaceInset,
+            maximumY,
+          ));
+        });
+        xCandidates.forEach(x => yCandidates.forEach(y => {
+          const candidate = cloneTiles(sourceTiles);
+          candidate[movingKey] = {
+            ...candidate[movingKey],
+            x,
+            y,
+            width: variant.width,
+            height: variant.height,
+          };
+          if (tileLayoutHasSelectionOverlap(candidate, movingKeys)) return;
+          const offsetX = x + variant.width / 2 - desiredCenterX;
+          const offsetY = y + variant.height / 2 - desiredCenterY;
+          const score = offsetX * offsetX + offsetY * offsetY;
+          const axialDistance = Math.abs(offsetX) + Math.abs(offsetY);
+          if (
+            !nearest
+            || score < nearest.score - .01
+            || (
+              Math.abs(score - nearest.score) <= .01
+              && axialDistance < nearest.axialDistance - .01
+            )
+            || (
+              Math.abs(score - nearest.score) <= .01
+              && Math.abs(axialDistance - nearest.axialDistance) <= .01
+              && variant.shrink < nearest.shrink
+            )
+          ) {
+            nearest = {
+              tiles: candidate,
+              score,
+              axialDistance,
+              shrink: variant.shrink,
+              resized: variant.width < source.width || variant.height < source.height,
+            };
+          }
+        }));
+      });
+      return nearest;
+    }
     const horizontalLeft = Number(horizontalExtent?.left ?? tileWorkspaceInset);
     const horizontalRight = Number(
       horizontalExtent?.right ?? workspace.width - tileWorkspaceInset,
@@ -1809,10 +1926,10 @@
         || score < nearest.score
         || (score === nearest.score && axialDistance < nearest.axialDistance)
       ) {
-        nearest = {tiles: candidate, score, axialDistance};
+        nearest = {tiles: candidate, score, axialDistance, shrink: 0, resized: false};
       }
     }));
-    return nearest?.tiles || null;
+    return nearest;
   };
   const freezeTileContentForResize = panel => {
     if (!panel) return () => {};
@@ -2174,6 +2291,7 @@
   const cancelTileHomeCenter = () => {
     if (tileHomeCenterFrame) cancelAnimationFrame(tileHomeCenterFrame);
     tileHomeCenterFrame = 0;
+    tileSelectionFocusActive = false;
     stopTileCameraAnimation();
     hideTileCenterAxis();
   };
@@ -2303,6 +2421,109 @@
       editorViewport.scrollTop = targetTop;
       syncTileViewportHorizontalAccess(layout.tiles);
       flashTileCenterAxis(homeAxis);
+      tileExtentCleanupSuppressedUntil = Date.now() + 120;
+      window.setTimeout(() => scheduleTileExtentCleanup(0), 130);
+      scheduleTileViewportScrollbarIdle();
+    };
+    tileHomeCenterFrame = requestAnimationFrame(step);
+    return true;
+  };
+  const focusPartiallyVisibleSelectedTile = key => {
+    if (
+      !editorViewport
+      || !tileViewportGeometry
+      || selectedTileKeys.size !== 1
+      || !selectedTileKeys.has(key)
+    ) return false;
+    const layout = ensureTileLayout();
+    const rect = layout.tiles[key];
+    const visible = tileLogicalViewportBounds(tileViewportGeometry);
+    if (!rect || !visible) return false;
+    const right = rect.x + rect.width;
+    const bottom = rect.y + rect.height;
+    const intersects = (
+      right > visible.left
+      && rect.x < visible.right
+      && bottom > visible.top
+      && rect.y < visible.bottom
+    );
+    const clipped = (
+      rect.x < visible.left - 1
+      || right > visible.right + 1
+      || rect.y < visible.top - 1
+      || bottom > visible.bottom + 1
+    );
+    if (!intersects || !clipped) return false;
+    const viewportWidth = tileHorizontalViewportWidth();
+    const viewportHeight = editorViewport.clientHeight;
+    const marginX = Math.min(32, Math.max(12, viewportWidth * .05));
+    const marginY = Math.min(32, Math.max(12, viewportHeight * .05));
+    let targetLogicalLeft = visible.left;
+    let targetLogicalTop = visible.top;
+    if (rect.width + marginX * 2 <= viewportWidth) {
+      if (rect.x < visible.left + marginX) {
+        targetLogicalLeft = rect.x - marginX;
+      } else if (right > visible.right - marginX) {
+        targetLogicalLeft = right - viewportWidth + marginX;
+      }
+    } else if (rect.x < visible.left && right <= visible.right) {
+      targetLogicalLeft = rect.x - marginX;
+    } else if (right > visible.right && rect.x >= visible.left) {
+      targetLogicalLeft = right - viewportWidth + marginX;
+    } else {
+      targetLogicalLeft = rect.x + rect.width / 2 - viewportWidth / 2;
+    }
+    if (rect.height + marginY * 2 <= viewportHeight) {
+      if (rect.y < visible.top + marginY) {
+        targetLogicalTop = rect.y - marginY;
+      } else if (bottom > visible.bottom - marginY) {
+        targetLogicalTop = bottom - viewportHeight + marginY;
+      }
+    } else if (rect.y < visible.top && bottom <= visible.bottom) {
+      targetLogicalTop = rect.y - marginY;
+    } else if (bottom > visible.bottom && rect.y >= visible.top) {
+      targetLogicalTop = bottom - viewportHeight + marginY;
+    } else {
+      targetLogicalTop = rect.y + rect.height / 2 - viewportHeight / 2;
+    }
+    const origin = tileWorkspaceViewportOrigin();
+    const targetLeft = clamp(
+      origin.x + tileViewportGeometry.offsetX + targetLogicalLeft,
+      tileCameraMinimumX(tileViewportGeometry),
+      tileCameraMaximumX(tileViewportGeometry),
+    );
+    const targetTop = clamp(
+      origin.y + tileViewportGeometry.offsetY + targetLogicalTop,
+      0,
+      Math.max(0, editorViewport.scrollHeight - viewportHeight),
+    );
+    const startLeft = tileCameraX;
+    const startTop = editorViewport.scrollTop;
+    if (
+      Math.abs(targetLeft - startLeft) < 1
+      && Math.abs(targetTop - startTop) < 1
+    ) return false;
+    cancelTileHomeCenter();
+    if (tileExtentCleanupTimer) clearTimeout(tileExtentCleanupTimer);
+    tileExtentCleanupTimer = 0;
+    tileExtentCleanupSuppressedUntil = Date.now() + 620;
+    tileSelectionFocusActive = true;
+    const startedAt = performance.now();
+    const duration = 240;
+    const step = now => {
+      const progress = clamp((now - startedAt) / duration, 0, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setTileCameraX(startLeft + (targetLeft - startLeft) * eased);
+      editorViewport.scrollTop = startTop + (targetTop - startTop) * eased;
+      if (progress < 1) {
+        tileHomeCenterFrame = requestAnimationFrame(step);
+        return;
+      }
+      tileHomeCenterFrame = 0;
+      tileSelectionFocusActive = false;
+      setTileCameraX(targetLeft);
+      editorViewport.scrollTop = targetTop;
+      syncTileViewportHorizontalAccess(layout.tiles);
       tileExtentCleanupSuppressedUntil = Date.now() + 120;
       window.setTimeout(() => scheduleTileExtentCleanup(0), 130);
       scheduleTileViewportScrollbarIdle();
@@ -2478,6 +2699,7 @@
     scheduleTileViewportVerticalIdle();
   }, {passive: false});
   editorViewport?.addEventListener("scroll", () => {
+    if (tileSelectionFocusActive) return;
     revealTileViewportVerticalScrollbar();
     scheduleTileViewportVerticalIdle();
   }, {passive: true});
@@ -3035,12 +3257,6 @@
           startCameraX,
         );
         const dragStartLocalBounds = tileGroupBounds(startTiles, movingKeys);
-        const dragStartOuterBounds = tileBounds(startTiles);
-        const dragStartedInsideOuterTiles = Boolean(
-          dragStartLocalBounds
-          && dragStartLocalBounds.x > dragStartOuterBounds.left + 1
-          && dragStartLocalBounds.right < dragStartOuterBounds.right - 1
-        );
         const dragHorizontalExtent = tileInteractiveHorizontalExtent(dragGeometry);
         const dragCameraMinimumX = tileCameraMinimumX(dragGeometry);
         const dragCameraMaximumX = tileCameraMaximumX(dragGeometry);
@@ -3221,6 +3437,9 @@
               setSelectedTileKeys(
                 [...selectedTileKeys].filter(selectedKey => selectedKey !== key)
               );
+            } else if (!additiveSelection) {
+              setSelectedTileKeys([key]);
+              focusPartiallyVisibleSelectedTile(key);
             }
             syncTileViewportHorizontalAccess(startTiles);
             scheduleTileViewportScrollbarIdle();
@@ -3228,7 +3447,7 @@
             return;
           }
           const invalidDrop = tileLayoutHasSelectionOverlap(currentTiles, movingKeys);
-          const nearestDropTiles = invalidDrop
+          const nearestDrop = invalidDrop
             ? nearestAvailableTileDrop(
                 startTiles,
                 currentTiles,
@@ -3237,11 +3456,14 @@
                 dragHorizontalExtent,
               )
             : null;
+          const nearestDropTiles = nearestDrop?.tiles || null;
           const dropAccepted = !invalidDrop || Boolean(nearestDropTiles);
           const finalTiles = invalidDrop
             ? (nearestDropTiles || startTiles)
             : currentTiles;
-          if (invalidDrop && nearestDropTiles) {
+          if (invalidDrop && nearestDrop?.resized) {
+            toast("Placed in the nearest free space and fitted by up to 20%");
+          } else if (invalidDrop && nearestDropTiles) {
             toast("Placed in the nearest free space");
           } else if (invalidDrop) {
             toast("This space is occupied");
@@ -3274,7 +3496,7 @@
                   localBounds: finalLocalBounds,
                   localViewportBounds: dragStartViewportBounds,
                   localFocusSide: localFocusDirection,
-                  localFocusOnlyWhenEscaped: dragStartedInsideOuterTiles,
+                  localFocusOnlyWhenEscaped: true,
                   localStableCameraX: startCameraX,
                 },
               )
@@ -3509,11 +3731,6 @@
           tileViewportGeometry,
           tileCameraX,
         );
-        const resizeStartOuterBounds = tileBounds(startTiles);
-        const resizeStartedInsideOuterTiles = (
-          origin.x > resizeStartOuterBounds.left + 1
-          && origin.x + origin.width < resizeStartOuterBounds.right - 1
-        );
         const pointerId = event.pointerId;
         const resizeStartCameraX = tileCameraX;
         let active = false;
@@ -3662,7 +3879,7 @@
               localBounds: tileGroupBounds(currentTiles, [key]),
               localViewportBounds: resizeStartViewportBounds,
               localFocusSide: horizontalSide,
-              localFocusOnlyWhenEscaped: resizeStartedInsideOuterTiles,
+              localFocusOnlyWhenEscaped: true,
               localStableCameraX: resizeStartCameraX,
             },
           );
