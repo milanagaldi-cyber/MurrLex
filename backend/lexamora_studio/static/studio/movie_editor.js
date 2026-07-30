@@ -1714,6 +1714,43 @@
       key !== otherKey && !selected.has(otherKey) && rectanglesOverlap(tiles[key], tiles[otherKey])
     ));
   };
+  const freezeTileContentForResize = panel => {
+    if (!panel) return () => {};
+    const snapshots = [];
+    [...panel.children].forEach(child => {
+      if (
+        !(child instanceof HTMLElement)
+        || child.classList.contains("movie-tile-edge")
+      ) return;
+      const computed = getComputedStyle(child);
+      if (computed.display === "none" || computed.position === "absolute") return;
+      const bounds = child.getBoundingClientRect();
+      if (bounds.width < 1 || bounds.height < 1) return;
+      snapshots.push({
+        child,
+        style: child.getAttribute("style"),
+      });
+      child.style.setProperty("box-sizing", "border-box", "important");
+      child.style.setProperty("width", `${bounds.width}px`, "important");
+      child.style.setProperty("min-width", `${bounds.width}px`, "important");
+      child.style.setProperty("max-width", `${bounds.width}px`, "important");
+      child.style.setProperty("height", `${bounds.height}px`, "important");
+      child.style.setProperty("min-height", `${bounds.height}px`, "important");
+      child.style.setProperty("max-height", `${bounds.height}px`, "important");
+      child.style.setProperty("flex", "0 0 auto", "important");
+    });
+    panel.classList.add("movie-tile-content-frozen");
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      snapshots.forEach(({child, style}) => {
+        if (style == null) child.removeAttribute("style");
+        else child.setAttribute("style", style);
+      });
+      panel.classList.remove("movie-tile-content-frozen");
+    };
+  };
   const applyTileRects = (tiles, {preserveViewport = false, scheduleCleanup = true} = {}) => {
     const layout = ensureTileLayout();
     tileRenderedTiles = cloneTiles(tiles);
@@ -3297,6 +3334,7 @@
         let latestPointer = event;
         let autoScrollFrame = 0;
         let observedCameraX = tileCameraX;
+        let releaseFrozenContent = () => {};
         const collisionPushEdges = new Map();
         const pointerToLogicalPoint = pointer => {
           const visible = tileLogicalViewportBounds(tileViewportGeometry);
@@ -3346,6 +3384,7 @@
           if (!active) {
             remember();
             revealTileViewportScrollbars();
+            releaseFrozenContent = freezeTileContentForResize(panel);
           }
           active = true;
           const resized = resizeTileCandidate(
@@ -3374,8 +3413,6 @@
           document.body.classList.add("movie-panel-interacting");
           showTileGuides(resized.guide);
           applyTileRects(currentTiles);
-          applyPreviewZoom();
-          updatePreviewGeometry();
         };
         const continueAutoScroll = () => {
           autoScrollFrame = 0;
@@ -3412,6 +3449,7 @@
           handle.classList.remove("active");
           document.body.classList.remove("movie-panel-interacting");
           hideTileGuides();
+          releaseFrozenContent();
           if (!active) {
             scheduleTileViewportScrollbarIdle();
             return;
