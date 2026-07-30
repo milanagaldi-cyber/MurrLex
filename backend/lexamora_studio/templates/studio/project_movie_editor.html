@@ -1502,7 +1502,7 @@ body.movie-panel-interacting *{
   <div class="movie-editor-viewport" data-editor-workspace-viewport>
   <div class="movie-editor-project-header" data-editor-project-header>{% include "studio/_project_navigation.html" %}</div>
   <div class="movie-editor-world" data-editor-workspace-world>
-  {% include "studio/_montage_gallery.html" with montage_gallery_key="draft-editor" montage_actions_url=movie_edits_url montage_can_edit=can_edit %}
+  {% include "studio/_montage_gallery.html" with montage_gallery_key="draft-editor" montage_actions_url=movie_edits_url montage_can_edit=can_edit montage_initially_closed=True %}
   <div class="panel movie-toolbar movie-collapsible" data-panel-key="editorHeader" data-panel-drag="editorHeader" title="Drag empty header space to move this tile">
     <div class="movie-settings">
       <input data-movie-title value="{{ movie_timeline.title }}" aria-label="MC Project title" title="Double-click to edit MC Project title" readonly>
@@ -1586,4 +1586,4 @@ body.movie-panel-interacting *{
 </section>
 {{ movie_timeline_data|json_script:"movie-timeline-data" }}{{ movie_assets|json_script:"movie-assets-data" }}{{ movie_library_assets|json_script:"movie-library-data" }}{{ movie_render_jobs|json_script:"movie-render-jobs-data" }}{{ movie_edits|json_script:"movie-edits-data" }}
 {% endblock %}
-{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260730-drop-fit-selection-focus"></script>{% endblock %}
+{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260730-compact-projects-pan-fit-rule"></script>{% endblock %}

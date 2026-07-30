@@ -138,6 +138,7 @@
   if (editProjectsPanel) {
     editProjectsPanel.dataset.panelKey = "editProjects";
     editProjectsPanel.classList.add("panel", "movie-collapsible", "movie-edit-projects-tile");
+    editProjectsPanel.removeAttribute("open");
     const editProjectsDrag = editProjectsPanel.querySelector(":scope > summary") || editProjectsPanel;
     editProjectsDrag.dataset.panelDrag = "editProjects";
     const editProjectsToggle = editProjectsDrag.querySelector(":scope > span");
@@ -173,6 +174,8 @@
   const savedLayoutKey = `studio-movie-layout-saved-${layoutEngineVersion}-${timelineId}`;
   const floatingPanelsKey = `studio-movie-floating-panels-${layoutEngineVersion}-${timelineId}`;
   const layoutLockKey = `studio-movie-layout-locked-${layoutEngineVersion}-${timelineId}`;
+  const editProjectsCompactMigrationKey =
+    `studio-movie-projects-compact-v1-${timelineId}`;
   let layoutLocked = localStorage.getItem(layoutLockKey) === "true";
   let floatingPanels = {};
   const tilePanelKeys = ["editProjects", "editorHeader", "media", "preview", "inspector", "timeline"];
@@ -292,7 +295,7 @@
     const mediaWidth = clamp(Math.round(availableWidth * .2), 220, 300);
     const inspectorWidth = clamp(Math.round(availableWidth * .27), 300, 430);
     const previewWidth = Math.max(360, availableWidth - mediaWidth - inspectorWidth - gap * 2);
-    const editProjectsHeight = 220;
+    const editProjectsHeight = tileMinimums.editProjects.height;
     const editorHeaderHeight = 58;
     const upperHeight = 390;
     const timelineHeight = 320;
@@ -370,6 +373,39 @@
     editorLayouts.columns = {...current, ...normalized};
     editorLayouts.stacked = {...editorLayouts.stacked, ...normalized};
     return normalized;
+  };
+  const migrateEditProjectsToCompactDefault = () => {
+    if (
+      !editProjectsPanel
+      || localStorage.getItem(editProjectsCompactMigrationKey) === "true"
+    ) return;
+    const layout = ensureTileLayout();
+    const projects = layout.tiles.editProjects;
+    const previousDefaultHeight = 220;
+    const compactHeight = tileMinimums.editProjects.height;
+    if (Math.abs(projects.height - previousDefaultHeight) <= 1) {
+      const previousBottom = projects.y + projects.height;
+      const heightReduction = projects.height - compactHeight;
+      projects.height = compactHeight;
+      tilePanelKeys.forEach(key => {
+        if (key === "editProjects") return;
+        const rect = layout.tiles[key];
+        if (rect.y >= previousBottom - 1) {
+          rect.y = Math.max(tileWorkspaceInset, rect.y - heightReduction);
+        }
+      });
+      editorLayouts.columns = {...editorLayouts.columns, ...layout};
+      editorLayouts.stacked = {...editorLayouts.stacked, ...layout};
+      localStorage.setItem(
+        layoutStateKey("columns"),
+        JSON.stringify(editorLayouts.columns),
+      );
+      localStorage.setItem(
+        layoutStateKey("stacked"),
+        JSON.stringify(editorLayouts.stacked),
+      );
+    }
+    localStorage.setItem(editProjectsCompactMigrationKey, "true");
   };
   let tileViewportGeometry = null;
   let tileAllocatedExtent = null;
@@ -1733,12 +1769,25 @@
       key !== otherKey && !selected.has(otherKey) && rectanglesOverlap(tiles[key], tiles[otherKey])
     ));
   };
+  const tileSelectionObstacleOverlapCount = (tiles, keys) => {
+    const selected = new Set(keys);
+    const overlappingObstacles = new Set();
+    keys.forEach(key => tilePanelKeys.forEach(otherKey => {
+      if (
+        key !== otherKey
+        && !selected.has(otherKey)
+        && rectanglesOverlap(tiles[key], tiles[otherKey])
+      ) overlappingObstacles.add(otherKey);
+    }));
+    return overlappingObstacles.size;
+  };
   const nearestAvailableTileDrop = (
     sourceTiles,
     desiredTiles,
     movingKeys,
     workspace,
     horizontalExtent = null,
+    allowResize = false,
   ) => {
     const selected = new Set(movingKeys);
     const sourceBounds = tileGroupBounds(sourceTiles, movingKeys);
@@ -1755,7 +1804,7 @@
       const horizontalRight = Number(
         horizontalExtent?.right ?? workspace.width - tileWorkspaceInset,
       );
-      const sizeFactors = [1, .95, .9, .85, .8];
+      const sizeFactors = allowResize ? [1, .95, .9, .85, .8] : [1];
       const variants = [];
       sizeFactors.forEach(widthFactor => sizeFactors.forEach(heightFactor => {
         const width = Math.max(
@@ -3447,6 +3496,9 @@
             return;
           }
           const invalidDrop = tileLayoutHasSelectionOverlap(currentTiles, movingKeys);
+          const overlappingObstacleCount = invalidDrop
+            ? tileSelectionObstacleOverlapCount(currentTiles, movingKeys)
+            : 0;
           const nearestDrop = invalidDrop
             ? nearestAvailableTileDrop(
                 startTiles,
@@ -3454,6 +3506,7 @@
                 movingKeys,
                 layout.workspace,
                 dragHorizontalExtent,
+                overlappingObstacleCount >= 2,
               )
             : null;
           const nearestDropTiles = nearestDrop?.tiles || null;
@@ -3583,6 +3636,22 @@
       const pointerOnEmptyWorkspace = event => !event.target.closest(
         "[data-panel-key],.movie-tile-edge,.movie-tile-snap-guide",
       );
+      const pointerCanPanFromTile = event => {
+        if (event.button !== 2) return false;
+        const panel = event.target.closest("[data-panel-key]");
+        const key = panel?.dataset.panelKey;
+        if (
+          !panel
+          || !workspacePanel(key)
+          || tileDragTargetIsBlocked(event.target, key, panel)
+          || pointerNearTileEdge(event, panel)
+        ) return false;
+        if (
+          key === "media"
+          && pointerOnElementScrollbar(event, event.target.closest("[data-movie-bin]"))
+        ) return false;
+        return true;
+      };
       const beginWorkspacePan = event => {
         event.preventDefault();
         event.stopPropagation();
@@ -3639,13 +3708,21 @@
         registerEditorPointerFinish(finish);
       };
       editorLayout.addEventListener("contextmenu", event => {
-        if (pointerOnEmptyWorkspace(event)) event.preventDefault();
+        if (pointerOnEmptyWorkspace(event) || pointerCanPanFromTile(event)) {
+          event.preventDefault();
+        }
       });
       editorLayout.addEventListener("pointerdown", event => {
-        if (!pointerOnEmptyWorkspace(event)) return;
+        const onEmptyWorkspace = pointerOnEmptyWorkspace(event);
+        const canPanFromTile = pointerCanPanFromTile(event);
+        if (!onEmptyWorkspace && !canPanFromTile) return;
         const panWorkspace = (
           event.button === 2
-          || (event.button === 0 && (event.ctrlKey || event.metaKey))
+          || (
+            onEmptyWorkspace
+            && event.button === 0
+            && (event.ctrlKey || event.metaKey)
+          )
         );
         if (panWorkspace) {
           beginWorkspacePan(event);
@@ -7766,6 +7843,7 @@
     editorLayouts.columns = {...layoutDefaults.columns, ...resetLayout};
     editorLayouts.stacked = {...layoutDefaults.stacked, ...resetLayout};
     editorLayoutMode = "columns";
+    editProjectsPanel?.removeAttribute("open");
     previewZoomManual = false;
     localStorage.removeItem(previewZoomStorageKey);
     applyEditorLayout(cloneLayoutState());
@@ -7811,6 +7889,7 @@
   q("[data-movie-resolution]").value = root.dataset.resolution || "1920x1080";
   q("[data-movie-fps]").value = root.dataset.fps || "25";
   applyPanelGapMode();
+  migrateEditProjectsToCompactDefault();
   bindPanelDragging();
   applyLayoutLockState();
   applyEditorLayout(cloneLayoutState(), {persist: false, refresh: false});
