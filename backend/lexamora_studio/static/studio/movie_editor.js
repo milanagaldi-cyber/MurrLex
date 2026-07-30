@@ -1710,6 +1710,33 @@
       bottom: top + editorViewport.clientHeight,
     };
   };
+  const tileScreenVisibleHorizontalExtent = (geometry = tileViewportGeometry) => {
+    if (!editorViewport || !editorLayout || !geometry) return null;
+    const viewportRect = editorViewport.getBoundingClientRect();
+    const layoutRect = editorLayout.getBoundingClientRect();
+    return {
+      left: viewportRect.left - layoutRect.left - geometry.offsetX,
+      right: viewportRect.right - layoutRect.left - geometry.offsetX,
+    };
+  };
+  const tileInteractiveHorizontalExtent = (geometry = tileViewportGeometry) => {
+    if (!geometry) return null;
+    const overscan = fullTileHorizontalOverscanExtent(geometry);
+    const logicalVisible = tileLogicalViewportBounds(geometry);
+    const screenVisible = tileScreenVisibleHorizontalExtent(geometry);
+    return {
+      left: Math.min(
+        overscan.left,
+        logicalVisible?.left ?? Infinity,
+        screenVisible?.left ?? Infinity,
+      ),
+      right: Math.max(
+        overscan.right,
+        logicalVisible?.right ?? -Infinity,
+        screenVisible?.right ?? -Infinity,
+      ),
+    };
+  };
   const tilesFitHorizontalCameraView = (tiles, geometry, cameraX) => {
     const visible = tileLogicalViewportBounds(geometry, cameraX);
     if (!visible || !tiles) return false;
@@ -1732,6 +1759,9 @@
     const origin = tileWorkspaceViewportOrigin();
     const visible = tileLogicalViewportBounds(geometry, tileCameraX);
     if (!visible) return null;
+    if (geometry.workspaceWidth <= editorViewport.clientWidth + 1) {
+      return tileHomeCameraX(geometry);
+    }
     const leftEdgeVisible = (
       bounds.left >= visible.left - 1
       && bounds.left <= visible.right + 1
@@ -2371,12 +2401,23 @@
       guide: {x: xSnap?.guide ?? null, y: ySnap?.guide ?? null},
     };
   };
-  const snapResizeEdge = (key, edge, value, tiles, workspace) => {
+  const snapResizeEdge = (
+    key,
+    edge,
+    value,
+    tiles,
+    workspace,
+    horizontalExtent = null,
+  ) => {
     const horizontal = edge === "e" || edge === "w";
+    const horizontalLeft = Number(horizontalExtent?.left ?? tileWorkspaceInset);
+    const horizontalRight = Number(
+      horizontalExtent?.right ?? workspace.width - tileWorkspaceInset,
+    );
     const candidates = horizontal
       ? [
-          {value: tileWorkspaceInset, guide: tileWorkspaceInset},
-          {value: workspace.width - tileWorkspaceInset, guide: workspace.width - tileWorkspaceInset},
+          {value: horizontalLeft, guide: horizontalLeft},
+          {value: horizontalRight, guide: horizontalRight},
         ]
       : [
           {value: tileWorkspaceInset, guide: tileWorkspaceInset},
@@ -2392,14 +2433,25 @@
     });
     return nearestTileSnap(value, candidates);
   };
-  const pushTileFromObstacle = (rect, obstacle, edge, workspace, minimum) => {
+  const pushTileFromObstacle = (
+    rect,
+    obstacle,
+    edge,
+    workspace,
+    minimum,
+    horizontalExtent = null,
+  ) => {
     const next = {...rect};
+    const horizontalLeft = Number(horizontalExtent?.left ?? tileWorkspaceInset);
+    const horizontalRight = Number(
+      horizontalExtent?.right ?? workspace.width - tileWorkspaceInset,
+    );
     if (edge === "e") {
       next.x = obstacle.x + obstacle.width;
-      if (next.x + next.width > workspace.width - tileWorkspaceInset) next.width = workspace.width - tileWorkspaceInset - next.x;
+      if (next.x + next.width > horizontalRight) next.width = horizontalRight - next.x;
     } else if (edge === "w") {
       const right = obstacle.x;
-      next.x = Math.max(tileWorkspaceInset, right - next.width);
+      next.x = Math.max(horizontalLeft, right - next.width);
       next.width = right - next.x;
     } else if (edge === "s") {
       next.y = obstacle.y + obstacle.height;
@@ -2412,7 +2464,14 @@
     if (next.width < minimum.width || next.height < minimum.height) return null;
     return next;
   };
-  const resolveResizeCollisions = (activeKey, candidate, edge, sourceTiles, workspace) => {
+  const resolveResizeCollisions = (
+    activeKey,
+    candidate,
+    edge,
+    sourceTiles,
+    workspace,
+    horizontalExtent = null,
+  ) => {
     const tiles = cloneTiles(sourceTiles);
     tiles[activeKey] = candidate;
     const queue = [activeKey];
@@ -2427,7 +2486,14 @@
         const pair = `${obstacleKey}:${otherKey}`;
         if (processed.has(pair) || !rectanglesOverlap(obstacle, tiles[otherKey])) continue;
         processed.add(pair);
-        const pushed = pushTileFromObstacle(tiles[otherKey], obstacle, edge, workspace, tileMinimums[otherKey]);
+        const pushed = pushTileFromObstacle(
+          tiles[otherKey],
+          obstacle,
+          edge,
+          workspace,
+          tileMinimums[otherKey],
+          horizontalExtent,
+        );
         if (!pushed) return null;
         tiles[otherKey] = pushed;
         queue.push(otherKey);
@@ -2436,26 +2502,61 @@
     if (attempts >= 64 || tileLayoutHasOverlap(tiles)) return null;
     return tiles;
   };
-  const resizeTileCandidate = (key, edge, origin, dx, dy, tiles, workspace) => {
+  const resizeTileCandidate = (
+    key,
+    edge,
+    origin,
+    dx,
+    dy,
+    tiles,
+    workspace,
+    horizontalExtent = null,
+  ) => {
     const minimum = tileMinimums[key];
     const defaults = tileLayoutDefaults.tiles[key];
     const maximumScale = tileMaximumScale(key);
-    const maximumWidth = Math.min(workspace.width, defaults.width * maximumScale);
+    const horizontalLeft = Number(horizontalExtent?.left ?? tileWorkspaceInset);
+    const horizontalRight = Number(
+      horizontalExtent?.right ?? workspace.width - tileWorkspaceInset,
+    );
+    const maximumWidth = Math.min(
+      horizontalRight - horizontalLeft,
+      defaults.width * maximumScale,
+    );
     const maximumHeight = Math.min(workspace.height, defaults.height * maximumScale);
     const next = {...origin};
     let guide = {x: null, y: null};
     const horizontalEdge = edge.includes("e") ? "e" : edge.includes("w") ? "w" : null;
     const verticalEdge = edge.includes("s") ? "s" : edge.includes("n") ? "n" : null;
     if (horizontalEdge === "e") {
-      const raw = clamp(origin.x + origin.width + dx, origin.x + minimum.width, Math.min(workspace.width - tileWorkspaceInset, origin.x + maximumWidth));
-      const snap = snapResizeEdge(key, horizontalEdge, raw, tiles, workspace);
-      const right = clamp(snap?.value ?? raw, origin.x + minimum.width, Math.min(workspace.width - tileWorkspaceInset, origin.x + maximumWidth));
+      const maximumRight = Math.min(horizontalRight, origin.x + maximumWidth);
+      const raw = clamp(origin.x + origin.width + dx, origin.x + minimum.width, maximumRight);
+      const snap = snapResizeEdge(
+        key,
+        horizontalEdge,
+        raw,
+        tiles,
+        workspace,
+        horizontalExtent,
+      );
+      const right = clamp(snap?.value ?? raw, origin.x + minimum.width, maximumRight);
       next.width = right - origin.x;
       guide.x = snap?.guide ?? null;
     } else if (horizontalEdge === "w") {
-      const raw = clamp(origin.x + dx, Math.max(tileWorkspaceInset, origin.x + origin.width - maximumWidth), origin.x + origin.width - minimum.width);
-      const snap = snapResizeEdge(key, horizontalEdge, raw, tiles, workspace);
-      next.x = clamp(snap?.value ?? raw, Math.max(tileWorkspaceInset, origin.x + origin.width - maximumWidth), origin.x + origin.width - minimum.width);
+      const minimumLeft = Math.max(
+        horizontalLeft,
+        origin.x + origin.width - maximumWidth,
+      );
+      const raw = clamp(origin.x + dx, minimumLeft, origin.x + origin.width - minimum.width);
+      const snap = snapResizeEdge(
+        key,
+        horizontalEdge,
+        raw,
+        tiles,
+        workspace,
+        horizontalExtent,
+      );
+      next.x = clamp(snap?.value ?? raw, minimumLeft, origin.x + origin.width - minimum.width);
       next.width = origin.x + origin.width - next.x;
       guide.x = snap?.guide ?? null;
     }
@@ -2635,12 +2736,7 @@
         const pointerId = event.pointerId;
         if (!tileViewportGeometry) applyTileRects(startTiles);
         const dragGeometry = tileViewportGeometry;
-        const dragOverscanExtent = fullTileHorizontalOverscanExtent(dragGeometry);
-        const dragVisibleExtent = tileLogicalViewportBounds(dragGeometry);
-        const dragHorizontalExtent = {
-          left: Math.min(dragOverscanExtent.left, dragVisibleExtent?.left ?? Infinity),
-          right: Math.max(dragOverscanExtent.right, dragVisibleExtent?.right ?? -Infinity),
-        };
+        const dragHorizontalExtent = tileInteractiveHorizontalExtent(dragGeometry);
         const dragCameraMaximumX = tileCameraMaximumX(dragGeometry);
         const dragCameraSpeedMultiplier = 2;
         let active = false;
@@ -2995,6 +3091,9 @@
         const layout = ensureTileLayout();
         const startTiles = cloneTiles(layout.tiles);
         const origin = {...startTiles[key]};
+        const resizeHorizontalExtent = tileInteractiveHorizontalExtent(
+          tileViewportGeometry,
+        );
         const startX = event.clientX;
         const startY = event.clientY;
         const horizontalEdge = edge.includes("e") ? "e" : edge.includes("w") ? "w" : null;
@@ -3066,6 +3165,7 @@
             dy,
             startTiles,
             layout.workspace,
+            resizeHorizontalExtent,
           );
           const resolved = resolveResizeCollisions(
             key,
@@ -3073,6 +3173,7 @@
             collisionPushEdge,
             startTiles,
             layout.workspace,
+            resizeHorizontalExtent,
           );
           if (!resolved) return;
           currentTiles = resolved;
