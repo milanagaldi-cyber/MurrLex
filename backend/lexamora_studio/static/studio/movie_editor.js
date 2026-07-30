@@ -357,6 +357,7 @@
   let tileProjectHeaderHomeLeft = null;
   let tileViewportHorizontalHotZoneHovered = false;
   let tileViewportVerticalHotZoneHovered = false;
+  let tileViewportHorizontalRevealRequested = false;
   let pendingTileCameraLogicalCenterX = null;
   const tileViewportMinimumReveal = 48;
   const tileExtentCleanupMargin = 32;
@@ -401,7 +402,8 @@
     const requiredExtent = {
       left: Math.min(baseLeft, bounds.left),
       right: Math.max(baseRight, bounds.right),
-      bottom: Math.max(baseTop, bounds.bottom),
+      // Vertical space is fixed: the home layout plus its permanent two-screen reserve.
+      bottom: Math.max(baseTop, Number(workspace.height || 0), bounds.bottom),
     };
     const extent = {
       left: clamp(
@@ -585,6 +587,7 @@
       && (
         tileMoveDragActive
         || document.body.classList.contains("movie-panel-interacting")
+        || tileViewportHorizontalRevealRequested
         || (
           tileViewportInitialCenterComplete
           && (!tilesFitDefaultDisplayZone(currentTiles) || !centered)
@@ -1848,7 +1851,9 @@
   const revealTileViewportHorizontalScrollbar = () => {
     if (tileViewportHorizontalIdleTimer) clearTimeout(tileViewportHorizontalIdleTimer);
     tileViewportHorizontalIdleTimer = 0;
+    tileViewportHorizontalRevealRequested = true;
     tileCameraScrollbar?.classList.remove("movie-scrollbars-idle");
+    syncTileViewportHorizontalAccess(tileRenderedTiles);
   };
   const revealTileViewportVerticalScrollbar = () => {
     if (!editorViewport) return;
@@ -1874,7 +1879,9 @@
         scheduleTileViewportHorizontalIdle();
         return;
       }
+      tileViewportHorizontalRevealRequested = false;
       tileCameraScrollbar?.classList.add("movie-scrollbars-idle");
+      syncTileViewportHorizontalAccess(tileRenderedTiles);
     }, 3000);
   };
   const scheduleTileViewportVerticalIdle = () => {
@@ -2528,11 +2535,6 @@
         tileViewportScrollbarDragChanged = false;
         if (tileViewportScrollSettleTimer) clearTimeout(tileViewportScrollSettleTimer);
         tileViewportScrollSettleTimer = 0;
-        tileMoveDragActive = true;
-        revealTileViewportScrollbars();
-        syncTileViewportHorizontalAccess(startTiles);
-        if (tileExtentCleanupTimer) clearTimeout(tileExtentCleanupTimer);
-        tileExtentCleanupTimer = 0;
         tileRenderedTiles = cloneTiles(startTiles);
         capturePointerSafely(handle, pointerId);
         const renderMovingTiles = guide => {
@@ -2559,6 +2561,11 @@
             remember();
             window.getSelection()?.removeAllRanges();
             document.body.classList.add("movie-panel-interacting");
+            tileMoveDragActive = true;
+            revealTileViewportScrollbars();
+            syncTileViewportHorizontalAccess(startTiles);
+            if (tileExtentCleanupTimer) clearTimeout(tileExtentCleanupTimer);
+            tileExtentCleanupTimer = 0;
           }
           active = true;
           const dx = rawDx - (crossingBarrierRelease?.axis === "x" ? crossingBarrierRelease.offset : 0);
@@ -2916,7 +2923,6 @@
         };
         const startPointerLogical = pointerToLogicalPoint(event);
         cancelTileHomeCenter();
-        revealTileViewportScrollbars();
         capturePointerSafely(handle, pointerId);
         const updateInwardFollowTarget = next => {
           if (!horizontalSide) return;
@@ -2964,7 +2970,10 @@
           const dx = pointerLogical.x - startPointerLogical.x;
           const dy = pointerLogical.y - startPointerLogical.y;
           if (!active && Math.hypot(next.clientX - startX, next.clientY - startY) < 2) return;
-          if (!active) remember();
+          if (!active) {
+            remember();
+            revealTileViewportScrollbars();
+          }
           active = true;
           const activeAxis = edge === "e" || edge === "w" ? "x" : "y";
           const direction = edge === "e" || edge === "s" ? 1 : -1;
