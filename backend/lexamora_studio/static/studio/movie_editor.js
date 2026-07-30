@@ -2271,6 +2271,7 @@
         if (!tileViewportGeometry) applyTileRects(startTiles);
         const dragGeometry = tileViewportGeometry;
         const dragCameraMaximumX = tileCameraMaximumX(dragGeometry);
+        const dragCameraSpeedMultiplier = 2;
         let active = false;
         let currentTiles = startTiles;
         let latestPointer = event;
@@ -2386,7 +2387,7 @@
           const smoothPressure = magnitude * magnitude * (3 - 2 * magnitude);
           if (!pressure) return false;
           const nextCameraX = clamp(
-            tileCameraX + Math.sign(pressure) * 15 * smoothPressure,
+            tileCameraX + Math.sign(pressure) * 15 * dragCameraSpeedMultiplier * smoothPressure,
             0,
             dragCameraMaximumX,
           );
