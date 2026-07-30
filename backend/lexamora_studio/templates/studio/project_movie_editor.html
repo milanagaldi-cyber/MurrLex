@@ -1330,8 +1330,8 @@ body.movie-panel-interacting *{
 </style>{% endblock %}
 {% block content %}
 <section class="movie-editor" data-movie-editor data-can-edit="{{ can_edit|yesno:'true,false' }}" data-can-export="{{ can_export|yesno:'true,false' }}" data-timeline-id="{{ movie_timeline.id }}" data-edits-url="{{ movie_edits_url }}" data-edit-settings-url="{{ movie_edit_settings_url }}" data-aspect-ratio="{{ movie_timeline.aspect_ratio }}" data-resolution="{{ movie_timeline.resolution }}" data-fps="{{ movie_timeline.fps }}" data-save-url="{% url 'studio:project_movie_editor' project.id %}" data-history-url="{% url 'studio:project_movie_editor_revisions' project.id %}" data-media-url="{{ movie_media_url }}" data-render-url="{{ movie_render_url }}">
-  <div class="movie-editor-viewport" data-editor-workspace-viewport>
   <div class="movie-editor-project-header" data-editor-project-header>{% include "studio/_project_navigation.html" %}</div>
+  <div class="movie-editor-viewport" data-editor-workspace-viewport>
   <div class="movie-editor-world" data-editor-workspace-world>
   {% include "studio/_montage_gallery.html" with montage_gallery_key="draft-editor" montage_actions_url=movie_edits_url montage_can_edit=can_edit %}
   <div class="panel movie-toolbar movie-collapsible" data-panel-key="editorHeader" data-panel-drag="editorHeader" title="Drag empty header space to move this tile">
@@ -1417,4 +1417,4 @@ body.movie-panel-interacting *{
 </section>
 {{ movie_timeline_data|json_script:"movie-timeline-data" }}{{ movie_assets|json_script:"movie-assets-data" }}{{ movie_library_assets|json_script:"movie-library-data" }}{{ movie_render_jobs|json_script:"movie-render-jobs-data" }}{{ movie_edits|json_script:"movie-edits-data" }}
 {% endblock %}
-{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260730-drag-speed-2x"></script>{% endblock %}
+{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260730-fixed-centered-header"></script>{% endblock %}
