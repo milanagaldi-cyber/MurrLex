@@ -129,6 +129,7 @@
   const editorLayout = q("[data-editor-layout]");
   const editorViewport = q("[data-editor-workspace-viewport]");
   const editorWorld = q("[data-editor-workspace-world]");
+  const editorProjectHeader = q("[data-editor-project-header]");
   const tileCameraScrollbar = q("[data-tile-camera-scrollbar]");
   const tileCameraTrack = q("[data-tile-camera-track]");
   const tileCameraThumb = q("[data-tile-camera-thumb]");
@@ -289,10 +290,12 @@
   const normalizeTileLayout = value => {
     const defaults = tileLayoutDefaults || createDefaultTileLayout();
     const source = value?.tiles && value?.workspace ? value : defaults;
+    const sourceBaseWidth = Number(source.workspace?.baseWidth || defaults.workspace.baseWidth);
+    const horizontalRebase = defaults.workspace.baseWidth - sourceBaseWidth;
     const workspace = {
       width: Number(source.workspace?.width || defaults.workspace.width),
       height: defaults.workspace.height,
-      baseWidth: Number(source.workspace?.baseWidth || defaults.workspace.baseWidth),
+      baseWidth: defaults.workspace.baseWidth,
       baseHeight: defaults.workspace.baseHeight,
     };
     workspace.width = Math.max(defaults.workspace.width, workspace.width);
@@ -306,7 +309,7 @@
       const width = clamp(current.width || fallback.width, minimum.width, Math.min(workspace.width - tileWorkspaceInset * 2, fallback.width * maximumScale));
       const height = clamp(current.height || fallback.height, minimum.height, Math.min(workspace.height - tileWorkspaceInset * 2, fallback.height * maximumScale));
       tiles[key] = {
-        x: clamp(current.x, tileWorkspaceInset, Math.max(tileWorkspaceInset, workspace.width - width - tileWorkspaceInset)),
+        x: clamp(current.x + horizontalRebase, tileWorkspaceInset, Math.max(tileWorkspaceInset, workspace.width - width - tileWorkspaceInset)),
         y: clamp(current.y, tileWorkspaceInset, Math.max(tileWorkspaceInset, workspace.height - height - tileWorkspaceInset)),
         width,
         height,
@@ -432,6 +435,20 @@
     const origin = tileWorkspaceViewportOrigin();
     return Math.max(0, origin.x + geometry.width - editorViewport.clientWidth);
   };
+  const tileHomeCameraX = (geometry = tileViewportGeometry) => {
+    if (!editorViewport || !geometry) return 0;
+    const origin = tileWorkspaceViewportOrigin();
+    const viewportBounds = editorViewport.getBoundingClientRect();
+    const headerBounds = editorProjectHeader?.getBoundingClientRect();
+    const headerLeft = headerBounds
+      ? Math.max(0, headerBounds.left - viewportBounds.left)
+      : Math.max(0, (editorViewport.clientWidth - geometry.baseWidth) / 2);
+    return clamp(
+      origin.x + geometry.baseLeft + geometry.offsetX - headerLeft,
+      0,
+      tileCameraMaximumX(geometry),
+    );
+  };
   const renderTileCameraScrollbar = () => {
     if (!tileCameraTrack || !tileCameraThumb || !editorViewport) return;
     const trackWidth = tileCameraTrackWidth;
@@ -537,9 +554,7 @@
   const syncTileViewportHorizontalAccess = (tiles = tileRenderedTiles) => {
     if (!editorViewport || !tileViewportGeometry) return;
     const currentTiles = tiles || ensureTileLayout().tiles;
-    const currentCenter = tileLogicalViewportCenter(tileViewportGeometry);
-    const homeAxis = tileViewportGeometry.baseLeft + tileViewportGeometry.baseWidth / 2;
-    const centered = currentCenter && Math.abs(currentCenter.x - homeAxis) <= 1;
+    const centered = Math.abs(tileCameraX - tileHomeCameraX(tileViewportGeometry)) <= 1;
     const active = (
       tileCameraMaximumX() > 1
       && (
@@ -620,12 +635,7 @@
     const layout = ensureTileLayout();
     const geometry = tileViewportGeometry || computeTileViewportGeometry(layout.tiles, layout.workspace);
     tileViewportGeometry = geometry;
-    const origin = tileWorkspaceViewportOrigin();
-    setTileCameraX(clamp(
-      geometry.baseLeft + geometry.baseWidth / 2 + origin.x + geometry.offsetX - editorViewport.clientWidth / 2,
-      0,
-      tileCameraMaximumX(geometry),
-    ));
+    setTileCameraX(tileHomeCameraX(geometry));
     tileViewportInitialCenterComplete = true;
     syncTileViewportHorizontalAccess(layout.tiles);
   };
@@ -1728,10 +1738,10 @@
       window.setTimeout(() => scheduleTileExtentCleanup(0), cleanupDelay);
       return false;
     }
-    const currentCenter = tileLogicalViewportCenter(tileViewportGeometry);
     const homeAxis = tileViewportGeometry.baseLeft + tileViewportGeometry.baseWidth / 2;
     const horizontalOverflow = tileCameraMaximumX();
-    const axisDistance = currentCenter ? Math.abs(currentCenter.x - homeAxis) : Infinity;
+    const homeCameraX = tileHomeCameraX(tileViewportGeometry);
+    const axisDistance = Math.abs(tileCameraX - homeCameraX);
     if (horizontalOverflow <= 1 || axisDistance <= 1) {
       cancelTileHomeCenter();
       if (horizontalOverflow > 1) {
@@ -1744,15 +1754,12 @@
       return false;
     }
     const focusTolerance = Math.max(1, editorViewport.clientWidth * toleranceRatio);
-    const scrollbarCenterDistance = Math.abs(
-      tileCameraX - horizontalOverflow / 2
-    );
+    const scrollbarCenterDistance = axisDistance;
     const scrollbarTolerance = Math.max(1, horizontalOverflow * toleranceRatio);
     const focusWithinTolerance = axisDistance <= focusTolerance;
     const scrollbarWithinTolerance = scrollbarCenterDistance <= scrollbarTolerance;
     if (
-      !currentCenter
-      || (!force && !focusWithinTolerance && !scrollbarWithinTolerance)
+      !force && !focusWithinTolerance && !scrollbarWithinTolerance
     ) {
       const cleanupDelay = Math.max(
         180,
@@ -1766,12 +1773,7 @@
     tileExtentCleanupTimer = 0;
     tileExtentCleanupSuppressedUntil = Date.now() + 700;
     const startLeft = tileCameraX;
-    const origin = tileWorkspaceViewportOrigin();
-    const targetLeft = clamp(
-      homeAxis + origin.x + tileViewportGeometry.offsetX - editorViewport.clientWidth / 2,
-      0,
-      tileCameraMaximumX(),
-    );
+    const targetLeft = homeCameraX;
     const startedAt = performance.now();
     const duration = 240;
     const step = now => {
@@ -1796,6 +1798,7 @@
       };
       applyTileRects(finalTiles, {preserveViewport: true, scheduleCleanup: false});
       scrollTileViewportToLogicalCenter({x: homeAxis, y: verticalCenter});
+      setTileCameraX(tileHomeCameraX(tileViewportGeometry));
       syncTileViewportHorizontalAccess(finalTiles);
       flashTileCenterAxis(homeAxis);
       tileExtentCleanupSuppressedUntil = Date.now() + 120;
