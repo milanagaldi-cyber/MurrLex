@@ -183,7 +183,6 @@
   const tileSnapDistance = 12;
   let tileLayoutDefaults = null;
   let selectedTileKeys = new Set();
-  let tileCtrlSelectionActive = false;
   const layoutDefaults = {
     columns: {mediaWidth: 250, inspectorWidth: 390, mediaHeight: 390, canvasHeight: 390, inspectorHeight: 390, timelineHeight: 320, timelineInsetLeft: 0, timelineInsetRight: 0},
     stacked: {mediaWidth: 250, inspectorWidth: 390, mediaHeight: 390, canvasHeight: 390, inspectorHeight: 390, timelineHeight: 320, timelineInsetLeft: 0, timelineInsetRight: 0},
@@ -283,8 +282,8 @@
       ),
     );
     const workspaceWidth = availableWidth * 3 + tileWorkspaceInset * 2;
-    // Keep two full viewport heights free below the complete home layout.
-    const workspaceHeight = defaultContentHeight + Math.round(initialScreenHeight * 2);
+    // Keep one and a half viewport heights free below the complete home layout.
+    const workspaceHeight = defaultContentHeight + Math.round(initialScreenHeight * 1.5);
     const baseHeight = workspaceHeight;
     const defaults = {
       workspace: {
@@ -365,6 +364,7 @@
   const tileExtentCleanupMargin = 32;
   const tileViewportTileFocusMargin = 18;
   const tileViewportHorizontalActivationRatio = .12;
+  const tileViewportReturnMarginRatio = .10;
   const tileWorkspaceTopReveal = 32;
   const tileCrossingBarrierReleaseDistance = 18;
   const tileBounds = tiles => {
@@ -405,7 +405,7 @@
     const requiredExtent = {
       left: Math.min(baseLeft, bounds.left),
       right: Math.max(baseRight, bounds.right),
-      // Vertical space is fixed: the home layout plus its permanent two-screen reserve.
+      // Vertical space is fixed: the home layout plus its permanent 1.5-screen reserve.
       bottom: Math.max(baseTop, Number(workspace.height || 0), bounds.bottom),
     };
     const extent = {
@@ -672,7 +672,7 @@
     const startCenter = startBounds.x + startBounds.width / 2;
     const returnSide = Math.sign(startCenter - homeAxis);
     if (!returnSide) return null;
-    const margin = editorViewport.clientWidth * tileViewportHorizontalActivationRatio;
+    const margin = editorViewport.clientWidth * tileViewportReturnMarginRatio;
     const range = tileCameraRangeKeepingBoundsVisible(
       bounds,
       margin,
@@ -1611,22 +1611,9 @@
     selectedTileKeys = new Set(keys.filter(key => workspacePanel(key)));
     syncTileSelectionClasses();
   };
-  const clearTileCtrlSelection = () => {
-    tileCtrlSelectionActive = false;
+  const clearTileSelection = () => {
     setSelectedTileKeys([]);
   };
-  window.addEventListener("keyup", event => {
-    if (
-      event.key === "Control"
-      && tileCtrlSelectionActive
-      && !tileMoveDragActive
-    ) {
-      clearTileCtrlSelection();
-    }
-  });
-  window.addEventListener("blur", () => {
-    if (tileCtrlSelectionActive && !tileMoveDragActive) clearTileCtrlSelection();
-  });
   const tileDisplayScale = () => {
     const widthRatio = Number(window.outerWidth) > 0 && Number(window.innerWidth) > 0
       ? window.outerWidth / window.innerWidth
@@ -2506,11 +2493,10 @@
         const layout = ensureTileLayout();
         const startTiles = cloneTiles(layout.tiles);
         const additiveSelection = event.ctrlKey || event.metaKey;
+        const selectedAtPointerDown = selectedTileKeys.has(key);
         if (additiveSelection) {
-          tileCtrlSelectionActive = true;
-          if (!selectedTileKeys.has(key)) setSelectedTileKeys([...selectedTileKeys, key]);
-        } else {
-          tileCtrlSelectionActive = false;
+          if (!selectedAtPointerDown) setSelectedTileKeys([...selectedTileKeys, key]);
+        } else if (!selectedAtPointerDown) {
           setSelectedTileKeys([key]);
         }
         const movingKeys = selectedTileKeys.has(key) ? [...selectedTileKeys] : [key];
@@ -2521,6 +2507,7 @@
         const pointerId = event.pointerId;
         if (!tileViewportGeometry) applyTileRects(startTiles);
         const dragGeometry = tileViewportGeometry;
+        const dragStartVisibleBounds = tileLogicalViewportBounds(dragGeometry);
         const dragCameraMaximumX = tileCameraMaximumX(dragGeometry);
         const dragCameraSpeedMultiplier = 2;
         let active = false;
@@ -2826,16 +2813,16 @@
           tileMoveDragActive = false;
           hideTileGuides();
           if (!active) {
-            const controlStillHeld = finishEvent
-              ? Boolean(finishEvent.ctrlKey || finishEvent.metaKey)
-              : additiveSelection;
-            if (!additiveSelection || !controlStillHeld) clearTileCtrlSelection();
+            if (selectedAtPointerDown) {
+              setSelectedTileKeys(
+                [...selectedTileKeys].filter(selectedKey => selectedKey !== key)
+              );
+            }
             syncTileViewportHorizontalAccess(startTiles);
             scheduleTileViewportScrollbarIdle();
             scheduleTileExtentCleanup(180);
             return;
           }
-          clearTileCtrlSelection();
           const invalidDrop = tileLayoutHasSelectionOverlap(currentTiles, movingKeys);
           const finalTiles = invalidDrop ? startTiles : currentTiles;
           const defaults = tileLayoutDefaults || createDefaultTileLayout();
@@ -2849,8 +2836,27 @@
             ? Math.abs(finalMovingBounds.x + finalMovingBounds.width / 2 - homeAxis)
             : startDistance;
           const focusReturnTolerance = clamp(editorViewport.clientWidth * .025, 24, 40);
+          const returnSide = startMovingBounds
+            ? Math.sign(startMovingBounds.x + startMovingBounds.width / 2 - homeAxis)
+            : 0;
+          const finalVisibleBounds = tileLogicalViewportBounds(tileViewportGeometry);
+          const startEdgeGap = returnSide > 0
+            ? dragStartVisibleBounds?.right - startMovingBounds?.right
+            : startMovingBounds?.x - dragStartVisibleBounds?.left;
+          const finalEdgeGap = returnSide > 0
+            ? finalVisibleBounds?.right - finalMovingBounds?.right
+            : finalMovingBounds?.x - finalVisibleBounds?.left;
+          const activationMargin = (
+            editorViewport.clientWidth * tileViewportHorizontalActivationRatio
+          );
+          const returnMargin = editorViewport.clientWidth * tileViewportReturnMarginRatio;
           const returnedFromEdge = (
             !invalidDrop
+            && Boolean(returnSide)
+            && Number.isFinite(startEdgeGap)
+            && Number.isFinite(finalEdgeGap)
+            && startEdgeGap <= activationMargin + 1
+            && finalEdgeGap > returnMargin + 1
             && startDistance > defaults.workspace.baseWidth * .05
             && finalDistance < startDistance - focusReturnTolerance
           );
@@ -3015,7 +3021,7 @@
           window.removeEventListener("pointercancel", finish, true);
           releasePointerCaptureSafely(editorLayout, pointerId);
           marquee.remove();
-          if (!active) clearTileCtrlSelection();
+          if (!active) clearTileSelection();
         };
         window.addEventListener("pointermove", update, true);
         window.addEventListener("pointerup", finish, true);
