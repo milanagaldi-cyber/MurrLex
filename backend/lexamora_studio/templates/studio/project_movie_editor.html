@@ -1123,7 +1123,7 @@ body.movie-editor-page-active .movie-editor-viewport{
   scrollbar-width:auto;
   scrollbar-color:
     color-mix(in srgb,var(--muted) 42%,transparent)
-    color-mix(in srgb,var(--line) 35%,transparent);
+    color-mix(in srgb,var(--line) 15%,transparent);
 }
 body.movie-editor-page-active .movie-editor-viewport :where(*){
   scrollbar-color:auto;
@@ -1142,7 +1142,7 @@ body.movie-editor-page-active .movie-editor-viewport::-webkit-scrollbar-thumb{
 }
 body.movie-editor-page-active .movie-editor-viewport::-webkit-scrollbar-track,
 body.movie-editor-page-active .movie-editor-viewport::-webkit-scrollbar-corner{
-  background-color:color-mix(in srgb,var(--line) 35%,transparent)!important;
+  background-color:color-mix(in srgb,var(--line) 15%,transparent)!important;
   transition:background-color .6s ease,border-color .6s ease;
 }
 body.movie-editor-page-active .movie-editor-viewport.movie-scrollbars-idle{
@@ -1305,7 +1305,10 @@ body.movie-panel-interacting *{
   width:var(--tile-edge-size,18px);
   cursor:ew-resize;
 }
-.movie-tile-edge.e{right:calc(var(--tile-edge-size,18px) / -2)}
+.movie-tile-edge.e{
+  right:0;
+  width:24px;
+}
 .movie-tile-edge.w{left:calc(var(--tile-edge-size,18px) / -2)}
 .movie-tile-edge.e::after,
 .movie-tile-edge.w::after{
@@ -1313,6 +1316,10 @@ body.movie-panel-interacting *{
   bottom:0;
   width:2px;
   left:calc(50% - 1px);
+}
+.movie-tile-edge.e::after{
+  right:0;
+  left:auto;
 }
 .movie-tile-edge.nw,
 .movie-tile-edge.ne,
@@ -1529,4 +1536,4 @@ body.movie-panel-interacting *{
 </section>
 {{ movie_timeline_data|json_script:"movie-timeline-data" }}{{ movie_assets|json_script:"movie-assets-data" }}{{ movie_library_assets|json_script:"movie-library-data" }}{{ movie_render_jobs|json_script:"movie-render-jobs-data" }}{{ movie_edits|json_script:"movie-edits-data" }}
 {% endblock %}
-{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260730-scale-aware-camera-boundary"></script>{% endblock %}
+{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260730-interior-focus-vertical-scrollbar"></script>{% endblock %}

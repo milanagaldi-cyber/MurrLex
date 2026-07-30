@@ -1823,6 +1823,10 @@
     {
       requireCurrentVisibility = true,
       localBounds = null,
+      localViewportBounds = null,
+      localFocusSide = 0,
+      localFocusOnlyWhenEscaped = false,
+      localStableCameraX = null,
     } = {},
   ) => {
     if (!tiles || !geometry) return null;
@@ -1833,6 +1837,54 @@
     const viewportWidth = tileHorizontalViewportWidth();
     if (geometry.workspaceWidth <= viewportWidth + 1) {
       return tileHomeCameraX(geometry);
+    }
+    const margin = viewportWidth * tileViewportLocalFocusMarginRatio;
+    if (localBounds && localFocusOnlyWhenEscaped) {
+      const referenceViewport = localViewportBounds || visible;
+      const escapedLeft = localBounds.x < referenceViewport.left - 1;
+      const escapedRight = localBounds.right > referenceViewport.right + 1;
+      if (!escapedLeft && !escapedRight) {
+        return Number.isFinite(localStableCameraX)
+          ? clamp(
+              localStableCameraX,
+              tileCameraMinimumX(geometry),
+              tileCameraMaximumX(geometry),
+            )
+          : null;
+      }
+      const focusSide = (
+        (escapedRight && !escapedLeft ? 1 : 0)
+        || (escapedLeft && !escapedRight ? -1 : 0)
+        || Math.sign(localFocusSide)
+        || (
+          localBounds.right - referenceViewport.right
+          >= referenceViewport.left - localBounds.x
+            ? 1
+            : -1
+        )
+      );
+      const effectiveMargin = Math.min(
+        margin,
+        Math.max(0, viewportWidth - localBounds.width),
+      );
+      const localCameraTarget = focusSide > 0
+        ? (
+            origin.x
+            + geometry.offsetX
+            + localBounds.right
+            - (viewportWidth - effectiveMargin)
+          )
+        : (
+            origin.x
+            + geometry.offsetX
+            + localBounds.x
+            - effectiveMargin
+          );
+      return clamp(
+        localCameraTarget,
+        tileCameraMinimumX(geometry),
+        tileCameraMaximumX(geometry),
+      );
     }
     const leftEdgeVisible = (
       bounds.left >= visible.left - 1
@@ -1856,7 +1908,6 @@
       )
       && tilesFitHorizontalCameraView(tiles, geometry, centeredCameraX)
     ) return centeredCameraX;
-    const margin = viewportWidth * tileViewportLocalFocusMarginRatio;
     if (rightEdgeVisible && !leftEdgeVisible) {
       return clamp(
         origin.x + geometry.offsetX + bounds.right
@@ -2833,6 +2884,17 @@
         const pointerId = event.pointerId;
         if (!tileViewportGeometry) applyTileRects(startTiles);
         const dragGeometry = tileViewportGeometry;
+        const dragStartViewportBounds = tileLogicalViewportBounds(
+          dragGeometry,
+          startCameraX,
+        );
+        const dragStartLocalBounds = tileGroupBounds(startTiles, movingKeys);
+        const dragStartOuterBounds = tileBounds(startTiles);
+        const dragStartedInsideOuterTiles = Boolean(
+          dragStartLocalBounds
+          && dragStartLocalBounds.x > dragStartOuterBounds.left + 1
+          && dragStartLocalBounds.right < dragStartOuterBounds.right - 1
+        );
         const dragHorizontalExtent = tileInteractiveHorizontalExtent(dragGeometry);
         const dragCameraMinimumX = tileCameraMinimumX(dragGeometry);
         const dragCameraMaximumX = tileCameraMaximumX(dragGeometry);
@@ -2930,6 +2992,12 @@
           const movingBounds = tileGroupBounds(currentTiles, movingKeys);
           const visibleBounds = tileLogicalViewportBounds(dragGeometry);
           if (!movingBounds || !visibleBounds) return false;
+          if (
+            dragStartedInsideOuterTiles
+            && dragStartViewportBounds
+            && movingBounds.x >= dragStartViewportBounds.left
+            && movingBounds.right <= dragStartViewportBounds.right
+          ) return false;
           const triggerDistance = (
             editorViewport.clientWidth * tileViewportHorizontalActivationRatio
           );
@@ -3033,12 +3101,28 @@
             tileExtentCleanupSuppressedUntil = Date.now() + 300;
           }
           applyTileRects(finalTiles, {preserveViewport: true, scheduleCleanup: false});
+          const finalLocalBounds = tileGroupBounds(finalTiles, movingKeys);
+          const localFocusDirection = (
+            finalLocalBounds
+            && dragStartLocalBounds
+              ? Math.sign(
+                  finalLocalBounds.x + finalLocalBounds.width / 2
+                  - dragStartLocalBounds.x - dragStartLocalBounds.width / 2
+                )
+              : 0
+          );
           const balancedCameraTarget = invalidDrop
             ? null
             : balancedCameraTargetForTiles(
                 finalTiles,
                 tileViewportGeometry,
-                {localBounds: tileGroupBounds(finalTiles, movingKeys)},
+                {
+                  localBounds: finalLocalBounds,
+                  localViewportBounds: dragStartViewportBounds,
+                  localFocusSide: localFocusDirection,
+                  localFocusOnlyWhenEscaped: dragStartedInsideOuterTiles,
+                  localStableCameraX: startCameraX,
+                },
               );
           if (invalidDrop) {
             const cleanupDelay = Math.max(
@@ -3197,7 +3281,17 @@
         const horizontalEdge = edge.includes("e") ? "e" : edge.includes("w") ? "w" : null;
         const verticalEdge = edge.includes("s") ? "s" : edge.includes("n") ? "n" : null;
         const horizontalSide = horizontalEdge === "e" ? 1 : horizontalEdge === "w" ? -1 : 0;
+        const resizeStartViewportBounds = tileLogicalViewportBounds(
+          tileViewportGeometry,
+          tileCameraX,
+        );
+        const resizeStartOuterBounds = tileBounds(startTiles);
+        const resizeStartedInsideOuterTiles = (
+          origin.x > resizeStartOuterBounds.left + 1
+          && origin.x + origin.width < resizeStartOuterBounds.right - 1
+        );
         const pointerId = event.pointerId;
+        const resizeStartCameraX = tileCameraX;
         let active = false;
         let currentTiles = startTiles;
         let latestPointer = event;
@@ -3221,6 +3315,12 @@
           const movingBounds = tileGroupBounds(currentTiles, [key]);
           const visibleBounds = tileLogicalViewportBounds(tileViewportGeometry);
           if (!movingBounds || !visibleBounds) return;
+          if (
+            resizeStartedInsideOuterTiles
+            && resizeStartViewportBounds
+            && movingBounds.x >= resizeStartViewportBounds.left
+            && movingBounds.right <= resizeStartViewportBounds.right
+          ) return;
           const triggerDistance = (
             editorViewport.clientWidth * tileViewportHorizontalActivationRatio
           );
@@ -3322,7 +3422,13 @@
           const balancedCameraTarget = balancedCameraTargetForTiles(
             currentTiles,
             tileViewportGeometry,
-            {localBounds: tileGroupBounds(currentTiles, [key])},
+            {
+              localBounds: tileGroupBounds(currentTiles, [key]),
+              localViewportBounds: resizeStartViewportBounds,
+              localFocusSide: horizontalSide,
+              localFocusOnlyWhenEscaped: resizeStartedInsideOuterTiles,
+              localStableCameraX: resizeStartCameraX,
+            },
           );
           if (Number.isFinite(balancedCameraTarget)) {
             setTileCameraX(balancedCameraTarget, {
