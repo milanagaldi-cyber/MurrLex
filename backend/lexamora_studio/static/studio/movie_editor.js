@@ -665,6 +665,20 @@
     const range = tileCameraRangeKeepingBoundsVisible(bounds);
     return range ? clamp(value, range.minimum, range.maximum) : value;
   };
+  const tileCameraForReturnedEdgeMargin = (bounds, startBounds, homeAxis) => {
+    if (!editorViewport || !bounds || !startBounds) return null;
+    const startCenter = startBounds.x + startBounds.width / 2;
+    const returnSide = Math.sign(startCenter - homeAxis);
+    if (!returnSide) return null;
+    const margin = editorViewport.clientWidth * .05;
+    const range = tileCameraRangeKeepingBoundsVisible(
+      bounds,
+      margin,
+      tileViewportGeometry,
+    );
+    if (!range) return null;
+    return returnSide > 0 ? range.minimum : range.maximum;
+  };
   const centerTileWorkspaceView = () => {
     if (!editorViewport) return;
     const layout = ensureTileLayout();
@@ -2789,22 +2803,30 @@
             settleTileViewportAfterScroll(80);
             scheduleTileExtentCleanup(100);
           } else if (stoppedAtCrossingBarrier && !invalidDrop) {
-            const targetCameraX = constrainTileCameraToVisibleBounds(
-              tileHomeCameraX(tileViewportGeometry),
-              finalMovingBounds,
-            );
+            const returnedEdgeCameraX = returnedFromEdge
+              ? tileCameraForReturnedEdgeMargin(
+                  finalMovingBounds,
+                  startMovingBounds,
+                  homeAxis,
+                )
+              : null;
+            const targetCameraX = Number.isFinite(returnedEdgeCameraX)
+              ? returnedEdgeCameraX
+              : constrainTileCameraToVisibleBounds(
+                  tileHomeCameraX(tileViewportGeometry),
+                  finalMovingBounds,
+                );
             setTileCameraX(targetCameraX, {immediate: false, maxVelocity: 14});
             settleTileViewportAfterScroll(80);
             scheduleTileExtentCleanup(100);
           } else if (returnedFromEdge) {
-            const currentCenter = tileLogicalViewportCenter(tileViewportGeometry);
-            const targetLogicalCenter = currentCenter?.x + (homeAxis - currentCenter.x) * .7;
-            if (Number.isFinite(targetLogicalCenter)) {
-              const targetCameraX = tileScrollLeftForLogicalCenter(targetLogicalCenter);
-              setTileCameraX(
-                constrainTileCameraToVisibleBounds(targetCameraX, finalMovingBounds),
-                {immediate: false, maxVelocity: 14},
-              );
+            const targetCameraX = tileCameraForReturnedEdgeMargin(
+              finalMovingBounds,
+              startMovingBounds,
+              homeAxis,
+            );
+            if (Number.isFinite(targetCameraX)) {
+              setTileCameraX(targetCameraX, {immediate: false, maxVelocity: 14});
             }
             settleTileViewportAfterScroll(80);
             scheduleTileExtentCleanup(100);
