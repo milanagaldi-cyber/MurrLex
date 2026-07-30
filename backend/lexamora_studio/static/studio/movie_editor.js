@@ -1770,6 +1770,22 @@
       && bounds.right <= visible.right + 1
     );
   };
+  const balancedCameraTargetForTiles = (
+    tiles,
+    geometry,
+    {requireCurrentVisibility = true} = {},
+  ) => {
+    if (!tiles || !geometry) return null;
+    const homeCameraX = tileHomeCameraX(geometry);
+    if (
+      (
+        requireCurrentVisibility
+        && !tilesFitHorizontalCameraView(tiles, geometry, tileCameraX)
+      )
+      || !tilesFitHorizontalCameraView(tiles, geometry, homeCameraX)
+    ) return null;
+    return homeCameraX;
+  };
   const cleanupTileWorkspaceExtent = () => {
     tileExtentCleanupTimer = 0;
     if (!editorViewport || !tileViewportGeometry || !tileAllocatedExtent) return;
@@ -1800,13 +1816,12 @@
       side => Math.abs(Number(next[side]) - Number(tileAllocatedExtent[side])) >= 1
     );
     const settleBalancedCamera = () => {
-      const homeCameraX = tileHomeCameraX(tileViewportGeometry);
-      if (
-        !tilesFitHorizontalCameraView(renderedTiles, tileViewportGeometry, tileCameraX)
-        || !tilesFitHorizontalCameraView(renderedTiles, tileViewportGeometry, homeCameraX)
-      ) return;
-      if (Math.abs(tileCameraX - homeCameraX) > 1) {
-        setTileCameraX(homeCameraX, {immediate: false, maxVelocity: 14});
+      const targetCameraX = balancedCameraTargetForTiles(
+        renderedTiles,
+        tileViewportGeometry,
+      );
+      if (Number.isFinite(targetCameraX) && Math.abs(tileCameraX - targetCameraX) > 1) {
+        setTileCameraX(targetCameraX, {immediate: false, maxVelocity: 14});
       }
     };
     if (!changed) {
@@ -2862,6 +2877,10 @@
           }
           applyTileRects(finalTiles, {preserveViewport: true, scheduleCleanup: false});
           const finalTilesFitHome = tilesFitDefaultDisplayZone(finalTiles);
+          const balancedCameraTarget = balancedCameraTargetForTiles(
+            finalTiles,
+            tileViewportGeometry,
+          );
           if (invalidDrop) {
             const cleanupDelay = Math.max(
               180,
@@ -2870,11 +2889,16 @@
             window.setTimeout(() => scheduleTileExtentCleanup(0), cleanupDelay);
           }
           syncTileViewportHorizontalAccess(finalTiles);
-          if (finalTilesFitHome) {
-            setTileCameraX(tileHomeCameraX(tileViewportGeometry), {
-              immediate: false,
-              maxVelocity: 14,
-            });
+          if (finalTilesFitHome || Number.isFinite(balancedCameraTarget)) {
+            setTileCameraX(
+              finalTilesFitHome
+                ? tileHomeCameraX(tileViewportGeometry)
+                : balancedCameraTarget,
+              {
+                immediate: false,
+                maxVelocity: 14,
+              },
+            );
             settleTileViewportAfterScroll(80);
             scheduleTileExtentCleanup(100);
           } else if (returnedFromEdge) {
