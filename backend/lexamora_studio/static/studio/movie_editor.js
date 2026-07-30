@@ -271,10 +271,19 @@
       inspector: {x: reserveX + mediaWidth + gap + previewWidth + gap, y: upperY, width: inspectorWidth, height: upperHeight},
       timeline: {x: reserveX, y: timelineY, width: availableWidth, height: timelineHeight},
     };
-    const defaultBottomReserve = reserveX;
-    const baseHeight = timelineY + timelineHeight + tileWorkspaceInset + defaultBottomReserve;
+    const defaultContentHeight = timelineY + timelineHeight + tileWorkspaceInset;
+    const initialScreenHeight = Math.max(
+      320,
+      Number(
+        editorViewport?.clientHeight
+        || window.visualViewport?.height
+        || document.documentElement.clientHeight
+        || 720
+      ),
+    );
     const workspaceWidth = availableWidth * 3 + tileWorkspaceInset * 2;
-    const workspaceHeight = baseHeight * 2;
+    const workspaceHeight = Math.max(defaultContentHeight, Math.round(initialScreenHeight * 2));
+    const baseHeight = workspaceHeight;
     const defaults = {
       workspace: {
         width: Math.round(workspaceWidth),
@@ -349,7 +358,8 @@
   const tileViewportMinimumReveal = 48;
   const tileExtentCleanupMargin = 32;
   const tileViewportTileFocusMargin = 18;
-  const tileWorkspaceTopReveal = 18;
+  const tileWorkspaceTopReveal = 32;
+  const tileCrossingBarrierReleaseDistance = 18;
   const tileBounds = tiles => {
     const rects = tilePanelKeys.map(key => tiles[key]).filter(Boolean);
     return {
@@ -2341,6 +2351,121 @@
         let currentTiles = startTiles;
         let latestPointer = event;
         let dragFrame = 0;
+        const dragStartBounds = tileGroupBounds(startTiles, movingKeys);
+        const stationaryTileKeys = tilePanelKeys.filter(tileKey => !movingKeys.includes(tileKey));
+        let crossingBarrier = null;
+        let crossingBarrierRelease = null;
+        const applyCrossingBarrier = (movement, pointer) => {
+          if (!dragStartBounds) return movement;
+          if (crossingBarrierRelease) return movement;
+          const desiredDx = movement.dx;
+          const desiredDy = movement.dy;
+          if (crossingBarrier) {
+            const axisValue = crossingBarrier.axis === "x" ? desiredDx : desiredDy;
+            const pointerValue = crossingBarrier.axis === "x" ? pointer.clientX : pointer.clientY;
+            const oppositeRetreat = crossingBarrier.direction * (axisValue - crossingBarrier.contact);
+            const obstacle = startTiles[crossingBarrier.obstacleKey];
+            const perpendicularStart = crossingBarrier.axis === "x"
+              ? dragStartBounds.y + desiredDy
+              : dragStartBounds.x + desiredDx;
+            const perpendicularEnd = perpendicularStart + (
+              crossingBarrier.axis === "x" ? dragStartBounds.height : dragStartBounds.width
+            );
+            const obstaclePerpendicularStart = crossingBarrier.axis === "x" ? obstacle?.y : obstacle?.x;
+            const obstaclePerpendicularEnd = obstaclePerpendicularStart + (
+              crossingBarrier.axis === "x" ? obstacle?.height || 0 : obstacle?.width || 0
+            );
+            const stillFacingObstacle = (
+              obstacle
+              && perpendicularStart < obstaclePerpendicularEnd
+              && perpendicularEnd > obstaclePerpendicularStart
+            );
+            if (oppositeRetreat < -4 || !stillFacingObstacle) {
+              crossingBarrier = null;
+              return movement;
+            }
+            const extraPull = crossingBarrier.direction * (pointerValue - crossingBarrier.pointerValue);
+            if (extraPull >= tileCrossingBarrierReleaseDistance) {
+              const axisKey = crossingBarrier.axis === "x" ? "dx" : "dy";
+              crossingBarrierRelease = {
+                axis: crossingBarrier.axis,
+                offset: movement[axisKey] - crossingBarrier.contact,
+              };
+              const releasedMovement = {
+                ...movement,
+                [axisKey]: crossingBarrier.contact,
+                guide: crossingBarrier.guide,
+              };
+              crossingBarrier = null;
+              return releasedMovement;
+            }
+            return {
+              ...movement,
+              [crossingBarrier.axis === "x" ? "dx" : "dy"]: crossingBarrier.contact,
+              guide: crossingBarrier.guide,
+            };
+          }
+
+          const axis = Math.abs(desiredDx) >= Math.abs(desiredDy) ? "x" : "y";
+          const axisDistance = axis === "x" ? desiredDx : desiredDy;
+          if (Math.abs(axisDistance) < 1) return movement;
+          const direction = Math.sign(axisDistance);
+          const perpendicularDistance = axis === "x" ? desiredDy : desiredDx;
+          const perpendicularStart = (
+            axis === "x" ? dragStartBounds.y : dragStartBounds.x
+          ) + perpendicularDistance;
+          const perpendicularEnd = perpendicularStart + (
+            axis === "x" ? dragStartBounds.height : dragStartBounds.width
+          );
+          const contacts = stationaryTileKeys.flatMap(obstacleKey => {
+            const obstacle = startTiles[obstacleKey];
+            if (!obstacle) return [];
+            const obstaclePerpendicularStart = axis === "x" ? obstacle.y : obstacle.x;
+            const obstaclePerpendicularEnd = obstaclePerpendicularStart + (
+              axis === "x" ? obstacle.height : obstacle.width
+            );
+            if (
+              perpendicularStart >= obstaclePerpendicularEnd
+              || perpendicularEnd <= obstaclePerpendicularStart
+            ) return [];
+            let contact;
+            let guide;
+            if (axis === "x" && direction > 0 && dragStartBounds.right <= obstacle.x) {
+              contact = obstacle.x - dragStartBounds.right;
+              guide = {x: obstacle.x, y: null};
+            } else if (axis === "x" && direction < 0 && dragStartBounds.x >= obstacle.x + obstacle.width) {
+              contact = obstacle.x + obstacle.width - dragStartBounds.x;
+              guide = {x: obstacle.x + obstacle.width, y: null};
+            } else if (axis === "y" && direction > 0 && dragStartBounds.bottom <= obstacle.y) {
+              contact = obstacle.y - dragStartBounds.bottom;
+              guide = {x: null, y: obstacle.y};
+            } else if (axis === "y" && direction < 0 && dragStartBounds.y >= obstacle.y + obstacle.height) {
+              contact = obstacle.y + obstacle.height - dragStartBounds.y;
+              guide = {x: null, y: obstacle.y + obstacle.height};
+            } else {
+              return [];
+            }
+            if (direction * axisDistance < direction * contact) return [];
+            return [{obstacleKey, contact, guide}];
+          }).sort((left, right) => (
+            direction * left.contact - direction * right.contact
+          ));
+          const firstContact = contacts[0];
+          if (!firstContact) return movement;
+          crossingBarrier = {
+            axis,
+            direction,
+            obstacleKey: firstContact.obstacleKey,
+            contact: firstContact.contact,
+            guide: firstContact.guide,
+            pointerValue: axis === "x" ? pointer.clientX : pointer.clientY,
+          };
+          return {
+            ...movement,
+            [axis === "x" ? "dx" : "dy"]: firstContact.contact,
+            guide: firstContact.guide,
+          };
+        };
         cancelTileHomeCenter();
         tileViewportScrollbarDragPointerId = null;
         tileViewportScrollbarDragChanged = false;
@@ -2370,15 +2495,17 @@
           showTileGuides(guide);
         };
         const updatePosition = (next, {render = true} = {}) => {
-          const dx = next.clientX - startX + tileCameraX - startCameraX;
-          const dy = next.clientY - startY + (editorViewport?.scrollTop || 0) - startScrollTop;
-          if (!active && Math.hypot(dx, dy) < 4) return false;
+          const rawDx = next.clientX - startX + tileCameraX - startCameraX;
+          const rawDy = next.clientY - startY + (editorViewport?.scrollTop || 0) - startScrollTop;
+          if (!active && Math.hypot(rawDx, rawDy) < 4) return false;
           if (!active) {
             remember();
             window.getSelection()?.removeAllRanges();
             document.body.classList.add("movie-panel-interacting");
           }
           active = true;
+          const dx = rawDx - (crossingBarrierRelease?.axis === "x" ? crossingBarrierRelease.offset : 0);
+          const dy = rawDy - (crossingBarrierRelease?.axis === "y" ? crossingBarrierRelease.offset : 0);
           const snapped = movingKeys.length > 1
             ? snapMovingTileGroup(movingKeys, dx, dy, startTiles, layout.workspace)
             : (() => {
@@ -2391,12 +2518,13 @@
                 const single = snapMovingTile(key, raw, startTiles, layout.workspace);
                 return {dx: single.rect.x - origin.x, dy: single.rect.y - origin.y, guide: single.guide};
               })();
+          const movement = applyCrossingBarrier(snapped, next);
           currentTiles = cloneTiles(startTiles);
           movingKeys.forEach(movingKey => {
             currentTiles[movingKey] = {
               ...currentTiles[movingKey],
-              x: startTiles[movingKey].x + snapped.dx,
-              y: startTiles[movingKey].y + snapped.dy,
+              x: startTiles[movingKey].x + movement.dx,
+              y: startTiles[movingKey].y + movement.dy,
             };
             layoutPanels[movingKey]?.classList.add("movie-tile-moving");
           });
@@ -2431,7 +2559,7 @@
               });
             }
           }
-          if (render) renderMovingTiles(snapped.guide);
+          if (render) renderMovingTiles(movement.guide);
           return true;
         };
         const driveVirtualCamera = () => {
@@ -2707,6 +2835,8 @@
         let inwardFollowTargetLogicalX = startViewportLogicalCenter?.x || 0;
         let previousPointerX = startX;
         let observedCameraX = tileCameraX;
+        let resizeCrossingBarrier = null;
+        let resizeCrossingReleaseOffset = null;
         const pointerToLogicalPoint = pointer => {
           const visible = tileLogicalViewportBounds(tileViewportGeometry);
           const viewportBounds = editorViewport?.getBoundingClientRect();
@@ -2768,7 +2898,133 @@
           if (!active && Math.hypot(next.clientX - startX, next.clientY - startY) < 2) return;
           if (!active) remember();
           active = true;
-          const resized = resizeTileCandidate(key, edge, origin, dx, dy, startTiles, layout.workspace);
+          const activeAxis = edge === "e" || edge === "w" ? "x" : "y";
+          const direction = edge === "e" || edge === "s" ? 1 : -1;
+          const pointerValue = activeAxis === "x" ? next.clientX : next.clientY;
+          const effectiveDx = dx - (activeAxis === "x" ? resizeCrossingReleaseOffset || 0 : 0);
+          const effectiveDy = dy - (activeAxis === "y" ? resizeCrossingReleaseOffset || 0 : 0);
+          let resized = resizeTileCandidate(
+            key,
+            edge,
+            origin,
+            effectiveDx,
+            effectiveDy,
+            startTiles,
+            layout.workspace,
+          );
+          const resizedEdge = rect => edge === "e"
+            ? rect.x + rect.width
+            : edge === "w"
+              ? rect.x
+              : edge === "s"
+                ? rect.y + rect.height
+                : rect.y;
+          const setResizedEdge = (rect, value) => {
+            const adjusted = {...rect};
+            if (edge === "e") adjusted.width = value - adjusted.x;
+            else if (edge === "w") {
+              const right = adjusted.x + adjusted.width;
+              adjusted.x = value;
+              adjusted.width = right - value;
+            } else if (edge === "s") adjusted.height = value - adjusted.y;
+            else {
+              const bottom = adjusted.y + adjusted.height;
+              adjusted.y = value;
+              adjusted.height = bottom - value;
+            }
+            return adjusted;
+          };
+          if (resizeCrossingReleaseOffset == null && resizeCrossingBarrier) {
+            const candidateEdge = edge === "e"
+              ? resized.rect.x + resized.rect.width
+              : edge === "w"
+                ? resized.rect.x
+                : edge === "s"
+                  ? resized.rect.y + resized.rect.height
+                  : resized.rect.y;
+            const retreat = direction * (candidateEdge - resizeCrossingBarrier.contact);
+            if (retreat < -4) {
+              resizeCrossingBarrier = null;
+            } else {
+              const extraPull = direction * (pointerValue - resizeCrossingBarrier.pointerValue);
+              if (extraPull >= tileCrossingBarrierReleaseDistance) {
+                resizeCrossingReleaseOffset = candidateEdge - resizeCrossingBarrier.contact;
+                resized = {
+                  rect: setResizedEdge(resized.rect, resizeCrossingBarrier.contact),
+                  guide: resizeCrossingBarrier.guide,
+                };
+                resizeCrossingBarrier = null;
+              } else {
+                resized = {
+                  rect: {...resizeCrossingBarrier.rect},
+                  guide: resizeCrossingBarrier.guide,
+                };
+              }
+            }
+          }
+          if (resizeCrossingReleaseOffset == null && !resizeCrossingBarrier) {
+            const outward = (
+              (edge === "e" && resized.rect.width > origin.width)
+              || (edge === "w" && resized.rect.x < origin.x)
+              || (edge === "s" && resized.rect.height > origin.height)
+              || (edge === "n" && resized.rect.y < origin.y)
+            );
+            if (outward) {
+              const contacts = tilePanelKeys.flatMap(obstacleKey => {
+                if (obstacleKey === key) return [];
+                const obstacle = startTiles[obstacleKey];
+                if (!obstacle) return [];
+                const perpendicularOverlap = activeAxis === "x"
+                  ? resized.rect.y < obstacle.y + obstacle.height
+                    && resized.rect.y + resized.rect.height > obstacle.y
+                  : resized.rect.x < obstacle.x + obstacle.width
+                    && resized.rect.x + resized.rect.width > obstacle.x;
+                if (!perpendicularOverlap) return [];
+                let contact;
+                if (edge === "e" && origin.x + origin.width <= obstacle.x) contact = obstacle.x;
+                else if (edge === "w" && origin.x >= obstacle.x + obstacle.width) contact = obstacle.x + obstacle.width;
+                else if (edge === "s" && origin.y + origin.height <= obstacle.y) contact = obstacle.y;
+                else if (edge === "n" && origin.y >= obstacle.y + obstacle.height) contact = obstacle.y + obstacle.height;
+                else return [];
+                const candidateEdge = edge === "e"
+                  ? resized.rect.x + resized.rect.width
+                  : edge === "w"
+                    ? resized.rect.x
+                    : edge === "s"
+                      ? resized.rect.y + resized.rect.height
+                      : resized.rect.y;
+                if (direction * candidateEdge < direction * contact) return [];
+                return [{contact, obstacleKey}];
+              }).sort((left, right) => (
+                direction * left.contact - direction * right.contact
+              ));
+              const firstContact = contacts[0];
+              if (firstContact) {
+                const barrierRect = {...resized.rect};
+                if (edge === "e") barrierRect.width = firstContact.contact - barrierRect.x;
+                else if (edge === "w") {
+                  const right = barrierRect.x + barrierRect.width;
+                  barrierRect.x = firstContact.contact;
+                  barrierRect.width = right - firstContact.contact;
+                } else if (edge === "s") barrierRect.height = firstContact.contact - barrierRect.y;
+                else {
+                  const bottom = barrierRect.y + barrierRect.height;
+                  barrierRect.y = firstContact.contact;
+                  barrierRect.height = bottom - firstContact.contact;
+                }
+                const guide = activeAxis === "x"
+                  ? {x: firstContact.contact, y: null}
+                  : {x: null, y: firstContact.contact};
+                resizeCrossingBarrier = {
+                  contact: firstContact.contact,
+                  pointerValue,
+                  rect: barrierRect,
+                  guide,
+                };
+                resized = {rect: barrierRect, guide};
+              }
+            }
+          }
           const resolved = resolveResizeCollisions(key, resized.rect, edge, startTiles, layout.workspace);
           if (!resolved) return;
           currentTiles = resolved;
