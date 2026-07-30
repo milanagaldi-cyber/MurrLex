@@ -183,6 +183,7 @@
   const tileSnapDistance = 12;
   let tileLayoutDefaults = null;
   let selectedTileKeys = new Set();
+  let tileCtrlSelectionActive = false;
   const layoutDefaults = {
     columns: {mediaWidth: 250, inspectorWidth: 390, mediaHeight: 390, canvasHeight: 390, inspectorHeight: 390, timelineHeight: 320, timelineInsetLeft: 0, timelineInsetRight: 0},
     stacked: {mediaWidth: 250, inspectorWidth: 390, mediaHeight: 390, canvasHeight: 390, inspectorHeight: 390, timelineHeight: 320, timelineInsetLeft: 0, timelineInsetRight: 0},
@@ -670,7 +671,7 @@
     const startCenter = startBounds.x + startBounds.width / 2;
     const returnSide = Math.sign(startCenter - homeAxis);
     if (!returnSide) return null;
-    const margin = editorViewport.clientWidth * .05;
+    const margin = editorViewport.clientWidth * .12;
     const range = tileCameraRangeKeepingBoundsVisible(
       bounds,
       margin,
@@ -1609,6 +1610,55 @@
     selectedTileKeys = new Set(keys.filter(key => workspacePanel(key)));
     syncTileSelectionClasses();
   };
+  const clearTileCtrlSelection = () => {
+    tileCtrlSelectionActive = false;
+    setSelectedTileKeys([]);
+  };
+  window.addEventListener("keyup", event => {
+    if (
+      event.key === "Control"
+      && tileCtrlSelectionActive
+      && !tileMoveDragActive
+    ) {
+      clearTileCtrlSelection();
+    }
+  });
+  window.addEventListener("blur", () => {
+    if (tileCtrlSelectionActive && !tileMoveDragActive) clearTileCtrlSelection();
+  });
+  const tileDisplayScale = () => {
+    const widthRatio = Number(window.outerWidth) > 0 && Number(window.innerWidth) > 0
+      ? window.outerWidth / window.innerWidth
+      : 1;
+    const visualScale = Number(window.visualViewport?.scale || 1);
+    return Math.min(
+      Number.isFinite(widthRatio) ? widthRatio : 1,
+      Number.isFinite(visualScale) ? visualScale : 1,
+    );
+  };
+  const syncTileWorkspaceBoundary = (geometry, workspace) => {
+    if (!editorLayout || !geometry || !workspace) return;
+    editorLayout.classList.toggle(
+      "movie-workspace-boundary-visible",
+      tileDisplayScale() <= .55,
+    );
+    editorLayout.style.setProperty(
+      "--murrcut-workspace-boundary-left",
+      `${geometry.offsetX}px`,
+    );
+    editorLayout.style.setProperty(
+      "--murrcut-workspace-boundary-top",
+      `${geometry.offsetY}px`,
+    );
+    editorLayout.style.setProperty(
+      "--murrcut-workspace-boundary-width",
+      `${workspace.width}px`,
+    );
+    editorLayout.style.setProperty(
+      "--murrcut-workspace-boundary-height",
+      `${workspace.height}px`,
+    );
+  };
   const tileGroupBounds = (tiles, keys) => {
     const rects = keys.map(key => tiles[key]).filter(Boolean);
     if (!rects.length) return null;
@@ -1644,6 +1694,7 @@
     const geometry = computeTileViewportGeometry(tiles, layout.workspace, tileAllocatedExtent);
     tileAllocatedExtent = geometry.extent;
     tileViewportGeometry = geometry;
+    syncTileWorkspaceBoundary(geometry, layout.workspace);
     if (editorWorld) {
       editorWorld.style.setProperty("--murrcut-world-width", `${geometry.width}px`);
       editorWorld.style.setProperty("--murrcut-world-anchor-x", `${geometry.baseLeft + geometry.offsetX}px`);
@@ -2441,9 +2492,14 @@
         event.stopPropagation();
         const layout = ensureTileLayout();
         const startTiles = cloneTiles(layout.tiles);
-        const additiveSelection = event.ctrlKey || event.metaKey || event.shiftKey;
-        if (additiveSelection && !selectedTileKeys.has(key)) setSelectedTileKeys([...selectedTileKeys, key]);
-        else if (!selectedTileKeys.has(key)) setSelectedTileKeys([key]);
+        const additiveSelection = event.ctrlKey || event.metaKey;
+        if (additiveSelection) {
+          tileCtrlSelectionActive = true;
+          if (!selectedTileKeys.has(key)) setSelectedTileKeys([...selectedTileKeys, key]);
+        } else {
+          tileCtrlSelectionActive = false;
+          setSelectedTileKeys([key]);
+        }
         const movingKeys = selectedTileKeys.has(key) ? [...selectedTileKeys] : [key];
         const startX = event.clientX;
         const startY = event.clientY;
@@ -2754,13 +2810,17 @@
           document.body.classList.remove("movie-panel-interacting");
           tileMoveDragActive = false;
           hideTileGuides();
-          setSelectedTileKeys([]);
           if (!active) {
+            const controlStillHeld = finishEvent
+              ? Boolean(finishEvent.ctrlKey || finishEvent.metaKey)
+              : additiveSelection;
+            if (!additiveSelection || !controlStillHeld) clearTileCtrlSelection();
             syncTileViewportHorizontalAccess(startTiles);
             scheduleTileViewportScrollbarIdle();
             scheduleTileExtentCleanup(180);
             return;
           }
+          clearTileCtrlSelection();
           const invalidDrop = tileLayoutHasSelectionOverlap(currentTiles, movingKeys);
           const finalTiles = invalidDrop ? startTiles : currentTiles;
           const defaults = tileLayoutDefaults || createDefaultTileLayout();
@@ -2936,7 +2996,7 @@
           window.removeEventListener("pointercancel", finish, true);
           releasePointerCaptureSafely(editorLayout, pointerId);
           marquee.remove();
-          if (!active && !preserved.size) setSelectedTileKeys([]);
+          if (!active) clearTileCtrlSelection();
         };
         window.addEventListener("pointermove", update, true);
         window.addEventListener("pointerup", finish, true);

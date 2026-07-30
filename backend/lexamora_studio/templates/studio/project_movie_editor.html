@@ -1151,6 +1151,18 @@ body.movie-editor-page-active .movie-editor-viewport.movie-scrollbars-idle::-web
   background-size:32px 32px;
   background-position:-1px -1px;
 }
+.movie-editor-layout.movie-workspace-boundary-visible::before{
+  content:"";
+  position:absolute;
+  z-index:1;
+  left:var(--murrcut-workspace-boundary-left,0px);
+  top:var(--murrcut-workspace-boundary-top,0px);
+  box-sizing:border-box;
+  width:var(--murrcut-workspace-boundary-width,100%);
+  height:var(--murrcut-workspace-boundary-height,100%);
+  border:1px dashed color-mix(in srgb,var(--accent) 72%,#79d9ff);
+  pointer-events:none;
+}
 .movie-editor-layout .movie-workbench,
 .movie-editor-layout .movie-stage-column{
   display:contents!important;
@@ -1492,4 +1504,4 @@ body.movie-panel-interacting *{
 </section>
 {{ movie_timeline_data|json_script:"movie-timeline-data" }}{{ movie_assets|json_script:"movie-assets-data" }}{{ movie_library_assets|json_script:"movie-library-data" }}{{ movie_render_jobs|json_script:"movie-render-jobs-data" }}{{ movie_edits|json_script:"movie-edits-data" }}
 {% endblock %}
-{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260730-diagonal-tile-resize"></script>{% endblock %}
+{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260730-workspace-bounds-ctrl-groups"></script>{% endblock %}
