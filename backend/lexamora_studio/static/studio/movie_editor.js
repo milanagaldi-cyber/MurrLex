@@ -429,6 +429,7 @@
   let tileCameraAnimationMaximumVelocity = 28;
   let tileCameraFrame = 0;
   let tileSelectionFocusActive = false;
+  let tileViewportManuallyPanned = false;
   let tileCameraTrackWidth = 1;
   let tileViewportHorizontalHotZoneHovered = false;
   let tileViewportVerticalHotZoneHovered = false;
@@ -812,7 +813,11 @@
     );
     positionTileCameraScrollbar();
     ensureTileWorkspaceCoversViewport();
-    if (recenterWorkspace && tileViewportGeometry) {
+    if (
+      recenterWorkspace
+      && tileViewportGeometry
+      && !tileViewportManuallyPanned
+    ) {
       const layout = ensureTileLayout();
       const balancedCameraTarget = balancedCameraTargetForTiles(
         layout.tiles,
@@ -2076,6 +2081,8 @@
     const symmetricHorizontalReserve = Math.max(
       requiredGeometry.baseLeft - requiredExtent.left,
       requiredExtent.right - baseRight,
+      requiredGeometry.baseLeft - overscanExtent.left,
+      overscanExtent.right - baseRight,
       requiredGeometry.baseLeft - previousExtent.left,
       previousExtent.right - baseRight,
     );
@@ -2187,9 +2194,9 @@
     if (contentWidth + marginX * 2 <= viewportWidth) {
       logicalLeft = (bounds.left + bounds.right - viewportWidth) / 2;
     } else if (visible.left < bounds.left - marginX) {
-      logicalLeft = bounds.left - marginX;
+      logicalLeft = bounds.left;
     } else if (visible.right > bounds.right + marginX) {
-      logicalLeft = bounds.right + marginX - viewportWidth;
+      logicalLeft = bounds.right - viewportWidth;
     }
     if (contentHeight + topMargin + bottomMargin <= viewportHeight) {
       const extra = Math.max(
@@ -2244,7 +2251,6 @@
     if (geometry.workspaceWidth <= viewportWidth + 1) {
       return tileHomeCameraX(geometry);
     }
-    const margin = viewportWidth * tileViewportLocalFocusMarginRatio;
     if (localBounds && localFocusOnlyWhenEscaped) {
       const referenceViewport = localViewportBounds || visible;
       const escapedLeft = localBounds.x < referenceViewport.left - 1;
@@ -2269,23 +2275,17 @@
             : -1
         )
       );
-      const effectiveMargin = Math.min(
-        margin,
-        Math.max(0, viewportWidth - localBounds.width),
-      );
-      const localCameraTarget = focusSide > 0
+      const localCameraTarget = localBounds.width <= viewportWidth
         ? (
             origin.x
             + geometry.offsetX
-            + localBounds.right
-            - (viewportWidth - effectiveMargin)
-          )
-        : (
-            origin.x
-            + geometry.offsetX
             + localBounds.x
-            - effectiveMargin
-          );
+            + localBounds.width / 2
+            - viewportWidth / 2
+          )
+        : focusSide > 0
+          ? origin.x + geometry.offsetX + localBounds.right - viewportWidth
+          : origin.x + geometry.offsetX + localBounds.x;
       return clamp(
         localCameraTarget,
         tileCameraMinimumX(geometry),
@@ -2316,15 +2316,14 @@
     ) return centeredCameraX;
     if (rightEdgeVisible && !leftEdgeVisible) {
       return clamp(
-        origin.x + geometry.offsetX + bounds.right
-          - (viewportWidth - margin),
+        origin.x + geometry.offsetX + bounds.right - viewportWidth,
         tileCameraMinimumX(geometry),
         tileCameraMaximumX(geometry),
       );
     }
     if (leftEdgeVisible && !rightEdgeVisible) {
       return clamp(
-        origin.x + geometry.offsetX + bounds.left - margin,
+        origin.x + geometry.offsetX + bounds.left,
         tileCameraMinimumX(geometry),
         tileCameraMaximumX(geometry),
       );
@@ -2337,15 +2336,28 @@
       );
       if (localSide > 0) {
         return clamp(
-          origin.x + geometry.offsetX + localBounds.right
-            - (viewportWidth - margin),
+          localBounds.width <= viewportWidth
+            ? (
+                origin.x
+                + geometry.offsetX
+                + localCenterX
+                - viewportWidth / 2
+              )
+            : origin.x + geometry.offsetX + localBounds.right - viewportWidth,
           tileCameraMinimumX(geometry),
           tileCameraMaximumX(geometry),
         );
       }
       if (localSide < 0) {
         return clamp(
-          origin.x + geometry.offsetX + localBounds.x - margin,
+          localBounds.width <= viewportWidth
+            ? (
+                origin.x
+                + geometry.offsetX
+                + localCenterX
+                - viewportWidth / 2
+              )
+            : origin.x + geometry.offsetX + localBounds.x,
           tileCameraMinimumX(geometry),
           tileCameraMaximumX(geometry),
         );
@@ -2401,7 +2413,12 @@
     if (!editorViewport || !tileViewportGeometry || !tileAllocatedExtent) return;
     const layout = ensureTileLayout();
     const renderedTiles = tileRenderedTiles || layout.tiles;
-    const required = computeTileViewportGeometry(renderedTiles, layout.workspace).requiredExtent;
+    const requiredGeometry = computeTileViewportGeometry(
+      renderedTiles,
+      layout.workspace,
+    );
+    const required = requiredGeometry.requiredExtent;
+    const overscan = fullTileHorizontalOverscanExtent(requiredGeometry);
     const visible = tileLogicalViewportBounds(tileViewportGeometry);
     if (!visible) return;
     const next = {...tileAllocatedExtent};
@@ -2409,6 +2426,8 @@
     const symmetricHorizontalReserve = Math.max(
       tileViewportGeometry.baseLeft - required.left,
       required.right - baseRight,
+      tileViewportGeometry.baseLeft - overscan.left,
+      overscan.right - baseRight,
     );
     const safeLeft = tileViewportGeometry.baseLeft - symmetricHorizontalReserve;
     const safeRight = baseRight + symmetricHorizontalReserve;
@@ -2431,7 +2450,9 @@
       renderedTiles,
       tileViewportGeometry,
     );
-    if (cleanupTarget) animateTileViewportToTarget(cleanupTarget);
+    if (cleanupTarget && !tileViewportManuallyPanned) {
+      animateTileViewportToTarget(cleanupTarget);
+    }
     const hasMore = (
       next.left < safeLeft - 1
       || next.right > safeRight + 1
@@ -2502,6 +2523,7 @@
     toleranceRatio = .05,
   } = {}) => {
     if (!editorViewport || !tileViewportGeometry) return false;
+    if (tileViewportManuallyPanned) return false;
     const layout = ensureTileLayout();
     const finalTiles = tiles || tileRenderedTiles || layout.tiles;
     const finalWorkspace = workspace || layout.workspace;
@@ -2562,11 +2584,12 @@
       }
       tileHomeCenterFrame = 0;
       const homeGeometry = computeTileViewportGeometry(finalTiles, finalWorkspace);
+      const homeOverscan = fullTileHorizontalOverscanExtent(homeGeometry);
       const verticalCenter = tileLogicalViewportCenter(tileViewportGeometry)?.y;
       tileAllocatedExtent = {
         ...(tileAllocatedExtent || homeGeometry.requiredExtent),
-        left: homeGeometry.requiredExtent.left,
-        right: homeGeometry.requiredExtent.right,
+        left: Math.min(homeGeometry.requiredExtent.left, homeOverscan.left),
+        right: Math.max(homeGeometry.requiredExtent.right, homeOverscan.right),
         bottom: Math.max(
           homeGeometry.requiredExtent.bottom,
           Number(tileAllocatedExtent?.bottom || fallbackBottom || homeGeometry.requiredExtent.bottom),
@@ -2588,6 +2611,7 @@
     const layout = ensureTileLayout();
     const rect = layout.tiles[key];
     if (!rect) return false;
+    tileViewportManuallyPanned = false;
     cancelTileHomeCenter();
     if (tileExtentCleanupTimer) clearTimeout(tileExtentCleanupTimer);
     tileExtentCleanupTimer = 0;
@@ -2638,6 +2662,7 @@
     const rect = layout.tiles[key];
     const visible = tileLogicalViewportBounds(tileViewportGeometry);
     if (!rect || !visible) return false;
+    tileViewportManuallyPanned = false;
     const viewportWidth = tileHorizontalViewportWidth();
     const viewportHeight = editorViewport.clientHeight;
     const marginX = Math.min(
@@ -2715,7 +2740,7 @@
     if (
       Math.abs(targetLeft - startLeft) < 1
       && Math.abs(targetTop - startTop) < 1
-    ) return false;
+    ) return true;
     cancelTileHomeCenter();
     if (tileExtentCleanupTimer) clearTimeout(tileExtentCleanupTimer);
     tileExtentCleanupTimer = 0;
@@ -2967,7 +2992,11 @@
     tileCameraScrollbar?.classList.remove("tile-resize-priority");
   });
   window.addEventListener("pointerup", () => {
-    if (tileSelectionFocusActive || tileHomeCenterFrame) return;
+    if (
+      tileViewportManuallyPanned
+      || tileSelectionFocusActive
+      || tileHomeCenterFrame
+    ) return;
     scheduleTileExtentCleanup(180);
   }, {passive: true});
   const nearestTileSnap = (value, candidates) => {
@@ -3524,6 +3553,7 @@
         if (!active && Math.abs(delta) < 3) return;
         if (!active) {
           active = true;
+          tileViewportManuallyPanned = false;
           remember();
           tileGapPushActive = true;
           document.body.classList.add("movie-panel-interacting");
@@ -3785,11 +3815,6 @@
           || event.defaultPrevented
           || tileDragTargetIsBlocked(event.target, key, panel)
         ) return false;
-        if (layoutLocked) {
-          event.preventDefault();
-          flashLayoutLock();
-          return false;
-        }
         event.stopPropagation();
         const layout = ensureTileLayout();
         const startTiles = cloneTiles(layout.tiles);
@@ -3824,6 +3849,7 @@
         let dragFrame = 0;
         let previousDragPointerX = startX;
         let dragPointerDirectionX = 0;
+        let layoutLockDragAttempted = false;
         cancelTileHomeCenter();
         tileViewportScrollbarDragPointerId = null;
         tileViewportScrollbarDragChanged = false;
@@ -3851,7 +3877,15 @@
           const rawDx = next.clientX - startX + tileCameraX - startCameraX;
           const rawDy = next.clientY - startY + (editorViewport?.scrollTop || 0) - startScrollTop;
           if (!active && Math.hypot(rawDx, rawDy) < 4) return false;
+          if (!active && layoutLocked) {
+            if (!layoutLockDragAttempted) {
+              layoutLockDragAttempted = true;
+              flashLayoutLock();
+            }
+            return false;
+          }
           if (!active) {
+            tileViewportManuallyPanned = false;
             remember();
             window.getSelection()?.removeAllRanges();
             document.body.classList.add("movie-panel-interacting");
@@ -4193,7 +4227,6 @@
         );
         let active = false;
         let finished = false;
-        cancelTileHomeCenter();
         const suppressClick = clickEvent => {
           clickEvent.preventDefault();
           clickEvent.stopImmediatePropagation();
@@ -4205,6 +4238,10 @@
           if (!active && Math.hypot(dx, dy) < 3) return;
           if (!active) {
             active = true;
+            tileViewportManuallyPanned = true;
+            cancelTileHomeCenter();
+            if (tileExtentCleanupTimer) clearTimeout(tileExtentCleanupTimer);
+            tileExtentCleanupTimer = 0;
             capturePointerSafely(editorLayout, pointerId);
             editorViewport?.classList.add("movie-workspace-panning");
             revealTileViewportScrollbars();
@@ -4248,7 +4285,7 @@
           }
           syncTileViewportHorizontalAccess(tileRenderedTiles);
           scheduleTileViewportScrollbarIdle();
-          scheduleTileExtentCleanup(180);
+          if (!active) scheduleTileExtentCleanup(180);
         };
         window.addEventListener("pointermove", update, true);
         window.addEventListener("pointerup", finish, true);
@@ -4445,6 +4482,7 @@
           const dy = pointerLogical.y - startPointerLogical.y;
           if (!active && Math.hypot(next.clientX - startX, next.clientY - startY) < 2) return;
           if (!active) {
+            tileViewportManuallyPanned = false;
             remember();
             revealTileViewportScrollbars();
             releaseFrozenContent = freezeTileContentForResize(panel);
