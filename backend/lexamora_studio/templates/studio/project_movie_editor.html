@@ -941,6 +941,8 @@ body.movie-layout-locked [data-timeline-edge-resizer]{pointer-events:none!import
   contain:layout paint;
   isolation:isolate;
   overscroll-behavior:contain;
+  overflow-anchor:none;
+  scroll-behavior:auto;
   scrollbar-gutter:stable;
   height:calc(100dvh - 230px);
   min-height:320px;
@@ -952,6 +954,7 @@ body.movie-layout-locked [data-timeline-edge-resizer]{pointer-events:none!import
   box-sizing:border-box;
   width:var(--murrcut-world-width,100%);
   min-width:100%;
+  overflow-anchor:none;
 }
 .movie-editor-project-header{
   display:flow-root;
@@ -1067,6 +1070,9 @@ body.movie-editor-page-active .movie-editor-layout{
 .movie-camera-scrollbar.is-active.movie-scrollbars-idle:hover{
   opacity:.7;
 }
+.movie-camera-scrollbar.tile-resize-priority{
+  pointer-events:none!important;
+}
 .movie-camera-scrollbar-track{
   position:relative;
   display:block;
@@ -1138,6 +1144,7 @@ body.movie-editor-page-active .movie-editor-viewport.movie-scrollbars-idle::-web
   margin:0!important;
   padding:0!important;
   overflow:visible!important;
+  overflow-anchor:none;
   background:
     linear-gradient(color-mix(in srgb,var(--line) 22%,transparent) 1px,transparent 1px),
     linear-gradient(90deg,color-mix(in srgb,var(--line) 22%,transparent) 1px,transparent 1px);
@@ -1446,4 +1453,4 @@ body.movie-panel-interacting *{
 </section>
 {{ movie_timeline_data|json_script:"movie-timeline-data" }}{{ movie_assets|json_script:"movie-assets-data" }}{{ movie_library_assets|json_script:"movie-library-data" }}{{ movie_render_jobs|json_script:"movie-render-jobs-data" }}{{ movie_edits|json_script:"movie-edits-data" }}
 {% endblock %}
-{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260730-static-workspace-scrollbar-zones"></script>{% endblock %}
+{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260730-smooth-scroll-drag-priority"></script>{% endblock %}

@@ -352,6 +352,7 @@
   let tileCameraX = 0;
   let tileCameraTargetX = 0;
   let tileCameraVelocityX = 0;
+  let tileCameraAnimationMaximumVelocity = 28;
   let tileCameraFrame = 0;
   let tileCameraTrackWidth = 1;
   let tileProjectHeaderHomeLeft = null;
@@ -515,16 +516,21 @@
     tileCameraVelocityX = 0;
     tileCameraTargetX = tileCameraX;
   };
-  const setTileCameraX = (value, {immediate = true} = {}) => {
+  const setTileCameraX = (value, {immediate = true, maxVelocity = 28} = {}) => {
     const next = clamp(Number(value) || 0, 0, tileCameraMaximumX());
     tileCameraTargetX = next;
     if (!immediate) {
+      tileCameraAnimationMaximumVelocity = Math.max(1, Number(maxVelocity) || 28);
       if (!tileCameraFrame) {
         const step = () => {
           tileCameraFrame = 0;
           const distance = tileCameraTargetX - tileCameraX;
           tileCameraVelocityX = (tileCameraVelocityX + distance * .12) * .74;
-          tileCameraVelocityX = clamp(tileCameraVelocityX, -28, 28);
+          tileCameraVelocityX = clamp(
+            tileCameraVelocityX,
+            -tileCameraAnimationMaximumVelocity,
+            tileCameraAnimationMaximumVelocity,
+          );
           const nextX = clamp(tileCameraX + tileCameraVelocityX, 0, tileCameraMaximumX());
           const reachedTarget = (
             Math.abs(distance) < .18
@@ -556,6 +562,7 @@
       return;
     }
     stopTileCameraAnimation();
+    tileCameraAnimationMaximumVelocity = 28;
     tileCameraX = next;
     tileCameraTargetX = next;
     renderTileCamera();
@@ -2014,9 +2021,6 @@
   editorViewport?.addEventListener("scroll", () => {
     revealTileViewportVerticalScrollbar();
     scheduleTileViewportVerticalIdle();
-    scheduleTileExtentCleanup(
-      document.body.classList.contains("movie-panel-interacting") ? 90 : 180
-    );
   }, {passive: true});
   editorViewport?.addEventListener("pointermove", event => {
     const bounds = editorViewport.getBoundingClientRect();
@@ -2047,6 +2051,26 @@
       scheduleTileViewportVerticalIdle();
     }
   }, {passive: true});
+  const syncTileBottomEdgePointerPriority = event => {
+    if (!tileCameraScrollbar || !editorLayout) return;
+    const overBottomResizeEdge = [...editorLayout.querySelectorAll(".movie-tile-edge.s")].some(edge => {
+      const bounds = edge.getBoundingClientRect();
+      return (
+        event.clientX >= bounds.left
+        && event.clientX <= bounds.right
+        && event.clientY >= bounds.top
+        && event.clientY <= bounds.bottom
+      );
+    });
+    tileCameraScrollbar.classList.toggle("tile-resize-priority", overBottomResizeEdge);
+  };
+  window.addEventListener("pointermove", syncTileBottomEdgePointerPriority, {
+    capture: true,
+    passive: true,
+  });
+  window.addEventListener("blur", () => {
+    tileCameraScrollbar?.classList.remove("tile-resize-priority");
+  });
   window.addEventListener("pointerup", () => scheduleTileExtentCleanup(180), {passive: true});
   const nearestTileSnap = (value, candidates) => {
     let nearest = null;
@@ -2415,6 +2439,8 @@
         let currentTiles = startTiles;
         let latestPointer = event;
         let dragFrame = 0;
+        let previousDragPointerX = startX;
+        let dragPointerDirectionX = 0;
         const dragStartBounds = tileGroupBounds(startTiles, movingKeys);
         const stationaryTileKeys = tilePanelKeys.filter(tileKey => !movingKeys.includes(tileKey));
         let crossingBarrier = null;
@@ -2643,6 +2669,10 @@
           const magnitude = Math.abs(pressure);
           const smoothPressure = magnitude * magnitude * (3 - 2 * magnitude);
           if (!pressure) return false;
+          if (
+            (pressure > 0 && dragPointerDirectionX < 0)
+            || (pressure < 0 && dragPointerDirectionX > 0)
+          ) return false;
           const nextCameraX = clamp(
             tileCameraX + Math.sign(pressure) * 15 * dragCameraSpeedMultiplier * smoothPressure,
             0,
@@ -2668,6 +2698,11 @@
         };
         const move = next => {
           latestPointer = next;
+          const pointerDeltaX = next.clientX - previousDragPointerX;
+          if (Math.abs(pointerDeltaX) >= .25) {
+            dragPointerDirectionX = Math.sign(pointerDeltaX);
+            previousDragPointerX = next.clientX;
+          }
           if (active || Math.hypot(next.clientX - startX, next.clientY - startY) >= 4) next.preventDefault();
           if (!dragFrame) dragFrame = requestAnimationFrame(continueDragFrame);
         };
@@ -2747,7 +2782,10 @@
           }
           syncTileViewportHorizontalAccess(finalTiles);
           if (finalTilesFitHome) {
-            setTileCameraX(tileHomeCameraX(tileViewportGeometry), {immediate: false});
+            setTileCameraX(tileHomeCameraX(tileViewportGeometry), {
+              immediate: false,
+              maxVelocity: 14,
+            });
             settleTileViewportAfterScroll(80);
             scheduleTileExtentCleanup(100);
           } else if (stoppedAtCrossingBarrier && !invalidDrop) {
@@ -2755,7 +2793,7 @@
               tileHomeCameraX(tileViewportGeometry),
               finalMovingBounds,
             );
-            setTileCameraX(targetCameraX, {immediate: false});
+            setTileCameraX(targetCameraX, {immediate: false, maxVelocity: 14});
             settleTileViewportAfterScroll(80);
             scheduleTileExtentCleanup(100);
           } else if (returnedFromEdge) {
@@ -2765,7 +2803,7 @@
               const targetCameraX = tileScrollLeftForLogicalCenter(targetLogicalCenter);
               setTileCameraX(
                 constrainTileCameraToVisibleBounds(targetCameraX, finalMovingBounds),
-                {immediate: false},
+                {immediate: false, maxVelocity: 14},
               );
             }
             settleTileViewportAfterScroll(80);
@@ -3166,7 +3204,7 @@
                 tileHomeCameraX(tileViewportGeometry),
                 resizedBounds,
               ),
-              {immediate: false},
+              {immediate: false, maxVelocity: 14},
             );
           } else {
             setTileCameraX(tileCameraX, {immediate: false});
