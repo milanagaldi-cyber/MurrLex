@@ -1262,8 +1262,9 @@ body.movie-panel-interacting *{
   outline-offset:-2px;
   box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 20%,transparent)!important;
 }
-.movie-tile-moving{
+.movie-editor-layout [data-panel-key].movie-tile-moving{
   opacity:.92;
+  z-index:60!important;
   transform:translate3d(
     var(--murrcut-tile-drag-x,0px),
     var(--murrcut-tile-drag-y,0px),
@@ -1416,4 +1417,4 @@ body.movie-panel-interacting *{
 </section>
 {{ movie_timeline_data|json_script:"movie-timeline-data" }}{{ movie_assets|json_script:"movie-assets-data" }}{{ movie_library_assets|json_script:"movie-library-data" }}{{ movie_render_jobs|json_script:"movie-render-jobs-data" }}{{ movie_edits|json_script:"movie-edits-data" }}
 {% endblock %}
-{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260730-unified-drag-camera"></script>{% endblock %}
+{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260730-visible-unified-drag"></script>{% endblock %}
