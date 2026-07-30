@@ -438,10 +438,8 @@
   const tileHomeCameraX = (geometry = tileViewportGeometry) => {
     if (!editorViewport || !geometry) return 0;
     const origin = tileWorkspaceViewportOrigin();
-    const viewportBounds = editorViewport.getBoundingClientRect();
-    const headerBounds = editorProjectHeader?.getBoundingClientRect();
-    const headerLeft = headerBounds
-      ? Math.max(0, headerBounds.left - viewportBounds.left)
+    const headerLeft = editorProjectHeader
+      ? Math.max(0, Number(editorProjectHeader.offsetLeft || 0))
       : Math.max(0, (editorViewport.clientWidth - geometry.baseWidth) / 2);
     return clamp(
       origin.x + geometry.baseLeft + geometry.offsetX - headerLeft,
@@ -475,6 +473,13 @@
   const renderTileCamera = () => {
     if (editorLayout) {
       editorLayout.style.setProperty("--murrcut-camera-translate-x", `${-tileCameraX}px`);
+    }
+    if (editorProjectHeader) {
+      const homeCameraX = tileViewportGeometry ? tileHomeCameraX(tileViewportGeometry) : tileCameraX;
+      editorProjectHeader.style.setProperty(
+        "--murrcut-header-camera-translate-x",
+        `${homeCameraX - tileCameraX}px`,
+      );
     }
     if (tileCameraScrollbar) {
       tileCameraScrollbar.setAttribute("aria-valuemax", String(Math.round(tileCameraMaximumX())));
