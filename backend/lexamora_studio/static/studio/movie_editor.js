@@ -2317,13 +2317,29 @@
           const visibleBounds = tileLogicalViewportBounds(tileViewportGeometry);
           const movingBounds = tileGroupBounds(currentTiles, movingKeys);
           if (visibleBounds && movingBounds) {
-            const rightOverflow = movingBounds.right - visibleBounds.right;
+            const maximumCameraX = tileCameraMaximumX();
+            const rightCameraStopped = (
+              tileCameraX >= maximumCameraX - .5
+              && tileCameraTargetX >= maximumCameraX - .5
+            );
+            const leftCameraStopped = (
+              tileCameraX <= .5
+              && tileCameraTargetX <= .5
+            );
+            const visibleWidth = visibleBounds.right - visibleBounds.left;
+            const movingMargin = Math.min(
+              tileViewportTileFocusMargin,
+              Math.max(0, (visibleWidth - movingBounds.width) / 2),
+            );
+            const rightMargin = rightCameraStopped ? 0 : movingMargin;
+            const leftMargin = leftCameraStopped ? 0 : movingMargin;
+            const rightOverflow = movingBounds.right + rightMargin - visibleBounds.right;
             if (rightOverflow > 0) {
               movingKeys.forEach(movingKey => {
                 currentTiles[movingKey].x -= rightOverflow;
               });
             }
-            const leftOverflow = visibleBounds.left - movingBounds.x;
+            const leftOverflow = visibleBounds.left + leftMargin - movingBounds.x;
             if (leftOverflow > 0) {
               movingKeys.forEach(movingKey => {
                 currentTiles[movingKey].x += leftOverflow;
@@ -2353,7 +2369,7 @@
           const magnitude = Math.abs(pressure);
           const smoothPressure = magnitude * magnitude * (3 - 2 * magnitude);
           if (pressure) {
-            shiftTileCameraTarget(Math.sign(pressure) * 12 * smoothPressure);
+            shiftTileCameraTarget(Math.sign(pressure) * 15 * smoothPressure);
           } else if (Math.abs(tileCameraTargetX - tileCameraX) > .25) {
             setTileCameraX(tileCameraX, {immediate: false});
           }
@@ -2416,10 +2432,11 @@
           const finalDistance = finalMovingBounds
             ? Math.abs(finalMovingBounds.x + finalMovingBounds.width / 2 - homeAxis)
             : startDistance;
+          const focusReturnTolerance = clamp(editorViewport.clientWidth * .025, 24, 40);
           const returnedFromEdge = (
             !invalidDrop
             && startDistance > defaults.workspace.baseWidth * .05
-            && finalDistance < startDistance - 8
+            && finalDistance < startDistance - focusReturnTolerance
           );
           if (invalidDrop) {
             toast("This space is occupied");
