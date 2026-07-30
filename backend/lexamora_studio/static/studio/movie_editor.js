@@ -2317,18 +2317,13 @@
           const visibleBounds = tileLogicalViewportBounds(tileViewportGeometry);
           const movingBounds = tileGroupBounds(currentTiles, movingKeys);
           if (visibleBounds && movingBounds) {
-            const visibleWidth = visibleBounds.right - visibleBounds.left;
-            const revealMargin = Math.min(
-              tileViewportTileFocusMargin,
-              Math.max(0, (visibleWidth - movingBounds.width) / 2),
-            );
-            const rightOverflow = movingBounds.right + revealMargin - visibleBounds.right;
+            const rightOverflow = movingBounds.right - visibleBounds.right;
             if (rightOverflow > 0) {
               movingKeys.forEach(movingKey => {
                 currentTiles[movingKey].x -= rightOverflow;
               });
             }
-            const leftOverflow = visibleBounds.left + revealMargin - movingBounds.x;
+            const leftOverflow = visibleBounds.left - movingBounds.x;
             if (leftOverflow > 0) {
               movingKeys.forEach(movingKey => {
                 currentTiles[movingKey].x += leftOverflow;
@@ -2358,7 +2353,7 @@
           const magnitude = Math.abs(pressure);
           const smoothPressure = magnitude * magnitude * (3 - 2 * magnitude);
           if (pressure) {
-            shiftTileCameraTarget(Math.sign(pressure) * 10 * smoothPressure);
+            shiftTileCameraTarget(Math.sign(pressure) * 12 * smoothPressure);
           } else if (Math.abs(tileCameraTargetX - tileCameraX) > .25) {
             setTileCameraX(tileCameraX, {immediate: false});
           }
