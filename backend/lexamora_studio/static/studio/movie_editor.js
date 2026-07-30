@@ -323,14 +323,8 @@
     };
     workspace.width = Math.max(defaults.workspace.width, workspace.width);
     workspace.height = Math.max(defaults.workspace.height, workspace.height);
-    const baseLeft = defaults.tiles.editProjects.x;
-    const baseRight = baseLeft + defaults.workspace.baseWidth;
-    const horizontalReserve = Math.max(
-      defaults.workspace.baseWidth,
-      tileHorizontalViewportWidth(),
-    );
-    const horizontalLeft = baseLeft - horizontalReserve;
-    const horizontalRight = baseRight + horizontalReserve;
+    const horizontalLeft = 0;
+    const horizontalRight = workspace.width;
     const tiles = {};
     tilePanelKeys.forEach(key => {
       const fallback = defaults.tiles[key];
@@ -1752,34 +1746,11 @@
       bottom: top + editorViewport.clientHeight,
     };
   };
-  const tileScreenVisibleHorizontalExtent = (geometry = tileViewportGeometry) => {
-    if (!editorViewport || !editorLayout || !geometry) return null;
-    const viewportRect = editorViewport.getBoundingClientRect();
-    const layoutRect = editorLayout.getBoundingClientRect();
-    const browserViewport = browserHorizontalViewport();
-    const screenLeft = Math.min(viewportRect.left, browserViewport.left);
-    const screenRight = Math.max(viewportRect.right, browserViewport.right);
-    return {
-      left: screenLeft - layoutRect.left - geometry.offsetX,
-      right: screenRight - layoutRect.left - geometry.offsetX,
-    };
-  };
   const tileInteractiveHorizontalExtent = (geometry = tileViewportGeometry) => {
     if (!geometry) return null;
-    const overscan = fullTileHorizontalOverscanExtent(geometry);
-    const logicalVisible = tileLogicalViewportBounds(geometry);
-    const screenVisible = tileScreenVisibleHorizontalExtent(geometry);
     return {
-      left: Math.min(
-        overscan.left,
-        logicalVisible?.left ?? Infinity,
-        screenVisible?.left ?? Infinity,
-      ),
-      right: Math.max(
-        overscan.right,
-        logicalVisible?.right ?? -Infinity,
-        screenVisible?.right ?? -Infinity,
-      ),
+      left: 0,
+      right: geometry.workspaceWidth,
     };
   };
   const tilesFitHorizontalCameraView = (tiles, geometry, cameraX) => {
