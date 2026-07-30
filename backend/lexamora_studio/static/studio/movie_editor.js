@@ -364,6 +364,7 @@
   const tileViewportMinimumReveal = 48;
   const tileExtentCleanupMargin = 32;
   const tileViewportHorizontalActivationRatio = .12;
+  const tileViewportLocalFocusMarginRatio = .10;
   const tileViewportHorizontalOverscanRatio = 1;
   const tileViewportScrollbarIdleDelay = 3000;
   const tileWorkspaceTopReveal = 32;
@@ -1721,11 +1722,24 @@
   const balancedCameraTargetForTiles = (
     tiles,
     geometry,
-    {requireCurrentVisibility = true} = {},
+    {
+      requireCurrentVisibility = true,
+      localBounds = null,
+    } = {},
   ) => {
     if (!tiles || !geometry) return null;
     const bounds = tileBounds(tiles);
     const origin = tileWorkspaceViewportOrigin();
+    const visible = tileLogicalViewportBounds(geometry, tileCameraX);
+    if (!visible) return null;
+    const leftEdgeVisible = (
+      bounds.left >= visible.left - 1
+      && bounds.left <= visible.right + 1
+    );
+    const rightEdgeVisible = (
+      bounds.right >= visible.left - 1
+      && bounds.right <= visible.right + 1
+    );
     const outerCenterX = (bounds.left + bounds.right) / 2;
     const centeredCameraX = clamp(
       origin.x + geometry.offsetX + outerCenterX - editorViewport.clientWidth / 2,
@@ -1733,13 +1747,48 @@
       tileCameraMaximumX(geometry),
     );
     if (
-      (
-        requireCurrentVisibility
-        && !tilesFitHorizontalCameraView(tiles, geometry, tileCameraX)
-      )
-      || !tilesFitHorizontalCameraView(tiles, geometry, centeredCameraX)
-    ) return null;
-    return centeredCameraX;
+      (!requireCurrentVisibility || (leftEdgeVisible && rightEdgeVisible))
+      && tilesFitHorizontalCameraView(tiles, geometry, centeredCameraX)
+    ) return centeredCameraX;
+    const margin = editorViewport.clientWidth * tileViewportLocalFocusMarginRatio;
+    if (rightEdgeVisible && !leftEdgeVisible) {
+      return clamp(
+        origin.x + geometry.offsetX + bounds.right
+          - (editorViewport.clientWidth - margin),
+        0,
+        tileCameraMaximumX(geometry),
+      );
+    }
+    if (leftEdgeVisible && !rightEdgeVisible) {
+      return clamp(
+        origin.x + geometry.offsetX + bounds.left - margin,
+        0,
+        tileCameraMaximumX(geometry),
+      );
+    }
+    if (localBounds) {
+      const localCenterX = localBounds.x + localBounds.width / 2;
+      const localSide = (
+        Math.sign(localCenterX - outerCenterX)
+        || Math.sign(localCenterX - (visible.left + visible.right) / 2)
+      );
+      if (localSide > 0) {
+        return clamp(
+          origin.x + geometry.offsetX + localBounds.right
+            - (editorViewport.clientWidth - margin),
+          0,
+          tileCameraMaximumX(geometry),
+        );
+      }
+      if (localSide < 0) {
+        return clamp(
+          origin.x + geometry.offsetX + localBounds.x - margin,
+          0,
+          tileCameraMaximumX(geometry),
+        );
+      }
+    }
+    return null;
   };
   const cleanupTileWorkspaceExtent = () => {
     tileExtentCleanupTimer = 0;
@@ -2790,10 +2839,13 @@
             tileExtentCleanupSuppressedUntil = Date.now() + 300;
           }
           applyTileRects(finalTiles, {preserveViewport: true, scheduleCleanup: false});
-          const balancedCameraTarget = balancedCameraTargetForTiles(
-            finalTiles,
-            tileViewportGeometry,
-          );
+          const balancedCameraTarget = invalidDrop
+            ? null
+            : balancedCameraTargetForTiles(
+                finalTiles,
+                tileViewportGeometry,
+                {localBounds: tileGroupBounds(finalTiles, movingKeys)},
+              );
           if (invalidDrop) {
             const cleanupDelay = Math.max(
               180,
@@ -3077,6 +3129,7 @@
           const balancedCameraTarget = balancedCameraTargetForTiles(
             currentTiles,
             tileViewportGeometry,
+            {localBounds: tileGroupBounds(currentTiles, [key])},
           );
           if (Number.isFinite(balancedCameraTarget)) {
             setTileCameraX(balancedCameraTarget, {
