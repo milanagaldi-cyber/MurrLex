@@ -343,6 +343,7 @@
   let pendingTileCameraLogicalCenterX = null;
   const tileViewportMinimumReveal = 48;
   const tileExtentCleanupMargin = 32;
+  const tileViewportTileFocusMargin = 18;
   const tileBounds = tiles => {
     const rects = tilePanelKeys.map(key => tiles[key]).filter(Boolean);
     return {
@@ -480,10 +481,20 @@
           const distance = tileCameraTargetX - tileCameraX;
           tileCameraVelocityX = (tileCameraVelocityX + distance * .12) * .74;
           tileCameraVelocityX = clamp(tileCameraVelocityX, -28, 28);
-          tileCameraX = clamp(tileCameraX + tileCameraVelocityX, 0, tileCameraMaximumX());
+          const nextX = clamp(tileCameraX + tileCameraVelocityX, 0, tileCameraMaximumX());
+          const reachedTarget = (
+            Math.abs(distance) < .18
+            || (distance > 0 && nextX >= tileCameraTargetX)
+            || (distance < 0 && nextX <= tileCameraTargetX)
+          );
+          tileCameraX = reachedTarget ? tileCameraTargetX : nextX;
+          if (reachedTarget) tileCameraVelocityX = 0;
           if (
-            Math.abs(tileCameraTargetX - tileCameraX) < .18
-            && Math.abs(tileCameraVelocityX) < .18
+            reachedTarget
+            || (
+              Math.abs(tileCameraTargetX - tileCameraX) < .18
+              && Math.abs(tileCameraVelocityX) < .18
+            )
           ) {
             tileCameraX = tileCameraTargetX;
             tileCameraVelocityX = 0;
@@ -567,6 +578,42 @@
       0,
       tileCameraMaximumX(geometry),
     );
+  };
+  const tileCameraRangeKeepingBoundsVisible = (
+    bounds,
+    margin = tileViewportTileFocusMargin,
+    geometry = tileViewportGeometry,
+  ) => {
+    if (!editorViewport || !geometry || !bounds) return null;
+    const origin = tileWorkspaceViewportOrigin();
+    const maximum = tileCameraMaximumX(geometry);
+    const availableMargin = Math.max(
+      0,
+      (editorViewport.clientWidth - Number(bounds.width || 0)) / 2,
+    );
+    const revealMargin = Math.min(margin, availableMargin);
+    const minimum = clamp(
+      bounds.right + revealMargin + origin.x + geometry.offsetX - editorViewport.clientWidth,
+      0,
+      maximum,
+    );
+    const maximumKeepingLeftVisible = clamp(
+      bounds.x - revealMargin + origin.x + geometry.offsetX,
+      0,
+      maximum,
+    );
+    if (minimum <= maximumKeepingLeftVisible) {
+      return {minimum, maximum: maximumKeepingLeftVisible};
+    }
+    const centered = tileScrollLeftForLogicalCenter(
+      bounds.x + bounds.width / 2,
+      geometry,
+    );
+    return {minimum: centered, maximum: centered};
+  };
+  const constrainTileCameraToVisibleBounds = (value, bounds) => {
+    const range = tileCameraRangeKeepingBoundsVisible(bounds);
+    return range ? clamp(value, range.minimum, range.maximum) : value;
   };
   const centerTileWorkspaceView = () => {
     if (!editorViewport) return;
@@ -672,7 +719,11 @@
       return;
     }
     const layout = ensureTileLayout();
-    layout.tiles[key] = structuredClone(tileLayoutDefaults.tiles[key]);
+    layout.tiles[key] = nearestAvailableTileHomeRect(
+      key,
+      layout.tiles,
+      layout.workspace,
+    );
     editorLayouts.columns = {...editorLayouts.columns, ...layout};
     applyEditorLayout(cloneLayoutState());
   };
@@ -1446,6 +1497,45 @@
     ));
   };
   const cloneTiles = tiles => Object.fromEntries(tilePanelKeys.map(key => [key, tileRect(tiles[key])]));
+  const nearestAvailableTileHomeRect = (key, tiles, workspace) => {
+    const home = tileRect(tileLayoutDefaults.tiles[key]);
+    const current = tileRect(tiles[key]);
+    const maximumX = Math.max(tileWorkspaceInset, workspace.width - home.width - tileWorkspaceInset);
+    const maximumY = Math.max(tileWorkspaceInset, workspace.height - home.height - tileWorkspaceInset);
+    const xCandidates = new Set();
+    const yCandidates = new Set();
+    const addX = value => xCandidates.add(clamp(Math.round(value), tileWorkspaceInset, maximumX));
+    const addY = value => yCandidates.add(clamp(Math.round(value), tileWorkspaceInset, maximumY));
+    [home.x, current.x, tileWorkspaceInset, maximumX].forEach(addX);
+    [home.y, current.y, tileWorkspaceInset, maximumY].forEach(addY);
+    tilePanelKeys.filter(otherKey => otherKey !== key).forEach(otherKey => {
+      const other = tiles[otherKey];
+      addX(Math.floor(other.x - home.width));
+      addX(Math.ceil(other.x + other.width));
+      addY(Math.floor(other.y - home.height));
+      addY(Math.ceil(other.y + other.height));
+    });
+    let nearest = null;
+    xCandidates.forEach(x => yCandidates.forEach(y => {
+      const rect = {...home, x, y};
+      const occupied = tilePanelKeys.some(
+        otherKey => otherKey !== key && rectanglesOverlap(rect, tiles[otherKey]),
+      );
+      if (occupied) return;
+      const dx = x - home.x;
+      const dy = y - home.y;
+      const score = dx * dx + dy * dy;
+      const axialDistance = Math.abs(dx) + Math.abs(dy);
+      if (
+        !nearest
+        || score < nearest.score
+        || (score === nearest.score && axialDistance < nearest.axialDistance)
+      ) {
+        nearest = {rect, score, axialDistance};
+      }
+    }));
+    return nearest?.rect || current;
+  };
   const syncTileSelectionClasses = () => {
     tilePanelKeys.forEach(key => {
       const panel = layoutPanels[key];
@@ -2227,28 +2317,18 @@
           const visibleBounds = tileLogicalViewportBounds(tileViewportGeometry);
           const movingBounds = tileGroupBounds(currentTiles, movingKeys);
           if (visibleBounds && movingBounds) {
-            const rightmostMovingTile = movingKeys
-              .map(movingKey => currentTiles[movingKey])
-              .reduce(
-                (rightmost, tile) =>
-                  !rightmost || tile.x + tile.width > rightmost.x + rightmost.width ? tile : rightmost,
-                null,
-              );
-            const leftmostMovingTile = movingKeys
-              .map(movingKey => currentTiles[movingKey])
-              .reduce(
-                (leftmost, tile) => !leftmost || tile.x < leftmost.x ? tile : leftmost,
-                null,
-              );
-            const rightAllowance = Number(rightmostMovingTile?.width || movingBounds.width) * .05;
-            const leftAllowance = Number(leftmostMovingTile?.width || movingBounds.width) * .05;
-            const rightOverflow = movingBounds.right - (visibleBounds.right + rightAllowance);
+            const visibleWidth = visibleBounds.right - visibleBounds.left;
+            const revealMargin = Math.min(
+              tileViewportTileFocusMargin,
+              Math.max(0, (visibleWidth - movingBounds.width) / 2),
+            );
+            const rightOverflow = movingBounds.right + revealMargin - visibleBounds.right;
             if (rightOverflow > 0) {
               movingKeys.forEach(movingKey => {
                 currentTiles[movingKey].x -= rightOverflow;
               });
             }
-            const leftOverflow = visibleBounds.left - leftAllowance - movingBounds.x;
+            const leftOverflow = visibleBounds.left + revealMargin - movingBounds.x;
             if (leftOverflow > 0) {
               movingKeys.forEach(movingKey => {
                 currentTiles[movingKey].x += leftOverflow;
@@ -2316,7 +2396,7 @@
           window.removeEventListener("pointercancel", finish, true);
           if (autoScrollFrame) cancelAnimationFrame(autoScrollFrame);
           autoScrollFrame = 0;
-          setTileCameraX(tileCameraX, {immediate: false});
+          setTileCameraX(tileCameraX);
           releasePointerCaptureSafely(handle, pointerId);
           movingKeys.forEach(movingKey => layoutPanels[movingKey]?.classList.remove("movie-tile-moving", "movie-tile-drop-invalid"));
           document.body.classList.remove("movie-panel-interacting");
@@ -2370,8 +2450,11 @@
               ? homeAxis
               : currentCenter?.x + (homeAxis - currentCenter.x) * .7;
             if (Number.isFinite(targetLogicalCenter)) {
+              const targetCameraX = tileScrollLeftForLogicalCenter(targetLogicalCenter);
               setTileCameraX(
-                tileScrollLeftForLogicalCenter(targetLogicalCenter),
+                tilesFitDefaultDisplayZone(finalTiles)
+                  ? targetCameraX
+                  : constrainTileCameraToVisibleBounds(targetCameraX, finalMovingBounds),
                 {immediate: false},
               );
             }
