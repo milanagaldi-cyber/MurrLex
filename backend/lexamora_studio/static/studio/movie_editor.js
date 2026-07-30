@@ -256,6 +256,20 @@
     Number(editorViewport?.clientWidth || 0),
     browserHorizontalViewport().width,
   );
+  const tileDisplayScale = () => {
+    const widthRatio = Number(window.outerWidth) > 0 && Number(window.innerWidth) > 0
+      ? window.outerWidth / window.innerWidth
+      : 1;
+    const visualScale = Number(window.visualViewport?.scale || 1);
+    return Math.min(
+      Number.isFinite(widthRatio) ? widthRatio : 1,
+      Number.isFinite(visualScale) ? visualScale : 1,
+    );
+  };
+  const tileCameraBoundaryPadding = () => {
+    const revealProgress = clamp((1 - tileDisplayScale()) / .10, 0, 1);
+    return revealProgress * Math.max(48, tileHorizontalViewportWidth() * .10);
+  };
   const createDefaultTileLayout = () => {
     const viewportWidth = Math.max(
       tileHorizontalViewportWidth(),
@@ -481,17 +495,44 @@
     x: Number(editorWorld?.offsetLeft || 0) + Number(editorLayout?.offsetLeft || 0),
     y: Number(editorWorld?.offsetTop || 0) + Number(editorLayout?.offsetTop || 0),
   });
-  const tileCameraMaximumX = (geometry = tileViewportGeometry) => {
-    if (!editorViewport || !geometry) return 0;
+  const tileCameraRangeX = (geometry = tileViewportGeometry) => {
+    if (!editorViewport || !geometry) return {min: 0, max: 0};
     const origin = tileWorkspaceViewportOrigin();
-    return Math.max(0, origin.x + geometry.width - tileHorizontalViewportWidth());
+    const viewportWidth = tileHorizontalViewportWidth();
+    const worldMaximum = Math.max(0, origin.x + geometry.width - viewportWidth);
+    const boundaryLeft = origin.x + geometry.offsetX;
+    const boundaryRight = boundaryLeft + geometry.workspaceWidth;
+    const padding = tileCameraBoundaryPadding();
+    const rawMinimum = boundaryLeft - padding;
+    const rawMaximum = boundaryRight + padding - viewportWidth;
+    if (rawMaximum < rawMinimum) {
+      const centered = clamp(
+        boundaryLeft + geometry.workspaceWidth / 2 - viewportWidth / 2,
+        0,
+        worldMaximum,
+      );
+      return {min: centered, max: centered};
+    }
+    const minimum = clamp(rawMinimum, 0, worldMaximum);
+    return {
+      min: minimum,
+      max: clamp(rawMaximum, minimum, worldMaximum),
+    };
+  };
+  const tileCameraMinimumX = (geometry = tileViewportGeometry) =>
+    tileCameraRangeX(geometry).min;
+  const tileCameraMaximumX = (geometry = tileViewportGeometry) =>
+    tileCameraRangeX(geometry).max;
+  const tileCameraTravelX = (geometry = tileViewportGeometry) => {
+    const range = tileCameraRangeX(geometry);
+    return Math.max(0, range.max - range.min);
   };
   const tileHomeCameraX = (geometry = tileViewportGeometry) => {
     if (!editorViewport || !geometry) return 0;
     const origin = tileWorkspaceViewportOrigin();
     return clamp(
       origin.x + geometry.workspaceCenterX - tileHorizontalViewportWidth() / 2,
-      0,
+      tileCameraMinimumX(geometry),
       tileCameraMaximumX(geometry),
     );
   };
@@ -499,15 +540,19 @@
     if (!tileCameraTrack || !tileCameraThumb || !editorViewport) return;
     const trackWidth = tileCameraTrackWidth;
     const viewportWidth = tileHorizontalViewportWidth();
-    const worldWidth = Math.max(viewportWidth, tileCameraMaximumX() + viewportWidth);
+    const minimum = tileCameraMinimumX();
+    const maximum = tileCameraMaximumX();
+    const travelX = Math.max(0, maximum - minimum);
+    const worldWidth = viewportWidth + travelX;
     const thumbWidth = clamp(
       trackWidth * viewportWidth / worldWidth,
       Math.min(48, trackWidth),
       trackWidth,
     );
     const travel = Math.max(0, trackWidth - thumbWidth);
-    const maximum = tileCameraMaximumX();
-    const thumbX = maximum > 0 ? tileCameraX / maximum * travel : 0;
+    const thumbX = travelX > 0
+      ? (tileCameraX - minimum) / travelX * travel
+      : 0;
     tileCameraThumb.style.width = `${thumbWidth}px`;
     tileCameraThumb.style.setProperty("--murrcut-camera-thumb-x", `${thumbX}px`);
   };
@@ -531,6 +576,7 @@
       );
     }
     if (tileCameraScrollbar) {
+      tileCameraScrollbar.setAttribute("aria-valuemin", String(Math.round(tileCameraMinimumX())));
       tileCameraScrollbar.setAttribute("aria-valuemax", String(Math.round(tileCameraMaximumX())));
       tileCameraScrollbar.setAttribute("aria-valuenow", String(Math.round(tileCameraX)));
     }
@@ -543,7 +589,11 @@
     tileCameraTargetX = tileCameraX;
   };
   const setTileCameraX = (value, {immediate = true, maxVelocity = 28} = {}) => {
-    const next = clamp(Number(value) || 0, 0, tileCameraMaximumX());
+    const next = clamp(
+      Number(value) || 0,
+      tileCameraMinimumX(),
+      tileCameraMaximumX(),
+    );
     tileCameraTargetX = next;
     if (!immediate) {
       tileCameraAnimationMaximumVelocity = Math.max(1, Number(maxVelocity) || 28);
@@ -557,7 +607,11 @@
             -tileCameraAnimationMaximumVelocity,
             tileCameraAnimationMaximumVelocity,
           );
-          const nextX = clamp(tileCameraX + tileCameraVelocityX, 0, tileCameraMaximumX());
+          const nextX = clamp(
+            tileCameraX + tileCameraVelocityX,
+            tileCameraMinimumX(),
+            tileCameraMaximumX(),
+          );
           const reachedTarget = (
             Math.abs(distance) < .18
             || (distance > 0 && nextX >= tileCameraTargetX)
@@ -617,7 +671,7 @@
     const currentTiles = tiles || ensureTileLayout().tiles;
     const centered = Math.abs(tileCameraX - tileHomeCameraX(tileViewportGeometry)) <= 1;
     const active = (
-      tileCameraMaximumX() > 1
+      tileCameraTravelX() > 1
       && (
         tileMoveDragActive
         || document.body.classList.contains("movie-panel-interacting")
@@ -638,7 +692,7 @@
     const origin = tileWorkspaceViewportOrigin();
     setTileCameraX(clamp(
       logicalCenter.x + origin.x + geometry.offsetX - tileHorizontalViewportWidth() / 2,
-      0,
+      tileCameraMinimumX(geometry),
       tileCameraMaximumX(geometry),
     ));
     editorViewport.scrollTop = clamp(
@@ -671,7 +725,10 @@
     const preserveViewport = (
       Number.isFinite(pendingTileCameraLogicalCenterX)
       || !usesHomeGeometry
-      || tileCameraX > 2
+      || (
+        tileViewportGeometry
+        && Math.abs(tileCameraX - tileHomeCameraX(tileViewportGeometry)) > 2
+      )
       || editorViewport.scrollTop > 2
     );
     applyTileRects(layout.tiles, {preserveViewport});
@@ -685,7 +742,7 @@
       syncTileViewportHorizontalAccess(layout.tiles);
     }
     if (!preserveViewport) {
-      setTileCameraX(0);
+      setTileCameraX(tileCameraMinimumX());
       editorViewport.scrollTop = 0;
     }
     return 0;
@@ -1619,21 +1676,11 @@
     }
     panel.classList.remove("movie-tile-pressed");
   };
-  const tileDisplayScale = () => {
-    const widthRatio = Number(window.outerWidth) > 0 && Number(window.innerWidth) > 0
-      ? window.outerWidth / window.innerWidth
-      : 1;
-    const visualScale = Number(window.visualViewport?.scale || 1);
-    return Math.min(
-      Number.isFinite(widthRatio) ? widthRatio : 1,
-      Number.isFinite(visualScale) ? visualScale : 1,
-    );
-  };
   const syncTileWorkspaceBoundary = (geometry, workspace) => {
     if (!editorLayout || !geometry || !workspace) return;
     editorLayout.classList.toggle(
       "movie-workspace-boundary-visible",
-      tileDisplayScale() <= .55,
+      tileDisplayScale() <= .92,
     );
     editorLayout.style.setProperty(
       "--murrcut-workspace-boundary-left",
@@ -1724,8 +1771,16 @@
     if (timelineShell) timelineShell.style.setProperty("height", `${Math.max(100, tiles.timeline.height - 46)}px`, "important");
     if (preserveViewport) scrollTileViewportToLogicalCenter(previousLogicalCenter);
     else {
-      tileCameraX = clamp(tileCameraX, 0, tileCameraMaximumX());
-      tileCameraTargetX = clamp(tileCameraTargetX, 0, tileCameraMaximumX());
+      tileCameraX = clamp(
+        tileCameraX,
+        tileCameraMinimumX(),
+        tileCameraMaximumX(),
+      );
+      tileCameraTargetX = clamp(
+        tileCameraTargetX,
+        tileCameraMinimumX(),
+        tileCameraMaximumX(),
+      );
       renderTileCamera();
     }
     syncTileViewportHorizontalAccess(tiles);
@@ -1790,7 +1845,7 @@
     const outerCenterX = (bounds.left + bounds.right) / 2;
     const centeredCameraX = clamp(
       origin.x + geometry.offsetX + outerCenterX - viewportWidth / 2,
-      0,
+      tileCameraMinimumX(geometry),
       tileCameraMaximumX(geometry),
     );
     if (
@@ -1806,14 +1861,14 @@
       return clamp(
         origin.x + geometry.offsetX + bounds.right
           - (viewportWidth - margin),
-        0,
+        tileCameraMinimumX(geometry),
         tileCameraMaximumX(geometry),
       );
     }
     if (leftEdgeVisible && !rightEdgeVisible) {
       return clamp(
         origin.x + geometry.offsetX + bounds.left - margin,
-        0,
+        tileCameraMinimumX(geometry),
         tileCameraMaximumX(geometry),
       );
     }
@@ -1827,14 +1882,14 @@
         return clamp(
           origin.x + geometry.offsetX + localBounds.right
             - (viewportWidth - margin),
-          0,
+          tileCameraMinimumX(geometry),
           tileCameraMaximumX(geometry),
         );
       }
       if (localSide < 0) {
         return clamp(
           origin.x + geometry.offsetX + localBounds.x - margin,
-          0,
+          tileCameraMinimumX(geometry),
           tileCameraMaximumX(geometry),
         );
       }
@@ -1955,7 +2010,7 @@
       return false;
     }
     const homeAxis = tileViewportGeometry.baseLeft + tileViewportGeometry.baseWidth / 2;
-    const horizontalOverflow = tileCameraMaximumX();
+    const horizontalOverflow = tileCameraTravelX();
     const homeCameraX = tileHomeCameraX(tileViewportGeometry);
     const axisDistance = Math.abs(tileCameraX - homeCameraX);
     if (horizontalOverflow <= 1 || axisDistance <= 1) {
@@ -2170,7 +2225,8 @@
         ? clamp((next.clientX - trackBounds.left - grabOffset) / travel, 0, 1)
         : 0;
       const previous = tileCameraX;
-      setTileCameraX(tileCameraMaximumX() * fraction);
+      const minimum = tileCameraMinimumX();
+      setTileCameraX(minimum + tileCameraTravelX() * fraction);
       if (Math.abs(tileCameraX - previous) >= .5) tileViewportScrollbarDragChanged = true;
     };
     const finish = finishEvent => {
@@ -2192,6 +2248,7 @@
     update(event);
   });
   tileCameraScrollbar?.addEventListener("keydown", event => {
+    const minimum = tileCameraMinimumX();
     const maximum = tileCameraMaximumX();
     const smallStep = Math.max(24, editorViewport.clientWidth * .05);
     const largeStep = Math.max(120, editorViewport.clientWidth * .2);
@@ -2200,7 +2257,7 @@
     else if (event.key === "ArrowRight") next = tileCameraX + smallStep;
     else if (event.key === "PageUp") next = tileCameraX - largeStep;
     else if (event.key === "PageDown") next = tileCameraX + largeStep;
-    else if (event.key === "Home") next = 0;
+    else if (event.key === "Home") next = minimum;
     else if (event.key === "End") next = maximum;
     if (next == null) return;
     event.preventDefault();
@@ -2678,7 +2735,7 @@
       if (horizontal) {
         setTileCameraX(clamp(
           beforeLeft + axisStep(horizontalPosition, bounds.left, bounds.right),
-          0,
+          tileCameraMinimumX(),
           tileCameraMaximumX(),
         ));
       }
@@ -2777,6 +2834,7 @@
         if (!tileViewportGeometry) applyTileRects(startTiles);
         const dragGeometry = tileViewportGeometry;
         const dragHorizontalExtent = tileInteractiveHorizontalExtent(dragGeometry);
+        const dragCameraMinimumX = tileCameraMinimumX(dragGeometry);
         const dragCameraMaximumX = tileCameraMaximumX(dragGeometry);
         const dragCameraSpeedMultiplier = 2;
         let active = false;
@@ -2892,7 +2950,7 @@
           ) return false;
           const nextCameraX = clamp(
             tileCameraX + Math.sign(pressure) * 15 * dragCameraSpeedMultiplier * smoothPressure,
-            0,
+            dragCameraMinimumX,
             dragCameraMaximumX,
           );
           if (Math.abs(nextCameraX - tileCameraX) < .01) return false;
