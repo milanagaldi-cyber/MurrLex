@@ -240,8 +240,27 @@
     width: Number(value?.width || 0),
     height: Number(value?.height || 0),
   });
+  const browserHorizontalViewport = () => {
+    const visualViewport = window.visualViewport;
+    const left = Math.max(0, Number(visualViewport?.offsetLeft || 0));
+    const width = Math.max(
+      1,
+      Number(visualViewport?.width || 0),
+      Number(document.documentElement.clientWidth || 0),
+      Number(window.innerWidth || 0),
+    );
+    return {left, right: left + width, width};
+  };
+  const tileHorizontalViewportWidth = () => Math.max(
+    1,
+    Number(editorViewport?.clientWidth || 0),
+    browserHorizontalViewport().width,
+  );
   const createDefaultTileLayout = () => {
-    const viewportWidth = Number(editorViewport?.clientWidth || document.documentElement.clientWidth || root.clientWidth || 1240);
+    const viewportWidth = Math.max(
+      tileHorizontalViewportWidth(),
+      Number(root.clientWidth || 1240),
+    );
     const horizontalViewportGutter = viewportWidth >= 1080 ? 64 : 0;
     const availableWidth = clamp(
       viewportWidth - horizontalViewportGutter,
@@ -308,7 +327,7 @@
     const baseRight = baseLeft + defaults.workspace.baseWidth;
     const horizontalReserve = Math.max(
       defaults.workspace.baseWidth,
-      Number(editorViewport?.clientWidth || defaults.workspace.baseWidth),
+      tileHorizontalViewportWidth(),
     );
     const horizontalLeft = baseLeft - horizontalReserve;
     const horizontalRight = baseRight + horizontalReserve;
@@ -401,7 +420,7 @@
       Number(workspace.width || defaults.workspace.width || baseWidth),
     );
     const baseRight = baseLeft + baseWidth;
-    const viewportWidth = Math.max(1, editorViewport?.clientWidth || baseWidth);
+    const viewportWidth = Math.max(baseWidth, tileHorizontalViewportWidth());
     const viewportHeight = Math.max(
       1,
       (editorViewport?.clientHeight || baseHeight) - Number(editorLayout?.offsetTop || 0),
@@ -471,13 +490,13 @@
   const tileCameraMaximumX = (geometry = tileViewportGeometry) => {
     if (!editorViewport || !geometry) return 0;
     const origin = tileWorkspaceViewportOrigin();
-    return Math.max(0, origin.x + geometry.width - editorViewport.clientWidth);
+    return Math.max(0, origin.x + geometry.width - tileHorizontalViewportWidth());
   };
   const tileHomeCameraX = (geometry = tileViewportGeometry) => {
     if (!editorViewport || !geometry) return 0;
     const origin = tileWorkspaceViewportOrigin();
     return clamp(
-      origin.x + geometry.workspaceCenterX - editorViewport.clientWidth / 2,
+      origin.x + geometry.workspaceCenterX - tileHorizontalViewportWidth() / 2,
       0,
       tileCameraMaximumX(geometry),
     );
@@ -485,9 +504,10 @@
   const renderTileCameraScrollbar = () => {
     if (!tileCameraTrack || !tileCameraThumb || !editorViewport) return;
     const trackWidth = tileCameraTrackWidth;
-    const worldWidth = Math.max(editorViewport.clientWidth, tileCameraMaximumX() + editorViewport.clientWidth);
+    const viewportWidth = tileHorizontalViewportWidth();
+    const worldWidth = Math.max(viewportWidth, tileCameraMaximumX() + viewportWidth);
     const thumbWidth = clamp(
-      trackWidth * editorViewport.clientWidth / worldWidth,
+      trackWidth * viewportWidth / worldWidth,
       Math.min(48, trackWidth),
       trackWidth,
     );
@@ -583,7 +603,7 @@
     if (!editorViewport || !geometry) return null;
     const origin = tileWorkspaceViewportOrigin();
     return {
-      x: tileCameraX + editorViewport.clientWidth / 2 - origin.x - geometry.offsetX,
+      x: tileCameraX + tileHorizontalViewportWidth() / 2 - origin.x - geometry.offsetX,
       y: editorViewport.scrollTop + editorViewport.clientHeight / 2 - origin.y - geometry.offsetY,
     };
   };
@@ -591,8 +611,7 @@
     if (!geometry) return null;
     const reserve = Math.max(
       geometry.baseWidth,
-      Number(editorViewport?.clientWidth || geometry.baseWidth)
-        * tileViewportHorizontalOverscanRatio,
+      tileHorizontalViewportWidth() * tileViewportHorizontalOverscanRatio,
     );
     return {
       left: geometry.baseLeft - reserve,
@@ -624,7 +643,7 @@
     const geometry = tileViewportGeometry;
     const origin = tileWorkspaceViewportOrigin();
     setTileCameraX(clamp(
-      logicalCenter.x + origin.x + geometry.offsetX - editorViewport.clientWidth / 2,
+      logicalCenter.x + origin.x + geometry.offsetX - tileHorizontalViewportWidth() / 2,
       0,
       tileCameraMaximumX(geometry),
     ));
@@ -677,7 +696,7 @@
     }
     return 0;
   };
-  const fitEditorViewportToWindow = () => {
+  const fitEditorViewportToWindow = ({recenterWorkspace = false} = {}) => {
     if (!editorViewport) return;
     editorViewport.scrollLeft = 0;
     ["width", "max-width", "margin-left", "margin-right"].forEach(property =>
@@ -696,6 +715,19 @@
     );
     positionTileCameraScrollbar();
     ensureTileWorkspaceCoversViewport();
+    if (recenterWorkspace && tileViewportGeometry) {
+      const layout = ensureTileLayout();
+      const balancedCameraTarget = balancedCameraTargetForTiles(
+        layout.tiles,
+        tileViewportGeometry,
+        {requireCurrentVisibility: false},
+      );
+      if (Number.isFinite(balancedCameraTarget)) {
+        pendingTileCameraLogicalCenterX = null;
+        setTileCameraX(balancedCameraTarget);
+        syncTileViewportHorizontalAccess(layout.tiles);
+      }
+    }
     scheduleTileExtentCleanup(220);
   };
   let initialTileWorkspaceCentered = false;
@@ -705,10 +737,19 @@
     requestAnimationFrame(() => requestAnimationFrame(centerTileWorkspaceView));
   };
   let editorViewportFitFrame = 0;
-  const scheduleEditorViewportFit = () => {
+  let editorViewportRecenterRequested = false;
+  const scheduleEditorViewportFit = ({recenterWorkspace = false} = {}) => {
+    editorViewportRecenterRequested = (
+      editorViewportRecenterRequested
+      || recenterWorkspace
+    );
     cancelAnimationFrame(editorViewportFitFrame);
     editorViewportFitFrame = requestAnimationFrame(() => {
-      fitEditorViewportToWindow();
+      const shouldRecenterWorkspace = editorViewportRecenterRequested;
+      editorViewportRecenterRequested = false;
+      fitEditorViewportToWindow({
+        recenterWorkspace: shouldRecenterWorkspace,
+      });
     });
   };
   const cloneLayoutState = () => ({mode: "columns", layouts: structuredClone(editorLayouts)});
@@ -1701,11 +1742,12 @@
   const tileLogicalViewportBounds = (geometry, cameraX = tileCameraX) => {
     if (!editorViewport || !geometry) return null;
     const origin = tileWorkspaceViewportOrigin();
+    const viewportWidth = tileHorizontalViewportWidth();
     const left = cameraX - origin.x - geometry.offsetX;
     const top = editorViewport.scrollTop - origin.y - geometry.offsetY;
     return {
       left,
-      right: left + editorViewport.clientWidth,
+      right: left + viewportWidth,
       top,
       bottom: top + editorViewport.clientHeight,
     };
@@ -1714,9 +1756,12 @@
     if (!editorViewport || !editorLayout || !geometry) return null;
     const viewportRect = editorViewport.getBoundingClientRect();
     const layoutRect = editorLayout.getBoundingClientRect();
+    const browserViewport = browserHorizontalViewport();
+    const screenLeft = Math.min(viewportRect.left, browserViewport.left);
+    const screenRight = Math.max(viewportRect.right, browserViewport.right);
     return {
-      left: viewportRect.left - layoutRect.left - geometry.offsetX,
-      right: viewportRect.right - layoutRect.left - geometry.offsetX,
+      left: screenLeft - layoutRect.left - geometry.offsetX,
+      right: screenRight - layoutRect.left - geometry.offsetX,
     };
   };
   const tileInteractiveHorizontalExtent = (geometry = tileViewportGeometry) => {
@@ -1759,7 +1804,8 @@
     const origin = tileWorkspaceViewportOrigin();
     const visible = tileLogicalViewportBounds(geometry, tileCameraX);
     if (!visible) return null;
-    if (geometry.workspaceWidth <= editorViewport.clientWidth + 1) {
+    const viewportWidth = tileHorizontalViewportWidth();
+    if (geometry.workspaceWidth <= viewportWidth + 1) {
       return tileHomeCameraX(geometry);
     }
     const leftEdgeVisible = (
@@ -1772,7 +1818,7 @@
     );
     const outerCenterX = (bounds.left + bounds.right) / 2;
     const centeredCameraX = clamp(
-      origin.x + geometry.offsetX + outerCenterX - editorViewport.clientWidth / 2,
+      origin.x + geometry.offsetX + outerCenterX - viewportWidth / 2,
       0,
       tileCameraMaximumX(geometry),
     );
@@ -1784,11 +1830,11 @@
       )
       && tilesFitHorizontalCameraView(tiles, geometry, centeredCameraX)
     ) return centeredCameraX;
-    const margin = editorViewport.clientWidth * tileViewportLocalFocusMarginRatio;
+    const margin = viewportWidth * tileViewportLocalFocusMarginRatio;
     if (rightEdgeVisible && !leftEdgeVisible) {
       return clamp(
         origin.x + geometry.offsetX + bounds.right
-          - (editorViewport.clientWidth - margin),
+          - (viewportWidth - margin),
         0,
         tileCameraMaximumX(geometry),
       );
@@ -1809,7 +1855,7 @@
       if (localSide > 0) {
         return clamp(
           origin.x + geometry.offsetX + localBounds.right
-            - (editorViewport.clientWidth - margin),
+            - (viewportWidth - margin),
           0,
           tileCameraMaximumX(geometry),
         );
@@ -6642,7 +6688,7 @@
   addEventListener("resize", () => {
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => {
-      scheduleEditorViewportFit();
+      scheduleEditorViewportFit({recenterWorkspace: true});
       applyPreviewZoom();
       updatePreviewGeometry();
       renderTimeline();
@@ -6651,7 +6697,7 @@
   window.visualViewport?.addEventListener("resize", () => {
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => {
-      scheduleEditorViewportFit();
+      scheduleEditorViewportFit({recenterWorkspace: true});
       applyPreviewZoom();
       updatePreviewGeometry();
       renderTimeline();
@@ -7168,9 +7214,9 @@
     renderTimeline();
   }));
   if ("ResizeObserver" in window && editorViewport) {
-    let observedViewportWidth = editorViewport.clientWidth;
+    let observedViewportWidth = tileHorizontalViewportWidth();
     new ResizeObserver(() => {
-      const nextWidth = editorViewport.clientWidth;
+      const nextWidth = tileHorizontalViewportWidth();
       if (Math.abs(nextWidth - observedViewportWidth) < 1) return;
       if (!Number.isFinite(pendingTileCameraLogicalCenterX) && tileViewportGeometry) {
         const origin = tileWorkspaceViewportOrigin();
@@ -7182,7 +7228,7 @@
         );
       }
       observedViewportWidth = nextWidth;
-      scheduleEditorViewportFit();
+      scheduleEditorViewportFit({recenterWorkspace: true});
     }).observe(editorViewport);
   }
   if ("ResizeObserver" in window && previewBody) {
