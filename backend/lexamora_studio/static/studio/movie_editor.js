@@ -140,6 +140,13 @@
     editProjectsPanel.classList.add("panel", "movie-collapsible", "movie-edit-projects-tile");
     const editProjectsDrag = editProjectsPanel.querySelector(":scope > summary") || editProjectsPanel;
     editProjectsDrag.dataset.panelDrag = "editProjects";
+    const editProjectsToggle = editProjectsDrag.querySelector(":scope > span");
+    if (editProjectsToggle) {
+      editProjectsToggle.dataset.editProjectsToggle = "";
+      editProjectsDrag.addEventListener("click", event => {
+        if (!editProjectsToggle.contains(event.target)) event.preventDefault();
+      });
+    }
   }
   if (editorLayout) {
     if (editProjectsPanel) editorLayout.appendChild(editProjectsPanel);
@@ -1029,8 +1036,19 @@
     setTimeout(() => element.classList.remove("movie-window-action-flash"), 620);
   };
   let lastLayoutLockWarning = 0;
+  let layoutLockFlashTimer = 0;
   const flashLayoutLock = () => {
-    flashWindowAction(q("[data-layout-lock]"));
+    const button = q("[data-layout-lock]");
+    if (button) {
+      if (layoutLockFlashTimer) clearTimeout(layoutLockFlashTimer);
+      button.classList.remove("movie-layout-lock-warning");
+      void button.offsetWidth;
+      button.classList.add("movie-layout-lock-warning");
+      layoutLockFlashTimer = setTimeout(() => {
+        button.classList.remove("movie-layout-lock-warning");
+        layoutLockFlashTimer = 0;
+      }, 1000);
+    }
     if (Date.now() - lastLayoutLockWarning > 900) {
       lastLayoutLockWarning = Date.now();
       toast("Layout is locked", "warning");
@@ -2945,6 +2963,15 @@
       "[data-timeline-height-resizer]",
       "[data-timeline-bottom-resizer]",
     ].join(",");
+    const tileDragTargetIsBlocked = (target, key, panel) => {
+      if (key === "editProjects") {
+        const summary = panel?.querySelector(":scope > summary");
+        if (summary?.contains(target)) {
+          return Boolean(target.closest("[data-edit-projects-toggle]"));
+        }
+      }
+      return Boolean(target.closest(tileDragBlockedSelector));
+    };
     const pointerNearTileEdge = (event, panel, inset = 14) => {
       const bounds = panel.getBoundingClientRect();
       return (
@@ -2977,7 +3004,7 @@
           !canEdit
           || event.button !== 0
           || event.defaultPrevented
-          || event.target.closest(tileDragBlockedSelector)
+          || tileDragTargetIsBlocked(event.target, key, panel)
         ) return false;
         if (layoutLocked) {
           event.preventDefault();
@@ -3295,7 +3322,7 @@
             !canEdit
             || event.button !== 0
             || event.defaultPrevented
-            || event.target.closest(tileDragBlockedSelector)
+            || tileDragTargetIsBlocked(event.target, key, panel)
             || (
               key === "media"
               && pointerOnElementScrollbar(event, event.target.closest("[data-movie-bin]"))
@@ -6941,6 +6968,33 @@
   q("[data-render-close]")?.addEventListener("click", () => { renderPanel.hidden = true; });
   q("[data-render-start]")?.addEventListener("click", queueRender);
   q("[data-save-movie]")?.addEventListener("click", () => saveTimeline());
+  const movieTitleInput = q("[data-movie-title]");
+  let movieTitleEditStart = movieTitleInput?.value || "";
+  movieTitleInput?.addEventListener("dblclick", event => {
+    if (!canEdit) return;
+    event.preventDefault();
+    event.stopPropagation();
+    movieTitleEditStart = movieTitleInput.value;
+    movieTitleInput.readOnly = false;
+    movieTitleInput.classList.add("movie-title-editing");
+    movieTitleInput.focus();
+    movieTitleInput.select();
+  });
+  movieTitleInput?.addEventListener("keydown", event => {
+    if (movieTitleInput.readOnly) return;
+    if (event.key === "Enter") {
+      event.preventDefault();
+      movieTitleInput.blur();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      movieTitleInput.value = movieTitleEditStart;
+      movieTitleInput.blur();
+    }
+  });
+  movieTitleInput?.addEventListener("blur", () => {
+    movieTitleInput.readOnly = true;
+    movieTitleInput.classList.remove("movie-title-editing");
+  });
   qa("[data-movie-title],[data-movie-ratio],[data-movie-resolution],[data-movie-fps]").forEach(control => {
     const capture = () => settingSnapshots.set(control, currentState());
     control.addEventListener("focus", capture);
@@ -7009,6 +7063,7 @@
       selectTrack(null, {render: false});
     }
     qa("details[open]").forEach(details => {
+      if (details === editProjectsPanel) return;
       if (!event.target.closest("summary") || !details.contains(event.target)) details.removeAttribute("open");
     });
   });
