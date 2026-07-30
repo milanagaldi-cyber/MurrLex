@@ -364,6 +364,7 @@
   const tileViewportMinimumReveal = 48;
   const tileExtentCleanupMargin = 32;
   const tileViewportTileFocusMargin = 18;
+  const tileViewportHorizontalActivationRatio = .12;
   const tileWorkspaceTopReveal = 32;
   const tileCrossingBarrierReleaseDistance = 18;
   const tileBounds = tiles => {
@@ -671,7 +672,7 @@
     const startCenter = startBounds.x + startBounds.width / 2;
     const returnSide = Math.sign(startCenter - homeAxis);
     if (!returnSide) return null;
-    const margin = editorViewport.clientWidth * .12;
+    const margin = editorViewport.clientWidth * tileViewportHorizontalActivationRatio;
     const range = tileCameraRangeKeepingBoundsVisible(
       bounds,
       margin,
@@ -2452,6 +2453,8 @@
       ".icon-tool",
       ".business-command-icon",
       "svg",
+      ".movie-bin-item",
+      ".movie-bin-folder-tile",
       ".movie-tile-edge",
       ".movie-window-resize-handle",
       "[data-panel-width-resizer]",
@@ -2467,6 +2470,16 @@
         || event.clientX >= bounds.right - inset
         || event.clientY <= bounds.top + inset
         || event.clientY >= bounds.bottom - inset
+      );
+    };
+    const pointerOnElementScrollbar = (event, element) => {
+      if (!element) return false;
+      const bounds = element.getBoundingClientRect();
+      const verticalWidth = Math.max(0, element.offsetWidth - element.clientWidth);
+      const horizontalHeight = Math.max(0, element.offsetHeight - element.clientHeight);
+      return (
+        (verticalWidth > 0 && event.clientX >= bounds.right - verticalWidth)
+        || (horizontalHeight > 0 && event.clientY >= bounds.bottom - horizontalHeight)
       );
     };
 
@@ -2732,7 +2745,9 @@
           const movingBounds = tileGroupBounds(currentTiles, movingKeys);
           const visibleBounds = tileLogicalViewportBounds(dragGeometry);
           if (!movingBounds || !visibleBounds) return false;
-          const triggerDistance = clamp(editorViewport.clientWidth * .035, 28, 52);
+          const triggerDistance = (
+            editorViewport.clientWidth * tileViewportHorizontalActivationRatio
+          );
           const rightGap = visibleBounds.right - movingBounds.right;
           const leftGap = movingBounds.x - visibleBounds.left;
           let pressure = 0;
@@ -2921,6 +2936,10 @@
             || event.button !== 0
             || event.defaultPrevented
             || event.target.closest(tileDragBlockedSelector)
+            || (
+              key === "media"
+              && pointerOnElementScrollbar(event, event.target.closest("[data-movie-bin]"))
+            )
             || pointerNearTileEdge(event, panel)
           ) return;
           beginTileDrag(event);
@@ -3077,7 +3096,9 @@
           const movingBounds = tileGroupBounds(currentTiles, [key]);
           const visibleBounds = tileLogicalViewportBounds(tileViewportGeometry);
           if (!movingBounds || !visibleBounds) return;
-          const triggerDistance = clamp(editorViewport.clientWidth * .035, 28, 52);
+          const triggerDistance = (
+            editorViewport.clientWidth * tileViewportHorizontalActivationRatio
+          );
           const gap = horizontalSide > 0
             ? visibleBounds.right - movingBounds.right
             : movingBounds.x - visibleBounds.left;
@@ -6442,6 +6463,7 @@
   });
   bin?.addEventListener("pointerdown", event => {
     if (event.button !== 0 || event.target.closest(".movie-bin-item,.movie-bin-folder-tile,button,input,select,label")) return;
+    if (!event.shiftKey) return;
     event.preventDefault();
     mediaSelectionActive = true;
     const startX = event.clientX;
