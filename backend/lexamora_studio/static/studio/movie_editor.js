@@ -1743,7 +1743,7 @@
     );
     editorLayout.style.setProperty(
       "--murrcut-workspace-boundary-top",
-      `${geometry.offsetY}px`,
+      `${geometry.offsetY + tileWorkspaceInset}px`,
     );
     editorLayout.style.setProperty(
       "--murrcut-workspace-boundary-width",
@@ -1751,7 +1751,7 @@
     );
     editorLayout.style.setProperty(
       "--murrcut-workspace-boundary-height",
-      `${workspace.height}px`,
+      `${Math.max(0, workspace.height - tileWorkspaceInset * 2)}px`,
     );
   };
   const tileGroupBounds = (tiles, keys) => {
@@ -2031,7 +2031,6 @@
       right: Math.max(requiredExtent.right, overscanExtent.right),
     };
     const symmetricHorizontalReserve = Math.max(
-      requiredGeometry.baseLeft - overscanExtent.left,
       requiredGeometry.baseLeft - requiredExtent.left,
       requiredExtent.right - baseRight,
       requiredGeometry.baseLeft - previousExtent.left,
@@ -2102,6 +2101,66 @@
       right: left + viewportWidth,
       top,
       bottom: top + editorViewport.clientHeight,
+    };
+  };
+  const tileCameraXForLogicalLeft = (logicalLeft, geometry = tileViewportGeometry) => {
+    if (!geometry) return tileCameraX;
+    const origin = tileWorkspaceViewportOrigin();
+    return clamp(
+      origin.x + geometry.offsetX + logicalLeft,
+      tileCameraMinimumX(geometry),
+      tileCameraMaximumX(geometry),
+    );
+  };
+  const tileScrollTopForLogicalTop = (logicalTop, geometry = tileViewportGeometry) => {
+    if (!editorViewport || !geometry) return 0;
+    const origin = tileWorkspaceViewportOrigin();
+    return clamp(
+      origin.y + geometry.offsetY + logicalTop,
+      0,
+      Math.max(0, editorViewport.scrollHeight - editorViewport.clientHeight),
+    );
+  };
+  const tileContentCleanupTarget = (
+    tiles,
+    geometry = tileViewportGeometry,
+    visible = tileLogicalViewportBounds(geometry),
+  ) => {
+    if (!editorViewport || !tiles || !geometry || !visible) return null;
+    const bounds = tileBounds(tiles);
+    const viewportWidth = tileHorizontalViewportWidth();
+    const viewportHeight = editorViewport.clientHeight;
+    const marginX = viewportWidth * tileViewportLocalFocusMarginRatio;
+    const topMargin = Math.min(
+      viewportHeight * tileViewportLocalFocusMarginRatio,
+      marginX,
+    );
+    const bottomMargin = topMargin * 2;
+    let logicalLeft = visible.left;
+    let logicalTop = visible.top;
+    const contentWidth = bounds.right - bounds.left;
+    const contentHeight = bounds.bottom - bounds.top;
+    if (contentWidth + marginX * 2 <= viewportWidth) {
+      logicalLeft = (bounds.left + bounds.right - viewportWidth) / 2;
+    } else if (visible.left < bounds.left - marginX) {
+      logicalLeft = bounds.left - marginX;
+    } else if (visible.right > bounds.right + marginX) {
+      logicalLeft = bounds.right + marginX - viewportWidth;
+    }
+    if (contentHeight + topMargin + bottomMargin <= viewportHeight) {
+      const extra = Math.max(
+        0,
+        viewportHeight - contentHeight - topMargin - bottomMargin,
+      );
+      logicalTop = bounds.top - topMargin - extra / 2;
+    } else if (visible.top < bounds.top - topMargin) {
+      logicalTop = bounds.top - topMargin;
+    } else if (visible.bottom > bounds.bottom + bottomMargin) {
+      logicalTop = bounds.bottom + bottomMargin - viewportHeight;
+    }
+    return {
+      cameraX: tileCameraXForLogicalLeft(logicalLeft, geometry),
+      scrollTop: tileScrollTopForLogicalTop(logicalTop, geometry),
     };
   };
   const tileInteractiveHorizontalExtent = (geometry = tileViewportGeometry) => {
@@ -2250,6 +2309,49 @@
     }
     return null;
   };
+  const animateTileViewportToTarget = (
+    {cameraX = tileCameraX, scrollTop = editorViewport?.scrollTop || 0},
+    {duration = 240} = {},
+  ) => {
+    if (!editorViewport) return false;
+    const targetLeft = clamp(
+      cameraX,
+      tileCameraMinimumX(),
+      tileCameraMaximumX(),
+    );
+    const targetTop = clamp(
+      scrollTop,
+      0,
+      Math.max(0, editorViewport.scrollHeight - editorViewport.clientHeight),
+    );
+    const startLeft = tileCameraX;
+    const startTop = editorViewport.scrollTop;
+    if (
+      Math.abs(targetLeft - startLeft) < 1
+      && Math.abs(targetTop - startTop) < 1
+    ) return false;
+    cancelTileHomeCenter();
+    tileSelectionFocusActive = true;
+    const startedAt = performance.now();
+    const step = now => {
+      const progress = clamp((now - startedAt) / duration, 0, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setTileCameraX(startLeft + (targetLeft - startLeft) * eased);
+      editorViewport.scrollTop = startTop + (targetTop - startTop) * eased;
+      if (progress < 1) {
+        tileHomeCenterFrame = requestAnimationFrame(step);
+        return;
+      }
+      tileHomeCenterFrame = 0;
+      tileSelectionFocusActive = false;
+      setTileCameraX(targetLeft);
+      editorViewport.scrollTop = targetTop;
+      syncTileViewportHorizontalAccess(tileRenderedTiles);
+      scheduleTileViewportScrollbarIdle();
+    };
+    tileHomeCenterFrame = requestAnimationFrame(step);
+    return true;
+  };
   const cleanupTileWorkspaceExtent = () => {
     tileExtentCleanupTimer = 0;
     if (!editorViewport || !tileViewportGeometry || !tileAllocatedExtent) return;
@@ -2259,10 +2361,8 @@
     const visible = tileLogicalViewportBounds(tileViewportGeometry);
     if (!visible) return;
     const next = {...tileAllocatedExtent};
-    const overscanExtent = fullTileHorizontalOverscanExtent(tileViewportGeometry);
     const baseRight = tileViewportGeometry.baseLeft + tileViewportGeometry.baseWidth;
     const symmetricHorizontalReserve = Math.max(
-      tileViewportGeometry.baseLeft - overscanExtent.left,
       tileViewportGeometry.baseLeft - required.left,
       required.right - baseRight,
     );
@@ -2279,9 +2379,15 @@
     const changed = ["left", "right", "bottom"].some(
       side => Math.abs(Number(next[side]) - Number(tileAllocatedExtent[side])) >= 1
     );
-    if (!changed) return;
-    tileAllocatedExtent = next;
-    applyTileRects(renderedTiles, {preserveViewport: true, scheduleCleanup: false});
+    if (changed) {
+      tileAllocatedExtent = next;
+      applyTileRects(renderedTiles, {preserveViewport: true, scheduleCleanup: false});
+    }
+    const cleanupTarget = tileContentCleanupTarget(
+      renderedTiles,
+      tileViewportGeometry,
+    );
+    if (cleanupTarget) animateTileViewportToTarget(cleanupTarget);
     const hasMore = (
       next.left < safeLeft - 1
       || next.right > safeRight + 1
@@ -2488,63 +2594,77 @@
     const rect = layout.tiles[key];
     const visible = tileLogicalViewportBounds(tileViewportGeometry);
     if (!rect || !visible) return false;
-    const right = rect.x + rect.width;
-    const bottom = rect.y + rect.height;
-    const intersects = (
-      right > visible.left
-      && rect.x < visible.right
-      && bottom > visible.top
-      && rect.y < visible.bottom
-    );
-    const clipped = (
-      rect.x < visible.left - 1
-      || right > visible.right + 1
-      || rect.y < visible.top - 1
-      || bottom > visible.bottom + 1
-    );
-    if (!intersects || !clipped) return false;
     const viewportWidth = tileHorizontalViewportWidth();
     const viewportHeight = editorViewport.clientHeight;
-    const marginX = Math.min(32, Math.max(12, viewportWidth * .05));
-    const marginY = Math.min(32, Math.max(12, viewportHeight * .05));
-    let targetLogicalLeft = visible.left;
-    let targetLogicalTop = visible.top;
-    if (rect.width + marginX * 2 <= viewportWidth) {
-      if (rect.x < visible.left + marginX) {
-        targetLogicalLeft = rect.x - marginX;
-      } else if (right > visible.right - marginX) {
-        targetLogicalLeft = right - viewportWidth + marginX;
-      }
-    } else if (rect.x < visible.left && right <= visible.right) {
-      targetLogicalLeft = rect.x - marginX;
-    } else if (right > visible.right && rect.x >= visible.left) {
-      targetLogicalLeft = right - viewportWidth + marginX;
-    } else {
-      targetLogicalLeft = rect.x + rect.width / 2 - viewportWidth / 2;
-    }
-    if (rect.height + marginY * 2 <= viewportHeight) {
-      if (rect.y < visible.top + marginY) {
-        targetLogicalTop = rect.y - marginY;
-      } else if (bottom > visible.bottom - marginY) {
-        targetLogicalTop = bottom - viewportHeight + marginY;
-      }
-    } else if (rect.y < visible.top && bottom <= visible.bottom) {
-      targetLogicalTop = rect.y - marginY;
-    } else if (bottom > visible.bottom && rect.y >= visible.top) {
-      targetLogicalTop = bottom - viewportHeight + marginY;
-    } else {
-      targetLogicalTop = rect.y + rect.height / 2 - viewportHeight / 2;
-    }
-    const origin = tileWorkspaceViewportOrigin();
-    const targetLeft = clamp(
-      origin.x + tileViewportGeometry.offsetX + targetLogicalLeft,
-      tileCameraMinimumX(tileViewportGeometry),
-      tileCameraMaximumX(tileViewportGeometry),
+    const marginX = Math.min(
+      viewportWidth * tileViewportLocalFocusMarginRatio,
+      Math.max(0, (viewportWidth - rect.width) / 2),
     );
-    const targetTop = clamp(
-      origin.y + tileViewportGeometry.offsetY + targetLogicalTop,
-      0,
-      Math.max(0, editorViewport.scrollHeight - viewportHeight),
+    const marginY = Math.min(
+      viewportHeight * tileViewportLocalFocusMarginRatio,
+      Math.max(0, (viewportHeight - rect.height) / 2),
+    );
+    const keys = tilePanelKeys.filter(tileKey => layout.tiles[tileKey]);
+    const selectedIndex = keys.indexOf(key);
+    let best = null;
+    for (let mask = 0; mask < 2 ** keys.length; mask += 1) {
+      if (!(mask & (1 << selectedIndex))) continue;
+      const subsetKeys = keys.filter((tileKey, index) => mask & (1 << index));
+      const subsetBounds = tileGroupBounds(layout.tiles, subsetKeys);
+      if (
+        !subsetBounds
+        || subsetBounds.width + marginX * 2 > viewportWidth + 1
+        || subsetBounds.height + marginY * 2 > viewportHeight + 1
+      ) continue;
+      const logicalLeft = subsetBounds.x + subsetBounds.width / 2 - viewportWidth / 2;
+      const logicalTop = subsetBounds.y + subsetBounds.height / 2 - viewportHeight / 2;
+      const movement = (
+        Math.abs(logicalLeft - visible.left)
+        + Math.abs(logicalTop - visible.top)
+      );
+      const tileArea = subsetKeys.reduce((sum, tileKey) => {
+        const tile = layout.tiles[tileKey];
+        return sum + tile.width * tile.height;
+      }, 0);
+      const candidate = {
+        bounds: subsetBounds,
+        count: subsetKeys.length,
+        tileArea,
+        movement,
+      };
+      if (
+        !best
+        || candidate.count > best.count
+        || (
+          candidate.count === best.count
+          && candidate.tileArea > best.tileArea
+        )
+        || (
+          candidate.count === best.count
+          && candidate.tileArea === best.tileArea
+          && candidate.movement < best.movement
+        )
+      ) best = candidate;
+    }
+    const focusBounds = best?.bounds || {
+      x: rect.x,
+      y: rect.y,
+      width: rect.width,
+      height: rect.height,
+    };
+    const targetLogicalLeft = (
+      focusBounds.x + focusBounds.width / 2 - viewportWidth / 2
+    );
+    const targetLogicalTop = (
+      focusBounds.y + focusBounds.height / 2 - viewportHeight / 2
+    );
+    const targetLeft = tileCameraXForLogicalLeft(
+      targetLogicalLeft,
+      tileViewportGeometry,
+    );
+    const targetTop = tileScrollTopForLogicalTop(
+      targetLogicalTop,
+      tileViewportGeometry,
     );
     const startLeft = tileCameraX;
     const startTop = editorViewport.scrollTop;
@@ -2573,8 +2693,7 @@
       setTileCameraX(targetLeft);
       editorViewport.scrollTop = targetTop;
       syncTileViewportHorizontalAccess(layout.tiles);
-      tileExtentCleanupSuppressedUntil = Date.now() + 120;
-      window.setTimeout(() => scheduleTileExtentCleanup(0), 130);
+      tileExtentCleanupSuppressedUntil = Date.now() + 420;
       scheduleTileViewportScrollbarIdle();
     };
     tileHomeCenterFrame = requestAnimationFrame(step);
@@ -3554,6 +3673,17 @@
                 },
               )
             : null;
+          const cleanupTarget = dropAccepted
+            ? tileContentCleanupTarget(finalTiles, tileViewportGeometry)
+            : null;
+          const finalLocalEscaped = Boolean(
+            finalLocalBounds
+            && dragStartViewportBounds
+            && (
+              finalLocalBounds.x < dragStartViewportBounds.left - 1
+              || finalLocalBounds.right > dragStartViewportBounds.right + 1
+            )
+          );
           if (!dropAccepted) {
             const cleanupDelay = Math.max(
               180,
@@ -3562,14 +3692,16 @@
             window.setTimeout(() => scheduleTileExtentCleanup(0), cleanupDelay);
           }
           syncTileViewportHorizontalAccess(finalTiles);
-          if (Number.isFinite(balancedCameraTarget)) {
-            setTileCameraX(
-              balancedCameraTarget,
-              {
-                immediate: false,
-                maxVelocity: 14,
-              },
-            );
+          if (
+            Number.isFinite(balancedCameraTarget)
+            || cleanupTarget
+          ) {
+            animateTileViewportToTarget({
+              cameraX: finalLocalEscaped && Number.isFinite(balancedCameraTarget)
+                ? balancedCameraTarget
+                : (cleanupTarget?.cameraX ?? balancedCameraTarget),
+              scrollTop: cleanupTarget?.scrollTop ?? editorViewport.scrollTop,
+            });
             settleTileViewportAfterScroll(80);
             scheduleTileExtentCleanup(100);
           } else {
@@ -3960,10 +4092,28 @@
               localStableCameraX: resizeStartCameraX,
             },
           );
-          if (Number.isFinite(balancedCameraTarget)) {
-            setTileCameraX(balancedCameraTarget, {
-              immediate: false,
-              maxVelocity: 14,
+          const cleanupTarget = tileContentCleanupTarget(
+            currentTiles,
+            tileViewportGeometry,
+          );
+          const resizedBounds = tileGroupBounds(currentTiles, [key]);
+          const resizedEscaped = Boolean(
+            resizedBounds
+            && resizeStartViewportBounds
+            && (
+              resizedBounds.x < resizeStartViewportBounds.left - 1
+              || resizedBounds.right > resizeStartViewportBounds.right + 1
+            )
+          );
+          if (
+            Number.isFinite(balancedCameraTarget)
+            || cleanupTarget
+          ) {
+            animateTileViewportToTarget({
+              cameraX: resizedEscaped && Number.isFinite(balancedCameraTarget)
+                ? balancedCameraTarget
+                : (cleanupTarget?.cameraX ?? balancedCameraTarget),
+              scrollTop: cleanupTarget?.scrollTop ?? editorViewport.scrollTop,
             });
           } else {
             setTileCameraX(tileCameraX);
