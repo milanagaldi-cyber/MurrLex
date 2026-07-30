@@ -1045,63 +1045,81 @@ body.movie-editor-page-active .movie-editor-layout{
   display:block;
   box-sizing:border-box;
   width:100vw;
-  height:12px;
-  padding:2px 8px;
+  height:24px;
+  padding:4px 8px;
   opacity:0;
   visibility:hidden;
   pointer-events:none;
-  transition:opacity .12s linear,visibility 0s linear .12s;
+  transition:opacity .6s ease,visibility 0s linear .6s;
 }
 .movie-camera-scrollbar.is-active{
-  opacity:1;
+  opacity:.7;
   visibility:visible;
   pointer-events:auto;
-  transition:opacity .12s linear,visibility 0s linear;
+  transition:opacity .25s ease,visibility 0s linear;
+}
+.movie-camera-scrollbar.is-active.movie-scrollbars-idle{
+  opacity:0;
+  visibility:visible;
+  pointer-events:auto;
+  transition:opacity .6s ease;
+}
+.movie-camera-scrollbar.is-active.movie-scrollbars-idle:hover{
+  opacity:.7;
 }
 .movie-camera-scrollbar-track{
   position:relative;
   display:block;
   width:100%;
-  height:8px;
-  border-radius:4px;
+  height:16px;
+  border-radius:8px;
   background:color-mix(in srgb,var(--bg) 78%,var(--line));
-  cursor:pointer;
+  cursor:default;
 }
 .movie-camera-scrollbar-thumb{
   position:absolute;
-  top:1px;
+  top:2px;
   left:0;
   display:block;
-  height:6px;
+  height:12px;
   min-width:48px;
-  border-radius:3px;
+  border-radius:6px;
   background:color-mix(in srgb,var(--muted) 60%,transparent);
-  cursor:ew-resize;
+  cursor:default;
   transform:translate3d(var(--murrcut-camera-thumb-x,0px),0,0);
   will-change:transform;
 }
 body.movie-editor-page-active .movie-editor-viewport{
-  scrollbar-width:thin;
+  scrollbar-width:auto;
   scrollbar-color:
-    color-mix(in srgb,var(--muted) 60%,transparent)
-    color-mix(in srgb,var(--bg) 78%,var(--line));
+    color-mix(in srgb,var(--muted) 42%,transparent)
+    color-mix(in srgb,var(--line) 35%,transparent);
 }
 body.movie-editor-page-active .movie-editor-viewport::-webkit-scrollbar{
-  width:12px;
+  width:24px;
   height:0;
 }
 body.movie-editor-page-active .movie-editor-viewport::-webkit-scrollbar-thumb{
   min-height:48px;
-  border:3px solid transparent!important;
-  border-radius:6px!important;
-  background-color:color-mix(in srgb,var(--muted) 60%,transparent)!important;
+  border:6px solid transparent!important;
+  border-radius:12px!important;
+  background-color:color-mix(in srgb,var(--muted) 42%,transparent)!important;
   background-clip:padding-box!important;
-  transition:background-color .12s linear,border-color .12s linear;
+  transition:background-color .6s ease,border-color .6s ease;
 }
 body.movie-editor-page-active .movie-editor-viewport::-webkit-scrollbar-track,
 body.movie-editor-page-active .movie-editor-viewport::-webkit-scrollbar-corner{
-  background-color:color-mix(in srgb,var(--bg) 78%,var(--line))!important;
-  transition:background-color .12s linear,border-color .12s linear;
+  background-color:color-mix(in srgb,var(--line) 35%,transparent)!important;
+  transition:background-color .6s ease,border-color .6s ease;
+}
+body.movie-editor-page-active .movie-editor-viewport.movie-scrollbars-idle{
+  scrollbar-color:transparent transparent;
+}
+body.movie-editor-page-active .movie-editor-viewport.movie-scrollbars-idle::-webkit-scrollbar-thumb,
+body.movie-editor-page-active .movie-editor-viewport.movie-scrollbars-idle::-webkit-scrollbar-track,
+body.movie-editor-page-active .movie-editor-viewport.movie-scrollbars-idle::-webkit-scrollbar-corner{
+  border-color:transparent!important;
+  background-color:transparent!important;
 }
 .movie-editor-layout,
 .movie-editor-layout[data-layout="columns"],
@@ -1267,7 +1285,8 @@ body.movie-panel-interacting *{
 }
 .movie-editor-layout [data-panel-key].movie-tile-moving{
   opacity:.92;
-  z-index:60!important;
+  z-index:1000!important;
+  isolation:isolate;
   transform:translate3d(
     var(--murrcut-tile-drag-x,0px),
     var(--murrcut-tile-drag-y,0px),
@@ -1420,4 +1439,4 @@ body.movie-panel-interacting *{
 </section>
 {{ movie_timeline_data|json_script:"movie-timeline-data" }}{{ movie_assets|json_script:"movie-assets-data" }}{{ movie_library_assets|json_script:"movie-library-data" }}{{ movie_render_jobs|json_script:"movie-render-jobs-data" }}{{ movie_edits|json_script:"movie-edits-data" }}
 {% endblock %}
-{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260730-first-drag-settle"></script>{% endblock %}
+{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260730-resilient-camera-scrollbars"></script>{% endblock %}

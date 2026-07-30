@@ -344,10 +344,12 @@
   let tileCameraFrame = 0;
   let tileCameraTrackWidth = 1;
   let tileProjectHeaderHomeLeft = null;
+  let tileViewportScrollbarHotZoneHovered = false;
   let pendingTileCameraLogicalCenterX = null;
   const tileViewportMinimumReveal = 48;
   const tileExtentCleanupMargin = 32;
   const tileViewportTileFocusMargin = 18;
+  const tileWorkspaceTopReveal = 18;
   const tileBounds = tiles => {
     const rects = tilePanelKeys.map(key => tiles[key]).filter(Boolean);
     return {
@@ -415,9 +417,12 @@
     const baseDisplayLeft = Math.max(centerX, leftReserve);
     return {
       offsetX: baseDisplayLeft - baseLeft,
-      offsetY: -baseTop,
+      offsetY: tileWorkspaceTopReveal - baseTop,
       width: Math.ceil(Math.max(coreWidth, baseDisplayLeft + baseWidth + rightReserve)),
-      height: Math.ceil(Math.max(viewportHeight, occupiedHeight + bottomReserve)),
+      height: Math.ceil(Math.max(
+        viewportHeight,
+        tileWorkspaceTopReveal + occupiedHeight + bottomReserve,
+      )),
       bounds,
       baseLeft,
       baseTop,
@@ -1693,10 +1698,22 @@
     }
   };
   const scheduleTileExtentCleanup = (delay = 160) => {
-    if (tileMoveDragActive || tileCameraFrame) return;
-    if (Date.now() < tileExtentCleanupSuppressedUntil) return;
     if (tileExtentCleanupTimer) return;
-    tileExtentCleanupTimer = setTimeout(cleanupTileWorkspaceExtent, delay);
+    const suppressionDelay = Math.max(0, tileExtentCleanupSuppressedUntil - Date.now() + 10);
+    tileExtentCleanupTimer = setTimeout(() => {
+      tileExtentCleanupTimer = 0;
+      if (
+        tileMoveDragActive
+        || tileHomeCenterFrame
+        || tileCameraFrame
+        || document.body.classList.contains("movie-panel-interacting")
+        || Date.now() < tileExtentCleanupSuppressedUntil
+      ) {
+        scheduleTileExtentCleanup(120);
+        return;
+      }
+      cleanupTileWorkspaceExtent();
+    }, Math.max(0, delay, suppressionDelay));
   };
   const hideTileCenterAxis = () => {
     if (tileCenterAxisTimer) clearTimeout(tileCenterAxisTimer);
@@ -1829,9 +1846,21 @@
   const scheduleTileViewportScrollbarIdle = () => {
     if (!editorViewport) return;
     if (tileViewportScrollbarIdleTimer) clearTimeout(tileViewportScrollbarIdleTimer);
-    tileViewportScrollbarIdleTimer = 0;
-    editorViewport.classList.remove("movie-scrollbars-idle");
-    tileCameraScrollbar?.classList.remove("movie-scrollbars-idle");
+    tileViewportScrollbarIdleTimer = window.setTimeout(() => {
+      tileViewportScrollbarIdleTimer = 0;
+      if (
+        tileMoveDragActive
+        || tileViewportScrollbarDragPointerId !== null
+        || document.body.classList.contains("movie-panel-interacting")
+        || tileViewportScrollbarHotZoneHovered
+        || tileCameraScrollbar?.matches(":hover")
+      ) {
+        scheduleTileViewportScrollbarIdle();
+        return;
+      }
+      editorViewport.classList.add("movie-scrollbars-idle");
+      tileCameraScrollbar?.classList.add("movie-scrollbars-idle");
+    }, 3000);
   };
   const settleTileViewportAfterScroll = (delay = 140) => {
     if (tileViewportScrollSettleTimer) clearTimeout(tileViewportScrollSettleTimer);
@@ -1843,6 +1872,7 @@
         || tileCameraFrame
         || document.body.classList.contains("movie-panel-interacting")
       ) {
+        settleTileViewportAfterScroll(Math.max(80, delay));
         return;
       }
       settleTileViewportOnHomeAxis({toleranceRatio: .05});
@@ -1850,7 +1880,9 @@
   };
   tileCameraScrollbar?.addEventListener("pointerenter", () => {
     revealTileViewportScrollbars();
-    scheduleTileViewportScrollbarIdle();
+  });
+  tileCameraScrollbar?.addEventListener("pointerleave", () => {
+    if (tileViewportScrollbarDragPointerId === null) scheduleTileViewportScrollbarIdle();
   });
   tileCameraScrollbar?.addEventListener("pointerdown", event => {
     if (event.button !== 0 || !tileCameraTrack || !tileCameraThumb) return;
@@ -1919,9 +1951,27 @@
     scheduleTileViewportScrollbarIdle();
   }, {passive: true});
   editorViewport?.addEventListener("scroll", () => {
+    revealTileViewportScrollbars();
+    scheduleTileViewportScrollbarIdle();
     scheduleTileExtentCleanup(
       document.body.classList.contains("movie-panel-interacting") ? 90 : 180
     );
+  }, {passive: true});
+  editorViewport?.addEventListener("pointermove", event => {
+    const bounds = editorViewport.getBoundingClientRect();
+    const inVerticalScrollbarZone = bounds.right - event.clientX <= 28;
+    if (inVerticalScrollbarZone) {
+      tileViewportScrollbarHotZoneHovered = true;
+      revealTileViewportScrollbars();
+    } else if (tileViewportScrollbarHotZoneHovered) {
+      tileViewportScrollbarHotZoneHovered = false;
+      scheduleTileViewportScrollbarIdle();
+    }
+  }, {passive: true});
+  editorViewport?.addEventListener("pointerleave", () => {
+    if (!tileViewportScrollbarHotZoneHovered) return;
+    tileViewportScrollbarHotZoneHovered = false;
+    scheduleTileViewportScrollbarIdle();
   }, {passive: true});
   window.addEventListener("pointerup", () => scheduleTileExtentCleanup(180), {passive: true});
   const nearestTileSnap = (value, candidates) => {
