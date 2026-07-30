@@ -282,7 +282,8 @@
       ),
     );
     const workspaceWidth = availableWidth * 3 + tileWorkspaceInset * 2;
-    const workspaceHeight = Math.max(defaultContentHeight, Math.round(initialScreenHeight * 2));
+    // Keep two full viewport heights free below the complete home layout.
+    const workspaceHeight = defaultContentHeight + Math.round(initialScreenHeight * 2);
     const baseHeight = workspaceHeight;
     const defaults = {
       workspace: {
