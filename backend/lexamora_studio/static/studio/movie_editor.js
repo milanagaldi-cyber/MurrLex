@@ -345,7 +345,8 @@
   let tileViewportScrollSettleTimer = 0;
   let tileViewportScrollbarDragPointerId = null;
   let tileViewportScrollbarDragChanged = false;
-  let tileViewportScrollbarIdleTimer = 0;
+  let tileViewportHorizontalIdleTimer = 0;
+  let tileViewportVerticalIdleTimer = 0;
   let tileViewportInitialCenterComplete = false;
   let tileCameraX = 0;
   let tileCameraTargetX = 0;
@@ -353,7 +354,8 @@
   let tileCameraFrame = 0;
   let tileCameraTrackWidth = 1;
   let tileProjectHeaderHomeLeft = null;
-  let tileViewportScrollbarHotZoneHovered = false;
+  let tileViewportHorizontalHotZoneHovered = false;
+  let tileViewportVerticalHotZoneHovered = false;
   let pendingTileCameraLogicalCenterX = null;
   const tileViewportMinimumReveal = 48;
   const tileExtentCleanupMargin = 32;
@@ -419,10 +421,6 @@
     const leftReserve = baseLeft - extent.left;
     const rightReserve = extent.right - baseRight;
     const occupiedHeight = Math.max(0, extent.bottom - baseTop);
-    const bottomReserve = Math.max(
-      0,
-      (editorViewport?.clientHeight || viewportHeight) - tileViewportMinimumReveal,
-    );
     const centerX = Math.max(0, (coreWidth - baseWidth) / 2);
     const baseDisplayLeft = Math.max(centerX, leftReserve);
     return {
@@ -431,7 +429,7 @@
       width: Math.ceil(Math.max(coreWidth, baseDisplayLeft + baseWidth + rightReserve)),
       height: Math.ceil(Math.max(
         viewportHeight,
-        tileWorkspaceTopReveal + occupiedHeight + bottomReserve,
+        tileWorkspaceTopReveal + occupiedHeight,
       )),
       bounds,
       baseLeft,
@@ -1846,31 +1844,57 @@
     tileHomeCenterFrame = requestAnimationFrame(step);
     return true;
   };
-  const revealTileViewportScrollbars = () => {
-    if (!editorViewport) return;
-    if (tileViewportScrollbarIdleTimer) clearTimeout(tileViewportScrollbarIdleTimer);
-    tileViewportScrollbarIdleTimer = 0;
-    editorViewport.classList.remove("movie-scrollbars-idle");
+  const revealTileViewportHorizontalScrollbar = () => {
+    if (tileViewportHorizontalIdleTimer) clearTimeout(tileViewportHorizontalIdleTimer);
+    tileViewportHorizontalIdleTimer = 0;
     tileCameraScrollbar?.classList.remove("movie-scrollbars-idle");
   };
-  const scheduleTileViewportScrollbarIdle = () => {
+  const revealTileViewportVerticalScrollbar = () => {
     if (!editorViewport) return;
-    if (tileViewportScrollbarIdleTimer) clearTimeout(tileViewportScrollbarIdleTimer);
-    tileViewportScrollbarIdleTimer = window.setTimeout(() => {
-      tileViewportScrollbarIdleTimer = 0;
+    if (tileViewportVerticalIdleTimer) clearTimeout(tileViewportVerticalIdleTimer);
+    tileViewportVerticalIdleTimer = 0;
+    editorViewport.classList.remove("movie-scrollbars-idle");
+  };
+  const revealTileViewportScrollbars = () => {
+    revealTileViewportHorizontalScrollbar();
+    revealTileViewportVerticalScrollbar();
+  };
+  const scheduleTileViewportHorizontalIdle = () => {
+    if (tileViewportHorizontalIdleTimer) clearTimeout(tileViewportHorizontalIdleTimer);
+    tileViewportHorizontalIdleTimer = window.setTimeout(() => {
+      tileViewportHorizontalIdleTimer = 0;
       if (
         tileMoveDragActive
         || tileViewportScrollbarDragPointerId !== null
         || document.body.classList.contains("movie-panel-interacting")
-        || tileViewportScrollbarHotZoneHovered
+        || tileViewportHorizontalHotZoneHovered
         || tileCameraScrollbar?.matches(":hover")
       ) {
-        scheduleTileViewportScrollbarIdle();
+        scheduleTileViewportHorizontalIdle();
+        return;
+      }
+      tileCameraScrollbar?.classList.add("movie-scrollbars-idle");
+    }, 3000);
+  };
+  const scheduleTileViewportVerticalIdle = () => {
+    if (!editorViewport) return;
+    if (tileViewportVerticalIdleTimer) clearTimeout(tileViewportVerticalIdleTimer);
+    tileViewportVerticalIdleTimer = window.setTimeout(() => {
+      tileViewportVerticalIdleTimer = 0;
+      if (
+        tileMoveDragActive
+        || document.body.classList.contains("movie-panel-interacting")
+        || tileViewportVerticalHotZoneHovered
+      ) {
+        scheduleTileViewportVerticalIdle();
         return;
       }
       editorViewport.classList.add("movie-scrollbars-idle");
-      tileCameraScrollbar?.classList.add("movie-scrollbars-idle");
     }, 3000);
+  };
+  const scheduleTileViewportScrollbarIdle = () => {
+    scheduleTileViewportHorizontalIdle();
+    scheduleTileViewportVerticalIdle();
   };
   const settleTileViewportAfterScroll = (delay = 140) => {
     if (tileViewportScrollSettleTimer) clearTimeout(tileViewportScrollSettleTimer);
@@ -1889,17 +1913,17 @@
     }, delay);
   };
   tileCameraScrollbar?.addEventListener("pointerenter", () => {
-    revealTileViewportScrollbars();
+    revealTileViewportHorizontalScrollbar();
   });
   tileCameraScrollbar?.addEventListener("pointerleave", () => {
-    if (tileViewportScrollbarDragPointerId === null) scheduleTileViewportScrollbarIdle();
+    if (tileViewportScrollbarDragPointerId === null) scheduleTileViewportHorizontalIdle();
   });
   tileCameraScrollbar?.addEventListener("pointerdown", event => {
     if (event.button !== 0 || !tileCameraTrack || !tileCameraThumb) return;
     event.preventDefault();
     event.stopPropagation();
     cancelTileHomeCenter();
-    revealTileViewportScrollbars();
+    revealTileViewportHorizontalScrollbar();
     tileViewportScrollbarDragPointerId = event.pointerId;
     tileViewportScrollbarDragChanged = false;
     if (tileViewportScrollSettleTimer) clearTimeout(tileViewportScrollSettleTimer);
@@ -1930,7 +1954,7 @@
       tileViewportScrollbarDragPointerId = null;
       tileViewportScrollbarDragChanged = false;
       if (changed) settleTileViewportAfterScroll(0);
-      scheduleTileViewportScrollbarIdle();
+      scheduleTileViewportHorizontalIdle();
     };
     capturePointerSafely(tileCameraScrollbar, pointerId);
     window.addEventListener("pointermove", update, true);
@@ -1951,18 +1975,37 @@
     else if (event.key === "End") next = maximum;
     if (next == null) return;
     event.preventDefault();
-    revealTileViewportScrollbars();
+    revealTileViewportHorizontalScrollbar();
     setTileCameraX(next);
     settleTileViewportAfterScroll(80);
-    scheduleTileViewportScrollbarIdle();
+    scheduleTileViewportHorizontalIdle();
   });
-  editorViewport?.addEventListener("wheel", () => {
-    revealTileViewportScrollbars();
-    scheduleTileViewportScrollbarIdle();
-  }, {passive: true});
+  editorViewport?.addEventListener("wheel", event => {
+    if (event.ctrlKey) return;
+    const horizontalIntent = (
+      event.shiftKey
+      || Math.abs(event.deltaX) > Math.abs(event.deltaY)
+    );
+    if (horizontalIntent) {
+      const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY)
+        ? event.deltaX
+        : event.deltaY;
+      if (!delta) return;
+      event.preventDefault();
+      revealTileViewportHorizontalScrollbar();
+      setTileCameraX(tileCameraX + delta);
+      syncTileViewportHorizontalAccess(tileRenderedTiles);
+      settleTileViewportAfterScroll(100);
+      scheduleTileViewportHorizontalIdle();
+      return;
+    }
+    if (!event.deltaY) return;
+    revealTileViewportVerticalScrollbar();
+    scheduleTileViewportVerticalIdle();
+  }, {passive: false});
   editorViewport?.addEventListener("scroll", () => {
-    revealTileViewportScrollbars();
-    scheduleTileViewportScrollbarIdle();
+    revealTileViewportVerticalScrollbar();
+    scheduleTileViewportVerticalIdle();
     scheduleTileExtentCleanup(
       document.body.classList.contains("movie-panel-interacting") ? 90 : 180
     );
@@ -1970,18 +2013,31 @@
   editorViewport?.addEventListener("pointermove", event => {
     const bounds = editorViewport.getBoundingClientRect();
     const inVerticalScrollbarZone = bounds.right - event.clientX <= 28;
+    const inHorizontalScrollbarZone = bounds.bottom - event.clientY <= 28;
     if (inVerticalScrollbarZone) {
-      tileViewportScrollbarHotZoneHovered = true;
-      revealTileViewportScrollbars();
-    } else if (tileViewportScrollbarHotZoneHovered) {
-      tileViewportScrollbarHotZoneHovered = false;
-      scheduleTileViewportScrollbarIdle();
+      tileViewportVerticalHotZoneHovered = true;
+      revealTileViewportVerticalScrollbar();
+    } else if (tileViewportVerticalHotZoneHovered) {
+      tileViewportVerticalHotZoneHovered = false;
+      scheduleTileViewportVerticalIdle();
+    }
+    if (inHorizontalScrollbarZone) {
+      tileViewportHorizontalHotZoneHovered = true;
+      revealTileViewportHorizontalScrollbar();
+    } else if (tileViewportHorizontalHotZoneHovered) {
+      tileViewportHorizontalHotZoneHovered = false;
+      scheduleTileViewportHorizontalIdle();
     }
   }, {passive: true});
   editorViewport?.addEventListener("pointerleave", () => {
-    if (!tileViewportScrollbarHotZoneHovered) return;
-    tileViewportScrollbarHotZoneHovered = false;
-    scheduleTileViewportScrollbarIdle();
+    if (tileViewportHorizontalHotZoneHovered) {
+      tileViewportHorizontalHotZoneHovered = false;
+      scheduleTileViewportHorizontalIdle();
+    }
+    if (tileViewportVerticalHotZoneHovered) {
+      tileViewportVerticalHotZoneHovered = false;
+      scheduleTileViewportVerticalIdle();
+    }
   }, {passive: true});
   window.addEventListener("pointerup", () => scheduleTileExtentCleanup(180), {passive: true});
   const nearestTileSnap = (value, candidates) => {
@@ -2622,6 +2678,9 @@
             latestPointer = finishEvent;
           }
           if (latestPointer) updatePosition(latestPointer, {render: false});
+          const stoppedAtCrossingBarrier = Boolean(
+            crossingBarrier && !crossingBarrierRelease
+          );
           setTileCameraX(tileCameraX);
           releasePointerCaptureSafely(handle, pointerId);
           movingKeys.forEach(movingKey => {
@@ -2681,6 +2740,14 @@
           syncTileViewportHorizontalAccess(finalTiles);
           if (finalTilesFitHome) {
             setTileCameraX(tileHomeCameraX(tileViewportGeometry), {immediate: false});
+            settleTileViewportAfterScroll(80);
+            scheduleTileExtentCleanup(100);
+          } else if (stoppedAtCrossingBarrier && !invalidDrop) {
+            const targetCameraX = constrainTileCameraToVisibleBounds(
+              tileHomeCameraX(tileViewportGeometry),
+              finalMovingBounds,
+            );
+            setTileCameraX(targetCameraX, {immediate: false});
             settleTileViewportAfterScroll(80);
             scheduleTileExtentCleanup(100);
           } else if (returnedFromEdge) {
@@ -3067,6 +3134,9 @@
           window.removeEventListener("pointercancel", finish, true);
           if (autoScrollFrame) cancelAnimationFrame(autoScrollFrame);
           autoScrollFrame = 0;
+          const stoppedAtCrossingBarrier = Boolean(
+            resizeCrossingBarrier && resizeCrossingReleaseOffset == null
+          );
           releasePointerCaptureSafely(handle, pointerId);
           panel?.classList.remove("movie-tile-resizing");
           handle.classList.remove("active");
@@ -3078,8 +3148,19 @@
           }
           editorLayouts.columns = {...editorLayouts.columns, workspace: layout.workspace, tiles: currentTiles};
           persistLayout("columns");
-          setTileCameraX(tileCameraX, {immediate: false});
           applyTileRects(currentTiles);
+          if (stoppedAtCrossingBarrier) {
+            const resizedBounds = tileGroupBounds(currentTiles, [key]);
+            setTileCameraX(
+              constrainTileCameraToVisibleBounds(
+                tileHomeCameraX(tileViewportGeometry),
+                resizedBounds,
+              ),
+              {immediate: false},
+            );
+          } else {
+            setTileCameraX(tileCameraX, {immediate: false});
+          }
           settleTileViewportAfterScroll(120);
           scheduleTileViewportScrollbarIdle();
           scheduleTileExtentCleanup(120);
@@ -6976,7 +7057,8 @@
   applyEditorLayout(cloneLayoutState(), {persist: false, refresh: false});
   scheduleEditorViewportFit();
   scheduleTileWorkspaceCenter();
-  scheduleTileViewportScrollbarIdle();
+  editorViewport?.classList.add("movie-scrollbars-idle");
+  tileCameraScrollbar?.classList.add("movie-scrollbars-idle");
   applyPreviewDock();
   normalizeTimeline(); applyCanvas(); renderBin(); renderTimeline(); renderInspector(); renderRenderJobs(); renderLibrary(); scheduleRenderPoll(); setPlayhead(0, true, true);
   savedSignature = signature(); updateDirty(); updateHistoryButtons(); refreshMedia();
