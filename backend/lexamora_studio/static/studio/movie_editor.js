@@ -2268,11 +2268,13 @@
         const startCameraX = tileCameraX;
         const startScrollTop = editorViewport?.scrollTop || 0;
         const pointerId = event.pointerId;
+        if (!tileViewportGeometry) applyTileRects(startTiles);
+        const dragGeometry = tileViewportGeometry;
+        const dragCameraMaximumX = tileCameraMaximumX(dragGeometry);
         let active = false;
         let currentTiles = startTiles;
         let latestPointer = event;
-        let autoScrollFrame = 0;
-        let observedCameraX = tileCameraX;
+        let dragFrame = 0;
         cancelTileHomeCenter();
         tileViewportScrollbarDragPointerId = null;
         tileViewportScrollbarDragChanged = false;
@@ -2283,14 +2285,32 @@
         syncTileViewportHorizontalAccess(startTiles);
         if (tileExtentCleanupTimer) clearTimeout(tileExtentCleanupTimer);
         tileExtentCleanupTimer = 0;
+        tileRenderedTiles = cloneTiles(startTiles);
         capturePointerSafely(handle, pointerId);
-        const updatePosition = next => {
+        const renderMovingTiles = guide => {
+          tileRenderedTiles = cloneTiles(currentTiles);
+          movingKeys.forEach(movingKey => {
+            const panel = layoutPanels[movingKey];
+            const rect = currentTiles[movingKey];
+            const origin = startTiles[movingKey];
+            if (!panel || !rect || !origin) return;
+            panel.style.setProperty("--murrcut-tile-drag-x", `${rect.x - origin.x}px`);
+            panel.style.setProperty("--murrcut-tile-drag-y", `${rect.y - origin.y}px`);
+            panel.dataset.tileX = String(Math.round(rect.x));
+            panel.dataset.tileY = String(Math.round(rect.y));
+          });
+          const invalidDrop = tileLayoutHasSelectionOverlap(currentTiles, movingKeys);
+          movingKeys.forEach(movingKey => layoutPanels[movingKey]?.classList.toggle("movie-tile-drop-invalid", invalidDrop));
+          showTileGuides(guide);
+        };
+        const updatePosition = (next, {render = true} = {}) => {
           const dx = next.clientX - startX + tileCameraX - startCameraX;
           const dy = next.clientY - startY + (editorViewport?.scrollTop || 0) - startScrollTop;
-          if (!active && Math.hypot(dx, dy) < 4) return;
+          if (!active && Math.hypot(dx, dy) < 4) return false;
           if (!active) {
             remember();
             window.getSelection()?.removeAllRanges();
+            document.body.classList.add("movie-panel-interacting");
           }
           active = true;
           const snapped = movingKeys.length > 1
@@ -2314,13 +2334,12 @@
             };
             layoutPanels[movingKey]?.classList.add("movie-tile-moving");
           });
-          const visibleBounds = tileLogicalViewportBounds(tileViewportGeometry);
+          const visibleBounds = tileLogicalViewportBounds(dragGeometry);
           const movingBounds = tileGroupBounds(currentTiles, movingKeys);
           if (visibleBounds && movingBounds) {
-            const maximumCameraX = tileCameraMaximumX();
             const rightCameraStopped = (
-              tileCameraX >= maximumCameraX - .5
-              && tileCameraTargetX >= maximumCameraX - .5
+              tileCameraX >= dragCameraMaximumX - .5
+              && tileCameraTargetX >= dragCameraMaximumX - .5
             );
             const leftCameraStopped = (
               tileCameraX <= .5
@@ -2346,17 +2365,14 @@
               });
             }
           }
-          const invalidDrop = tileLayoutHasSelectionOverlap(currentTiles, movingKeys);
-          movingKeys.forEach(movingKey => layoutPanels[movingKey]?.classList.toggle("movie-tile-drop-invalid", invalidDrop));
-          document.body.classList.add("movie-panel-interacting");
-          showTileGuides(snapped.guide);
-          applyTileRects(currentTiles);
+          if (render) renderMovingTiles(snapped.guide);
+          return true;
         };
         const driveVirtualCamera = () => {
-          if (!editorViewport || !tileViewportGeometry) return;
+          if (!editorViewport || !dragGeometry) return false;
           const movingBounds = tileGroupBounds(currentTiles, movingKeys);
-          const visibleBounds = tileLogicalViewportBounds(tileViewportGeometry);
-          if (!movingBounds || !visibleBounds) return;
+          const visibleBounds = tileLogicalViewportBounds(dragGeometry);
+          if (!movingBounds || !visibleBounds) return false;
           const triggerDistance = clamp(editorViewport.clientWidth * .035, 28, 52);
           const rightGap = visibleBounds.right - movingBounds.right;
           const leftGap = movingBounds.x - visibleBounds.left;
@@ -2368,33 +2384,34 @@
           }
           const magnitude = Math.abs(pressure);
           const smoothPressure = magnitude * magnitude * (3 - 2 * magnitude);
-          if (pressure) {
-            shiftTileCameraTarget(Math.sign(pressure) * 15 * smoothPressure);
-          } else if (Math.abs(tileCameraTargetX - tileCameraX) > .25) {
-            setTileCameraX(tileCameraX, {immediate: false});
-          }
+          if (!pressure) return false;
+          const nextCameraX = clamp(
+            tileCameraX + Math.sign(pressure) * 15 * smoothPressure,
+            0,
+            dragCameraMaximumX,
+          );
+          if (Math.abs(nextCameraX - tileCameraX) < .01) return false;
+          setTileCameraX(nextCameraX);
+          return true;
         };
-        const continueAutoScroll = () => {
-          autoScrollFrame = 0;
-          if (!active || !latestPointer) return;
-          driveVirtualCamera();
+        const continueDragFrame = () => {
+          dragFrame = 0;
+          if (!latestPointer || !updatePosition(latestPointer, {render: false})) return;
+          const cameraMoved = driveVirtualCamera();
           const verticalMoved = scrollEditorViewportTowardPointer(
             latestPointer,
             tileGroupBounds(currentTiles, movingKeys),
             {maxStep: 44, horizontal: false},
           );
-          const horizontalMoved = Math.abs(tileCameraX - observedCameraX) >= .01;
-          observedCameraX = tileCameraX;
-          if (horizontalMoved || verticalMoved) updatePosition(latestPointer);
-          autoScrollFrame = requestAnimationFrame(continueAutoScroll);
+          updatePosition(latestPointer);
+          if (cameraMoved || verticalMoved) {
+            dragFrame = requestAnimationFrame(continueDragFrame);
+          }
         };
         const move = next => {
           latestPointer = next;
-          updatePosition(next);
-          if (active) {
-            next.preventDefault();
-          }
-          if (active && !autoScrollFrame) autoScrollFrame = requestAnimationFrame(continueAutoScroll);
+          if (active || Math.hypot(next.clientX - startX, next.clientY - startY) >= 4) next.preventDefault();
+          if (!dragFrame) dragFrame = requestAnimationFrame(continueDragFrame);
         };
         let finished = false;
         const finish = finishEvent => {
@@ -2405,11 +2422,20 @@
           window.removeEventListener("pointermove", move, true);
           window.removeEventListener("pointerup", finish, true);
           window.removeEventListener("pointercancel", finish, true);
-          if (autoScrollFrame) cancelAnimationFrame(autoScrollFrame);
-          autoScrollFrame = 0;
+          if (dragFrame) cancelAnimationFrame(dragFrame);
+          dragFrame = 0;
+          if (Number.isFinite(finishEvent?.clientX) && Number.isFinite(finishEvent?.clientY)) {
+            latestPointer = finishEvent;
+          }
+          if (latestPointer) updatePosition(latestPointer, {render: false});
           setTileCameraX(tileCameraX);
           releasePointerCaptureSafely(handle, pointerId);
-          movingKeys.forEach(movingKey => layoutPanels[movingKey]?.classList.remove("movie-tile-moving", "movie-tile-drop-invalid"));
+          movingKeys.forEach(movingKey => {
+            const movingPanel = layoutPanels[movingKey];
+            movingPanel?.classList.remove("movie-tile-moving", "movie-tile-drop-invalid");
+            movingPanel?.style.removeProperty("--murrcut-tile-drag-x");
+            movingPanel?.style.removeProperty("--murrcut-tile-drag-y");
+          });
           document.body.classList.remove("movie-panel-interacting");
           tileMoveDragActive = false;
           hideTileGuides();
@@ -2448,7 +2474,9 @@
             if (tileExtentCleanupTimer) clearTimeout(tileExtentCleanupTimer);
             tileExtentCleanupTimer = 0;
             tileExtentCleanupSuppressedUntil = Date.now() + 300;
-            applyTileRects(finalTiles, {preserveViewport: true, scheduleCleanup: false});
+          }
+          applyTileRects(finalTiles, {preserveViewport: true, scheduleCleanup: false});
+          if (invalidDrop) {
             const cleanupDelay = Math.max(
               180,
               tileExtentCleanupSuppressedUntil - Date.now() + 10,
