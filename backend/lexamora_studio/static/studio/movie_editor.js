@@ -189,12 +189,12 @@
   };
   const tileMaximumScale = key => ["media", "preview", "inspector", "timeline"].includes(key) ? 4 : 2;
   const tileEdgeSize = 18;
-  const tileGapHandleSize = tileEdgeSize * 3;
+  const tileResizeHitSize = 32;
+  const tileSelectedResizeHitSize = 54;
   const tileWorkspaceInset = Math.ceil(tileEdgeSize / 2) + 2;
   const tileSnapDistance = 12;
   let tileLayoutDefaults = null;
   let selectedTileKeys = new Set();
-  let tileGapPushActive = false;
   const layoutDefaults = {
     columns: {mediaWidth: 250, inspectorWidth: 390, mediaHeight: 390, canvasHeight: 390, inspectorHeight: 390, timelineHeight: 320, timelineInsetLeft: 0, timelineInsetRight: 0},
     stacked: {mediaWidth: 250, inspectorWidth: 390, mediaHeight: 390, canvasHeight: 390, inspectorHeight: 390, timelineHeight: 320, timelineInsetLeft: 0, timelineInsetRight: 0},
@@ -435,10 +435,7 @@
   let tileViewportVerticalHotZoneHovered = false;
   let tileViewportHorizontalRevealRequested = false;
   let pendingTileCameraLogicalCenterX = null;
-  const tileViewportMinimumReveal = 48;
-  const tileExtentCleanupMargin = 32;
   const tileViewportHorizontalActivationRatio = .05;
-  const tileViewportLocalFocusMarginRatio = .10;
   const tileViewportHorizontalOverscanRatio = 1;
   const tileViewportScrollbarIdleDelay = 3000;
   const tileWorkspaceTopReveal = 32;
@@ -813,23 +810,6 @@
     );
     positionTileCameraScrollbar();
     ensureTileWorkspaceCoversViewport();
-    if (
-      recenterWorkspace
-      && tileViewportGeometry
-      && !tileViewportManuallyPanned
-    ) {
-      const layout = ensureTileLayout();
-      const balancedCameraTarget = balancedCameraTargetForTiles(
-        layout.tiles,
-        tileViewportGeometry,
-        {requireCurrentVisibility: false},
-      );
-      if (Number.isFinite(balancedCameraTarget)) {
-        pendingTileCameraLogicalCenterX = null;
-        setTileCameraX(balancedCameraTarget);
-        syncTileViewportHorizontalAccess(layout.tiles);
-      }
-    }
     scheduleTileExtentCleanup(220);
   };
   let initialTileWorkspaceCentered = false;
@@ -1413,7 +1393,6 @@
           persistFloatingPanels();
         } else {
           resetPanelGeometry(key);
-          requestAnimationFrame(() => focusTileOnHomePosition(key));
         }
         historyRedo = [];
         updateHistoryButtons();
@@ -1711,6 +1690,9 @@
       panel.classList.toggle("movie-tile-selected", selected);
       panel.setAttribute("aria-selected", selected ? "true" : "false");
     });
+    if (tileViewportGeometry && tileRenderedTiles) {
+      syncTileEdgeHitAreas(tileRenderedTiles, tileViewportGeometry);
+    }
   };
   const setSelectedTileKeys = keys => {
     selectedTileKeys = new Set(keys.filter(key => workspacePanel(key)));
@@ -2117,7 +2099,7 @@
       panel.dataset.tileX = String(Math.round(rect.x));
       panel.dataset.tileY = String(Math.round(rect.y));
     });
-    syncTileGapHandles(tiles, geometry);
+    syncTileEdgeHitAreas(tiles, geometry);
     syncTileSelectionClasses();
     refreshPanelHomeButtons(tiles);
     const timelineShell = q("[data-timeline-shell]");
@@ -2172,48 +2154,6 @@
       Math.max(0, editorViewport.scrollHeight - editorViewport.clientHeight),
     );
   };
-  const tileContentCleanupTarget = (
-    tiles,
-    geometry = tileViewportGeometry,
-    visible = tileLogicalViewportBounds(geometry),
-  ) => {
-    if (!editorViewport || !tiles || !geometry || !visible) return null;
-    const bounds = tileBounds(tiles);
-    const viewportWidth = tileHorizontalViewportWidth();
-    const viewportHeight = editorViewport.clientHeight;
-    const marginX = viewportWidth * tileViewportLocalFocusMarginRatio;
-    const topMargin = Math.min(
-      viewportHeight * tileViewportLocalFocusMarginRatio,
-      marginX,
-    );
-    const bottomMargin = topMargin * 2;
-    let logicalLeft = visible.left;
-    let logicalTop = visible.top;
-    const contentWidth = bounds.right - bounds.left;
-    const contentHeight = bounds.bottom - bounds.top;
-    if (contentWidth + marginX * 2 <= viewportWidth) {
-      logicalLeft = (bounds.left + bounds.right - viewportWidth) / 2;
-    } else if (visible.left < bounds.left - marginX) {
-      logicalLeft = bounds.left;
-    } else if (visible.right > bounds.right + marginX) {
-      logicalLeft = bounds.right - viewportWidth;
-    }
-    if (contentHeight + topMargin + bottomMargin <= viewportHeight) {
-      const extra = Math.max(
-        0,
-        viewportHeight - contentHeight - topMargin - bottomMargin,
-      );
-      logicalTop = bounds.top - topMargin - extra / 2;
-    } else if (visible.top < bounds.top - topMargin) {
-      logicalTop = bounds.top - topMargin;
-    } else if (visible.bottom > bounds.bottom + bottomMargin) {
-      logicalTop = bounds.bottom + bottomMargin - viewportHeight;
-    }
-    return {
-      cameraX: tileCameraXForLogicalLeft(logicalLeft, geometry),
-      scrollTop: tileScrollTopForLogicalTop(logicalTop, geometry),
-    };
-  };
   const tileInteractiveHorizontalExtent = (geometry = tileViewportGeometry) => {
     if (!geometry) return null;
     return {
@@ -2221,248 +2161,9 @@
       right: geometry.workspaceWidth,
     };
   };
-  const tilesFitHorizontalCameraView = (tiles, geometry, cameraX) => {
-    const visible = tileLogicalViewportBounds(geometry, cameraX);
-    if (!visible || !tiles) return false;
-    const bounds = tileBounds(tiles);
-    return (
-      bounds.left >= visible.left - 1
-      && bounds.right <= visible.right + 1
-    );
-  };
-  const balancedCameraTargetForTiles = (
-    tiles,
-    geometry,
-    {
-      requireCurrentVisibility = true,
-      localBounds = null,
-      localViewportBounds = null,
-      localFocusSide = 0,
-      localFocusOnlyWhenEscaped = false,
-      localStableCameraX = null,
-    } = {},
-  ) => {
-    if (!tiles || !geometry) return null;
-    const bounds = tileBounds(tiles);
-    const origin = tileWorkspaceViewportOrigin();
-    const visible = tileLogicalViewportBounds(geometry, tileCameraX);
-    if (!visible) return null;
-    const viewportWidth = tileHorizontalViewportWidth();
-    if (geometry.workspaceWidth <= viewportWidth + 1) {
-      return tileHomeCameraX(geometry);
-    }
-    if (localBounds && localFocusOnlyWhenEscaped) {
-      const referenceViewport = localViewportBounds || visible;
-      const escapedLeft = localBounds.x < referenceViewport.left - 1;
-      const escapedRight = localBounds.right > referenceViewport.right + 1;
-      if (!escapedLeft && !escapedRight) {
-        return Number.isFinite(localStableCameraX)
-          ? clamp(
-              localStableCameraX,
-              tileCameraMinimumX(geometry),
-              tileCameraMaximumX(geometry),
-            )
-          : null;
-      }
-      const focusSide = (
-        (escapedRight && !escapedLeft ? 1 : 0)
-        || (escapedLeft && !escapedRight ? -1 : 0)
-        || Math.sign(localFocusSide)
-        || (
-          localBounds.right - referenceViewport.right
-          >= referenceViewport.left - localBounds.x
-            ? 1
-            : -1
-        )
-      );
-      const localCameraTarget = localBounds.width <= viewportWidth
-        ? (
-            origin.x
-            + geometry.offsetX
-            + localBounds.x
-            + localBounds.width / 2
-            - viewportWidth / 2
-          )
-        : focusSide > 0
-          ? origin.x + geometry.offsetX + localBounds.right - viewportWidth
-          : origin.x + geometry.offsetX + localBounds.x;
-      return clamp(
-        localCameraTarget,
-        tileCameraMinimumX(geometry),
-        tileCameraMaximumX(geometry),
-      );
-    }
-    const leftEdgeVisible = (
-      bounds.left >= visible.left - 1
-      && bounds.left <= visible.right + 1
-    );
-    const rightEdgeVisible = (
-      bounds.right >= visible.left - 1
-      && bounds.right <= visible.right + 1
-    );
-    const outerCenterX = (bounds.left + bounds.right) / 2;
-    const centeredCameraX = clamp(
-      origin.x + geometry.offsetX + outerCenterX - viewportWidth / 2,
-      tileCameraMinimumX(geometry),
-      tileCameraMaximumX(geometry),
-    );
-    if (
-      (
-        !requireCurrentVisibility
-        || leftEdgeVisible
-        || rightEdgeVisible
-      )
-      && tilesFitHorizontalCameraView(tiles, geometry, centeredCameraX)
-    ) return centeredCameraX;
-    if (rightEdgeVisible && !leftEdgeVisible) {
-      return clamp(
-        origin.x + geometry.offsetX + bounds.right - viewportWidth,
-        tileCameraMinimumX(geometry),
-        tileCameraMaximumX(geometry),
-      );
-    }
-    if (leftEdgeVisible && !rightEdgeVisible) {
-      return clamp(
-        origin.x + geometry.offsetX + bounds.left,
-        tileCameraMinimumX(geometry),
-        tileCameraMaximumX(geometry),
-      );
-    }
-    if (localBounds) {
-      const localCenterX = localBounds.x + localBounds.width / 2;
-      const localSide = (
-        Math.sign(localCenterX - outerCenterX)
-        || Math.sign(localCenterX - (visible.left + visible.right) / 2)
-      );
-      if (localSide > 0) {
-        return clamp(
-          localBounds.width <= viewportWidth
-            ? (
-                origin.x
-                + geometry.offsetX
-                + localCenterX
-                - viewportWidth / 2
-              )
-            : origin.x + geometry.offsetX + localBounds.right - viewportWidth,
-          tileCameraMinimumX(geometry),
-          tileCameraMaximumX(geometry),
-        );
-      }
-      if (localSide < 0) {
-        return clamp(
-          localBounds.width <= viewportWidth
-            ? (
-                origin.x
-                + geometry.offsetX
-                + localCenterX
-                - viewportWidth / 2
-              )
-            : origin.x + geometry.offsetX + localBounds.x,
-          tileCameraMinimumX(geometry),
-          tileCameraMaximumX(geometry),
-        );
-      }
-    }
-    return null;
-  };
-  const animateTileViewportToTarget = (
-    {cameraX = tileCameraX, scrollTop = editorViewport?.scrollTop || 0},
-    {duration = 240} = {},
-  ) => {
-    if (!editorViewport) return false;
-    const targetLeft = clamp(
-      cameraX,
-      tileCameraMinimumX(),
-      tileCameraMaximumX(),
-    );
-    const targetTop = clamp(
-      scrollTop,
-      0,
-      Math.max(0, editorViewport.scrollHeight - editorViewport.clientHeight),
-    );
-    const startLeft = tileCameraX;
-    const startTop = editorViewport.scrollTop;
-    if (
-      Math.abs(targetLeft - startLeft) < 1
-      && Math.abs(targetTop - startTop) < 1
-    ) return false;
-    cancelTileHomeCenter();
-    tileSelectionFocusActive = true;
-    const startedAt = performance.now();
-    const step = now => {
-      const progress = clamp((now - startedAt) / duration, 0, 1);
-      const eased = 1 - Math.pow(1 - progress, 3);
-      setTileCameraX(startLeft + (targetLeft - startLeft) * eased);
-      editorViewport.scrollTop = startTop + (targetTop - startTop) * eased;
-      if (progress < 1) {
-        tileHomeCenterFrame = requestAnimationFrame(step);
-        return;
-      }
-      tileHomeCenterFrame = 0;
-      tileSelectionFocusActive = false;
-      setTileCameraX(targetLeft);
-      editorViewport.scrollTop = targetTop;
-      syncTileViewportHorizontalAccess(tileRenderedTiles);
-      scheduleTileViewportScrollbarIdle();
-    };
-    tileHomeCenterFrame = requestAnimationFrame(step);
-    return true;
-  };
   const cleanupTileWorkspaceExtent = () => {
     tileExtentCleanupTimer = 0;
-    if (!editorViewport || !tileViewportGeometry || !tileAllocatedExtent) return;
-    const layout = ensureTileLayout();
-    const renderedTiles = tileRenderedTiles || layout.tiles;
-    const requiredGeometry = computeTileViewportGeometry(
-      renderedTiles,
-      layout.workspace,
-    );
-    const required = requiredGeometry.requiredExtent;
-    const overscan = fullTileHorizontalOverscanExtent(requiredGeometry);
-    const visible = tileLogicalViewportBounds(tileViewportGeometry);
-    if (!visible) return;
-    const next = {...tileAllocatedExtent};
-    const baseRight = tileViewportGeometry.baseLeft + tileViewportGeometry.baseWidth;
-    const symmetricHorizontalReserve = Math.max(
-      tileViewportGeometry.baseLeft - required.left,
-      required.right - baseRight,
-      tileViewportGeometry.baseLeft - overscan.left,
-      overscan.right - baseRight,
-    );
-    const safeLeft = tileViewportGeometry.baseLeft - symmetricHorizontalReserve;
-    const safeRight = baseRight + symmetricHorizontalReserve;
-    const safeBottom = Math.max(
-      required.bottom,
-      visible.top + tileViewportMinimumReveal + tileExtentCleanupMargin,
-    );
-    const verticalStep = Math.max(48, editorViewport.clientHeight * .12);
-    next.left = safeLeft;
-    next.right = safeRight;
-    if (safeBottom < next.bottom) next.bottom = Math.max(safeBottom, next.bottom - verticalStep);
-    const changed = ["left", "right", "bottom"].some(
-      side => Math.abs(Number(next[side]) - Number(tileAllocatedExtent[side])) >= 1
-    );
-    if (changed) {
-      tileAllocatedExtent = next;
-      applyTileRects(renderedTiles, {preserveViewport: true, scheduleCleanup: false});
-    }
-    const cleanupTarget = tileContentCleanupTarget(
-      renderedTiles,
-      tileViewportGeometry,
-    );
-    if (cleanupTarget && !tileViewportManuallyPanned) {
-      animateTileViewportToTarget(cleanupTarget);
-    }
-    const hasMore = (
-      next.left < safeLeft - 1
-      || next.right > safeRight + 1
-      || next.bottom > safeBottom + 1
-    );
-    if (hasMore) {
-      scheduleTileExtentCleanup(
-        document.body.classList.contains("movie-panel-interacting") ? 90 : 140
-      );
-    }
+    syncTileViewportHorizontalAccess(tileRenderedTiles);
   };
   const scheduleTileExtentCleanup = (delay = 160) => {
     if (tileExtentCleanupTimer) return;
@@ -2515,143 +2216,7 @@
     stopTileCameraAnimation();
     hideTileCenterAxis();
   };
-  const settleTileViewportOnHomeAxis = ({
-    tiles = null,
-    workspace = null,
-    fallbackBottom = null,
-    force = false,
-    toleranceRatio = .05,
-  } = {}) => {
-    if (!editorViewport || !tileViewportGeometry) return false;
-    if (tileViewportManuallyPanned) return false;
-    const layout = ensureTileLayout();
-    const finalTiles = tiles || tileRenderedTiles || layout.tiles;
-    const finalWorkspace = workspace || layout.workspace;
-    if (!tilesFitDefaultDisplayZone(finalTiles)) {
-      cancelTileHomeCenter();
-      const cleanupDelay = Math.max(
-        180,
-        tileExtentCleanupSuppressedUntil - Date.now() + 10,
-      );
-      window.setTimeout(() => scheduleTileExtentCleanup(0), cleanupDelay);
-      return false;
-    }
-    const homeAxis = tileViewportGeometry.baseLeft + tileViewportGeometry.baseWidth / 2;
-    const horizontalOverflow = tileCameraTravelX();
-    const homeCameraX = tileHomeCameraX(tileViewportGeometry);
-    const axisDistance = Math.abs(tileCameraX - homeCameraX);
-    if (horizontalOverflow <= 1 || axisDistance <= 1) {
-      cancelTileHomeCenter();
-      if (horizontalOverflow > 1) {
-        const cleanupDelay = Math.max(
-          180,
-          tileExtentCleanupSuppressedUntil - Date.now() + 10,
-        );
-        window.setTimeout(() => scheduleTileExtentCleanup(0), cleanupDelay);
-      }
-      return false;
-    }
-    const focusTolerance = Math.max(1, editorViewport.clientWidth * toleranceRatio);
-    const scrollbarCenterDistance = axisDistance;
-    const scrollbarTolerance = Math.max(1, horizontalOverflow * toleranceRatio);
-    const focusWithinTolerance = axisDistance <= focusTolerance;
-    const scrollbarWithinTolerance = scrollbarCenterDistance <= scrollbarTolerance;
-    if (
-      !force && !focusWithinTolerance && !scrollbarWithinTolerance
-    ) {
-      const cleanupDelay = Math.max(
-        180,
-        tileExtentCleanupSuppressedUntil - Date.now() + 10,
-      );
-      window.setTimeout(() => scheduleTileExtentCleanup(0), cleanupDelay);
-      return false;
-    }
-    cancelTileHomeCenter();
-    if (tileExtentCleanupTimer) clearTimeout(tileExtentCleanupTimer);
-    tileExtentCleanupTimer = 0;
-    tileExtentCleanupSuppressedUntil = Date.now() + 700;
-    const startLeft = tileCameraX;
-    const targetLeft = homeCameraX;
-    const startedAt = performance.now();
-    const duration = 240;
-    const step = now => {
-      const progress = clamp((now - startedAt) / duration, 0, 1);
-      const eased = 1 - Math.pow(1 - progress, 3);
-      setTileCameraX(startLeft + (targetLeft - startLeft) * eased);
-      if (progress < 1) {
-        tileHomeCenterFrame = requestAnimationFrame(step);
-        return;
-      }
-      tileHomeCenterFrame = 0;
-      const homeGeometry = computeTileViewportGeometry(finalTiles, finalWorkspace);
-      const homeOverscan = fullTileHorizontalOverscanExtent(homeGeometry);
-      const verticalCenter = tileLogicalViewportCenter(tileViewportGeometry)?.y;
-      tileAllocatedExtent = {
-        ...(tileAllocatedExtent || homeGeometry.requiredExtent),
-        left: Math.min(homeGeometry.requiredExtent.left, homeOverscan.left),
-        right: Math.max(homeGeometry.requiredExtent.right, homeOverscan.right),
-        bottom: Math.max(
-          homeGeometry.requiredExtent.bottom,
-          Number(tileAllocatedExtent?.bottom || fallbackBottom || homeGeometry.requiredExtent.bottom),
-        ),
-      };
-      applyTileRects(finalTiles, {preserveViewport: true, scheduleCleanup: false});
-      scrollTileViewportToLogicalCenter({x: homeAxis, y: verticalCenter});
-      setTileCameraX(tileHomeCameraX(tileViewportGeometry));
-      syncTileViewportHorizontalAccess(finalTiles);
-      flashTileCenterAxis(homeAxis);
-      tileExtentCleanupSuppressedUntil = Date.now() + 120;
-      window.setTimeout(() => scheduleTileExtentCleanup(0), 130);
-    };
-    tileHomeCenterFrame = requestAnimationFrame(step);
-    return true;
-  };
-  const focusTileOnHomePosition = key => {
-    if (!editorViewport || !tileViewportGeometry || !workspacePanel(key)) return false;
-    const layout = ensureTileLayout();
-    const rect = layout.tiles[key];
-    if (!rect) return false;
-    tileViewportManuallyPanned = false;
-    cancelTileHomeCenter();
-    if (tileExtentCleanupTimer) clearTimeout(tileExtentCleanupTimer);
-    tileExtentCleanupTimer = 0;
-    tileExtentCleanupSuppressedUntil = Date.now() + 700;
-    const geometry = tileViewportGeometry;
-    const origin = tileWorkspaceViewportOrigin();
-    const homeAxis = geometry.baseLeft + geometry.baseWidth / 2;
-    const startLeft = tileCameraX;
-    const targetLeft = tileHomeCameraX(geometry);
-    const startTop = editorViewport.scrollTop;
-    const targetTop = clamp(
-      rect.y + rect.height / 2 + origin.y + geometry.offsetY - editorViewport.clientHeight / 2,
-      0,
-      Math.max(0, editorViewport.scrollHeight - editorViewport.clientHeight),
-    );
-    const startedAt = performance.now();
-    const duration = 240;
-    revealTileViewportScrollbars();
-    const step = now => {
-      const progress = clamp((now - startedAt) / duration, 0, 1);
-      const eased = 1 - Math.pow(1 - progress, 3);
-      setTileCameraX(startLeft + (targetLeft - startLeft) * eased);
-      editorViewport.scrollTop = startTop + (targetTop - startTop) * eased;
-      if (progress < 1) {
-        tileHomeCenterFrame = requestAnimationFrame(step);
-        return;
-      }
-      tileHomeCenterFrame = 0;
-      setTileCameraX(targetLeft);
-      editorViewport.scrollTop = targetTop;
-      syncTileViewportHorizontalAccess(layout.tiles);
-      flashTileCenterAxis(homeAxis);
-      tileExtentCleanupSuppressedUntil = Date.now() + 120;
-      window.setTimeout(() => scheduleTileExtentCleanup(0), 130);
-      scheduleTileViewportScrollbarIdle();
-    };
-    tileHomeCenterFrame = requestAnimationFrame(step);
-    return true;
-  };
-  const focusPartiallyVisibleSelectedTile = key => {
+  const focusSelectedTileWithNeighbors = key => {
     if (
       !editorViewport
       || !tileViewportGeometry
@@ -2665,14 +2230,19 @@
     tileViewportManuallyPanned = false;
     const viewportWidth = tileHorizontalViewportWidth();
     const viewportHeight = editorViewport.clientHeight;
-    const marginX = Math.min(
-      viewportWidth * tileViewportLocalFocusMarginRatio,
-      Math.max(0, (viewportWidth - rect.width) / 2),
-    );
-    const marginY = Math.min(
-      viewportHeight * tileViewportLocalFocusMarginRatio,
-      Math.max(0, (viewportHeight - rect.height) / 2),
-    );
+    const distanceFromSelected = candidate => {
+      const horizontalGap = Math.max(
+        0,
+        rect.x - (candidate.x + candidate.width),
+        candidate.x - (rect.x + rect.width),
+      );
+      const verticalGap = Math.max(
+        0,
+        rect.y - (candidate.y + candidate.height),
+        candidate.y - (rect.y + rect.height),
+      );
+      return Math.hypot(horizontalGap, verticalGap);
+    };
     const keys = tilePanelKeys.filter(tileKey => layout.tiles[tileKey]);
     const selectedIndex = keys.indexOf(key);
     let best = null;
@@ -2682,8 +2252,8 @@
       const subsetBounds = tileGroupBounds(layout.tiles, subsetKeys);
       if (
         !subsetBounds
-        || subsetBounds.width + marginX * 2 > viewportWidth + 1
-        || subsetBounds.height + marginY * 2 > viewportHeight + 1
+        || subsetBounds.width > viewportWidth + 1
+        || subsetBounds.height > viewportHeight + 1
       ) continue;
       const logicalLeft = subsetBounds.x + subsetBounds.width / 2 - viewportWidth / 2;
       const logicalTop = subsetBounds.y + subsetBounds.height / 2 - viewportHeight / 2;
@@ -2695,10 +2265,17 @@
         const tile = layout.tiles[tileKey];
         return sum + tile.width * tile.height;
       }, 0);
+      const neighborDistance = subsetKeys.reduce(
+        (sum, tileKey) => sum + (
+          tileKey === key ? 0 : distanceFromSelected(layout.tiles[tileKey])
+        ),
+        0,
+      );
       const candidate = {
         bounds: subsetBounds,
         count: subsetKeys.length,
         tileArea,
+        neighborDistance,
         movement,
       };
       if (
@@ -2706,10 +2283,16 @@
         || candidate.count > best.count
         || (
           candidate.count === best.count
+          && candidate.neighborDistance < best.neighborDistance
+        )
+        || (
+          candidate.count === best.count
+          && candidate.neighborDistance === best.neighborDistance
           && candidate.tileArea > best.tileArea
         )
         || (
           candidate.count === best.count
+          && candidate.neighborDistance === best.neighborDistance
           && candidate.tileArea === best.tileArea
           && candidate.movement < best.movement
         )
@@ -2839,7 +2422,7 @@
         settleTileViewportAfterScroll(Math.max(80, delay));
         return;
       }
-      settleTileViewportOnHomeAxis({toleranceRatio: .05});
+      syncTileViewportHorizontalAccess(tileRenderedTiles);
     }, delay);
   };
   tileCameraScrollbar?.addEventListener("pointerenter", () => {
@@ -3326,339 +2909,62 @@
     }
     return {rect: next, guide};
   };
+  const syncTileEdgeHitAreas = (
+    tiles = tileRenderedTiles,
+    geometry = tileViewportGeometry,
+  ) => {
+    if (!editorLayout || !tiles || !geometry) return;
+    editorLayout.querySelectorAll(":scope > .movie-tile-edge").forEach(handle => {
+      const key = handle.dataset.tileKey;
+      const edge = handle.dataset.tileEdge || "";
+      const rect = tiles[key];
+      if (!rect) return;
+      const selected = selectedTileKeys.has(key);
+      const hitSize = selected ? tileSelectedResizeHitSize : tileResizeHitSize;
+      const cornerSize = selected ? tileSelectedResizeHitSize : tileResizeHitSize + 8;
+      const horizontal = edge === "n" || edge === "s";
+      const vertical = edge === "e" || edge === "w";
+      const size = horizontal || vertical ? hitSize : cornerSize;
+      let left = rect.x + geometry.offsetX;
+      let top = rect.y + geometry.offsetY;
+      let width = rect.width;
+      let height = rect.height;
+      if (edge === "n" || edge === "s") {
+        top += edge === "n" ? -size / 2 : rect.height - size / 2;
+        height = size;
+      } else if (edge === "e" || edge === "w") {
+        left += edge === "w" ? -size / 2 : rect.width - size / 2;
+        width = size;
+      } else {
+        left += edge.includes("w") ? -size / 2 : rect.width - size / 2;
+        top += edge.includes("n") ? -size / 2 : rect.height - size / 2;
+        width = size;
+        height = size;
+      }
+      handle.style.left = `${left}px`;
+      handle.style.top = `${top}px`;
+      handle.style.width = `${width}px`;
+      handle.style.height = `${height}px`;
+      handle.style.right = "auto";
+      handle.style.bottom = "auto";
+      handle.style.zIndex = selected ? "80" : "30";
+      handle.classList.toggle("selected-owner", selected);
+    });
+  };
   const ensureTileEdges = (key, panel) => {
-    if (!workspacePanel(key) || !panel) return;
+    if (!workspacePanel(key) || !panel || !editorLayout) return;
     panel.querySelectorAll(":scope > .movie-tile-edge").forEach(handle => handle.remove());
+    editorLayout.querySelectorAll(`:scope > .movie-tile-edge[data-tile-key="${key}"]`)
+      .forEach(handle => handle.remove());
     ["n", "e", "s", "w", "nw", "ne", "sw", "se"].forEach(edge => {
       const handle = document.createElement("i");
       handle.className = `movie-tile-edge ${edge}`;
       handle.dataset.tileEdge = edge;
       handle.dataset.tileKey = key;
       handle.title = `Resize ${key}`;
-      panel.appendChild(handle);
-    });
-  };
-  const pushTilesFromGap = (
-    sourceTiles,
-    initialKey,
-    axis,
-    requestedDelta,
-    workspace,
-    horizontalExtent,
-  ) => {
-    if (!initialKey || !requestedDelta) return cloneTiles(sourceTiles);
-    const tiles = cloneTiles(sourceTiles);
-    const direction = Math.sign(requestedDelta);
-    const pushEdge = axis === "x"
-      ? (direction > 0 ? "e" : "w")
-      : (direction > 0 ? "s" : "n");
-    const horizontalLeft = Number(horizontalExtent?.left ?? tileWorkspaceInset);
-    const horizontalRight = Number(
-      horizontalExtent?.right ?? workspace.width - tileWorkspaceInset,
-    );
-    const source = sourceTiles[initialKey];
-    let delta = requestedDelta;
-    if (axis === "x") {
-      delta = clamp(
-        delta,
-        horizontalLeft - source.x,
-        horizontalRight - source.x - source.width,
-      );
-      tiles[initialKey].x = source.x + delta;
-    } else {
-      delta = clamp(
-        delta,
-        tileWorkspaceInset - source.y,
-        workspace.height - tileWorkspaceInset - source.y - source.height,
-      );
-      tiles[initialKey].y = source.y + delta;
-    }
-    const queue = [initialKey];
-    const processed = new Set();
-    let attempts = 0;
-    while (queue.length && attempts < 64) {
-      const obstacleKey = queue.shift();
-      const obstacle = tiles[obstacleKey];
-      for (const otherKey of tilePanelKeys) {
-        attempts += 1;
-        if (otherKey === obstacleKey) continue;
-        const pair = `${obstacleKey}:${otherKey}`;
-        if (
-          processed.has(pair)
-          || !rectanglesOverlap(obstacle, tiles[otherKey])
-        ) continue;
-        processed.add(pair);
-        const pushed = pushTileFromObstacle(
-          tiles[otherKey],
-          obstacle,
-          pushEdge,
-          workspace,
-          tileMinimums[otherKey],
-          horizontalExtent,
-        );
-        if (!pushed) return null;
-        tiles[otherKey] = pushed;
-        queue.push(otherKey);
-      }
-    }
-    if (attempts >= 64 || tileLayoutHasOverlap(tiles)) return null;
-    return tiles;
-  };
-  const resolveGapPush = (
-    sourceTiles,
-    initialKey,
-    axis,
-    requestedDelta,
-    workspace,
-    horizontalExtent,
-  ) => {
-    let resolved = pushTilesFromGap(
-      sourceTiles,
-      initialKey,
-      axis,
-      requestedDelta,
-      workspace,
-      horizontalExtent,
-    );
-    if (resolved) return resolved;
-    const direction = Math.sign(requestedDelta);
-    let low = 0;
-    let high = Math.abs(requestedDelta);
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-      const middle = (low + high) / 2;
-      const candidate = pushTilesFromGap(
-        sourceTiles,
-        initialKey,
-        axis,
-        direction * middle,
-        workspace,
-        horizontalExtent,
-      );
-      if (candidate) {
-        resolved = candidate;
-        low = middle;
-      } else {
-        high = middle;
-      }
-    }
-    return resolved || cloneTiles(sourceTiles);
-  };
-  const tileGapDescriptors = tiles => {
-    const descriptors = [];
-    tilePanelKeys.forEach((firstKey, firstIndex) => {
-      const first = tiles[firstKey];
-      tilePanelKeys.slice(firstIndex + 1).forEach(secondKey => {
-        const second = tiles[secondKey];
-        if (!first || !second) return;
-        const leftKey = first.x <= second.x ? firstKey : secondKey;
-        const rightKey = leftKey === firstKey ? secondKey : firstKey;
-        const left = tiles[leftKey];
-        const right = tiles[rightKey];
-        const horizontalGap = right.x - (left.x + left.width);
-        const overlapTop = Math.max(left.y, right.y);
-        const overlapBottom = Math.min(
-          left.y + left.height,
-          right.y + right.height,
-        );
-        if (horizontalGap > .5 && overlapBottom - overlapTop >= tileEdgeSize) {
-          const obstructed = tilePanelKeys.some(otherKey => {
-            if (otherKey === leftKey || otherKey === rightKey) return false;
-            const other = tiles[otherKey];
-            return (
-              other.x < right.x
-              && other.x + other.width > left.x + left.width
-              && other.y < overlapBottom
-              && other.y + other.height > overlapTop
-            );
-          });
-          if (!obstructed) {
-            descriptors.push({
-              axis: "x",
-              negativeKey: leftKey,
-              positiveKey: rightKey,
-              gapStart: left.x + left.width,
-              gapSize: horizontalGap,
-              crossStart: overlapTop,
-              crossSize: overlapBottom - overlapTop,
-            });
-          }
-        }
-        const topKey = first.y <= second.y ? firstKey : secondKey;
-        const bottomKey = topKey === firstKey ? secondKey : firstKey;
-        const top = tiles[topKey];
-        const bottom = tiles[bottomKey];
-        const verticalGap = bottom.y - (top.y + top.height);
-        const overlapLeft = Math.max(top.x, bottom.x);
-        const overlapRight = Math.min(
-          top.x + top.width,
-          bottom.x + bottom.width,
-        );
-        if (verticalGap > .5 && overlapRight - overlapLeft >= tileEdgeSize) {
-          const obstructed = tilePanelKeys.some(otherKey => {
-            if (otherKey === topKey || otherKey === bottomKey) return false;
-            const other = tiles[otherKey];
-            return (
-              other.y < bottom.y
-              && other.y + other.height > top.y + top.height
-              && other.x < overlapRight
-              && other.x + other.width > overlapLeft
-            );
-          });
-          if (!obstructed) {
-            descriptors.push({
-              axis: "y",
-              negativeKey: topKey,
-              positiveKey: bottomKey,
-              gapStart: top.y + top.height,
-              gapSize: verticalGap,
-              crossStart: overlapLeft,
-              crossSize: overlapRight - overlapLeft,
-            });
-          }
-        }
-      });
-    });
-    return descriptors;
-  };
-  const bindTileGapHandle = handle => {
-    handle.addEventListener("pointerdown", event => {
-      if (
-        !canEdit
-        || event.button !== 0
-        || event.ctrlKey
-        || event.metaKey
-      ) return;
-      if (layoutLocked) {
-        event.preventDefault();
-        flashLayoutLock();
-        return;
-      }
-      event.preventDefault();
-      event.stopPropagation();
-      const axis = handle.dataset.gapAxis;
-      const negativeKey = handle.dataset.gapNegativeKey;
-      const positiveKey = handle.dataset.gapPositiveKey;
-      const layout = ensureTileLayout();
-      const startTiles = cloneTiles(layout.tiles);
-      const horizontalExtent = tileInteractiveHorizontalExtent();
-      const pointerId = event.pointerId;
-      const startPosition = axis === "x" ? event.clientX : event.clientY;
-      let active = false;
-      let currentTiles = startTiles;
-      let finished = false;
-      capturePointerSafely(handle, pointerId);
-      const update = next => {
-        const pointerPosition = axis === "x" ? next.clientX : next.clientY;
-        const delta = pointerPosition - startPosition;
-        if (!active && Math.abs(delta) < 3) return;
-        if (!active) {
-          active = true;
-          tileViewportManuallyPanned = false;
-          remember();
-          tileGapPushActive = true;
-          document.body.classList.add("movie-panel-interacting");
-          handle.classList.add("active");
-          revealTileViewportScrollbars();
-        }
-        next.preventDefault();
-        const initialKey = delta >= 0 ? positiveKey : negativeKey;
-        currentTiles = resolveGapPush(
-          startTiles,
-          initialKey,
-          axis,
-          delta,
-          layout.workspace,
-          horizontalExtent,
-        );
-        tilePanelKeys.forEach(key => {
-          const changed = (
-            currentTiles[key].x !== startTiles[key].x
-            || currentTiles[key].y !== startTiles[key].y
-          );
-          layoutPanels[key]?.classList.toggle("movie-tile-moving", changed);
-        });
-        applyTileRects(currentTiles, {
-          preserveViewport: true,
-          scheduleCleanup: false,
-        });
-      };
-      const finish = finishEvent => {
-        if (finishEvent?.pointerId != null && finishEvent.pointerId !== pointerId) return;
-        if (finished) return;
-        finished = true;
-        clearEditorPointerFinish(finish);
-        window.removeEventListener("pointermove", update, true);
-        window.removeEventListener("pointerup", finish, true);
-        window.removeEventListener("pointercancel", finish, true);
-        releasePointerCaptureSafely(handle, pointerId);
-        tileGapPushActive = false;
-        document.body.classList.remove("movie-panel-interacting");
-        handle.classList.remove("active");
-        tilePanelKeys.forEach(key =>
-          layoutPanels[key]?.classList.remove("movie-tile-moving")
-        );
-        if (!active) {
-          syncTileGapHandles(startTiles, tileViewportGeometry);
-          return;
-        }
-        editorLayouts.columns = {
-          ...editorLayouts.columns,
-          workspace: layout.workspace,
-          tiles: currentTiles,
-        };
-        persistLayout("columns");
-        applyTileRects(currentTiles, {
-          preserveViewport: true,
-          scheduleCleanup: false,
-        });
-        const cleanupTarget = tileContentCleanupTarget(
-          currentTiles,
-          tileViewportGeometry,
-        );
-        if (cleanupTarget) animateTileViewportToTarget(cleanupTarget);
-        scheduleTileExtentCleanup(180);
-        scheduleTileViewportScrollbarIdle();
-        historyRedo = [];
-        updateHistoryButtons();
-      };
-      window.addEventListener("pointermove", update, true);
-      window.addEventListener("pointerup", finish, true);
-      window.addEventListener("pointercancel", finish, true);
-      registerEditorPointerFinish(finish);
-    });
-  };
-  const syncTileGapHandles = (tiles, geometry = tileViewportGeometry) => {
-    if (!editorLayout || !geometry || tileGapPushActive) return;
-    editorLayout.querySelectorAll(":scope > .movie-tile-gap-handle")
-      .forEach(handle => handle.remove());
-    tileGapDescriptors(tiles).forEach(descriptor => {
-      const handle = document.createElement("i");
-      const size = Math.min(tileGapHandleSize, descriptor.gapSize);
-      handle.className = "movie-tile-gap-handle";
-      handle.dataset.gapAxis = descriptor.axis;
-      handle.dataset.gapNegativeKey = descriptor.negativeKey;
-      handle.dataset.gapPositiveKey = descriptor.positiveKey;
-      handle.title = descriptor.axis === "x"
-        ? "Drag to push neighboring tiles horizontally"
-        : "Drag to push neighboring tiles vertically";
-      if (descriptor.axis === "x") {
-        handle.style.left = `${
-          descriptor.gapStart + (descriptor.gapSize - size) / 2 + geometry.offsetX
-        }px`;
-        handle.style.top = `${descriptor.crossStart + geometry.offsetY}px`;
-        handle.style.width = `${size}px`;
-        handle.style.height = `${descriptor.crossSize}px`;
-      } else {
-        handle.style.left = `${descriptor.crossStart + geometry.offsetX}px`;
-        handle.style.top = `${
-          descriptor.gapStart + (descriptor.gapSize - size) / 2 + geometry.offsetY
-        }px`;
-        handle.style.width = `${descriptor.crossSize}px`;
-        handle.style.height = `${size}px`;
-      }
-      bindTileGapHandle(handle);
       editorLayout.appendChild(handle);
     });
+    syncTileEdgeHitAreas();
   };
   const bindPanelDragging = () => {
     initializeProjectFullscreen();
@@ -3760,7 +3066,6 @@
       ".movie-bin-item",
       ".movie-bin-folder-tile",
       ".movie-tile-edge",
-      ".movie-tile-gap-handle",
       ".movie-window-resize-handle",
       "[data-panel-width-resizer]",
       "[data-panel-height-resizer]",
@@ -3834,11 +3139,6 @@
         const pointerId = event.pointerId;
         if (!tileViewportGeometry) applyTileRects(startTiles);
         const dragGeometry = tileViewportGeometry;
-        const dragStartViewportBounds = tileLogicalViewportBounds(
-          dragGeometry,
-          startCameraX,
-        );
-        const dragStartLocalBounds = tileGroupBounds(startTiles, movingKeys);
         const dragHorizontalExtent = tileInteractiveHorizontalExtent(dragGeometry);
         const dragCameraMinimumX = tileCameraMinimumX(dragGeometry);
         const dragCameraMaximumX = tileCameraMaximumX(dragGeometry);
@@ -4024,18 +3324,15 @@
           hideTileGuides();
           setTemporaryTileSelection(panel, false, active ? 0 : 180);
           if (!active) {
-            let focusStarted = false;
             if (additiveSelection && selectedAtPointerDown) {
               setSelectedTileKeys(
                 [...selectedTileKeys].filter(selectedKey => selectedKey !== key)
               );
             } else if (!additiveSelection) {
               setSelectedTileKeys([key]);
-              focusStarted = focusPartiallyVisibleSelectedTile(key);
             }
             syncTileViewportHorizontalAccess(startTiles);
             scheduleTileViewportScrollbarIdle();
-            if (!focusStarted) scheduleTileExtentCleanup(180);
             return;
           }
           const invalidDrop = tileLayoutHasSelectionOverlap(currentTiles, movingKeys);
@@ -4068,70 +3365,9 @@
             editorLayouts.columns = {...editorLayouts.columns, workspace: layout.workspace, tiles: finalTiles};
             persistLayout("columns");
           }
-          if (!dropAccepted) {
-            if (tileExtentCleanupTimer) clearTimeout(tileExtentCleanupTimer);
-            tileExtentCleanupTimer = 0;
-            tileExtentCleanupSuppressedUntil = Date.now() + 300;
-          }
           applyTileRects(finalTiles, {preserveViewport: true, scheduleCleanup: false});
-          const finalLocalBounds = tileGroupBounds(finalTiles, movingKeys);
-          const localFocusDirection = (
-            finalLocalBounds
-            && dragStartLocalBounds
-              ? Math.sign(
-                  finalLocalBounds.x + finalLocalBounds.width / 2
-                  - dragStartLocalBounds.x - dragStartLocalBounds.width / 2
-                )
-              : 0
-          );
-          const balancedCameraTarget = dropAccepted
-            ? balancedCameraTargetForTiles(
-                finalTiles,
-                tileViewportGeometry,
-                {
-                  localBounds: finalLocalBounds,
-                  localViewportBounds: dragStartViewportBounds,
-                  localFocusSide: localFocusDirection,
-                  localFocusOnlyWhenEscaped: true,
-                  localStableCameraX: startCameraX,
-                },
-              )
-            : null;
-          const cleanupTarget = dropAccepted
-            ? tileContentCleanupTarget(finalTiles, tileViewportGeometry)
-            : null;
-          const finalLocalEscaped = Boolean(
-            finalLocalBounds
-            && dragStartViewportBounds
-            && (
-              finalLocalBounds.x < dragStartViewportBounds.left - 1
-              || finalLocalBounds.right > dragStartViewportBounds.right + 1
-            )
-          );
-          if (!dropAccepted) {
-            const cleanupDelay = Math.max(
-              180,
-              tileExtentCleanupSuppressedUntil - Date.now() + 10,
-            );
-            window.setTimeout(() => scheduleTileExtentCleanup(0), cleanupDelay);
-          }
+          setTileCameraX(tileCameraX);
           syncTileViewportHorizontalAccess(finalTiles);
-          if (
-            Number.isFinite(balancedCameraTarget)
-            || cleanupTarget
-          ) {
-            animateTileViewportToTarget({
-              cameraX: finalLocalEscaped && Number.isFinite(balancedCameraTarget)
-                ? balancedCameraTarget
-                : (cleanupTarget?.cameraX ?? balancedCameraTarget),
-              scrollTop: cleanupTarget?.scrollTop ?? editorViewport.scrollTop,
-            });
-            settleTileViewportAfterScroll(80);
-            scheduleTileExtentCleanup(100);
-          } else {
-            settleTileViewportAfterScroll(120);
-            scheduleTileExtentCleanup(180);
-          }
           scheduleTileViewportScrollbarIdle();
           applyPreviewZoom();
           updatePreviewGeometry();
@@ -4164,8 +3400,8 @@
         });
       }
 
-      if (panel.dataset.tileHomeDblclickBound !== "true") {
-        panel.dataset.tileHomeDblclickBound = "true";
+      if (panel.dataset.tileFocusDblclickBound !== "true") {
+        panel.dataset.tileFocusDblclickBound = "true";
         panel.addEventListener("dblclick", event => {
           if (
             !canEdit
@@ -4175,7 +3411,8 @@
           ) return;
           event.preventDefault();
           event.stopPropagation();
-          panel.querySelector(".movie-window-home")?.click();
+          setSelectedTileKeys([key]);
+          focusSelectedTileWithNeighbors(key);
         });
       }
     });
@@ -4190,7 +3427,7 @@
         };
       };
       const pointerOnEmptyWorkspace = event => !event.target.closest(
-        "[data-panel-key],.movie-tile-edge,.movie-tile-gap-handle,.movie-tile-snap-guide",
+        "[data-panel-key],.movie-tile-edge,.movie-tile-snap-guide",
       );
       const pointerCanPanFromTile = event => {
         if (event.button !== 2) return false;
@@ -4412,20 +3649,57 @@
         const layout = ensureTileLayout();
         const startTiles = cloneTiles(layout.tiles);
         const origin = {...startTiles[key]};
+        if (!selectedTileKeys.has(key)) setSelectedTileKeys([key]);
         const resizeHorizontalExtent = tileInteractiveHorizontalExtent(
           tileViewportGeometry,
+        );
+        const resizeHorizontalLeft = Number(
+          resizeHorizontalExtent?.left ?? tileWorkspaceInset,
+        );
+        const resizeHorizontalRight = Number(
+          resizeHorizontalExtent?.right
+          ?? layout.workspace.width - tileWorkspaceInset,
         );
         const startX = event.clientX;
         const startY = event.clientY;
         const horizontalEdge = edge.includes("e") ? "e" : edge.includes("w") ? "w" : null;
         const verticalEdge = edge.includes("s") ? "s" : edge.includes("n") ? "n" : null;
         const horizontalSide = horizontalEdge === "e" ? 1 : horizontalEdge === "w" ? -1 : 0;
-        const resizeStartViewportBounds = tileLogicalViewportBounds(
-          tileViewportGeometry,
-          tileCameraX,
-        );
+        const sharedEdgeReach = tileSelectedResizeHitSize / 2 + 1;
+        const sharedEdgeNeighbors = new Map();
+        tilePanelKeys.forEach(otherKey => {
+          if (otherKey === key) return;
+          const other = startTiles[otherKey];
+          if (!other) return;
+          const verticalOverlap = (
+            Math.min(origin.y + origin.height, other.y + other.height)
+            - Math.max(origin.y, other.y)
+          );
+          const horizontalOverlap = (
+            Math.min(origin.x + origin.width, other.x + other.width)
+            - Math.max(origin.x, other.x)
+          );
+          const candidates = [];
+          if (horizontalEdge && verticalOverlap > 1) {
+            const gap = horizontalEdge === "e"
+              ? other.x - (origin.x + origin.width)
+              : origin.x - (other.x + other.width);
+            if (gap >= -1 && gap <= sharedEdgeReach) {
+              candidates.push({axis: "x", gap: Math.abs(gap)});
+            }
+          }
+          if (verticalEdge && horizontalOverlap > 1) {
+            const gap = verticalEdge === "s"
+              ? other.y - (origin.y + origin.height)
+              : origin.y - (other.y + other.height);
+            if (gap >= -1 && gap <= sharedEdgeReach) {
+              candidates.push({axis: "y", gap: Math.abs(gap)});
+            }
+          }
+          candidates.sort((first, second) => first.gap - second.gap);
+          if (candidates[0]) sharedEdgeNeighbors.set(otherKey, candidates[0].axis);
+        });
         const pointerId = event.pointerId;
-        const resizeStartCameraX = tileCameraX;
         let active = false;
         let currentTiles = startTiles;
         let latestPointer = event;
@@ -4498,11 +3772,38 @@
             layout.workspace,
             resizeHorizontalExtent,
           );
+          const shiftedTiles = cloneTiles(startTiles);
+          const horizontalDelta = horizontalEdge === "e"
+            ? resized.rect.x + resized.rect.width - origin.x - origin.width
+            : horizontalEdge === "w"
+              ? resized.rect.x - origin.x
+              : 0;
+          const verticalDelta = verticalEdge === "s"
+            ? resized.rect.y + resized.rect.height - origin.y - origin.height
+            : verticalEdge === "n"
+              ? resized.rect.y - origin.y
+              : 0;
+          sharedEdgeNeighbors.forEach((axis, otherKey) => {
+            const neighbor = shiftedTiles[otherKey];
+            if (axis === "x") {
+              neighbor.x = clamp(
+                neighbor.x + horizontalDelta,
+                resizeHorizontalLeft,
+                resizeHorizontalRight - neighbor.width,
+              );
+            } else {
+              neighbor.y = clamp(
+                neighbor.y + verticalDelta,
+                tileWorkspaceInset,
+                layout.workspace.height - tileWorkspaceInset - neighbor.height,
+              );
+            }
+          });
           const resolved = resolveResizeCollisions(
             key,
             resized.rect,
             edge,
-            startTiles,
+            shiftedTiles,
             layout.workspace,
             resizeHorizontalExtent,
             collisionPushEdges,
@@ -4566,46 +3867,8 @@
           editorLayouts.columns = {...editorLayouts.columns, workspace: layout.workspace, tiles: currentTiles};
           persistLayout("columns");
           applyTileRects(currentTiles);
-          const balancedCameraTarget = balancedCameraTargetForTiles(
-            currentTiles,
-            tileViewportGeometry,
-            {
-              localBounds: tileGroupBounds(currentTiles, [key]),
-              localViewportBounds: resizeStartViewportBounds,
-              localFocusSide: horizontalSide,
-              localFocusOnlyWhenEscaped: true,
-              localStableCameraX: resizeStartCameraX,
-            },
-          );
-          const cleanupTarget = tileContentCleanupTarget(
-            currentTiles,
-            tileViewportGeometry,
-          );
-          const resizedBounds = tileGroupBounds(currentTiles, [key]);
-          const resizedEscaped = Boolean(
-            resizedBounds
-            && resizeStartViewportBounds
-            && (
-              resizedBounds.x < resizeStartViewportBounds.left - 1
-              || resizedBounds.right > resizeStartViewportBounds.right + 1
-            )
-          );
-          if (
-            Number.isFinite(balancedCameraTarget)
-            || cleanupTarget
-          ) {
-            animateTileViewportToTarget({
-              cameraX: resizedEscaped && Number.isFinite(balancedCameraTarget)
-                ? balancedCameraTarget
-                : (cleanupTarget?.cameraX ?? balancedCameraTarget),
-              scrollTop: cleanupTarget?.scrollTop ?? editorViewport.scrollTop,
-            });
-          } else {
-            setTileCameraX(tileCameraX);
-          }
-          settleTileViewportAfterScroll(120);
+          setTileCameraX(tileCameraX);
           scheduleTileViewportScrollbarIdle();
-          scheduleTileExtentCleanup(120);
           applyPreviewZoom();
           updatePreviewGeometry();
           renderTimeline();
@@ -8484,7 +7747,6 @@
     previewZoomManual = false;
     localStorage.removeItem(previewZoomStorageKey);
     applyEditorLayout(cloneLayoutState());
-    scheduleTileWorkspaceCenter({force: true});
     updateHistoryButtons();
     toast("Layout reset");
   });
@@ -8506,7 +7768,6 @@
       if (!saved?.layouts) return;
       remember();
       applyEditorLayout(saved);
-      scheduleTileWorkspaceCenter({force: true});
       updateHistoryButtons();
       toast("Saved layout loaded");
     } catch (_) {

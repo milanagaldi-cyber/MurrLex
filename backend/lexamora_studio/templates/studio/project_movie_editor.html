@@ -1390,8 +1390,8 @@ body.movie-panel-interacting *{
   left:calc(50% - 1px);
 }
 .movie-tile-edge.e::after{
-  right:0;
-  left:auto;
+  right:auto;
+  left:calc(50% - 1px);
 }
 .movie-tile-edge.nw,
 .movie-tile-edge.ne,
@@ -1425,7 +1425,10 @@ body.movie-panel-interacting *{
 .movie-tile-edge.ne::after,
 .movie-tile-edge.sw::after,
 .movie-tile-edge.se::after{
-  inset:6px;
+  left:calc(50% - 6px);
+  top:calc(50% - 6px);
+  width:12px;
+  height:12px;
   border:2px solid transparent;
 }
 .movie-tile-edge.nw::after{border-top-color:transparent;border-left-color:transparent}
@@ -1437,43 +1440,6 @@ body.movie-panel-interacting *{
   background:var(--accent);
   box-shadow:0 0 8px color-mix(in srgb,var(--accent) 72%,transparent);
 }
-.movie-tile-gap-handle{
-  position:absolute;
-  z-index:29;
-  display:block;
-  box-sizing:border-box;
-  margin:0;
-  padding:0;
-  border:0;
-  background:transparent;
-  touch-action:none;
-}
-.movie-tile-gap-handle[data-gap-axis="x"]{cursor:ew-resize}
-.movie-tile-gap-handle[data-gap-axis="y"]{cursor:ns-resize}
-.movie-tile-gap-handle::after{
-  content:"";
-  position:absolute;
-  border-radius:3px;
-  background:transparent;
-  transition:background-color .12s ease,box-shadow .12s ease;
-}
-.movie-tile-gap-handle[data-gap-axis="x"]::after{
-  top:0;
-  bottom:0;
-  left:calc(50% - 2px);
-  width:4px;
-}
-.movie-tile-gap-handle[data-gap-axis="y"]::after{
-  left:0;
-  right:0;
-  top:calc(50% - 2px);
-  height:4px;
-}
-.movie-tile-gap-handle:hover::after,
-.movie-tile-gap-handle.active::after{
-  background:color-mix(in srgb,var(--accent) 72%,transparent);
-  box-shadow:0 0 10px color-mix(in srgb,var(--accent) 72%,transparent);
-}
 .movie-tile-moving,
 .movie-tile-resizing{
   z-index:60!important;
@@ -1484,6 +1450,9 @@ body.movie-panel-interacting *{
   outline:2px solid color-mix(in srgb,var(--accent) 78%,#fff)!important;
   outline-offset:-2px;
   box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 20%,transparent)!important;
+}
+.movie-editor-layout [data-panel-key].movie-tile-selected{
+  z-index:20!important;
 }
 .movie-editor-layout [data-panel-key].movie-tile-moving{
   opacity:.92;
@@ -1648,4 +1617,4 @@ body.movie-panel-interacting *{
 </section>
 {{ movie_timeline_data|json_script:"movie-timeline-data" }}{{ movie_assets|json_script:"movie-assets-data" }}{{ movie_library_assets|json_script:"movie-library-data" }}{{ movie_render_jobs|json_script:"movie-render-jobs-data" }}{{ movie_edits|json_script:"movie-edits-data" }}
 {% endblock %}
-{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260730-locked-focus-manual-pan-v3"></script>{% endblock %}
+{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260730-explicit-focus-resize-edges-v4"></script>{% endblock %}
