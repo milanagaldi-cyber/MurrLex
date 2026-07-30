@@ -189,10 +189,12 @@
   };
   const tileMaximumScale = key => ["media", "preview", "inspector", "timeline"].includes(key) ? 4 : 2;
   const tileEdgeSize = 18;
+  const tileGapHandleSize = tileEdgeSize * 3;
   const tileWorkspaceInset = Math.ceil(tileEdgeSize / 2) + 2;
   const tileSnapDistance = 12;
   let tileLayoutDefaults = null;
   let selectedTileKeys = new Set();
+  let tileGapPushActive = false;
   const layoutDefaults = {
     columns: {mediaWidth: 250, inspectorWidth: 390, mediaHeight: 390, canvasHeight: 390, inspectorHeight: 390, timelineHeight: 320, timelineInsetLeft: 0, timelineInsetRight: 0},
     stacked: {mediaWidth: 250, inspectorWidth: 390, mediaHeight: 390, canvasHeight: 390, inspectorHeight: 390, timelineHeight: 320, timelineInsetLeft: 0, timelineInsetRight: 0},
@@ -1781,6 +1783,39 @@
     }));
     return overlappingObstacles.size;
   };
+  const tileRectFitsBetweenObstacles = (rect, tiles, selectedKeys) => {
+    const selected = new Set(selectedKeys);
+    const obstacles = tilePanelKeys
+      .filter(key => !selected.has(key))
+      .map(key => tiles[key])
+      .filter(Boolean);
+    const tolerance = 2;
+    const verticallyAligned = obstacle => (
+      rect.y < obstacle.y + obstacle.height
+      && rect.y + rect.height > obstacle.y
+    );
+    const horizontallyAligned = obstacle => (
+      rect.x < obstacle.x + obstacle.width
+      && rect.x + rect.width > obstacle.x
+    );
+    const hasLeft = obstacles.some(obstacle =>
+      verticallyAligned(obstacle)
+      && obstacle.x + obstacle.width <= rect.x + tolerance
+    );
+    const hasRight = obstacles.some(obstacle =>
+      verticallyAligned(obstacle)
+      && obstacle.x >= rect.x + rect.width - tolerance
+    );
+    const hasTop = obstacles.some(obstacle =>
+      horizontallyAligned(obstacle)
+      && obstacle.y + obstacle.height <= rect.y + tolerance
+    );
+    const hasBottom = obstacles.some(obstacle =>
+      horizontallyAligned(obstacle)
+      && obstacle.y >= rect.y + rect.height - tolerance
+    );
+    return (hasLeft && hasRight) || (hasTop && hasBottom);
+  };
   const nearestAvailableTileDrop = (
     sourceTiles,
     desiredTiles,
@@ -1804,7 +1839,7 @@
       const horizontalRight = Number(
         horizontalExtent?.right ?? workspace.width - tileWorkspaceInset,
       );
-      const sizeFactors = allowResize ? [1, .95, .9, .85, .8] : [1];
+      const sizeFactors = allowResize ? [1, .95, .9] : [1];
       const variants = [];
       sizeFactors.forEach(widthFactor => sizeFactors.forEach(heightFactor => {
         const width = Math.max(
@@ -1880,6 +1915,14 @@
             height: variant.height,
           };
           if (tileLayoutHasSelectionOverlap(candidate, movingKeys)) return;
+          if (
+            (variant.width < source.width || variant.height < source.height)
+            && !tileRectFitsBetweenObstacles(
+              candidate[movingKey],
+              sourceTiles,
+              movingKeys,
+            )
+          ) return;
           const offsetX = x + variant.width / 2 - desiredCenterX;
           const offsetY = y + variant.height / 2 - desiredCenterY;
           const score = offsetX * offsetX + offsetY * offsetY;
@@ -2067,6 +2110,7 @@
       panel.dataset.tileX = String(Math.round(rect.x));
       panel.dataset.tileY = String(Math.round(rect.y));
     });
+    syncTileGapHandles(tiles, geometry);
     syncTileSelectionClasses();
     refreshPanelHomeButtons(tiles);
     const timelineShell = q("[data-timeline-shell]");
@@ -2922,7 +2966,10 @@
   window.addEventListener("blur", () => {
     tileCameraScrollbar?.classList.remove("tile-resize-priority");
   });
-  window.addEventListener("pointerup", () => scheduleTileExtentCleanup(180), {passive: true});
+  window.addEventListener("pointerup", () => {
+    if (tileSelectionFocusActive || tileHomeCenterFrame) return;
+    scheduleTileExtentCleanup(180);
+  }, {passive: true});
   const nearestTileSnap = (value, candidates) => {
     let nearest = null;
     candidates.forEach(candidate => {
@@ -3262,6 +3309,327 @@
       panel.appendChild(handle);
     });
   };
+  const pushTilesFromGap = (
+    sourceTiles,
+    initialKey,
+    axis,
+    requestedDelta,
+    workspace,
+    horizontalExtent,
+  ) => {
+    if (!initialKey || !requestedDelta) return cloneTiles(sourceTiles);
+    const tiles = cloneTiles(sourceTiles);
+    const direction = Math.sign(requestedDelta);
+    const pushEdge = axis === "x"
+      ? (direction > 0 ? "e" : "w")
+      : (direction > 0 ? "s" : "n");
+    const horizontalLeft = Number(horizontalExtent?.left ?? tileWorkspaceInset);
+    const horizontalRight = Number(
+      horizontalExtent?.right ?? workspace.width - tileWorkspaceInset,
+    );
+    const source = sourceTiles[initialKey];
+    let delta = requestedDelta;
+    if (axis === "x") {
+      delta = clamp(
+        delta,
+        horizontalLeft - source.x,
+        horizontalRight - source.x - source.width,
+      );
+      tiles[initialKey].x = source.x + delta;
+    } else {
+      delta = clamp(
+        delta,
+        tileWorkspaceInset - source.y,
+        workspace.height - tileWorkspaceInset - source.y - source.height,
+      );
+      tiles[initialKey].y = source.y + delta;
+    }
+    const queue = [initialKey];
+    const processed = new Set();
+    let attempts = 0;
+    while (queue.length && attempts < 64) {
+      const obstacleKey = queue.shift();
+      const obstacle = tiles[obstacleKey];
+      for (const otherKey of tilePanelKeys) {
+        attempts += 1;
+        if (otherKey === obstacleKey) continue;
+        const pair = `${obstacleKey}:${otherKey}`;
+        if (
+          processed.has(pair)
+          || !rectanglesOverlap(obstacle, tiles[otherKey])
+        ) continue;
+        processed.add(pair);
+        const pushed = pushTileFromObstacle(
+          tiles[otherKey],
+          obstacle,
+          pushEdge,
+          workspace,
+          tileMinimums[otherKey],
+          horizontalExtent,
+        );
+        if (!pushed) return null;
+        tiles[otherKey] = pushed;
+        queue.push(otherKey);
+      }
+    }
+    if (attempts >= 64 || tileLayoutHasOverlap(tiles)) return null;
+    return tiles;
+  };
+  const resolveGapPush = (
+    sourceTiles,
+    initialKey,
+    axis,
+    requestedDelta,
+    workspace,
+    horizontalExtent,
+  ) => {
+    let resolved = pushTilesFromGap(
+      sourceTiles,
+      initialKey,
+      axis,
+      requestedDelta,
+      workspace,
+      horizontalExtent,
+    );
+    if (resolved) return resolved;
+    const direction = Math.sign(requestedDelta);
+    let low = 0;
+    let high = Math.abs(requestedDelta);
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const middle = (low + high) / 2;
+      const candidate = pushTilesFromGap(
+        sourceTiles,
+        initialKey,
+        axis,
+        direction * middle,
+        workspace,
+        horizontalExtent,
+      );
+      if (candidate) {
+        resolved = candidate;
+        low = middle;
+      } else {
+        high = middle;
+      }
+    }
+    return resolved || cloneTiles(sourceTiles);
+  };
+  const tileGapDescriptors = tiles => {
+    const descriptors = [];
+    tilePanelKeys.forEach((firstKey, firstIndex) => {
+      const first = tiles[firstKey];
+      tilePanelKeys.slice(firstIndex + 1).forEach(secondKey => {
+        const second = tiles[secondKey];
+        if (!first || !second) return;
+        const leftKey = first.x <= second.x ? firstKey : secondKey;
+        const rightKey = leftKey === firstKey ? secondKey : firstKey;
+        const left = tiles[leftKey];
+        const right = tiles[rightKey];
+        const horizontalGap = right.x - (left.x + left.width);
+        const overlapTop = Math.max(left.y, right.y);
+        const overlapBottom = Math.min(
+          left.y + left.height,
+          right.y + right.height,
+        );
+        if (horizontalGap > .5 && overlapBottom - overlapTop >= tileEdgeSize) {
+          const obstructed = tilePanelKeys.some(otherKey => {
+            if (otherKey === leftKey || otherKey === rightKey) return false;
+            const other = tiles[otherKey];
+            return (
+              other.x < right.x
+              && other.x + other.width > left.x + left.width
+              && other.y < overlapBottom
+              && other.y + other.height > overlapTop
+            );
+          });
+          if (!obstructed) {
+            descriptors.push({
+              axis: "x",
+              negativeKey: leftKey,
+              positiveKey: rightKey,
+              gapStart: left.x + left.width,
+              gapSize: horizontalGap,
+              crossStart: overlapTop,
+              crossSize: overlapBottom - overlapTop,
+            });
+          }
+        }
+        const topKey = first.y <= second.y ? firstKey : secondKey;
+        const bottomKey = topKey === firstKey ? secondKey : firstKey;
+        const top = tiles[topKey];
+        const bottom = tiles[bottomKey];
+        const verticalGap = bottom.y - (top.y + top.height);
+        const overlapLeft = Math.max(top.x, bottom.x);
+        const overlapRight = Math.min(
+          top.x + top.width,
+          bottom.x + bottom.width,
+        );
+        if (verticalGap > .5 && overlapRight - overlapLeft >= tileEdgeSize) {
+          const obstructed = tilePanelKeys.some(otherKey => {
+            if (otherKey === topKey || otherKey === bottomKey) return false;
+            const other = tiles[otherKey];
+            return (
+              other.y < bottom.y
+              && other.y + other.height > top.y + top.height
+              && other.x < overlapRight
+              && other.x + other.width > overlapLeft
+            );
+          });
+          if (!obstructed) {
+            descriptors.push({
+              axis: "y",
+              negativeKey: topKey,
+              positiveKey: bottomKey,
+              gapStart: top.y + top.height,
+              gapSize: verticalGap,
+              crossStart: overlapLeft,
+              crossSize: overlapRight - overlapLeft,
+            });
+          }
+        }
+      });
+    });
+    return descriptors;
+  };
+  const bindTileGapHandle = handle => {
+    handle.addEventListener("pointerdown", event => {
+      if (
+        !canEdit
+        || event.button !== 0
+        || event.ctrlKey
+        || event.metaKey
+      ) return;
+      if (layoutLocked) {
+        event.preventDefault();
+        flashLayoutLock();
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      const axis = handle.dataset.gapAxis;
+      const negativeKey = handle.dataset.gapNegativeKey;
+      const positiveKey = handle.dataset.gapPositiveKey;
+      const layout = ensureTileLayout();
+      const startTiles = cloneTiles(layout.tiles);
+      const horizontalExtent = tileInteractiveHorizontalExtent();
+      const pointerId = event.pointerId;
+      const startPosition = axis === "x" ? event.clientX : event.clientY;
+      let active = false;
+      let currentTiles = startTiles;
+      let finished = false;
+      capturePointerSafely(handle, pointerId);
+      const update = next => {
+        const pointerPosition = axis === "x" ? next.clientX : next.clientY;
+        const delta = pointerPosition - startPosition;
+        if (!active && Math.abs(delta) < 3) return;
+        if (!active) {
+          active = true;
+          remember();
+          tileGapPushActive = true;
+          document.body.classList.add("movie-panel-interacting");
+          handle.classList.add("active");
+          revealTileViewportScrollbars();
+        }
+        next.preventDefault();
+        const initialKey = delta >= 0 ? positiveKey : negativeKey;
+        currentTiles = resolveGapPush(
+          startTiles,
+          initialKey,
+          axis,
+          delta,
+          layout.workspace,
+          horizontalExtent,
+        );
+        tilePanelKeys.forEach(key => {
+          const changed = (
+            currentTiles[key].x !== startTiles[key].x
+            || currentTiles[key].y !== startTiles[key].y
+          );
+          layoutPanels[key]?.classList.toggle("movie-tile-moving", changed);
+        });
+        applyTileRects(currentTiles, {
+          preserveViewport: true,
+          scheduleCleanup: false,
+        });
+      };
+      const finish = finishEvent => {
+        if (finishEvent?.pointerId != null && finishEvent.pointerId !== pointerId) return;
+        if (finished) return;
+        finished = true;
+        clearEditorPointerFinish(finish);
+        window.removeEventListener("pointermove", update, true);
+        window.removeEventListener("pointerup", finish, true);
+        window.removeEventListener("pointercancel", finish, true);
+        releasePointerCaptureSafely(handle, pointerId);
+        tileGapPushActive = false;
+        document.body.classList.remove("movie-panel-interacting");
+        handle.classList.remove("active");
+        tilePanelKeys.forEach(key =>
+          layoutPanels[key]?.classList.remove("movie-tile-moving")
+        );
+        if (!active) {
+          syncTileGapHandles(startTiles, tileViewportGeometry);
+          return;
+        }
+        editorLayouts.columns = {
+          ...editorLayouts.columns,
+          workspace: layout.workspace,
+          tiles: currentTiles,
+        };
+        persistLayout("columns");
+        applyTileRects(currentTiles, {
+          preserveViewport: true,
+          scheduleCleanup: false,
+        });
+        const cleanupTarget = tileContentCleanupTarget(
+          currentTiles,
+          tileViewportGeometry,
+        );
+        if (cleanupTarget) animateTileViewportToTarget(cleanupTarget);
+        scheduleTileExtentCleanup(180);
+        scheduleTileViewportScrollbarIdle();
+        historyRedo = [];
+        updateHistoryButtons();
+      };
+      window.addEventListener("pointermove", update, true);
+      window.addEventListener("pointerup", finish, true);
+      window.addEventListener("pointercancel", finish, true);
+      registerEditorPointerFinish(finish);
+    });
+  };
+  const syncTileGapHandles = (tiles, geometry = tileViewportGeometry) => {
+    if (!editorLayout || !geometry || tileGapPushActive) return;
+    editorLayout.querySelectorAll(":scope > .movie-tile-gap-handle")
+      .forEach(handle => handle.remove());
+    tileGapDescriptors(tiles).forEach(descriptor => {
+      const handle = document.createElement("i");
+      const size = Math.min(tileGapHandleSize, descriptor.gapSize);
+      handle.className = "movie-tile-gap-handle";
+      handle.dataset.gapAxis = descriptor.axis;
+      handle.dataset.gapNegativeKey = descriptor.negativeKey;
+      handle.dataset.gapPositiveKey = descriptor.positiveKey;
+      handle.title = descriptor.axis === "x"
+        ? "Drag to push neighboring tiles horizontally"
+        : "Drag to push neighboring tiles vertically";
+      if (descriptor.axis === "x") {
+        handle.style.left = `${
+          descriptor.gapStart + (descriptor.gapSize - size) / 2 + geometry.offsetX
+        }px`;
+        handle.style.top = `${descriptor.crossStart + geometry.offsetY}px`;
+        handle.style.width = `${size}px`;
+        handle.style.height = `${descriptor.crossSize}px`;
+      } else {
+        handle.style.left = `${descriptor.crossStart + geometry.offsetX}px`;
+        handle.style.top = `${
+          descriptor.gapStart + (descriptor.gapSize - size) / 2 + geometry.offsetY
+        }px`;
+        handle.style.width = `${descriptor.crossSize}px`;
+        handle.style.height = `${size}px`;
+      }
+      bindTileGapHandle(handle);
+      editorLayout.appendChild(handle);
+    });
+  };
   const bindPanelDragging = () => {
     initializeProjectFullscreen();
     Object.entries(layoutPanels).forEach(([key, panel]) => {
@@ -3300,13 +3668,29 @@
       const beforeTop = editorViewport.scrollTop;
       const logicalViewport = tileLogicalViewportBounds(tileViewportGeometry);
       let horizontalPosition = pointer.clientX;
+      let verticalPosition = pointer.clientY;
       if (movingBounds && logicalViewport) {
         const movingScreenLeft = bounds.left + movingBounds.x - logicalViewport.left;
         const movingScreenRight = bounds.left + movingBounds.right - logicalViewport.left;
+        const movingScreenTop = bounds.top + movingBounds.y - logicalViewport.top;
+        const movingScreenBottom = bounds.top + movingBounds.bottom - logicalViewport.top;
         if (movingScreenRight > bounds.right - edgeZone) {
           horizontalPosition = Math.max(horizontalPosition, movingScreenRight);
         } else if (movingScreenLeft < bounds.left + edgeZone) {
           horizontalPosition = Math.min(horizontalPosition, movingScreenLeft);
+        }
+        const movingPastBottom = movingScreenBottom > bounds.bottom - edgeZone;
+        const movingPastTop = movingScreenTop < bounds.top + edgeZone;
+        if (
+          movingPastBottom
+          && (
+            !movingPastTop
+            || pointer.clientY >= bounds.top + bounds.height / 2
+          )
+        ) {
+          verticalPosition = Math.max(verticalPosition, movingScreenBottom);
+        } else if (movingPastTop) {
+          verticalPosition = Math.min(verticalPosition, movingScreenTop);
         }
       }
       const maxTop = Math.max(0, editorViewport.scrollHeight - editorViewport.clientHeight);
@@ -3319,7 +3703,7 @@
       }
       if (vertical) {
         editorViewport.scrollTop = clamp(
-          beforeTop + axisStep(pointer.clientY, bounds.top, bounds.bottom),
+          beforeTop + axisStep(verticalPosition, bounds.top, bounds.bottom),
           0,
           maxTop,
         );
@@ -3346,6 +3730,7 @@
       ".movie-bin-item",
       ".movie-bin-folder-tile",
       ".movie-tile-edge",
+      ".movie-tile-gap-handle",
       ".movie-window-resize-handle",
       "[data-panel-width-resizer]",
       "[data-panel-height-resizer]",
@@ -3354,6 +3739,8 @@
       "[data-timeline-bottom-resizer]",
     ].join(",");
     const tileDragTargetIsBlocked = (target, key, panel) => {
+      const movieTitle = target.closest("[data-movie-title]");
+      if (movieTitle?.readOnly) return false;
       if (key === "editProjects") {
         const summary = panel?.querySelector(":scope > summary");
         if (summary?.contains(target)) {
@@ -3393,6 +3780,8 @@
         if (
           !canEdit
           || event.button !== 0
+          || event.ctrlKey
+          || event.metaKey
           || event.defaultPrevented
           || tileDragTargetIsBlocked(event.target, key, panel)
         ) return false;
@@ -3601,17 +3990,18 @@
           hideTileGuides();
           setTemporaryTileSelection(panel, false, active ? 0 : 180);
           if (!active) {
+            let focusStarted = false;
             if (additiveSelection && selectedAtPointerDown) {
               setSelectedTileKeys(
                 [...selectedTileKeys].filter(selectedKey => selectedKey !== key)
               );
             } else if (!additiveSelection) {
               setSelectedTileKeys([key]);
-              focusPartiallyVisibleSelectedTile(key);
+              focusStarted = focusPartiallyVisibleSelectedTile(key);
             }
             syncTileViewportHorizontalAccess(startTiles);
             scheduleTileViewportScrollbarIdle();
-            scheduleTileExtentCleanup(180);
+            if (!focusStarted) scheduleTileExtentCleanup(180);
             return;
           }
           const invalidDrop = tileLayoutHasSelectionOverlap(currentTiles, movingKeys);
@@ -3634,7 +4024,7 @@
             ? (nearestDropTiles || startTiles)
             : currentTiles;
           if (invalidDrop && nearestDrop?.resized) {
-            toast("Placed in the nearest free space and fitted by up to 20%");
+            toast("Placed between neighboring tiles and fitted by up to 10%");
           } else if (invalidDrop && nearestDropTiles) {
             toast("Placed in the nearest free space");
           } else if (invalidDrop) {
@@ -3766,7 +4156,7 @@
         };
       };
       const pointerOnEmptyWorkspace = event => !event.target.closest(
-        "[data-panel-key],.movie-tile-edge,.movie-tile-snap-guide",
+        "[data-panel-key],.movie-tile-edge,.movie-tile-gap-handle,.movie-tile-snap-guide",
       );
       const pointerCanPanFromTile = event => {
         if (event.button !== 2) return false;
@@ -3784,10 +4174,15 @@
         ) return false;
         return true;
       };
-      const beginWorkspacePan = event => {
-        event.preventDefault();
-        event.stopPropagation();
+      let workspacePanPointerId = null;
+      let suppressWorkspaceContextMenuUntil = 0;
+      const beginWorkspacePan = (
+        event,
+        {selectionKey = null, clearSelectionOnClick = false} = {},
+      ) => {
+        if (workspacePanPointerId !== null) return;
         const pointerId = event.pointerId;
+        workspacePanPointerId = pointerId;
         const startX = event.clientX;
         const startY = event.clientY;
         const startCameraX = tileCameraX;
@@ -3799,15 +4194,21 @@
         let active = false;
         let finished = false;
         cancelTileHomeCenter();
-        capturePointerSafely(editorLayout, pointerId);
+        const suppressClick = clickEvent => {
+          clickEvent.preventDefault();
+          clickEvent.stopImmediatePropagation();
+          window.removeEventListener("click", suppressClick, true);
+        };
         const update = next => {
           const dx = next.clientX - startX;
           const dy = next.clientY - startY;
           if (!active && Math.hypot(dx, dy) < 3) return;
           if (!active) {
             active = true;
+            capturePointerSafely(editorLayout, pointerId);
             editorViewport?.classList.add("movie-workspace-panning");
             revealTileViewportScrollbars();
+            window.addEventListener("click", suppressClick, true);
           }
           next.preventDefault();
           setTileCameraX(startCameraX - dx);
@@ -3823,13 +4224,28 @@
           if (finishEvent?.pointerId != null && finishEvent.pointerId !== pointerId) return;
           if (finished) return;
           finished = true;
+          workspacePanPointerId = null;
           clearEditorPointerFinish(finish);
           window.removeEventListener("pointermove", update, true);
           window.removeEventListener("pointerup", finish, true);
           window.removeEventListener("pointercancel", finish, true);
           releasePointerCaptureSafely(editorLayout, pointerId);
           editorViewport?.classList.remove("movie-workspace-panning");
-          if (!active && event.button === 0) clearTileSelection();
+          if (active) {
+            suppressWorkspaceContextMenuUntil = Date.now() + 300;
+            window.setTimeout(
+              () => window.removeEventListener("click", suppressClick, true),
+              0,
+            );
+          } else if (event.button === 0 && selectionKey) {
+            setSelectedTileKeys(
+              selectedTileKeys.has(selectionKey)
+                ? [...selectedTileKeys].filter(key => key !== selectionKey)
+                : [...selectedTileKeys, selectionKey],
+            );
+          } else if (event.button === 0 && clearSelectionOnClick) {
+            clearTileSelection();
+          }
           syncTileViewportHorizontalAccess(tileRenderedTiles);
           scheduleTileViewportScrollbarIdle();
           scheduleTileExtentCleanup(180);
@@ -3840,11 +4256,37 @@
         registerEditorPointerFinish(finish);
       };
       editorLayout.addEventListener("contextmenu", event => {
-        if (pointerOnEmptyWorkspace(event) || pointerCanPanFromTile(event)) {
+        if (
+          Date.now() < suppressWorkspaceContextMenuUntil
+          || pointerOnEmptyWorkspace(event)
+          || pointerCanPanFromTile(event)
+        ) {
           event.preventDefault();
         }
-      });
+      }, true);
       editorLayout.addEventListener("pointerdown", event => {
+        const ctrlPan = (
+          event.button === 0
+          && (event.ctrlKey || event.metaKey)
+        );
+        if (!ctrlPan && event.button !== 2) return;
+        const panel = event.target.closest("[data-panel-key]");
+        const key = panel?.dataset.panelKey;
+        const selectionKey = (
+          ctrlPan
+          && panel
+          && workspacePanel(key)
+          && !tileDragTargetIsBlocked(event.target, key, panel)
+          && !pointerNearTileEdge(event, panel)
+        ) ? key : null;
+        beginWorkspacePan(event, {
+          selectionKey,
+          clearSelectionOnClick: ctrlPan && !panel,
+        });
+        event.stopPropagation();
+      }, true);
+      editorLayout.addEventListener("pointerdown", event => {
+        if (workspacePanPointerId === event.pointerId) return;
         const onEmptyWorkspace = pointerOnEmptyWorkspace(event);
         const canPanFromTile = pointerCanPanFromTile(event);
         if (!onEmptyWorkspace && !canPanFromTile) return;
@@ -3914,7 +4356,12 @@
       if (handle.dataset.tileResizeBound === "true") return;
       handle.dataset.tileResizeBound = "true";
       handle.addEventListener("pointerdown", event => {
-        if (!canEdit || event.button !== 0) return;
+        if (
+          !canEdit
+          || event.button !== 0
+          || event.ctrlKey
+          || event.metaKey
+        ) return;
         if (layoutLocked) {
           event.preventDefault();
           flashLayoutLock();
@@ -7414,7 +7861,7 @@
   q("[data-save-movie]")?.addEventListener("click", () => saveTimeline());
   const movieTitleInput = q("[data-movie-title]");
   let movieTitleEditStart = movieTitleInput?.value || "";
-  movieTitleInput?.addEventListener("dblclick", event => {
+  const beginMovieTitleEdit = event => {
     if (!canEdit) return;
     event.preventDefault();
     event.stopPropagation();
@@ -7423,7 +7870,9 @@
     movieTitleInput.classList.add("movie-title-editing");
     movieTitleInput.focus();
     movieTitleInput.select();
-  });
+  };
+  movieTitleInput?.addEventListener("dblclick", beginMovieTitleEdit);
+  q("[data-movie-title-edit]")?.addEventListener("click", beginMovieTitleEdit);
   movieTitleInput?.addEventListener("keydown", event => {
     if (movieTitleInput.readOnly) return;
     if (event.key === "Enter") {

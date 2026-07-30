@@ -1232,10 +1232,32 @@ body.movie-editor-page-active .movie-editor-viewport.movie-scrollbars-idle::-web
   display:block!important;
 }
 .movie-toolbar [data-movie-title][readonly]{
-  cursor:default;
+  cursor:grab;
 }
 .movie-toolbar [data-movie-title].movie-title-editing{
   cursor:text;
+}
+.movie-title-zone{
+  display:flex;
+  align-items:center;
+  min-width:0;
+  gap:3px;
+  cursor:grab;
+}
+.movie-title-zone [data-movie-title]{
+  flex:1 1 auto;
+  min-width:0;
+}
+.movie-title-edit{
+  flex:0 0 auto;
+  width:24px;
+  height:24px;
+  min-width:24px;
+  padding:0;
+  border:0;
+  background:transparent;
+  color:var(--accent);
+  font-size:15px;
 }
 .movie-editor-layout .movie-workbench,
 .movie-editor-layout .movie-stage-column{
@@ -1415,6 +1437,43 @@ body.movie-panel-interacting *{
   background:var(--accent);
   box-shadow:0 0 8px color-mix(in srgb,var(--accent) 72%,transparent);
 }
+.movie-tile-gap-handle{
+  position:absolute;
+  z-index:29;
+  display:block;
+  box-sizing:border-box;
+  margin:0;
+  padding:0;
+  border:0;
+  background:transparent;
+  touch-action:none;
+}
+.movie-tile-gap-handle[data-gap-axis="x"]{cursor:ew-resize}
+.movie-tile-gap-handle[data-gap-axis="y"]{cursor:ns-resize}
+.movie-tile-gap-handle::after{
+  content:"";
+  position:absolute;
+  border-radius:3px;
+  background:transparent;
+  transition:background-color .12s ease,box-shadow .12s ease;
+}
+.movie-tile-gap-handle[data-gap-axis="x"]::after{
+  top:0;
+  bottom:0;
+  left:calc(50% - 2px);
+  width:4px;
+}
+.movie-tile-gap-handle[data-gap-axis="y"]::after{
+  left:0;
+  right:0;
+  top:calc(50% - 2px);
+  height:4px;
+}
+.movie-tile-gap-handle:hover::after,
+.movie-tile-gap-handle.active::after{
+  background:color-mix(in srgb,var(--accent) 72%,transparent);
+  box-shadow:0 0 10px color-mix(in srgb,var(--accent) 72%,transparent);
+}
 .movie-tile-moving,
 .movie-tile-resizing{
   z-index:60!important;
@@ -1505,7 +1564,10 @@ body.movie-panel-interacting *{
   {% include "studio/_montage_gallery.html" with montage_gallery_key="draft-editor" montage_actions_url=movie_edits_url montage_can_edit=can_edit montage_initially_closed=True %}
   <div class="panel movie-toolbar movie-collapsible" data-panel-key="editorHeader" data-panel-drag="editorHeader" title="Drag empty header space to move this tile">
     <div class="movie-settings">
-      <input data-movie-title value="{{ movie_timeline.title }}" aria-label="MC Project title" title="Double-click to edit MC Project title" readonly>
+      <span class="movie-title-zone">
+        <input data-movie-title value="{{ movie_timeline.title }}" aria-label="MC Project title" title="Double-click to edit MC Project title" readonly>
+        <button class="movie-title-edit" type="button" data-movie-title-edit title="Edit MC Project title" aria-label="Edit MC Project title">&#9998;</button>
+      </span>
     </div>
     <div class="movie-actions">
       <span class="movie-editor-state" data-movie-state>Saved</span>
@@ -1586,4 +1648,4 @@ body.movie-panel-interacting *{
 </section>
 {{ movie_timeline_data|json_script:"movie-timeline-data" }}{{ movie_assets|json_script:"movie-assets-data" }}{{ movie_library_assets|json_script:"movie-library-data" }}{{ movie_render_jobs|json_script:"movie-render-jobs-data" }}{{ movie_edits|json_script:"movie-edits-data" }}
 {% endblock %}
-{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260730-balanced-focus-cleanup"></script>{% endblock %}
+{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260730-pan-gap-push-v2"></script>{% endblock %}
