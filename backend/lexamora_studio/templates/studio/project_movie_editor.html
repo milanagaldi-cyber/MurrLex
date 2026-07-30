@@ -1278,6 +1278,45 @@ body.movie-panel-interacting *{
   width:2px;
   left:calc(50% - 1px);
 }
+.movie-tile-edge.nw,
+.movie-tile-edge.ne,
+.movie-tile-edge.sw,
+.movie-tile-edge.se{
+  z-index:31;
+  width:var(--tile-corner-size,24px);
+  height:var(--tile-corner-size,24px);
+}
+.movie-tile-edge.nw,
+.movie-tile-edge.se{cursor:nwse-resize}
+.movie-tile-edge.ne,
+.movie-tile-edge.sw{cursor:nesw-resize}
+.movie-tile-edge.nw{
+  top:calc(var(--tile-corner-size,24px) / -2);
+  left:calc(var(--tile-corner-size,24px) / -2);
+}
+.movie-tile-edge.ne{
+  top:calc(var(--tile-corner-size,24px) / -2);
+  right:calc(var(--tile-corner-size,24px) / -2);
+}
+.movie-tile-edge.sw{
+  bottom:calc(var(--tile-corner-size,24px) / -2);
+  left:calc(var(--tile-corner-size,24px) / -2);
+}
+.movie-tile-edge.se{
+  right:calc(var(--tile-corner-size,24px) / -2);
+  bottom:calc(var(--tile-corner-size,24px) / -2);
+}
+.movie-tile-edge.nw::after,
+.movie-tile-edge.ne::after,
+.movie-tile-edge.sw::after,
+.movie-tile-edge.se::after{
+  inset:6px;
+  border:2px solid transparent;
+}
+.movie-tile-edge.nw::after{border-top-color:transparent;border-left-color:transparent}
+.movie-tile-edge.ne::after{border-top-color:transparent;border-right-color:transparent}
+.movie-tile-edge.sw::after{border-bottom-color:transparent;border-left-color:transparent}
+.movie-tile-edge.se::after{border-right-color:transparent;border-bottom-color:transparent}
 .movie-tile-edge:hover::after,
 .movie-tile-edge.active::after{
   background:var(--accent);
@@ -1453,4 +1492,4 @@ body.movie-panel-interacting *{
 </section>
 {{ movie_timeline_data|json_script:"movie-timeline-data" }}{{ movie_assets|json_script:"movie-assets-data" }}{{ movie_library_assets|json_script:"movie-library-data" }}{{ movie_render_jobs|json_script:"movie-render-jobs-data" }}{{ movie_edits|json_script:"movie-edits-data" }}
 {% endblock %}
-{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260730-five-percent-return-margin"></script>{% endblock %}
+{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260730-diagonal-tile-resize"></script>{% endblock %}

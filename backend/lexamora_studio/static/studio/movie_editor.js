@@ -2067,7 +2067,9 @@
   }, {passive: true});
   const syncTileBottomEdgePointerPriority = event => {
     if (!tileCameraScrollbar || !editorLayout) return;
-    const overBottomResizeEdge = [...editorLayout.querySelectorAll(".movie-tile-edge.s")].some(edge => {
+    const overBottomResizeEdge = [...editorLayout.querySelectorAll(
+      ".movie-tile-edge.s,.movie-tile-edge.sw,.movie-tile-edge.se"
+    )].some(edge => {
       const bounds = edge.getBoundingClientRect();
       return (
         event.clientX >= bounds.left
@@ -2278,27 +2280,30 @@
     const maximumHeight = Math.min(workspace.height, defaults.height * maximumScale);
     const next = {...origin};
     let guide = {x: null, y: null};
-    if (edge === "e") {
+    const horizontalEdge = edge.includes("e") ? "e" : edge.includes("w") ? "w" : null;
+    const verticalEdge = edge.includes("s") ? "s" : edge.includes("n") ? "n" : null;
+    if (horizontalEdge === "e") {
       const raw = clamp(origin.x + origin.width + dx, origin.x + minimum.width, Math.min(workspace.width - tileWorkspaceInset, origin.x + maximumWidth));
-      const snap = snapResizeEdge(key, edge, raw, tiles, workspace);
+      const snap = snapResizeEdge(key, horizontalEdge, raw, tiles, workspace);
       const right = clamp(snap?.value ?? raw, origin.x + minimum.width, Math.min(workspace.width - tileWorkspaceInset, origin.x + maximumWidth));
       next.width = right - origin.x;
       guide.x = snap?.guide ?? null;
-    } else if (edge === "w") {
+    } else if (horizontalEdge === "w") {
       const raw = clamp(origin.x + dx, Math.max(tileWorkspaceInset, origin.x + origin.width - maximumWidth), origin.x + origin.width - minimum.width);
-      const snap = snapResizeEdge(key, edge, raw, tiles, workspace);
+      const snap = snapResizeEdge(key, horizontalEdge, raw, tiles, workspace);
       next.x = clamp(snap?.value ?? raw, Math.max(tileWorkspaceInset, origin.x + origin.width - maximumWidth), origin.x + origin.width - minimum.width);
       next.width = origin.x + origin.width - next.x;
       guide.x = snap?.guide ?? null;
-    } else if (edge === "s") {
+    }
+    if (verticalEdge === "s") {
       const raw = clamp(origin.y + origin.height + dy, origin.y + minimum.height, Math.min(workspace.height - tileWorkspaceInset, origin.y + maximumHeight));
-      const snap = snapResizeEdge(key, edge, raw, tiles, workspace);
+      const snap = snapResizeEdge(key, verticalEdge, raw, tiles, workspace);
       const bottom = clamp(snap?.value ?? raw, origin.y + minimum.height, Math.min(workspace.height - tileWorkspaceInset, origin.y + maximumHeight));
       next.height = bottom - origin.y;
       guide.y = snap?.guide ?? null;
-    } else {
+    } else if (verticalEdge === "n") {
       const raw = clamp(origin.y + dy, Math.max(tileWorkspaceInset, origin.y + origin.height - maximumHeight), origin.y + origin.height - minimum.height);
-      const snap = snapResizeEdge(key, edge, raw, tiles, workspace);
+      const snap = snapResizeEdge(key, verticalEdge, raw, tiles, workspace);
       next.y = clamp(snap?.value ?? raw, Math.max(tileWorkspaceInset, origin.y + origin.height - maximumHeight), origin.y + origin.height - minimum.height);
       next.height = origin.y + origin.height - next.y;
       guide.y = snap?.guide ?? null;
@@ -2308,7 +2313,7 @@
   const ensureTileEdges = (key, panel) => {
     if (!workspacePanel(key) || !panel) return;
     panel.querySelectorAll(":scope > .movie-tile-edge").forEach(handle => handle.remove());
-    ["n", "e", "s", "w"].forEach(edge => {
+    ["n", "e", "s", "w", "nw", "ne", "sw", "se"].forEach(edge => {
       const handle = document.createElement("i");
       handle.className = `movie-tile-edge ${edge}`;
       handle.dataset.tileEdge = edge;
@@ -2960,7 +2965,9 @@
         const startX = event.clientX;
         const startY = event.clientY;
         const startViewportLogicalCenter = tileLogicalViewportCenter(tileViewportGeometry);
-        const horizontalSide = edge === "e" ? 1 : edge === "w" ? -1 : 0;
+        const horizontalEdge = edge.includes("e") ? "e" : edge.includes("w") ? "w" : null;
+        const verticalEdge = edge.includes("s") ? "s" : edge.includes("n") ? "n" : null;
+        const horizontalSide = horizontalEdge === "e" ? 1 : horizontalEdge === "w" ? -1 : 0;
         const pointerId = event.pointerId;
         let active = false;
         let currentTiles = startTiles;
@@ -2971,7 +2978,7 @@
         let previousPointerX = startX;
         let observedCameraX = tileCameraX;
         let resizeCrossingBarrier = null;
-        let resizeCrossingReleaseOffset = null;
+        let resizeCrossingRelease = null;
         const pointerToLogicalPoint = pointer => {
           const visible = tileLogicalViewportBounds(tileViewportGeometry);
           const viewportBounds = editorViewport?.getBoundingClientRect();
@@ -3035,11 +3042,20 @@
             revealTileViewportScrollbars();
           }
           active = true;
-          const activeAxis = edge === "e" || edge === "w" ? "x" : "y";
-          const direction = edge === "e" || edge === "s" ? 1 : -1;
+          const pointerDx = next.clientX - startX;
+          const pointerDy = next.clientY - startY;
+          const activeEdge = horizontalEdge && verticalEdge
+            ? (Math.abs(pointerDx) >= Math.abs(pointerDy) ? horizontalEdge : verticalEdge)
+            : horizontalEdge || verticalEdge;
+          const activeAxis = activeEdge === "e" || activeEdge === "w" ? "x" : "y";
+          const direction = activeEdge === "e" || activeEdge === "s" ? 1 : -1;
           const pointerValue = activeAxis === "x" ? next.clientX : next.clientY;
-          const effectiveDx = dx - (activeAxis === "x" ? resizeCrossingReleaseOffset || 0 : 0);
-          const effectiveDy = dy - (activeAxis === "y" ? resizeCrossingReleaseOffset || 0 : 0);
+          const effectiveDx = dx - (
+            resizeCrossingRelease?.axis === "x" ? resizeCrossingRelease.offset : 0
+          );
+          const effectiveDy = dy - (
+            resizeCrossingRelease?.axis === "y" ? resizeCrossingRelease.offset : 0
+          );
           let resized = resizeTileCandidate(
             key,
             edge,
@@ -3049,21 +3065,21 @@
             startTiles,
             layout.workspace,
           );
-          const resizedEdge = rect => edge === "e"
+          const resizedEdge = (rect, resizeEdge) => resizeEdge === "e"
             ? rect.x + rect.width
-            : edge === "w"
+            : resizeEdge === "w"
               ? rect.x
-              : edge === "s"
+              : resizeEdge === "s"
                 ? rect.y + rect.height
                 : rect.y;
-          const setResizedEdge = (rect, value) => {
+          const setResizedEdge = (rect, resizeEdge, value) => {
             const adjusted = {...rect};
-            if (edge === "e") adjusted.width = value - adjusted.x;
-            else if (edge === "w") {
+            if (resizeEdge === "e") adjusted.width = value - adjusted.x;
+            else if (resizeEdge === "w") {
               const right = adjusted.x + adjusted.width;
               adjusted.x = value;
               adjusted.width = right - value;
-            } else if (edge === "s") adjusted.height = value - adjusted.y;
+            } else if (resizeEdge === "s") adjusted.height = value - adjusted.y;
             else {
               const bottom = adjusted.y + adjusted.height;
               adjusted.y = value;
@@ -3071,40 +3087,52 @@
             }
             return adjusted;
           };
-          if (resizeCrossingReleaseOffset == null && resizeCrossingBarrier) {
-            const candidateEdge = edge === "e"
-              ? resized.rect.x + resized.rect.width
-              : edge === "w"
-                ? resized.rect.x
-                : edge === "s"
-                  ? resized.rect.y + resized.rect.height
-                  : resized.rect.y;
-            const retreat = direction * (candidateEdge - resizeCrossingBarrier.contact);
+          if (!resizeCrossingRelease && resizeCrossingBarrier) {
+            const barrierEdge = resizeCrossingBarrier.edge;
+            const barrierAxis = resizeCrossingBarrier.axis;
+            const barrierDirection = resizeCrossingBarrier.direction;
+            const barrierPointerValue = barrierAxis === "x" ? next.clientX : next.clientY;
+            const candidateEdge = resizedEdge(resized.rect, barrierEdge);
+            const retreat = barrierDirection * (candidateEdge - resizeCrossingBarrier.contact);
             if (retreat < -4) {
               resizeCrossingBarrier = null;
             } else {
-              const extraPull = direction * (pointerValue - resizeCrossingBarrier.pointerValue);
+              const extraPull = barrierDirection * (
+                barrierPointerValue - resizeCrossingBarrier.pointerValue
+              );
               if (extraPull >= tileCrossingBarrierReleaseDistance) {
-                resizeCrossingReleaseOffset = candidateEdge - resizeCrossingBarrier.contact;
+                resizeCrossingRelease = {
+                  axis: barrierAxis,
+                  edge: barrierEdge,
+                  offset: candidateEdge - resizeCrossingBarrier.contact,
+                };
                 resized = {
-                  rect: setResizedEdge(resized.rect, resizeCrossingBarrier.contact),
-                  guide: resizeCrossingBarrier.guide,
+                  rect: setResizedEdge(
+                    resized.rect,
+                    barrierEdge,
+                    resizeCrossingBarrier.contact,
+                  ),
+                  guide: {...resized.guide, ...resizeCrossingBarrier.guide},
                 };
                 resizeCrossingBarrier = null;
               } else {
                 resized = {
-                  rect: {...resizeCrossingBarrier.rect},
-                  guide: resizeCrossingBarrier.guide,
+                  rect: setResizedEdge(
+                    resized.rect,
+                    barrierEdge,
+                    resizeCrossingBarrier.contact,
+                  ),
+                  guide: {...resized.guide, ...resizeCrossingBarrier.guide},
                 };
               }
             }
           }
-          if (resizeCrossingReleaseOffset == null && !resizeCrossingBarrier) {
+          if (!resizeCrossingRelease && !resizeCrossingBarrier) {
             const outward = (
-              (edge === "e" && resized.rect.width > origin.width)
-              || (edge === "w" && resized.rect.x < origin.x)
-              || (edge === "s" && resized.rect.height > origin.height)
-              || (edge === "n" && resized.rect.y < origin.y)
+              (activeEdge === "e" && resized.rect.width > origin.width)
+              || (activeEdge === "w" && resized.rect.x < origin.x)
+              || (activeEdge === "s" && resized.rect.height > origin.height)
+              || (activeEdge === "n" && resized.rect.y < origin.y)
             );
             if (outward) {
               const contacts = tilePanelKeys.flatMap(obstacleKey => {
@@ -3118,18 +3146,12 @@
                     && resized.rect.x + resized.rect.width > obstacle.x;
                 if (!perpendicularOverlap) return [];
                 let contact;
-                if (edge === "e" && origin.x + origin.width <= obstacle.x) contact = obstacle.x;
-                else if (edge === "w" && origin.x >= obstacle.x + obstacle.width) contact = obstacle.x + obstacle.width;
-                else if (edge === "s" && origin.y + origin.height <= obstacle.y) contact = obstacle.y;
-                else if (edge === "n" && origin.y >= obstacle.y + obstacle.height) contact = obstacle.y + obstacle.height;
+                if (activeEdge === "e" && origin.x + origin.width <= obstacle.x) contact = obstacle.x;
+                else if (activeEdge === "w" && origin.x >= obstacle.x + obstacle.width) contact = obstacle.x + obstacle.width;
+                else if (activeEdge === "s" && origin.y + origin.height <= obstacle.y) contact = obstacle.y;
+                else if (activeEdge === "n" && origin.y >= obstacle.y + obstacle.height) contact = obstacle.y + obstacle.height;
                 else return [];
-                const candidateEdge = edge === "e"
-                  ? resized.rect.x + resized.rect.width
-                  : edge === "w"
-                    ? resized.rect.x
-                    : edge === "s"
-                      ? resized.rect.y + resized.rect.height
-                      : resized.rect.y;
+                const candidateEdge = resizedEdge(resized.rect, activeEdge);
                 if (direction * candidateEdge < direction * contact) return [];
                 return [{contact, obstacleKey}];
               }).sort((left, right) => (
@@ -3137,32 +3159,39 @@
               ));
               const firstContact = contacts[0];
               if (firstContact) {
-                const barrierRect = {...resized.rect};
-                if (edge === "e") barrierRect.width = firstContact.contact - barrierRect.x;
-                else if (edge === "w") {
-                  const right = barrierRect.x + barrierRect.width;
-                  barrierRect.x = firstContact.contact;
-                  barrierRect.width = right - firstContact.contact;
-                } else if (edge === "s") barrierRect.height = firstContact.contact - barrierRect.y;
-                else {
-                  const bottom = barrierRect.y + barrierRect.height;
-                  barrierRect.y = firstContact.contact;
-                  barrierRect.height = bottom - firstContact.contact;
-                }
+                const barrierRect = setResizedEdge(
+                  resized.rect,
+                  activeEdge,
+                  firstContact.contact,
+                );
                 const guide = activeAxis === "x"
-                  ? {x: firstContact.contact, y: null}
-                  : {x: null, y: firstContact.contact};
+                  ? {x: firstContact.contact}
+                  : {y: firstContact.contact};
                 resizeCrossingBarrier = {
+                  edge: activeEdge,
+                  axis: activeAxis,
+                  direction,
                   contact: firstContact.contact,
                   pointerValue,
                   rect: barrierRect,
                   guide,
                 };
-                resized = {rect: barrierRect, guide};
+                resized = {rect: barrierRect, guide: {...resized.guide, ...guide}};
               }
             }
           }
-          const resolved = resolveResizeCollisions(key, resized.rect, edge, startTiles, layout.workspace);
+          const collisionEdge = (
+            resizeCrossingBarrier?.edge
+            || resizeCrossingRelease?.edge
+            || activeEdge
+          );
+          const resolved = resolveResizeCollisions(
+            key,
+            resized.rect,
+            collisionEdge,
+            startTiles,
+            layout.workspace,
+          );
           if (!resolved) return;
           currentTiles = resolved;
           panel?.classList.add("movie-tile-resizing");
@@ -3205,7 +3234,7 @@
           if (autoScrollFrame) cancelAnimationFrame(autoScrollFrame);
           autoScrollFrame = 0;
           const stoppedAtCrossingBarrier = Boolean(
-            resizeCrossingBarrier && resizeCrossingReleaseOffset == null
+            resizeCrossingBarrier && !resizeCrossingRelease
           );
           releasePointerCaptureSafely(handle, pointerId);
           panel?.classList.remove("movie-tile-resizing");
