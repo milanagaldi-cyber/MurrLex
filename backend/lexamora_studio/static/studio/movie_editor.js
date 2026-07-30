@@ -389,6 +389,10 @@
     const baseTop = defaults.tiles.editProjects.y;
     const baseWidth = workspace.baseWidth || defaults.workspace.baseWidth;
     const baseHeight = workspace.baseHeight || defaults.workspace.baseHeight;
+    const workspaceWidth = Math.max(
+      baseWidth,
+      Number(workspace.width || defaults.workspace.width || baseWidth),
+    );
     const baseRight = baseLeft + baseWidth;
     const viewportWidth = Math.max(1, editorViewport?.clientWidth || baseWidth);
     const viewportHeight = Math.max(
@@ -427,10 +431,17 @@
     const occupiedHeight = Math.max(0, extent.bottom - baseTop);
     const centerX = Math.max(0, (coreWidth - baseWidth) / 2);
     const baseDisplayLeft = Math.max(centerX, leftReserve);
+    const workspaceDisplayLeft = baseDisplayLeft - baseLeft;
+    const workspaceCenterX = workspaceDisplayLeft + workspaceWidth / 2;
     return {
-      offsetX: baseDisplayLeft - baseLeft,
+      offsetX: workspaceDisplayLeft,
       offsetY: tileWorkspaceTopReveal - baseTop,
-      width: Math.ceil(Math.max(coreWidth, baseDisplayLeft + baseWidth + rightReserve)),
+      width: Math.ceil(Math.max(
+        coreWidth,
+        baseDisplayLeft + baseWidth + rightReserve,
+        workspaceDisplayLeft + workspaceWidth,
+        workspaceCenterX + viewportWidth / 2,
+      )),
       height: Math.ceil(Math.max(
         viewportHeight,
         tileWorkspaceTopReveal + occupiedHeight,
@@ -440,6 +451,8 @@
       baseTop,
       baseWidth,
       baseHeight,
+      workspaceWidth,
+      workspaceCenterX,
       requiredExtent,
       extent,
     };
@@ -456,9 +469,8 @@
   const tileHomeCameraX = (geometry = tileViewportGeometry) => {
     if (!editorViewport || !geometry) return 0;
     const origin = tileWorkspaceViewportOrigin();
-    const centeredMargin = (editorViewport.clientWidth - geometry.baseWidth) / 2;
     return clamp(
-      origin.x + geometry.baseLeft + geometry.offsetX - centeredMargin,
+      origin.x + geometry.workspaceCenterX - editorViewport.clientWidth / 2,
       0,
       tileCameraMaximumX(geometry),
     );
@@ -1779,7 +1791,6 @@
       side => Math.abs(Number(next[side]) - Number(tileAllocatedExtent[side])) >= 1
     );
     const settleBalancedCamera = () => {
-      if (!tilesFitDefaultDisplayZone(renderedTiles)) return;
       const homeCameraX = tileHomeCameraX(tileViewportGeometry);
       if (Math.abs(tileCameraX - homeCameraX) > 1) {
         setTileCameraX(homeCameraX, {immediate: false, maxVelocity: 14});
