@@ -390,7 +390,7 @@
   let pendingTileCameraLogicalCenterX = null;
   const tileViewportMinimumReveal = 48;
   const tileExtentCleanupMargin = 32;
-  const tileViewportHorizontalActivationRatio = .12;
+  const tileViewportHorizontalActivationRatio = .05;
   const tileViewportLocalFocusMarginRatio = .10;
   const tileViewportHorizontalOverscanRatio = 1;
   const tileViewportScrollbarIdleDelay = 3000;
@@ -1714,6 +1714,88 @@
       key !== otherKey && !selected.has(otherKey) && rectanglesOverlap(tiles[key], tiles[otherKey])
     ));
   };
+  const nearestAvailableTileDrop = (
+    sourceTiles,
+    desiredTiles,
+    movingKeys,
+    workspace,
+    horizontalExtent = null,
+  ) => {
+    const selected = new Set(movingKeys);
+    const sourceBounds = tileGroupBounds(sourceTiles, movingKeys);
+    const desiredBounds = tileGroupBounds(desiredTiles, movingKeys);
+    if (!sourceBounds || !desiredBounds) return null;
+    const horizontalLeft = Number(horizontalExtent?.left ?? tileWorkspaceInset);
+    const horizontalRight = Number(
+      horizontalExtent?.right ?? workspace.width - tileWorkspaceInset,
+    );
+    const minimumDx = horizontalLeft - sourceBounds.x;
+    const maximumDx = horizontalRight - sourceBounds.right;
+    const minimumDy = tileWorkspaceInset - sourceBounds.y;
+    const maximumDy = workspace.height - tileWorkspaceInset - sourceBounds.bottom;
+    const desiredDx = clamp(
+      desiredBounds.x - sourceBounds.x,
+      minimumDx,
+      maximumDx,
+    );
+    const desiredDy = clamp(
+      desiredBounds.y - sourceBounds.y,
+      minimumDy,
+      maximumDy,
+    );
+    const xCandidates = new Set([desiredDx, minimumDx, maximumDx]);
+    const yCandidates = new Set([desiredDy, minimumDy, maximumDy]);
+    movingKeys.forEach(movingKey => {
+      const moving = sourceTiles[movingKey];
+      tilePanelKeys.filter(otherKey => !selected.has(otherKey)).forEach(otherKey => {
+        const obstacle = sourceTiles[otherKey];
+        xCandidates.add(clamp(
+          obstacle.x - moving.x - moving.width,
+          minimumDx,
+          maximumDx,
+        ));
+        xCandidates.add(clamp(
+          obstacle.x + obstacle.width - moving.x,
+          minimumDx,
+          maximumDx,
+        ));
+        yCandidates.add(clamp(
+          obstacle.y - moving.y - moving.height,
+          minimumDy,
+          maximumDy,
+        ));
+        yCandidates.add(clamp(
+          obstacle.y + obstacle.height - moving.y,
+          minimumDy,
+          maximumDy,
+        ));
+      });
+    });
+    let nearest = null;
+    xCandidates.forEach(dx => yCandidates.forEach(dy => {
+      const candidate = cloneTiles(sourceTiles);
+      movingKeys.forEach(movingKey => {
+        candidate[movingKey] = {
+          ...candidate[movingKey],
+          x: sourceTiles[movingKey].x + dx,
+          y: sourceTiles[movingKey].y + dy,
+        };
+      });
+      if (tileLayoutHasSelectionOverlap(candidate, movingKeys)) return;
+      const offsetX = dx - desiredDx;
+      const offsetY = dy - desiredDy;
+      const score = offsetX * offsetX + offsetY * offsetY;
+      const axialDistance = Math.abs(offsetX) + Math.abs(offsetY);
+      if (
+        !nearest
+        || score < nearest.score
+        || (score === nearest.score && axialDistance < nearest.axialDistance)
+      ) {
+        nearest = {tiles: candidate, score, axialDistance};
+      }
+    }));
+    return nearest?.tiles || null;
+  };
   const freezeTileContentForResize = panel => {
     if (!panel) return () => {};
     const snapshots = [];
@@ -3029,12 +3111,6 @@
           const movingBounds = tileGroupBounds(currentTiles, movingKeys);
           const visibleBounds = tileLogicalViewportBounds(dragGeometry);
           if (!movingBounds || !visibleBounds) return false;
-          if (
-            dragStartedInsideOuterTiles
-            && dragStartViewportBounds
-            && movingBounds.x >= dragStartViewportBounds.left
-            && movingBounds.right <= dragStartViewportBounds.right
-          ) return false;
           const triggerDistance = (
             editorViewport.clientWidth * tileViewportHorizontalActivationRatio
           );
@@ -3125,14 +3201,29 @@
             return;
           }
           const invalidDrop = tileLayoutHasSelectionOverlap(currentTiles, movingKeys);
-          const finalTiles = invalidDrop ? startTiles : currentTiles;
-          if (invalidDrop) {
+          const nearestDropTiles = invalidDrop
+            ? nearestAvailableTileDrop(
+                startTiles,
+                currentTiles,
+                movingKeys,
+                layout.workspace,
+                dragHorizontalExtent,
+              )
+            : null;
+          const dropAccepted = !invalidDrop || Boolean(nearestDropTiles);
+          const finalTiles = invalidDrop
+            ? (nearestDropTiles || startTiles)
+            : currentTiles;
+          if (invalidDrop && nearestDropTiles) {
+            toast("Placed in the nearest free space");
+          } else if (invalidDrop) {
             toast("This space is occupied");
-          } else {
-            editorLayouts.columns = {...editorLayouts.columns, workspace: layout.workspace, tiles: currentTiles};
+          }
+          if (dropAccepted) {
+            editorLayouts.columns = {...editorLayouts.columns, workspace: layout.workspace, tiles: finalTiles};
             persistLayout("columns");
           }
-          if (invalidDrop) {
+          if (!dropAccepted) {
             if (tileExtentCleanupTimer) clearTimeout(tileExtentCleanupTimer);
             tileExtentCleanupTimer = 0;
             tileExtentCleanupSuppressedUntil = Date.now() + 300;
@@ -3148,9 +3239,8 @@
                 )
               : 0
           );
-          const balancedCameraTarget = invalidDrop
-            ? null
-            : balancedCameraTargetForTiles(
+          const balancedCameraTarget = dropAccepted
+            ? balancedCameraTargetForTiles(
                 finalTiles,
                 tileViewportGeometry,
                 {
@@ -3160,8 +3250,9 @@
                   localFocusOnlyWhenEscaped: dragStartedInsideOuterTiles,
                   localStableCameraX: startCameraX,
                 },
-              );
-          if (invalidDrop) {
+              )
+            : null;
+          if (!dropAccepted) {
             const cleanupDelay = Math.max(
               180,
               tileExtentCleanupSuppressedUntil - Date.now() + 10,
@@ -3240,9 +3331,78 @@
           y: event.clientY - bounds.top - (tileViewportGeometry?.offsetY || 0),
         };
       };
+      const pointerOnEmptyWorkspace = event => !event.target.closest(
+        "[data-panel-key],.movie-tile-edge,.movie-tile-snap-guide",
+      );
+      const beginWorkspacePan = event => {
+        event.preventDefault();
+        event.stopPropagation();
+        const pointerId = event.pointerId;
+        const startX = event.clientX;
+        const startY = event.clientY;
+        const startCameraX = tileCameraX;
+        const startScrollTop = editorViewport?.scrollTop || 0;
+        const maximumScrollTop = Math.max(
+          0,
+          (editorViewport?.scrollHeight || 0) - (editorViewport?.clientHeight || 0),
+        );
+        let active = false;
+        let finished = false;
+        cancelTileHomeCenter();
+        capturePointerSafely(editorLayout, pointerId);
+        const update = next => {
+          const dx = next.clientX - startX;
+          const dy = next.clientY - startY;
+          if (!active && Math.hypot(dx, dy) < 3) return;
+          if (!active) {
+            active = true;
+            editorViewport?.classList.add("movie-workspace-panning");
+            revealTileViewportScrollbars();
+          }
+          next.preventDefault();
+          setTileCameraX(startCameraX - dx);
+          if (editorViewport) {
+            editorViewport.scrollTop = clamp(
+              startScrollTop - dy,
+              0,
+              maximumScrollTop,
+            );
+          }
+        };
+        const finish = finishEvent => {
+          if (finishEvent?.pointerId != null && finishEvent.pointerId !== pointerId) return;
+          if (finished) return;
+          finished = true;
+          clearEditorPointerFinish(finish);
+          window.removeEventListener("pointermove", update, true);
+          window.removeEventListener("pointerup", finish, true);
+          window.removeEventListener("pointercancel", finish, true);
+          releasePointerCaptureSafely(editorLayout, pointerId);
+          editorViewport?.classList.remove("movie-workspace-panning");
+          if (!active && event.button === 0) clearTileSelection();
+          syncTileViewportHorizontalAccess(tileRenderedTiles);
+          scheduleTileViewportScrollbarIdle();
+          scheduleTileExtentCleanup(180);
+        };
+        window.addEventListener("pointermove", update, true);
+        window.addEventListener("pointerup", finish, true);
+        window.addEventListener("pointercancel", finish, true);
+        registerEditorPointerFinish(finish);
+      };
+      editorLayout.addEventListener("contextmenu", event => {
+        if (pointerOnEmptyWorkspace(event)) event.preventDefault();
+      });
       editorLayout.addEventListener("pointerdown", event => {
+        if (!pointerOnEmptyWorkspace(event)) return;
+        const panWorkspace = (
+          event.button === 2
+          || (event.button === 0 && (event.ctrlKey || event.metaKey))
+        );
+        if (panWorkspace) {
+          beginWorkspacePan(event);
+          return;
+        }
         if (!canEdit || event.button !== 0) return;
-        if (event.target.closest("[data-panel-key],.movie-tile-edge,.movie-tile-snap-guide")) return;
         if (layoutLocked) {
           event.preventDefault();
           flashLayoutLock();
@@ -3333,7 +3493,8 @@
         let currentTiles = startTiles;
         let latestPointer = event;
         let autoScrollFrame = 0;
-        let observedCameraX = tileCameraX;
+        let previousResizePointerX = startX;
+        let resizePointerDirectionX = 0;
         let releaseFrozenContent = () => {};
         const collisionPushEdges = new Map();
         const pointerToLogicalPoint = pointer => {
@@ -3349,16 +3510,14 @@
         cancelTileHomeCenter();
         capturePointerSafely(handle, pointerId);
         const driveVirtualResizeCamera = () => {
-          if (!editorViewport || !horizontalSide) return;
+          if (!editorViewport || !horizontalSide) return false;
           const movingBounds = tileGroupBounds(currentTiles, [key]);
           const visibleBounds = tileLogicalViewportBounds(tileViewportGeometry);
-          if (!movingBounds || !visibleBounds) return;
+          if (!movingBounds || !visibleBounds) return false;
           if (
-            resizeStartedInsideOuterTiles
-            && resizeStartViewportBounds
-            && movingBounds.x >= resizeStartViewportBounds.left
-            && movingBounds.right <= resizeStartViewportBounds.right
-          ) return;
+            (horizontalSide > 0 && resizePointerDirectionX <= 0)
+            || (horizontalSide < 0 && resizePointerDirectionX >= 0)
+          ) return false;
           const triggerDistance = (
             editorViewport.clientWidth * tileViewportHorizontalActivationRatio
           );
@@ -3368,12 +3527,16 @@
           const pressure = gap < triggerDistance
             ? clamp((triggerDistance - gap) / triggerDistance, 0, 1)
             : 0;
-          if (pressure) {
-            const smoothPressure = pressure * pressure * (3 - 2 * pressure);
-            setTileCameraX(
-              tileCameraX + horizontalSide * 9 * smoothPressure,
-            );
-          }
+          if (!pressure) return false;
+          const smoothPressure = pressure * pressure * (3 - 2 * pressure);
+          const nextCameraX = clamp(
+            tileCameraX + horizontalSide * 9 * smoothPressure,
+            tileCameraMinimumX(),
+            tileCameraMaximumX(),
+          );
+          if (Math.abs(nextCameraX - tileCameraX) < .01) return false;
+          setTileCameraX(nextCameraX);
+          return true;
         };
         const updateSize = next => {
           const pointerLogical = pointerToLogicalPoint(next);
@@ -3412,24 +3575,32 @@
           handle.classList.add("active");
           document.body.classList.add("movie-panel-interacting");
           showTileGuides(resized.guide);
-          applyTileRects(currentTiles);
+          applyTileRects(currentTiles, {
+            preserveViewport: true,
+            scheduleCleanup: false,
+          });
         };
         const continueAutoScroll = () => {
           autoScrollFrame = 0;
           if (!active || !latestPointer) return;
-          driveVirtualResizeCamera();
+          const cameraMoved = driveVirtualResizeCamera();
           const verticalMoved = scrollEditorViewportTowardPointer(
             latestPointer,
             tileGroupBounds(currentTiles, [key]),
             {maxStep: 18, horizontal: false},
           );
-          const horizontalMoved = Math.abs(tileCameraX - observedCameraX) >= .01;
-          observedCameraX = tileCameraX;
-          if (horizontalMoved || verticalMoved) updateSize(latestPointer);
-          autoScrollFrame = requestAnimationFrame(continueAutoScroll);
+          if (cameraMoved || verticalMoved) {
+            updateSize(latestPointer);
+            autoScrollFrame = requestAnimationFrame(continueAutoScroll);
+          }
         };
         const move = next => {
           latestPointer = next;
+          const pointerDeltaX = next.clientX - previousResizePointerX;
+          if (Math.abs(pointerDeltaX) >= .25) {
+            resizePointerDirectionX = Math.sign(pointerDeltaX);
+            previousResizePointerX = next.clientX;
+          }
           updateSize(next);
           if (active && !autoScrollFrame) autoScrollFrame = requestAnimationFrame(continueAutoScroll);
         };

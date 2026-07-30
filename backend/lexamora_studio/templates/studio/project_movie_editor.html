@@ -1125,6 +1125,11 @@ body.movie-editor-page-active .movie-editor-viewport{
     color-mix(in srgb,var(--muted) 42%,transparent)
     color-mix(in srgb,var(--line) 15%,transparent);
 }
+body.movie-editor-page-active .movie-editor-viewport.movie-workspace-panning,
+body.movie-editor-page-active .movie-editor-viewport.movie-workspace-panning *{
+  cursor:grabbing!important;
+  user-select:none!important;
+}
 body.movie-editor-page-active .movie-editor-viewport :where(*){
   scrollbar-color:auto;
 }
@@ -1536,4 +1541,4 @@ body.movie-panel-interacting *{
 </section>
 {{ movie_timeline_data|json_script:"movie-timeline-data" }}{{ movie_assets|json_script:"movie-assets-data" }}{{ movie_library_assets|json_script:"movie-library-data" }}{{ movie_render_jobs|json_script:"movie-render-jobs-data" }}{{ movie_edits|json_script:"movie-edits-data" }}
 {% endblock %}
-{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260730-deferred-tile-content-reflow"></script>{% endblock %}
+{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260730-five-percent-camera-pan-drop"></script>{% endblock %}
