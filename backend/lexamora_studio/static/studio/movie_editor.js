@@ -456,10 +456,7 @@
   const tileHomeCameraX = (geometry = tileViewportGeometry) => {
     if (!editorViewport || !geometry) return 0;
     const origin = tileWorkspaceViewportOrigin();
-    const centeredMargin = Math.max(
-      0,
-      (editorViewport.clientWidth - geometry.baseWidth) / 2,
-    );
+    const centeredMargin = (editorViewport.clientWidth - geometry.baseWidth) / 2;
     return clamp(
       origin.x + geometry.baseLeft + geometry.offsetX - centeredMargin,
       0,
@@ -1301,7 +1298,6 @@
           persistFloatingPanels();
         } else {
           resetPanelGeometry(key);
-          setSelectedTileKeys([]);
           requestAnimationFrame(() => focusTileOnHomePosition(key));
         }
         historyRedo = [];
@@ -1782,9 +1778,20 @@
     const changed = ["left", "right", "bottom"].some(
       side => Math.abs(Number(next[side]) - Number(tileAllocatedExtent[side])) >= 1
     );
-    if (!changed) return;
+    const settleBalancedCamera = () => {
+      if (!tilesFitDefaultDisplayZone(renderedTiles)) return;
+      const homeCameraX = tileHomeCameraX(tileViewportGeometry);
+      if (Math.abs(tileCameraX - homeCameraX) > 1) {
+        setTileCameraX(homeCameraX, {immediate: false, maxVelocity: 14});
+      }
+    };
+    if (!changed) {
+      settleBalancedCamera();
+      return;
+    }
     tileAllocatedExtent = next;
     applyTileRects(renderedTiles, {preserveViewport: true, scheduleCleanup: false});
+    settleBalancedCamera();
     const hasMore = (
       next.left < safeLeft - 1
       || next.right > safeRight + 1
@@ -2569,6 +2576,8 @@
         const selectedAtPointerDown = selectedTileKeys.has(key);
         if (additiveSelection) {
           if (!selectedAtPointerDown) setSelectedTileKeys([...selectedTileKeys, key]);
+        } else if (!selectedAtPointerDown) {
+          setSelectedTileKeys([key]);
         }
         setTemporaryTileSelection(panel, true);
         const movingKeys = selectedTileKeys.has(key) ? [...selectedTileKeys] : [key];
@@ -2769,7 +2778,7 @@
           hideTileGuides();
           setTemporaryTileSelection(panel, false, active ? 0 : 180);
           if (!active) {
-            if (selectedAtPointerDown) {
+            if (additiveSelection && selectedAtPointerDown) {
               setSelectedTileKeys(
                 [...selectedTileKeys].filter(selectedKey => selectedKey !== key)
               );
