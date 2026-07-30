@@ -343,6 +343,7 @@
   let tileCameraVelocityX = 0;
   let tileCameraFrame = 0;
   let tileCameraTrackWidth = 1;
+  let tileProjectHeaderHomeLeft = null;
   let pendingTileCameraLogicalCenterX = null;
   const tileViewportMinimumReveal = 48;
   const tileExtentCleanupMargin = 32;
@@ -438,14 +439,19 @@
   const tileHomeCameraX = (geometry = tileViewportGeometry) => {
     if (!editorViewport || !geometry) return 0;
     const origin = tileWorkspaceViewportOrigin();
-    const headerLeft = editorProjectHeader
-      ? Math.max(0, Number(editorProjectHeader.offsetLeft || 0))
+    const headerLeft = Number.isFinite(tileProjectHeaderHomeLeft)
+      ? tileProjectHeaderHomeLeft
       : Math.max(0, (editorViewport.clientWidth - geometry.baseWidth) / 2);
     return clamp(
       origin.x + geometry.baseLeft + geometry.offsetX - headerLeft,
       0,
       tileCameraMaximumX(geometry),
     );
+  };
+  const refreshTileProjectHeaderHomeLeft = () => {
+    tileProjectHeaderHomeLeft = editorProjectHeader
+      ? Math.max(0, Number(editorProjectHeader.offsetLeft || 0))
+      : null;
   };
   const renderTileCameraScrollbar = () => {
     if (!tileCameraTrack || !tileCameraThumb || !editorViewport) return;
@@ -695,6 +701,7 @@
       `${Math.max(320, Math.floor(browserBottom - viewportTop))}px`,
       "important",
     );
+    refreshTileProjectHeaderHomeLeft();
     positionTileCameraScrollbar();
     ensureTileWorkspaceCoversViewport();
     scheduleTileExtentCleanup(220);
@@ -2485,6 +2492,7 @@
             tileExtentCleanupSuppressedUntil = Date.now() + 300;
           }
           applyTileRects(finalTiles, {preserveViewport: true, scheduleCleanup: false});
+          const finalTilesFitHome = tilesFitDefaultDisplayZone(finalTiles);
           if (invalidDrop) {
             const cleanupDelay = Math.max(
               180,
@@ -2493,17 +2501,17 @@
             window.setTimeout(() => scheduleTileExtentCleanup(0), cleanupDelay);
           }
           syncTileViewportHorizontalAccess(finalTiles);
-          if (returnedFromEdge) {
+          if (finalTilesFitHome) {
+            setTileCameraX(tileHomeCameraX(tileViewportGeometry), {immediate: false});
+            settleTileViewportAfterScroll(80);
+            scheduleTileExtentCleanup(100);
+          } else if (returnedFromEdge) {
             const currentCenter = tileLogicalViewportCenter(tileViewportGeometry);
-            const targetLogicalCenter = tilesFitDefaultDisplayZone(finalTiles)
-              ? homeAxis
-              : currentCenter?.x + (homeAxis - currentCenter.x) * .7;
+            const targetLogicalCenter = currentCenter?.x + (homeAxis - currentCenter.x) * .7;
             if (Number.isFinite(targetLogicalCenter)) {
               const targetCameraX = tileScrollLeftForLogicalCenter(targetLogicalCenter);
               setTileCameraX(
-                tilesFitDefaultDisplayZone(finalTiles)
-                  ? targetCameraX
-                  : constrainTileCameraToVisibleBounds(targetCameraX, finalMovingBounds),
+                constrainTileCameraToVisibleBounds(targetCameraX, finalMovingBounds),
                 {immediate: false},
               );
             }
