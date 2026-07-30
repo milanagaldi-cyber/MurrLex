@@ -203,14 +203,15 @@
   const previewDockKey = `studio-movie-preview-dock-${timelineId}`;
   const panelGapKey = `studio-movie-panel-gap-${timelineId}`;
   const workspacePatternKey = `studio-movie-workspace-pattern-${timelineId}`;
+  const workspacePatterns = ["none", "grid", "dots", "stars", "hearts", "cats"];
   let previewDockMode = localStorage.getItem(previewDockKey) === "bottom" ? "bottom" : "center";
   let widePanelGaps = localStorage.getItem(panelGapKey) === "wide";
-  let workspacePattern = ["grid", "dots", "hearts"].includes(localStorage.getItem(workspacePatternKey))
+  let workspacePattern = workspacePatterns.includes(localStorage.getItem(workspacePatternKey))
     ? localStorage.getItem(workspacePatternKey)
     : "grid";
   const applyPanelGapMode = () => editorLayout?.classList.toggle("movie-wide-gaps", widePanelGaps);
   const applyWorkspacePattern = value => {
-    workspacePattern = ["grid", "dots", "hearts"].includes(value) ? value : "grid";
+    workspacePattern = workspacePatterns.includes(value) ? value : "grid";
     root.dataset.workspacePattern = workspacePattern;
   };
   const applyEditorWallpaper = value => {
@@ -1609,6 +1610,25 @@
   const clearTileSelection = () => {
     setSelectedTileKeys([]);
   };
+  const temporaryTileSelectionTimers = new WeakMap();
+  const setTemporaryTileSelection = (panel, active, linger = 0) => {
+    if (!panel) return;
+    const timer = temporaryTileSelectionTimers.get(panel);
+    if (timer) window.clearTimeout(timer);
+    temporaryTileSelectionTimers.delete(panel);
+    if (active) {
+      panel.classList.add("movie-tile-pressed");
+      return;
+    }
+    if (linger > 0) {
+      temporaryTileSelectionTimers.set(panel, window.setTimeout(() => {
+        panel.classList.remove("movie-tile-pressed");
+        temporaryTileSelectionTimers.delete(panel);
+      }, linger));
+      return;
+    }
+    panel.classList.remove("movie-tile-pressed");
+  };
   const tileDisplayScale = () => {
     const widthRatio = Number(window.outerWidth) > 0 && Number(window.innerWidth) > 0
       ? window.outerWidth / window.innerWidth
@@ -2492,6 +2512,7 @@
         if (additiveSelection) {
           if (!selectedAtPointerDown) setSelectedTileKeys([...selectedTileKeys, key]);
         }
+        setTemporaryTileSelection(panel, true);
         const movingKeys = selectedTileKeys.has(key) ? [...selectedTileKeys] : [key];
         const startX = event.clientX;
         const startY = event.clientY;
@@ -2688,6 +2709,7 @@
           document.body.classList.remove("movie-panel-interacting");
           tileMoveDragActive = false;
           hideTileGuides();
+          setTemporaryTileSelection(panel, false, active ? 0 : 180);
           if (!active) {
             if (selectedAtPointerDown) {
               setSelectedTileKeys(

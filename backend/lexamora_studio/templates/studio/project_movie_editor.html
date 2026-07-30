@@ -970,6 +970,9 @@ body.movie-layout-locked [data-timeline-edge-resizer]{pointer-events:none!import
 .movie-editor-project-header .project-shell-header{
   margin-bottom:0;
 }
+.movie-editor[data-workspace-pattern="none"] .movie-editor-layout{
+  background-image:none!important;
+}
 .movie-editor[data-workspace-pattern="grid"] .movie-editor-layout{
   background-image:
     linear-gradient(color-mix(in srgb,var(--line) 22%,transparent) 1px,transparent 1px),
@@ -982,9 +985,19 @@ body.movie-layout-locked [data-timeline-edge-resizer]{pointer-events:none!import
   background-size:24px 24px!important;
   background-position:0 0!important;
 }
+.movie-editor[data-workspace-pattern="stars"] .movie-editor-layout{
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'%3E%3Cpath fill='%232fc5ff' fill-opacity='.26' d='m14 6.8 2.05 4.16 4.59.67-3.32 3.23.78 4.57L14 17.27l-4.1 2.16.78-4.57-3.32-3.23 4.59-.67L14 6.8z'/%3E%3C/svg%3E")!important;
+  background-size:28px 28px!important;
+  background-position:0 0!important;
+}
 .movie-editor[data-workspace-pattern="hearts"] .movie-editor-layout{
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='42' height='42' viewBox='0 0 42 42'%3E%3Cpath fill='%232fc5ff' fill-opacity='.24' d='M21 31.5 9.9 21.2C4.1 15.8 7.9 6.5 15.5 6.5c2.7 0 4.4 1.4 5.5 3.1 1.1-1.7 2.8-3.1 5.5-3.1 7.6 0 11.4 9.3 5.6 14.7L21 31.5z'/%3E%3C/svg%3E")!important;
-  background-size:42px 42px!important;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'%3E%3Cpath fill='%232fc5ff' fill-opacity='.25' d='M14 21.2 6.6 14.4C2.7 10.8 5.2 4.6 10.3 4.6c1.8 0 2.9.9 3.7 2.1.8-1.2 1.9-2.1 3.7-2.1 5.1 0 7.6 6.2 3.7 9.8L14 21.2z'/%3E%3C/svg%3E")!important;
+  background-size:28px 28px!important;
+  background-position:0 0!important;
+}
+.movie-editor[data-workspace-pattern="cats"] .movie-editor-layout{
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='30' height='30' viewBox='0 0 30 30'%3E%3Cg fill='none' stroke='%232fc5ff' stroke-opacity='.28' stroke-width='1.25' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m8.7 11-.6-5 4.1 2.6a9.5 9.5 0 0 1 5.6 0L21.9 6l-.6 5c1.2 1.3 1.7 3 1.4 4.8-.6 3.7-3.8 6.2-7.7 6.2s-7.1-2.5-7.7-6.2c-.3-1.8.2-3.5 1.4-4.8Z'/%3E%3Cpath d='M11.4 14.2h.1m7 0h.1M15 15.5v1.4m0 0-1.6 1m1.6-1 1.6 1M10.8 17l-3.3-.4m3.5 2-3.2.6m11.4-2.2 3.3-.4m-3.5 2 3.2.6'/%3E%3C/g%3E%3C/svg%3E")!important;
+  background-size:30px 30px!important;
   background-position:0 0!important;
 }
 html.movie-editor-page-active,
@@ -1339,7 +1352,8 @@ body.movie-panel-interacting *{
   z-index:60!important;
   box-shadow:0 14px 34px rgba(0,0,0,.32)!important;
 }
-.movie-tile-selected{
+.movie-tile-selected,
+.movie-tile-pressed{
   outline:2px solid color-mix(in srgb,var(--accent) 78%,#fff)!important;
   outline-offset:-2px;
   box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 20%,transparent)!important;
@@ -1498,10 +1512,10 @@ body.movie-panel-interacting *{
   <dialog class="confirmation-dialog asset-properties-dialog" data-movie-media-properties><button class="dialog-close" type="button" data-movie-media-properties-close aria-label="Close">&times;</button><h2>Media properties</h2><div class="movie-media-properties-content" data-movie-media-properties-content></div></dialog>
   <dialog class="confirm-dialog" data-media-folder-dialog><button class="dialog-close" type="button" data-media-folder-cancel aria-label="Close">&times;</button><h2 data-media-folder-title>Media folder</h2><label data-media-folder-name-field>Folder name<input type="text" maxlength="100" data-media-folder-name></label><p data-media-folder-message hidden></p><div class="dialog-actions"><button class="secondary" type="button" data-media-folder-cancel>Cancel</button><button type="button" data-media-folder-save>Save</button></div></dialog>
   <dialog class="confirmation-dialog" data-media-remove-dialog><div class="image-picker-head"><h2>Remove media</h2><button class="icon-button secondary" type="button" data-media-remove-cancel aria-label="Close">&times;</button></div><p data-media-remove-message></p><div class="dialog-actions"><button class="secondary" type="button" data-media-remove-cancel>Cancel</button><button type="button" data-media-remove-confirm>Remove</button></div></dialog>
-  {% if can_edit %}<dialog class="confirmation-dialog movie-edit-settings-dialog" data-edit-settings-dialog><button class="dialog-close" type="button" data-edit-settings-close data-business-command="close" aria-label="Close"></button><h2>MC Project settings</h2><form data-edit-settings-form><label>Workspace background<select class="movie-workspace-pattern-select" data-edit-workspace-pattern><option value="grid">Grid</option><option value="dots">Dots</option><option value="hearts">Hearts</option></select></label><div class="dialog-actions"><button class="secondary" type="button" data-edit-settings-cancel>Cancel</button><button type="submit">Save</button></div></form></dialog>{% endif %}
+  {% if can_edit %}<dialog class="confirmation-dialog movie-edit-settings-dialog" data-edit-settings-dialog><button class="dialog-close" type="button" data-edit-settings-close data-business-command="close" aria-label="Close"></button><h2>MC Project settings</h2><form data-edit-settings-form><label>Workspace background<select class="movie-workspace-pattern-select" data-edit-workspace-pattern><option value="none">None</option><option value="grid">Grid</option><option value="dots">Dots</option><option value="stars">Small stars</option><option value="hearts">Small hearts</option><option value="cats">Small cat faces</option></select></label><div class="dialog-actions"><button class="secondary" type="button" data-edit-settings-cancel>Cancel</button><button type="submit">Save</button></div></form></dialog>{% endif %}
   {% if can_edit %}<dialog class="confirmation-dialog" data-edit-delete-dialog><button class="dialog-close" type="button" data-edit-delete-close data-business-command="close" aria-label="Close"></button><h2>Delete MC Project?</h2><p>This removes the MC Project. Workspace media files are kept.</p><div class="dialog-actions"><button class="secondary" type="button" data-edit-delete-cancel>Cancel</button><button type="button" data-edit-delete-confirm>Delete</button></div></dialog>{% endif %}
   <div class="movie-media-context" data-movie-media-context hidden><button type="button" data-media-context-select-all>Select All</button><button type="button" data-media-context-cut>Cut</button><button type="button" data-media-context-copy>Copy</button><button type="button" data-media-context-paste>Paste</button><button type="button" data-media-context-root>Move to Media</button><hr><a data-media-context-download download>Download</a><button type="button" data-media-context-delete>Remove from MC Project</button><button type="button" data-media-context-properties>Properties</button></div>
 </section>
 {{ movie_timeline_data|json_script:"movie-timeline-data" }}{{ movie_assets|json_script:"movie-assets-data" }}{{ movie_library_assets|json_script:"movie-library-data" }}{{ movie_render_jobs|json_script:"movie-render-jobs-data" }}{{ movie_edits|json_script:"movie-edits-data" }}
 {% endblock %}
-{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260730-direct-crossing-ctrl-selection"></script>{% endblock %}
+{% block extra_script %}<script src="{% static 'studio/movie_editor.js' %}?v=20260730-pressed-selection-workspace-patterns"></script>{% endblock %}
