@@ -22,6 +22,17 @@ jobs:
       - name: Test shop
         working-directory: odpaniewy
         run: node --test tests/*.test.mjs
+      - name: Verify preview is unreachable outside Team VPN
+        run: |
+          curl --fail --silent --show-error --max-time 15 https://ml-staging-api.lexaailabs.com/api/health > /dev/null
+          for path in szczoteczki api/bootstrap assets/hero.webp; do
+            status=0
+            curl --ipv4 --silent --show-error --connect-timeout 5 --max-time 6 -o /dev/null "https://ml-staging-api.lexaailabs.com:8445/$path" || status=$?
+            case "$status" in
+              7|28) echo "Public access blocked: $path" ;;
+              *) echo "Unexpected public response, curl status $status: $path"; exit 1 ;;
+            esac
+          done
   deploy:
     needs: validate
     runs-on: ubuntu-latest
