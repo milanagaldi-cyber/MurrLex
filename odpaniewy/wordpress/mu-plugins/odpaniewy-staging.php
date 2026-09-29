@@ -7,6 +7,11 @@ defined('ABSPATH') || exit;
 if (!defined('ODP_STAGING') || !ODP_STAGING) return;
 
 add_filter('pre_wp_mail', '__return_false');
+add_filter('body_class', function ($classes) { $classes[] = 'odp-staging'; return $classes; });
+add_filter('woocommerce_order_button_text', function () { return 'Zapisz zamówienie testowe'; });
+add_filter('gettext', function ($translated, $original, $domain) {
+    return $domain === 'woocommerce' && $original === 'Proceed to checkout' ? 'Przejdź do zamówienia testowego' : $translated;
+}, 10, 3);
 add_filter('wp_robots', function ($robots) { $robots['noindex'] = true; $robots['nofollow'] = true; return $robots; });
 add_filter('woocommerce_enable_order_notes_field', '__return_false');
 add_filter('woocommerce_checkout_fields', function () { return ['billing'=>[], 'shipping'=>[], 'account'=>[], 'order'=>[]]; }, 999);

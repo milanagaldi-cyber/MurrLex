@@ -1,6 +1,6 @@
 # Od Pani Ewy - WordPress / WooCommerce migration
 
-Prepared on 2026-09-29. Installation and end-to-end verification are pending temporary owner SSH access. The currently served application remains the Node.js prototype until the one-time switch is performed.
+Installed on 2026-09-29 at https://ml-staging-api.lexaailabs.com:8445/ (Team VPN only). WordPress 7.1.2, WooCommerce 11.1.2, PHP 8.3 and MariaDB 11.4 run in isolated containers. The original Node.js prototype is retained as rollback source.
 
 ## Components
 

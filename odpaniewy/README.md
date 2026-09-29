@@ -1,5 +1,7 @@
 # Od Pani Ewy shop preview
 
+The VPN site now runs native WordPress and WooCommerce. See [WordPress deployment](wordpress/README.md) for its architecture. The Node.js prototype below remains as a local design reference and rollback source.
+
 Standalone Polish shop prototype, developed on the `odpaniewy` branch. The existing MurrLex service and database are independent.
 
 ## Preview

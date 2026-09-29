@@ -58,7 +58,9 @@ services:
     profiles: [tools]
     user: "33:33"
     mem_limit: 384m
-    environment: *wp_environment
+    environment:
+      <<: *wp_environment
+      WP_CLI_CACHE_DIR: /tmp/.wp-cli/cache
     volumes:
       - wordpress:/var/www/html
       - ${ODP_RELEASE:?Release required}/wordpress/theme:/var/www/html/wp-content/themes/odpaniewy:ro
