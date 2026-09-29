@@ -26,7 +26,7 @@ assert len(page.meta.get('description', [])) == 1, 'Exactly one meta description
 assert page.meta.get('og:url') == ['http://127.0.0.1:8089/'], 'Canonical social URL without campaign parameters'
 assert len(page.canonicals) == 1, 'WordPress native canonical remains singular'
 assert any('noindex' in value for value in page.meta.get('robots', [])), 'VPN staging stays noindex'
-assert 'woocommerce-order-attribution' in text, 'Native attribution script is enqueued'
+assert 'id="wc-order-attribution-js"' in text, 'Native attribution script is enqueued'
 assert 'coupon-code' in text and 'wiosna' in text.lower(), 'Selected active coupon is rendered'
 assert 'Zobacz wszystkie produkty' in text, 'Full category remains accessible'
 assert 'Fatal error' not in text and 'Warning:' not in text, 'No PHP errors in output'
