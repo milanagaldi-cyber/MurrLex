@@ -1,0 +1,150 @@
+[
+  {
+    "id": "DEMO-BRUSH-01",
+    "slug": "kids-duo",
+    "name": "Curaprox Kids 5500 DUO",
+    "subtitle": "Little Bacteria - kandydat do oferty",
+    "category": "szczoteczki",
+    "group": "duo",
+    "price": 5600,
+    "featured": true,
+    "colors": [
+      "turkus",
+      "roz"
+    ],
+    "variants": [
+      {
+        "id": "duo",
+        "label": "Zestaw demonstracyjny",
+        "stock": 8
+      }
+    ],
+    "note": "Dokładny SKU, EAN, skład zestawu i zdjęcia wymagają potwierdzenia. Cena demonstracyjna."
+  },
+  {
+    "id": "DEMO-BRUSH-02",
+    "slug": "szczoteczka-turkus",
+    "name": "Szczoteczka kolorowa",
+    "subtitle": "Przykładowy produkt 02",
+    "category": "szczoteczki",
+    "group": "single",
+    "price": 2800,
+    "colors": [
+      "turkus"
+    ],
+    "variants": [
+      {
+        "id": "turkus",
+        "label": "Turkusowy - demo",
+        "stock": 5
+      },
+      {
+        "id": "fiolet",
+        "label": "Fioletowy - demo",
+        "stock": 3
+      }
+    ],
+    "note": "Fikcyjna pozycja do prezentacji wyboru wariantu. Nie jest ofertą handlową."
+  },
+  {
+    "id": "DEMO-BRUSH-03",
+    "slug": "szczoteczka-roz",
+    "name": "Szczoteczka różowa",
+    "subtitle": "Przykładowy produkt 03",
+    "category": "szczoteczki",
+    "group": "single",
+    "price": 2800,
+    "colors": [
+      "roz"
+    ],
+    "variants": [
+      {
+        "id": "roz",
+        "label": "Różowy - demo",
+        "stock": 4
+      }
+    ],
+    "note": "Fikcyjna pozycja do prezentacji. Parametry i cena nie są ofertą handlową."
+  },
+  {
+    "id": "DEMO-BRUSH-04",
+    "slug": "zestaw-fiolet",
+    "name": "Kolorowy duet",
+    "subtitle": "Przykładowy produkt 04",
+    "category": "szczoteczki",
+    "group": "duo",
+    "price": 5200,
+    "colors": [
+      "fiolet",
+      "turkus"
+    ],
+    "variants": [
+      {
+        "id": "duo",
+        "label": "Duet - demo",
+        "stock": 3
+      }
+    ],
+    "note": "Fikcyjny zestaw do prezentacji wspólnego koszyka."
+  },
+  {
+    "id": "DEMO-BRUSH-05",
+    "slug": "szczoteczka-pomarancz",
+    "name": "Szczoteczka pomarańczowa",
+    "subtitle": "Przykładowy produkt 05",
+    "category": "szczoteczki",
+    "group": "single",
+    "price": 2600,
+    "colors": [
+      "pomarancz"
+    ],
+    "variants": [
+      {
+        "id": "pomarancz",
+        "label": "Pomarańczowy - demo",
+        "stock": 2
+      }
+    ],
+    "note": "Fikcyjna pozycja do testowania ilości i dostępności."
+  },
+  {
+    "id": "DEMO-BRUSH-06",
+    "slug": "szczoteczka-fiolet",
+    "name": "Szczoteczka fioletowa",
+    "subtitle": "Przykładowy produkt 06",
+    "category": "szczoteczki",
+    "group": "single",
+    "price": 3000,
+    "colors": [
+      "fiolet"
+    ],
+    "variants": [
+      {
+        "id": "fiolet",
+        "label": "Fioletowy - demo",
+        "stock": 0
+      }
+    ],
+    "note": "Celowo niedostępny produkt demonstracyjny."
+  },
+  {
+    "id": "DEMO-PASTE-01",
+    "slug": "pasta-demo",
+    "name": "Pasta demonstracyjna",
+    "subtitle": "Przykładowy produkt - bez marki",
+    "category": "pasty",
+    "group": "paste",
+    "price": 1800,
+    "colors": [
+      "turkus"
+    ],
+    "variants": [
+      {
+        "id": "demo",
+        "label": "Wariant testowy",
+        "stock": 10
+      }
+    ],
+    "note": "Fikcyjny produkt do sprawdzenia wspólnego koszyka. Bez deklaracji składu i właściwości."
+  }
+]

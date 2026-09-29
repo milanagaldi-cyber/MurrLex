@@ -8,4 +8,3 @@ export const catalog = [
   {id:'DEMO-BRUSH-06',slug:'szczoteczka-fiolet',name:'Szczoteczka fioletowa',subtitle:'Przykładowy produkt 06',category:'szczoteczki',group:'single',price:3000,colors:['fiolet'],variants:[{id:'fiolet',label:'Fioletowy - demo',stock:0}],note:'Celowo niedostępny produkt demonstracyjny.'},
   {id:'DEMO-PASTE-01',slug:'pasta-demo',name:'Pasta demonstracyjna',subtitle:'Przykładowy produkt - bez marki',category:'pasty',group:'paste',price:1800,colors:['turkus'],variants:[{id:'demo',label:'Wariant testowy',stock:10}],note:'Fikcyjny produkt do sprawdzenia wspólnego koszyka. Bez deklaracji składu i właściwości.'}
 ];
-

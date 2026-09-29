@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+[[ $EUID -eq 0 && $# -eq 1 && $1 =~ ^[0-9a-f]{40}$ ]] || exit 2
+revision=$1
+app=/opt/odpaniewy
+exec 9>/run/lock/odpaniewy-deploy.lock
+flock -w 120 9 || exit 1
+as_deploy() { sudo -u odpaniewy-deploy -- "$@"; }
+as_deploy git -C "$app/repo" fetch --depth=1 origin refs/heads/odpaniewy
+[[ $(as_deploy git -C "$app/repo" rev-parse FETCH_HEAD) == "$revision" ]] || { echo 'Only current branch head may deploy.' >&2; exit 1; }
+release="$app/releases/$revision"
+healthy() { curl -fsS --max-time 15 -H 'Host: ml-staging-api.lexaailabs.com:8445' -H 'X-Forwarded-Proto: https' http://127.0.0.1:18085/ | grep -q 'hero-fixed.png'; }
+if [[ $(readlink "$app/woo-current" || true) == "$release" ]] && healthy; then
+  echo "WooCommerce already healthy at $revision"; exit 0
+fi
+[[ ! -e $release ]] || { echo 'Release already exists; refusing to overwrite.' >&2; exit 1; }
+install -d -o odpaniewy-deploy -g odpaniewy-deploy -m 0755 "$release"
+as_deploy bash -c 'set -euo pipefail; git -C "$1/repo" archive "$2" odpaniewy | tar -x --strip-components=1 --no-same-owner -C "$3"; cd "$3"; "$1/runtime/bin/node" --test tests/*.test.mjs' -- "$app" "$revision" "$release"
+[[ -f $release/wordpress/theme/functions.php && -f $release/wordpress/mu-plugins/odpaniewy-staging.php ]]
+chown -R root:root "$release"
+compose() { docker compose --env-file "$app/woo/.env" -f "$app/woo/compose.yml" "$@"; }
+container=$(compose ps -q wordpress)
+while IFS= read -r -d '' file; do
+    docker exec -i --user www-data "$container" php -l < "$file" >/dev/null
+done < <(find "$release/wordpress" -name '*.php' -type f -print0)
+install -d -m 0700 "$app/woo/backups"
+backup="$app/woo/backups/pre-deploy-$(date -u +%Y%m%dT%H%M%S).sql.gz"
+umask 077
+compose exec -T database sh -c 'MYSQL_PWD="$MARIADB_PASSWORD" mariadb-dump -u "$MARIADB_USER" --single-transaction "$MARIADB_DATABASE"' | gzip > "$backup"
+previous=$(readlink "$app/woo-current")
+ln -s "$release" "$app/woo-current.next"
+mv -Tf "$app/woo-current.next" "$app/woo-current"
+sed -i "s|^ODP_RELEASE=.*|ODP_RELEASE=$release|" "$app/woo/.env"
+ready=0
+if compose up -d --no-deps --force-recreate wordpress; then
+    for attempt in {1..20}; do if healthy; then ready=1; break; fi; sleep 2; done
+fi
+if [[ $ready != 1 ]]; then
+    ln -s "$previous" "$app/woo-current.rollback"
+    mv -Tf "$app/woo-current.rollback" "$app/woo-current"
+    sed -i "s|^ODP_RELEASE=.*|ODP_RELEASE=$previous|" "$app/woo/.env"
+    compose up -d --no-deps --force-recreate wordpress
+    echo 'WooCommerce health check failed; previous code restored.' >&2; exit 1
+fi
+logger -t odpaniewy-deploy "WooCommerce deployed $revision"
+echo "WooCommerce deployed: $revision"

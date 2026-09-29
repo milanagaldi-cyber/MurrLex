@@ -1,0 +1,74 @@
+name: odpaniewy-woo
+services:
+  database:
+    image: ${ODP_DB_IMAGE:?Pinned MariaDB image required}
+    restart: unless-stopped
+    mem_limit: 384m
+    environment:
+      MARIADB_DATABASE: odpaniewy
+      MARIADB_USER: odpaniewy
+      MARIADB_PASSWORD: ${ODP_DB_PASSWORD:?Database password required}
+      MARIADB_ROOT_PASSWORD: ${ODP_DB_ROOT_PASSWORD:?Root database password required}
+    command: [--innodb-buffer-pool-size=96M, --max-connections=35]
+    volumes: [database:/var/lib/mysql]
+    networks: [database]
+    healthcheck:
+      test: [CMD, healthcheck.sh, --connect, --innodb_initialized]
+      interval: 5s
+      timeout: 4s
+      retries: 30
+  wordpress:
+    image: ${ODP_WP_IMAGE:?Pinned WordPress image required}
+    restart: unless-stopped
+    mem_limit: 768m
+    ports: ["127.0.0.1:18085:80"]
+    depends_on:
+      database:
+        condition: service_healthy
+    environment: &wp_environment
+      WORDPRESS_DB_HOST: database:3306
+      WORDPRESS_DB_NAME: odpaniewy
+      WORDPRESS_DB_USER: odpaniewy
+      WORDPRESS_DB_PASSWORD: ${ODP_DB_PASSWORD:?Database password required}
+      ODP_ORIGIN: ${ODP_ORIGIN:?Origin required}
+      WORDPRESS_CONFIG_EXTRA: |
+        define('WP_HOME', getenv('ODP_ORIGIN'));
+        define('WP_SITEURL', getenv('ODP_ORIGIN'));
+        define('ODP_STAGING', true);
+        define('WP_ENVIRONMENT_TYPE', 'staging');
+        define('WP_MEMORY_LIMIT', '256M');
+        define('WP_MAX_MEMORY_LIMIT', '384M');
+        define('DISALLOW_FILE_EDIT', true);
+        define('AUTOMATIC_UPDATER_DISABLED', true);
+        define('WP_AUTO_UPDATE_CORE', false);
+        define('FORCE_SSL_ADMIN', true);
+    volumes: &wp_volumes
+      - wordpress:/var/www/html
+      - ${ODP_RELEASE:?Release required}/wordpress/theme:/var/www/html/wp-content/themes/odpaniewy:ro
+      - ${ODP_RELEASE:?Release required}/wordpress/mu-plugins:/var/www/html/wp-content/mu-plugins:ro
+      - ${ODP_RELEASE:?Release required}/wordpress:/opt/odpaniewy-source:ro
+      - /var/lib/odpaniewy/media:/var/www/html/assets:ro
+      - /opt/odpaniewy/woo/php.ini:/usr/local/etc/php/conf.d/odpaniewy.ini:ro
+      - /opt/odpaniewy/woo/apache-limits.conf:/etc/apache2/conf-enabled/odpaniewy-limits.conf:ro
+    networks: [database, frontend]
+    logging:
+      options: {max-size: 10m, max-file: "3"}
+  cli:
+    image: ${ODP_CLI_IMAGE:?Pinned WP CLI image required}
+    profiles: [tools]
+    user: "33:33"
+    mem_limit: 384m
+    environment: *wp_environment
+    volumes:
+      - wordpress:/var/www/html
+      - ${ODP_RELEASE:?Release required}/wordpress/theme:/var/www/html/wp-content/themes/odpaniewy:ro
+      - ${ODP_RELEASE:?Release required}/wordpress/mu-plugins:/var/www/html/wp-content/mu-plugins:ro
+      - ${ODP_RELEASE:?Release required}/wordpress:/opt/odpaniewy-source:ro
+    networks: [database, frontend]
+volumes:
+  database:
+  wordpress:
+networks:
+  database:
+    internal: true
+  frontend:
