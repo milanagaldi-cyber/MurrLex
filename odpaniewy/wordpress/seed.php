@@ -99,7 +99,7 @@ update_option('woocommerce_permalinks', ['product_base'=>'/produkt', 'category_b
 update_option('blog_public', '0');
 update_option('timezone_string', 'Europe/Warsaw');
 update_option('woocommerce_coming_soon', 'no');
-update_option('woocommerce_feature_order_attribution_enabled', 'no');
+update_option('woocommerce_feature_order_attribution_enabled', 'yes');
 update_option('woocommerce_allow_tracking', 'no');
 $zone = new WC_Shipping_Zone(0);
 $existing_flat = array_filter($zone->get_shipping_methods(), fn($m)=>$m->id === 'flat_rate');

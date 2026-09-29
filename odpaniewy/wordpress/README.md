@@ -6,10 +6,19 @@ Installed on 2026-09-29 at https://ml-staging-api.lexaailabs.com:8445/ (Team VPN
 
 - `theme/`: original comic design as a classic WordPress theme. Standard WooCommerce product, cart and checkout rendering, stock and coupon handling. No frontend API keys.
 - `mu-plugins/odpaniewy-staging.php`: test-only payment method, synthetic checkout identity, outgoing email disabled, real payment gateways unavailable, classic checkout only.
+- `mu-plugins/odpaniewy-growth.php`: shop-manager dashboard at `admin.php?page=odp-shop`, editable homepage category/hero/up to three alternatives, selected existing coupon banner, native coupon report links, campaign URL builder, homepage SEO title/description and Open Graph metadata. Published visible products are validated against the selected category; the full category catalogue remains linked. Core WordPress canonical/sitemap and WooCommerce structured data remain in use. Common SEO plugins take precedence over this metadata.
 - `catalog.json` and `seed.php`: one-time import of seven demo products, variable colours, stock, WIOSNA coupon limited to toothbrushes, 12 PLN test delivery and Polish pages. Existing SKU records are not overwritten. Seed never runs on ordinary deployment.
 - `deploy/`: isolated Docker Compose stack, separate MariaDB and WordPress volumes, localhost-only backend on 18085, existing VPN-only Nginx entry point on 8445.
 
 All prices, stock and names are demo data. Test orders are real WooCommerce database records marked `_odp_test_order=yes`, without payment or dispatch. No InPost connection is included. Cancelling a test order through WooCommerce restores stock using its normal order handling.
+
+## Growth settings and analytics
+
+The growth module enables WooCommerce native order attribution once on this staging installation. Later changes in WooCommerce > Settings > Advanced > Features are respected. This records sources for new orders, not all visits or historical attribution. It does not add third-party visit analytics. A one-time privacy migration replaces only the untouched seed paragraph; custom privacy content is never overwritten. Configure visitor analytics and consent separately before a public launch. Staging remains noindex and VPN-only. AI integration is deferred until a provider is selected.
+
+The dashboard saves selections with WordPress Settings API nonces and the `manage_woocommerce` capability. Selecting a category requires products assigned directly to that category. Empty saved selections remain empty. Invalid, private, draft or duplicate choices are excluded. Native WooCommerce decides stock, variations, coupon eligibility and checkout totals.
+
+CI runs the original Node tests and a disposable WordPress/MariaDB/WooCommerce installation. `tests/ci.sh` verifies management behavior, coupon visibility, product publication boundaries, role restrictions, SEO and actual storefront HTML before deployment. It never connects to the live shop database. The public runner additionally verifies VPN isolation; deploy health checks run on the VPS. Browser appearance and authenticated live admin checks require Team VPN.
 
 ## Deployment
 
