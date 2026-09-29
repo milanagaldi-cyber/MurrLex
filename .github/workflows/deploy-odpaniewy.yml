@@ -38,6 +38,12 @@ jobs:
               *) echo "Unexpected public response, curl status $status: $path"; exit 1 ;;
             esac
           done
+          status=0
+          curl --ipv4 --silent --show-error --connect-timeout 5 --max-time 6 -o /dev/null http://ml-staging-api.lexaailabs.com:18085/ || status=$?
+          case "$status" in
+            7|28) echo 'Internal WordPress port is not publicly reachable' ;;
+            *) echo "Unexpected public WordPress backend response: $status"; exit 1 ;;
+          esac
   deploy:
     needs: validate
     runs-on: ubuntu-latest

@@ -13,6 +13,7 @@ add_action('wp_enqueue_scripts', function () {
     wp_enqueue_style('odp-design', $uri . '/design.css', [], '1.0.0');
     wp_enqueue_style('odp-commerce', $uri . '/commerce.css', ['odp-design'], '1.0.0');
     wp_enqueue_script('odp-ui', $uri . '/ui.js', [], '1.0.0', true);
+    if (class_exists('WooCommerce')) wp_enqueue_script('wc-cart-fragments');
 });
 function odp_asset($name) {
     $settings = ['hero-fixed.png'=>'odp_hero_image', 'poster.webp'=>'odp_story_poster', 'story.mp4'=>'odp_story_video'];
