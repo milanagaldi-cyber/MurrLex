@@ -5,7 +5,10 @@ test_dir=$(mktemp -d)
 trap 'rm -rf -- "$test_dir"' EXIT
 curl --fail --silent --show-error --location https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar -o "$test_dir/wp.phar"
 wp() { php "$test_dir/wp.phar" --path="$test_dir/site" "$@"; }
-wp core download --version=7.1.2 --locale=en_US
+# Use the official ZIP: PHP PharData's tar extraction truncates long core paths.
+curl --fail --silent --show-error --location https://wordpress.org/wordpress-7.1.2.zip -o "$test_dir/core.zip"
+unzip -q "$test_dir/core.zip" -d "$test_dir"
+mv "$test_dir/wordpress" "$test_dir/site"
 wp config create --dbname=odp_ci --dbuser=root --dbpass=odp-ci-only --dbhost=127.0.0.1:3306 --skip-check --extra-php <<'PHP'
 define('ODP_STAGING', true);
 define('WP_ENVIRONMENT_TYPE', 'staging');
