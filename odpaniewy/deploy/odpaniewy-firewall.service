@@ -1,0 +1,13 @@
+[Unit]
+Description=Allow shop preview only through Team VPN
+Before=nginx.service
+After=network-pre.target
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/odpaniewy-firewall
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

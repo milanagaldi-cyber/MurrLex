@@ -1,0 +1,42 @@
+name: Deploy odpaniewy
+on:
+  push:
+    branches: [odpaniewy]
+    paths: ['odpaniewy/**', '.github/workflows/deploy-odpaniewy.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: odpaniewy-deploy
+  cancel-in-progress: false
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify shop branch
+        run: test "$GITHUB_REF_NAME" = odpaniewy
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Test shop
+        working-directory: odpaniewy
+        run: node --test tests/*.test.mjs
+  deploy:
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure shop-only key
+        env:
+          DEPLOY_KEY: ${{ secrets.ODP_SSH_PRIVATE_KEY }}
+        run: |
+          test -n "$DEPLOY_KEY" || { echo 'Add repository secret ODP_SSH_PRIVATE_KEY first.'; exit 1; }
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/odpaniewy
+          chmod 600 ~/.ssh/odpaniewy
+          printf '%s\n' 'ml-staging-api.lexaailabs.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOw1Aolwl5ND3zKwREHki8SamricZZmGv6Hb9ANzUAS+' > ~/.ssh/known_hosts
+      - name: Deploy isolated shop
+        run: ssh -i ~/.ssh/odpaniewy -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes odpaniewy-deploy@ml-staging-api.lexaailabs.com "deploy $GITHUB_SHA"
+      - name: Remove runner key
+        if: always()
+        run: rm -f ~/.ssh/odpaniewy

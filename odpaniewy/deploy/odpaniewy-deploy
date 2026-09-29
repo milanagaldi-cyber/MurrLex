@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+[[ $EUID -eq 0 && $# -eq 1 && $1 =~ ^[0-9a-f]{40}$ ]] || exit 2
+revision=$1
+app=/opt/odpaniewy
+exec 9>/run/lock/odpaniewy-deploy.lock
+flock -n 9 || { echo 'Another shop deploy is running.' >&2; exit 1; }
+as_deploy() { sudo -u odpaniewy-deploy -- "$@"; }
+as_deploy git -C "$app/repo" fetch --depth=1 origin refs/heads/odpaniewy
+head=$(as_deploy git -C "$app/repo" rev-parse FETCH_HEAD)
+[[ $head == "$revision" ]] || { echo 'Only the current odpaniewy branch head may deploy.' >&2; exit 1; }
+release="$app/releases/$revision"
+[[ ! -e $release ]] || { echo 'Release already exists; refusing to overwrite.' >&2; exit 1; }
+install -d -o odpaniewy-deploy -g odpaniewy-deploy -m 0755 "$release"
+as_deploy bash -c 'set -euo pipefail; git -C "$1/repo" archive "$2" odpaniewy | tar -x --strip-components=1 --no-same-owner -C "$3"; cd "$3"; "$1/runtime/bin/node" --test tests/*.test.mjs' -- "$app" "$revision" "$release"
+# Freeze release ownership before a privileged service uses it.
+chown -R root:root "$release"
+previous=$(readlink "$app/current" || true)
+ln -s "$release" "$app/current.next"
+mv -Tf "$app/current.next" "$app/current"
+healthy=0
+if systemctl restart odpaniewy.service; then
+  for attempt in {1..20}; do
+    if curl --fail --silent --max-time 2 --unix-socket /run/odpaniewy/app.sock -H 'Host: ml-staging-api.lexaailabs.com:8445' http://localhost/szczoteczki >/dev/null; then healthy=1; break; fi
+    sleep 1
+  done
+fi
+if [[ $healthy != 1 ]]; then
+  if [[ -n $previous ]]; then
+    ln -s "$previous" "$app/current.rollback"
+    mv -Tf "$app/current.rollback" "$app/current"
+    systemctl restart odpaniewy.service
+  fi
+  echo 'Shop health check failed; previous release restored when available.' >&2
+  exit 1
+fi
+logger -t odpaniewy-deploy "deployed $revision"
+echo "Shop deployed: $revision"

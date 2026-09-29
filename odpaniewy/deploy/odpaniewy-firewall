@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# These addresses were inspected on this VPS, not inferred from client headers.
+iptables -w -N ODP_PREVIEW 2>/dev/null || true
+iptables -w -C ODP_PREVIEW -i wg0 -s 10.0.0.0/24 -j ACCEPT 2>/dev/null || iptables -w -A ODP_PREVIEW -i wg0 -s 10.0.0.0/24 -j ACCEPT
+iptables -w -C ODP_PREVIEW -j DROP 2>/dev/null || iptables -w -A ODP_PREVIEW -j DROP
+iptables -w -C INPUT -p tcp --dport 8445 -j ODP_PREVIEW 2>/dev/null || iptables -w -I INPUT 1 -p tcp --dport 8445 -j ODP_PREVIEW
+ip6tables -w -C INPUT -p tcp --dport 8445 -j DROP 2>/dev/null || ip6tables -w -I INPUT 1 -p tcp --dport 8445 -j DROP
