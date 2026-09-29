@@ -12,6 +12,8 @@ mv "$test_dir/wordpress" "$test_dir/site"
 wp config create --dbname=odp_ci --dbuser=root --dbpass=odp-ci-only --dbhost=127.0.0.1:3306 --skip-check --extra-php <<'PHP'
 define('ODP_STAGING', true);
 define('ODP_CI', true);
+define('WP_HOME', 'http://127.0.0.1:8089');
+define('WP_SITEURL', 'http://127.0.0.1:8089');
 define('WP_ENVIRONMENT_TYPE', 'staging');
 define('DISABLE_WP_CRON', true);
 PHP
