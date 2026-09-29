@@ -28,7 +28,12 @@ php -S 127.0.0.1:8089 -t "$test_dir/site" > "$test_dir/http.log" 2>&1 &
 server_pid=$!
 trap 'kill "$server_pid" 2>/dev/null || true; rm -rf -- "$test_dir"' EXIT
 for attempt in {1..10}; do
-  if curl --fail --silent http://127.0.0.1:8089/ -o "$test_dir/home.html"; then break; fi
+  if curl --fail --silent --show-error --location --max-time 15 -D "$test_dir/home.headers" http://127.0.0.1:8089/ -o "$test_dir/home.html"; then break; fi
   sleep 1
 done
-python3 "$source_dir/tests/check-home.py" "$test_dir/home.html"
+if ! python3 "$source_dir/tests/check-home.py" "$test_dir/home.html"; then
+  cat "$test_dir/home.headers"
+  head -c 6000 "$test_dir/home.html"
+  cat "$test_dir/http.log"
+  exit 1
+fi
