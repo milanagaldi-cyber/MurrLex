@@ -9,7 +9,7 @@ as_deploy() { sudo -u odpaniewy-deploy -- "$@"; }
 as_deploy git -C "$app/repo" fetch --depth=1 origin refs/heads/odpaniewy
 [[ $(as_deploy git -C "$app/repo" rev-parse FETCH_HEAD) == "$revision" ]] || { echo 'Only current branch head may deploy.' >&2; exit 1; }
 release="$app/releases/$revision"
-healthy() { curl -fsS --max-time 15 -H 'Host: ml-staging-api.lexaailabs.com:8445' -H 'X-Forwarded-Proto: https' http://127.0.0.1:18085/ | grep -q 'hero-fixed.png'; }
+healthy() { curl -fsS --max-time 15 -H 'Host: ml-staging-api.lexaailabs.com:8445' -H 'X-Forwarded-Proto: https' http://127.0.0.1:18085/ | grep -F 'name="odp-shop" content="woocommerce"' >/dev/null; }
 if [[ $(readlink "$app/woo-current" || true) == "$release" ]] && healthy; then
   echo "WooCommerce already healthy at $revision"; exit 0
 fi

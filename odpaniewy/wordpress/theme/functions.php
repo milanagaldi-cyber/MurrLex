@@ -14,7 +14,18 @@ add_action('wp_enqueue_scripts', function () {
     wp_enqueue_style('odp-commerce', $uri . '/commerce.css', ['odp-design'], '1.0.0');
     wp_enqueue_script('odp-ui', $uri . '/ui.js', [], '1.0.0', true);
 });
-function odp_asset($name) { return home_url('/assets/' . $name); }
+function odp_asset($name) {
+    $settings = ['hero-fixed.png'=>'odp_hero_image', 'poster.webp'=>'odp_story_poster', 'story.mp4'=>'odp_story_video'];
+    $attachment = isset($settings[$name]) ? absint(get_theme_mod($settings[$name])) : 0;
+    return ($attachment ? wp_get_attachment_url($attachment) : false) ?: home_url('/assets/' . $name);
+}
+add_action('customize_register', function ($customizer) {
+    $customizer->add_section('odp_media', ['title'=>'Od Pani Ewy - ilustracja i film']);
+    foreach (['odp_hero_image'=>['Główna ilustracja', 'image'], 'odp_story_poster'=>['Okładka filmu', 'image'], 'odp_story_video'=>['Film', 'video']] as $key=>[$label,$mime]) {
+        $customizer->add_setting($key, ['sanitize_callback'=>'absint']);
+        $customizer->add_control(new WP_Customize_Media_Control($customizer, $key, ['label'=>$label, 'section'=>'odp_media', 'mime_type'=>$mime]));
+    }
+});
 function odp_brand() { ?>
 <span class="brand-mark">e<span>✦</span></span><span>od Pani Ewy<small>MAŁE RYTUAŁY. WIELKIE UŚMIECHY.</small></span>
 <?php }

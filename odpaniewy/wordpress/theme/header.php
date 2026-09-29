@@ -1,5 +1,5 @@
 <?php defined('ABSPATH') || exit; ?>
-<!doctype html><html <?php language_attributes(); ?>><head><meta charset="<?php bloginfo('charset'); ?>"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="theme-color" content="#087E8B"><?php wp_head(); ?></head>
+<!doctype html><html <?php language_attributes(); ?>><head><meta charset="<?php bloginfo('charset'); ?>"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="theme-color" content="#087E8B"><meta name="odp-shop" content="woocommerce"><?php wp_head(); ?></head>
 <body <?php body_class(); ?>><?php wp_body_open(); ?>
 <a class="skip" href="#main">Przejdź do treści</a>
 <?php if (defined('ODP_STAGING') && ODP_STAGING): ?><div class="demo-bar"><span>SKLEP TESTOWY</span> Produkty i ceny demo. Bez płatności i wysyłki.</div><?php endif; ?>
