@@ -1,7 +1,7 @@
 <?php
 // Dedicated disposable CI database only. Never run this against the live store.
 defined('WP_CLI') && WP_CLI || exit;
-if (getenv('ODP_CI') !== '1' || home_url('/') !== 'http://127.0.0.1:8089/') WP_CLI::error('Requires the disposable local CI store.');
+if (!defined('ODP_CI') || !ODP_CI || DB_NAME !== 'odp_ci' || wp_parse_url(get_option('home'), PHP_URL_HOST) !== '127.0.0.1' || wp_parse_url(get_option('home'), PHP_URL_PORT) !== 8089) WP_CLI::error('Requires the disposable local CI store.');
 require_once ABSPATH . 'wp-admin/includes/template.php';
 $check = function ($condition, $message) {
     if (!$condition) WP_CLI::error($message);
